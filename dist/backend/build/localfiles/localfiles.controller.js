@@ -120,7 +120,9 @@ let LocalFilesController = class LocalFilesController {
         const id = String(channelId || '').trim();
         if (!id)
             return { error: '请选择本地文件渠道' };
-        const ch = await prisma_1.prisma.channel.findFirst({ where: { type: 'localfiles', OR: [{ id }, { code: id }] } });
+        const ch = await prisma_1.prisma.channel.findFirst({
+            where: { type: { in: ['localfiles', 'local'] }, OR: [{ id }, { code: id }] },
+        });
         if (!ch)
             return { error: '渠道不存在或不是「本地文件」渠道' };
         if (!ch.enabled)
@@ -134,6 +136,11 @@ let LocalFilesController = class LocalFilesController {
         }
         catch {
             cfg = {};
+        }
+        if (ch.type === 'local') {
+            const on = cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true';
+            if (!on)
+                return { error: '该本地存储渠道未开启「同步到本地文件管理」' };
         }
         let wanted = [];
         if (Array.isArray(cfg.rootPaths))
@@ -184,18 +191,32 @@ let LocalFilesController = class LocalFilesController {
             return { success: false, message: '请先登录' };
         if (!(0, localfiles_util_1.localFilesAdminOnly)(this.role(req)))
             return { success: true, data: [] };
-        const rows = await prisma_1.prisma.channel.findMany({ where: { type: 'localfiles' }, orderBy: [{ typeCode: 'asc' }, { name: 'asc' }] });
+        const rows = await prisma_1.prisma.channel.findMany({
+            where: { type: { in: ['localfiles', 'local'] } },
+            orderBy: [{ typeCode: 'asc' }, { name: 'asc' }],
+        });
         const list = rows
             .map((ch) => {
-            let rootPath = '';
+            let cfg = {};
             try {
-                rootPath = String(JSON.parse(ch.config || '{}').rootPath || '');
+                cfg = JSON.parse(ch.config || '{}');
             }
             catch {
-                rootPath = '';
+                cfg = {};
             }
-            return { id: ch.id, code: ch.code, name: ch.name, rootPath, enabled: ch.enabled };
-        });
+            const synced = ch.type === 'local' && (cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true');
+            if (ch.type === 'local' && (!synced || !String(cfg.rootPath || '').trim()))
+                return null;
+            return {
+                id: ch.id,
+                code: ch.code,
+                name: ch.name,
+                rootPath: String(cfg.rootPath || ''),
+                enabled: ch.enabled,
+                source: ch.type === 'local' ? 'local' : 'localfiles',
+            };
+        })
+            .filter(Boolean);
         return { success: true, data: list };
     }
     async getSettings(req) {

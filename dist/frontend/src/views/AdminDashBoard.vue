@@ -720,6 +720,7 @@
             :fileLink="getFileLink(detailFile?.name)"
             :urls="allUrl"
             :trashMode="trashMode"
+            :trashBusy="trashBusy"
             @download="handleDownload(detailFile?.name)"
             @tagManagement="handleTagManagement(detailFile?.name)"
             @block="handleBlock(detailFile?.name)"
@@ -1150,6 +1151,13 @@ data() {
         trashTotal: 0,
         // v3.0.0（R12）：正在删除的条目 key 集合（卡片/列表行显示转圈遮罩，需求 43）
         deletingKeys: [],
+        /*
+         * v1.0.1：回收站「恢复 / 彻底删除」执行中标记。
+         * 回收站条目常常是从「文件详情」弹窗里操作的，而卡片上的转圈遮罩被弹窗盖住看不见，
+         * 所以再把同一个状态传给详情弹窗，让它的「恢复 / 彻底删除」按钮也转圈并禁用，
+         * 与普通文件软删除时的反馈保持一致。
+         */
+        trashBusy: false,
         // v3.0.0（R12）：目录属性里的自定义名称（path → 名称），列表/全局目录各存一份
         folderNameMap: {},
         allFolderNames: {},
@@ -1710,12 +1718,19 @@ watch: {
     },
     tableData: {
         handler(newData) {
+            /*
+             * v1.0.1：文件夹不参与多选 —— 兜底把目录条目的 selected 归零，
+             * 防止历史状态 / 拖拽框选 / 旧代码路径把文件夹塞进选中集合。
+             */
+            newData.forEach((it) => { if (this.isFolder(it) && it.selected) it.selected = false; });
             // selectedFiles 增加 newData中新选中，不包含在 selectedFiles 中的文件
             this.selectedFiles = this.selectedFiles.concat(newData.filter(file => file.selected && !this.selectedFiles.includes(file)));
             // selectedFiles 删掉 newData 中已取消选中的文件
             this.selectedFiles = this.selectedFiles.filter(file => file.selected);
             // selectedFiles 删掉 tableData 中已删除的文件
             this.selectedFiles = this.selectedFiles.filter(file => newData.includes(file));
+            // v1.0.1：文件夹一律不留在选中集合里
+            this.selectedFiles = this.selectedFiles.filter(file => !this.isFolder(file));
         },
         deep: true
     },
@@ -1777,7 +1792,8 @@ methods: {
     },
     // 列表视图全选当前页
     handleSelectAllPage(val) {
-        this.paginatedTableData.forEach(file => file.selected = val);
+        // v1.0.1：文件夹永远不可被选中 —— 全选只作用于文件
+        this.paginatedTableData.forEach(file => { file.selected = val ? !this.isFolder(file) : false; });
     },
     /*
      * v3.0.0（R16）：Shift + 点击复选框 → 批量选中区间（PC 端）。
@@ -1795,7 +1811,8 @@ methods: {
                 // 没有锚点：退化为单选本次点击行
                 e.preventDefault();
                 e.stopPropagation();
-                this.paginatedTableData[index].selected = true;
+                // v1.0.1：文件夹不可选中
+                if (!this.isFolder(this.paginatedTableData[index])) this.paginatedTableData[index].selected = true;
                 this.lastSelectedIndex = index;
                 return;
             }
@@ -1803,8 +1820,12 @@ methods: {
             e.stopPropagation();
             const a = Math.min(this.lastSelectedIndex, index);
             const b = Math.max(this.lastSelectedIndex, index);
-            this.paginatedTableData.forEach((it, i) => { if (i >= a && i <= b) it.selected = true; });
-            this.$message && this.$message.success(this.$t('dashboard.shiftRangeSelected', { count: b - a + 1 }));
+            // v1.0.1：区间选择跳过文件夹
+            let count = 0;
+            this.paginatedTableData.forEach((it, i) => {
+                if (i >= a && i <= b && !this.isFolder(it)) { it.selected = true; count += 1; }
+            });
+            if (count) this.$message && this.$message.success(this.$t('dashboard.shiftRangeSelected', { count }));
             return;
         }
         // 普通点击：记录锚点（勾选/取消交给 el-checkbox 自己）
@@ -1880,6 +1901,11 @@ methods: {
     /** v3.0.0：把某个文件/文件夹加入多选（移动端长按菜单「选择文件」） */
     selectSingleItem(file) {
         if (!file) return;
+        // v1.0.1：文件夹不可被选中（选择只针对文件）
+        if (this.isFolder(file)) {
+            this.$message.info(this.$t('dashboard.folderNotSelectable'));
+            return;
+        }
         // v3.0.0（R8）：只读共享条目不可选中
         if (this.isSharedReadonly(file)) {
             this.$message.warning(this.$t('fileManager.sharedReadonlyHint'));
@@ -2634,6 +2660,7 @@ methods: {
             // v3.0.0（R12，需求 43）：恢复期间同样显示转圈（回收站条目用 trashId 作 key）
             const keys = items.map((it) => it.trashId || it.name);
             this.setDeleting(keys, true);
+            this.trashBusy = true;
             try {
                 await this.trashBatchRequest(items, 'restore');
                 this.removeTrashItems(items);
@@ -2642,6 +2669,7 @@ methods: {
                 this.$message.error(this.$t('dashboard.trashRestoreFailed'));
             } finally {
                 this.setDeleting(keys, false);
+                this.trashBusy = false;
             }
         }).catch(() => {});
     },
@@ -2667,10 +2695,12 @@ methods: {
         if (!items.length) return;
         const keys = items.map((it) => it.trashId || it.name);
         this.setDeleting(keys, true);
+        this.trashBusy = true;
         try {
             const data = await this.trashBatchRequest(items, 'purge', totpCode);
             if (data.needTotp) {
                 this.setDeleting(keys, false);
+                this.trashBusy = false;
                 let code = '';
                 try {
                     const r = await this.askTrashTotp(data.message);
@@ -2686,6 +2716,7 @@ methods: {
             this.$message.error(this.$t('dashboard.trashPurgeFailed'));
         } finally {
             this.setDeleting(keys, false);
+            this.trashBusy = false;
         }
     },
     /** 从回收站视图移除已处理的条目 */

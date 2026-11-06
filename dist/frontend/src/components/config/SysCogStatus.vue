@@ -1519,7 +1519,7 @@ export default {
     // 打开发布页面（跳转 GitHub 仓库）
     openReleases() {
       // 「系统版本」→ GitHub Releases（新标签打开）
-      const url = 'https://github.com/hqh519/GoHub/releases'
+      const url = 'https://github.com/hqh519/go-hub/releases'
       window.open(url, '_blank', 'noopener')
     },
     

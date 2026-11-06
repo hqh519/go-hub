@@ -400,24 +400,100 @@ let UploadService = class UploadService {
     }
     async autoTag(fileId, info) {
         try {
-            if ((await this.settings.get('autoTagEnabled', 'true')) === 'false' && !(info.extraTags || []).length)
-                return;
-            const ext = info.originalName.includes('.') ? String(info.originalName.split('.').pop() || '').toLowerCase() : '';
+            const legacyOn = (await this.settings.get('autoTagEnabled', 'true')) !== 'false';
             const instanceId = String(info.instanceId || '').trim();
             const owner = String(info.owner || '').trim();
-            const names = Array.from(new Set([
-                (0, file_view_1.fileTypeOf)(info.mime),
-                ext.replace(/^\./, ''),
-                (0, file_view_1.channelShort)(info.channelType),
-                (0, file_view_1.normalizeUploadSource)(info.uploadSource),
-                String(new Date().getFullYear()),
-            ]
-                .map((v) => String(v || '').trim())
-                .filter(Boolean)
-                .concat((info.extraTags || [])
+            let rules = {
+                enabled: true,
+                placeholders: UploadService_1.DEFAULT_TAG_PLACEHOLDERS,
+                extract: '',
+                regex: UploadService_1.DEFAULT_TAG_REGEX,
+            };
+            try {
+                const cfg = await this.sysConfig.get('others');
+                const at = (cfg && cfg.autoTag) || {};
+                rules = {
+                    enabled: at.enabled === undefined ? true : !(at.enabled === false || String(at.enabled) === 'false'),
+                    placeholders: at.placeholders === undefined ? UploadService_1.DEFAULT_TAG_PLACEHOLDERS : String(at.placeholders ?? ''),
+                    extract: at.extract === undefined ? '' : String(at.extract ?? ''),
+                    regex: at.regex === undefined ? UploadService_1.DEFAULT_TAG_REGEX : String(at.regex ?? ''),
+                };
+            }
+            catch (err) {
+                app_log_1.appLog.warn('upload', `读取自动标签规则失败，使用默认规则`, err?.message || String(err));
+            }
+            const extraTags = (info.extraTags || [])
                 .map((t) => String(t || '').trim().slice(0, 20))
                 .filter(Boolean)
-                .slice(0, 10))));
+                .slice(0, 10);
+            if (!(legacyOn && rules.enabled) && !extraTags.length)
+                return;
+            const autoNames = [];
+            if (legacyOn && rules.enabled) {
+                const now = new Date();
+                const ext = info.originalName.includes('.')
+                    ? String(info.originalName.split('.').pop() || '').toLowerCase().replace(/^\./, '')
+                    : '';
+                const vars = {
+                    mime: (0, file_view_1.fileTypeOf)(info.mime),
+                    ext,
+                    channelName: (0, file_view_1.channelShort)(info.channelType),
+                    uploadSource: (0, file_view_1.normalizeUploadSource)(info.uploadSource),
+                    y: String(now.getFullYear()),
+                    m: String(now.getMonth() + 1).padStart(2, '0'),
+                    d: String(now.getDate()).padStart(2, '0'),
+                    width: info.width ? String(info.width) : '',
+                    height: info.height ? String(info.height) : '',
+                };
+                for (const piece of String(rules.placeholders || '').split(/[,，\n]/)) {
+                    const raw = piece.trim();
+                    if (!raw)
+                        continue;
+                    let resolved = false;
+                    const rendered = raw.replace(/\{(mime|ext|channelName|uploadSource|y|m|d|width|height)\}/g, (_m, k) => {
+                        const v = vars[k] || '';
+                        if (v)
+                            resolved = true;
+                        return v;
+                    });
+                    if (raw.includes('{') && !resolved)
+                        continue;
+                    const name = rendered.trim();
+                    if (name)
+                        autoNames.push(name);
+                }
+                for (const rule of UploadService_1.parseTagExtractRules(rules.extract)) {
+                    if (String(info.originalName || '').includes(rule.find))
+                        autoNames.push(rule.tag);
+                }
+                for (const line of String(rules.regex || '').split('\n')) {
+                    const pattern = line.trim();
+                    if (!pattern)
+                        continue;
+                    let re;
+                    try {
+                        re = new RegExp(pattern, 'g');
+                    }
+                    catch (err) {
+                        app_log_1.appLog.warn('upload', `自动标签正则无效，已跳过：${pattern}`, err?.message || String(err));
+                        continue;
+                    }
+                    let m;
+                    let guard = 0;
+                    while ((m = re.exec(String(info.originalName || ''))) !== null) {
+                        const hit = String(m[1] ?? m[0] ?? '').trim();
+                        if (hit)
+                            autoNames.push(hit);
+                        if (!m[0])
+                            re.lastIndex += 1;
+                        if (++guard >= 10)
+                            break;
+                    }
+                }
+            }
+            const names = Array.from(new Set([...autoNames, ...extraTags]
+                .map((v) => String(v || '').trim().slice(0, 20))
+                .filter(Boolean))).slice(0, 30);
             for (const name of names) {
                 const tag = await prisma_1.prisma.tag.upsert({
                     where: { name_instanceId_owner: { name, instanceId, owner } },
@@ -435,6 +511,49 @@ let UploadService = class UploadService {
         catch (err) {
             app_log_1.appLog.warn('upload', `自动打标签失败（不影响文件本身）`, err?.message || String(err));
         }
+    }
+    static DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
+    static DEFAULT_TAG_REGEX = '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])';
+    static parseTagExtractRules(raw) {
+        const out = [];
+        const s = String(raw || '').trim();
+        if (!s)
+            return out;
+        const push = (find, tag) => {
+            const f = String(find ?? '').trim();
+            const t = String(tag ?? '').trim();
+            if (f && t && !out.some((x) => x.find === f))
+                out.push({ find: f, tag: t });
+        };
+        try {
+            const j = JSON.parse(s);
+            if (Array.isArray(j)) {
+                for (const it of j) {
+                    if (Array.isArray(it) && it.length >= 2)
+                        push(it[0], it[1]);
+                    else if (it && typeof it === 'object')
+                        push(it.find ?? it.key, it.tag ?? it.value);
+                    else if (typeof it === 'string') {
+                        const sep = it.indexOf(':');
+                        if (sep > 0)
+                            push(it.slice(0, sep), it.slice(sep + 1));
+                    }
+                }
+            }
+            else if (j && typeof j === 'object') {
+                for (const [k, v] of Object.entries(j))
+                    push(k, v);
+            }
+            if (out.length)
+                return out;
+        }
+        catch {
+        }
+        const re = /["']([^"']+)["']\s*:\s*["']([^"']*)["']/g;
+        let m;
+        while ((m = re.exec(s)) !== null)
+            push(m[1], m[2]);
+        return out;
     }
     static extractHashTags(originalName) {
         const out = [];
@@ -1365,7 +1484,9 @@ let UploadService = class UploadService {
             uploadSource: opts.uploadSource,
             instanceId: instanceScope,
             owner: record.uploader,
-            extraTags: [...(opts.extraTags || []), ...UploadService_1.extractHashTags(originalName)],
+            extraTags: [...(opts.extraTags || [])],
+            width: dims.width,
+            height: dims.height,
         }));
         if (opts.backup !== false) {
             const payload = { buffer, path: srcPath, size, mime, originalName };
@@ -1636,6 +1757,8 @@ let UploadService = class UploadService {
             uploadSource: 'Record',
             instanceId: instanceScope,
             owner: record.uploader,
+            width: dims.width,
+            height: dims.height,
         }));
         this.enqueueBackground(() => this.touchIp(uploadIp, uploadAddress));
         app_log_1.appLog.info('record', `登记文件成功：${originalName}`, `渠道=${ch.name} ｜ ${size}B ｜ mime=${mime} ｜ md5=${md5 || '未获取'} ｜ 匹配域名=${domainHit.field}(${domainHit.host}) ｜ 路径=${domainHit.rest} ｜ 文件名来源=${nameSource} ｜ 分类=${folder}${folderInput ? '' : '（默认 登记文件/年/月）'} ｜ 源=${rawUrl}`, uploadIp);

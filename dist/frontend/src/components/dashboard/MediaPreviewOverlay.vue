@@ -1033,6 +1033,18 @@ export default {
          * 原实现按 items 全长取模，图片灯箱会切到视频、PDF 会切到图片。
          * 现在取当前类型的下标列表，在其中前后移动；当前类型不足 2 个时不动。
          */
+        /**
+         * v1.0.1（桌面端 ↓ 键）：在同类型文件里随机跳一个（不是「下一个」）。
+         * 只有一个同类型文件时什么都不做；控件显隐沿用 step() 的规则。
+         */
+        randomStep() {
+            const pool = this.sameKindIndexes.filter((i) => i !== this.index)
+            if (!pool.length) return
+            this.index = pool[Math.floor(Math.random() * pool.length)]
+            if (this.silent) this.setIdleTimer()
+            else if (!this.controlsVisible) this.setIdleTimer()
+            else this.bumpControls()
+        },
         step(delta, opts) {
             const pool = this.sameKindIndexes
             if (pool.length < 2) return
@@ -2046,6 +2058,32 @@ export default {
                 if (this._keyHandler) return
                 this._keyHandler = (e) => {
                     if (!this.modelValue) return
+                    // 输入框 / 文本域里不接管方向键（避免影响光标移动）
+                    const t = e.target
+                    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+                    /*
+                     * v1.0.1（桌面端）：
+                     *   ↓ 随机切换到下一个「同类型」文件（图片只换图片、视频只换视频）；
+                     *   ↑ 打开文件详情并暂停正在播放的视频 / 音频。
+                     * 左右方向键仍为按顺序切上一个 / 下一个。
+                     */
+                    if (e.key === 'ArrowDown') {
+                        const kind = this.current && this.current.kind
+                        if (kind === 'image' || kind === 'video') {
+                            e.preventDefault()
+                            this.randomStep()
+                        }
+                        return
+                    }
+                    if (e.key === 'ArrowUp') {
+                        if (this.showDetail) {
+                            e.preventDefault()
+                            if (this.silent || !this.controlsVisible) this.setIdleTimer()
+                            // goDetail 内部会 pauseAll()，视频随之暂停
+                            this.goDetail()
+                        }
+                        return
+                    }
                     // v3.0.0（R12）：方向键切换在控件隐藏 / 静默态下保持静默（不再点亮控件），
                     // 只重置 idle 计时；Esc 仍然唤出（因为它马上就要关灯箱了）。
                     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {

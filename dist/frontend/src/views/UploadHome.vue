@@ -63,6 +63,7 @@
                     class="inner-folder-input"
                     v-model="uploadFolder"
                     :placeholder="$t('upload.folderPlaceholder')"
+                    name="gohub-upload-folder"
                     autocomplete="on"
                     @focus="handleFolderInputFocus"
                     @blur="handleFolderInputBlur"

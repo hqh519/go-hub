@@ -7,7 +7,7 @@
     -->
     <div
         class="folder-card"
-        :class="{ 'is-selected': localSelected, 'is-deleting': deleting, 'is-force-select': showSelect }"
+        :class="{ 'is-selected': localSelected, 'is-deleting': deleting }"
         @contextmenu.prevent
         @touchstart="$emit('touchstart', $event)"
         @touchend="$emit('touchend', $event)"
@@ -21,19 +21,8 @@
         <!-- 上半部分：文件夹图标 -->
         <div class="folder-preview" @click="$emit('enter')">
             <font-awesome-icon icon="folder-open" class="folder-icon-svg"/>
-            <!-- 悬浮层：选择 / 操作 -->
+            <!-- 悬浮层：操作（文件夹已不可选中，这里不再有选择圆圈） -->
             <div class="folder-overlay">
-                <div class="overlay-top">
-                    <span></span>
-                    <!-- v3.0.0（R8）：只读共享目录不可选中（隐藏选择圆圈） -->
-                    <el-checkbox
-                        v-if="!sharedReadonly"
-                        v-model="localSelected"
-                        class="card-select"
-                        @click.stop
-                        @change="$emit('update:selected', localSelected)"
-                    ></el-checkbox>
-                </div>
                 <div v-if="showActions" class="overlay-actions" @click.stop>
                     <el-tooltip :disabled="disableTooltip" :content="$t('dashboard.copyLink')" placement="top" :show-after="600">
                         <button class="overlay-btn" @click.stop="$emit('copy')">
@@ -243,53 +232,15 @@ export default {
     opacity: 1;
     pointer-events: auto;
 }
-/* v3.0.0（R14）：已有文件夹被选中 → 全部文件夹都显示选择圆圈（只放开圆圈可点，其余区域仍可点进目录） */
-.folder-card.is-force-select .folder-overlay {
-    opacity: 1;
-    pointer-events: none;
-}
-.folder-card.is-force-select .folder-overlay .card-select {
-    pointer-events: auto;
-}
-.overlay-top {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    padding: 6px 8px;
-}
-.card-select {
-    flex-shrink: 0;
-}
-/* v2.8.0：手机端/平板端下选择圆圈整体上移 4px（PC 端保持不动） */
-@media (max-width: 1199px) {
-    .card-select {
-        margin-top: -4px;
-    }
-}
-.card-select :deep(.el-checkbox__inner) {
-    width: 16px !important;
-    min-width: 16px;
-    height: 16px !important;
-    min-height: 16px;
-    border-radius: 50% !important;
-    /* v2.8.0：未选中时圆圈内部透明（不填充白色） */
-    background: transparent;
-}
-/* v2.8.5：选中时恢复主题色填充（transparent 规则会按级联顺序盖掉 EP 选中态默认背景） */
-.card-select :deep(.el-checkbox__input.is-checked .el-checkbox__inner) {
-    background-color: var(--el-color-primary);
-    border-color: var(--el-color-primary);
-}
-/* v2.8.5：选中态对勾保持白色可见 */
-.card-select :deep(.el-checkbox__input.is-checked .el-checkbox__inner::after) {
-    border-color: #fff;
-}
+/* v1.0.1：文件夹不可选中 → is-force-select / .card-select / .overlay-top 相关样式一并移除 */
 .overlay-actions {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 10px;
     padding-bottom: 12px;
+    /* 上方 overlay-top 已移除，靠 margin-top:auto 把操作按钮压到卡片底部 */
+    margin-top: auto;
 }
 .overlay-btn {
     width: 32px;

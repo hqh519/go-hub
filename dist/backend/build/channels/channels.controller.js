@@ -57,6 +57,7 @@ const adapter_factory_1 = require("../adapters/adapter.factory");
 const storage_channel_service_1 = require("../storage/storage-channel.service");
 const app_log_1 = require("../common/app-log");
 const channel_domain_1 = require("../common/channel-domain");
+const mounts_1 = require("./mounts");
 const SECRET_FIELDS = {
     local: [],
     cos: ['secretId', 'secretKey'],
@@ -447,6 +448,16 @@ let ChannelManageController = class ChannelManageController {
         }
         return grouped;
     }
+    async mounts() {
+        try {
+            const list = await (0, mounts_1.listContainerMounts)();
+            return { success: true, data: list };
+        }
+        catch (err) {
+            app_log_1.appLog.warn('channel', '读取容器内映射路径失败', err.message);
+            return { success: false, message: '读取容器内映射路径失败', data: [] };
+        }
+    }
     async plain(id) {
         const c = await prisma_1.prisma.channel.findUnique({ where: { id } });
         if (!c)
@@ -771,6 +782,12 @@ __decorate([
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], ChannelManageController.prototype, "list", null);
+__decorate([
+    (0, common_1.Get)('mounts'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], ChannelManageController.prototype, "mounts", null);
 __decorate([
     (0, common_1.Get)(':id/plain'),
     __param(0, (0, common_1.Param)('id')),

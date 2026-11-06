@@ -661,36 +661,114 @@ export class UploadService {
        * 自动标签归属到上传者名下，其他人（含同实例的其他账户）不可见。
        */
       owner?: string;
-      /** v3.0.0（R14）：调用方追加的标签（本地上传 / 视频抓拍 / #号提取 等），与自动标签合并去重 */
+      /** v3.0.0（R14）：调用方追加的标签（本地上传 / 视频抓拍 等），与自动标签合并去重 */
       extraTags?: string[];
+      /** v1.0.1：图片 / 视频宽高（供 {width} / {height} 占位符使用，拿不到就跳过该标签） */
+      width?: number;
+      height?: number;
     },
   ): Promise<void> {
     try {
-      if ((await this.settings.get('autoTagEnabled', 'true')) === 'false' && !(info.extraTags || []).length) return;
-      const ext = info.originalName.includes('.') ? String(info.originalName.split('.').pop() || '').toLowerCase() : '';
+      const legacyOn = (await this.settings.get('autoTagEnabled', 'true')) !== 'false';
       const instanceId = String(info.instanceId || '').trim();
       // v1.0.0：标签归属者（未传则落到默认实例的公共标签 owner=''，与历史数据口径一致）
       const owner = String(info.owner || '').trim();
+      /*
+       * v1.0.1：自动标签规则改为后台可配置（系统管理 → 其他设置 → 文件标签添加设置）。
+       * 原来写死的「文件类型 / 扩展名 / 渠道简称 / 上传方式 / 年份」已移除，
+       * 统一由 autoTag.placeholders / extract / regex 三项决定。
+       */
+      let rules: { enabled: boolean; placeholders: string; extract: string; regex: string } = {
+        enabled: true,
+        placeholders: UploadService.DEFAULT_TAG_PLACEHOLDERS,
+        extract: '',
+        regex: UploadService.DEFAULT_TAG_REGEX,
+      };
+      try {
+        const cfg = await this.sysConfig.get('others');
+        const at = (cfg && cfg.autoTag) || {};
+        rules = {
+          enabled: at.enabled === undefined ? true : !(at.enabled === false || String(at.enabled) === 'false'),
+          placeholders:
+            at.placeholders === undefined ? UploadService.DEFAULT_TAG_PLACEHOLDERS : String(at.placeholders ?? ''),
+          extract: at.extract === undefined ? '' : String(at.extract ?? ''),
+          regex: at.regex === undefined ? UploadService.DEFAULT_TAG_REGEX : String(at.regex ?? ''),
+        };
+      } catch (err) {
+        appLog.warn('upload', `读取自动标签规则失败，使用默认规则`, (err as Error)?.message || String(err));
+      }
+      const extraTags = (info.extraTags || [])
+        .map((t) => String(t || '').trim().slice(0, 20))
+        .filter(Boolean)
+        .slice(0, 10);
+      // 系统规则全部关闭且调用方也没给标签 → 什么都不做
+      if (!(legacyOn && rules.enabled) && !extraTags.length) return;
+
+      const autoNames: string[] = [];
+      if (legacyOn && rules.enabled) {
+        const now = new Date();
+        const ext = info.originalName.includes('.')
+          ? String(info.originalName.split('.').pop() || '').toLowerCase().replace(/^\./, '')
+          : '';
+        const vars: Record<string, string> = {
+          mime: fileTypeOf(info.mime),
+          ext,
+          channelName: channelShort(info.channelType),
+          uploadSource: normalizeUploadSource(info.uploadSource),
+          y: String(now.getFullYear()),
+          m: String(now.getMonth() + 1).padStart(2, '0'),
+          d: String(now.getDate()).padStart(2, '0'),
+          width: info.width ? String(info.width) : '',
+          height: info.height ? String(info.height) : '',
+        };
+        // ① 占位符：逗号 / 顿号 / 换行分隔，每段渲染成一个标签（可混写固定文字）
+        for (const piece of String(rules.placeholders || '').split(/[,，\n]/)) {
+          const raw = piece.trim();
+          if (!raw) continue;
+          let resolved = false;
+          const rendered = raw.replace(/\{(mime|ext|channelName|uploadSource|y|m|d|width|height)\}/g, (_m, k: string) => {
+            const v = vars[k] || '';
+            if (v) resolved = true;
+            return v;
+          });
+          // 整段只有占位符且取值失败（如没有宽高）→ 不生成空标签 / 半截标签
+          if (raw.includes('{') && !resolved) continue;
+          const name = rendered.trim();
+          if (name) autoNames.push(name);
+        }
+        // ② 提取指定内容：文件名包含指定内容 → 打上对应标签
+        for (const rule of UploadService.parseTagExtractRules(rules.extract)) {
+          if (String(info.originalName || '').includes(rule.find)) autoNames.push(rule.tag);
+        }
+        // ③ 自定义规则：一行一条正则，取捕获组 1（没有捕获组则取整段匹配）
+        for (const line of String(rules.regex || '').split('\n')) {
+          const pattern = line.trim();
+          if (!pattern) continue;
+          let re: RegExp;
+          try {
+            re = new RegExp(pattern, 'g');
+          } catch (err) {
+            appLog.warn('upload', `自动标签正则无效，已跳过：${pattern}`, (err as Error)?.message || String(err));
+            continue;
+          }
+          let m: RegExpExecArray | null;
+          let guard = 0;
+          while ((m = re.exec(String(info.originalName || ''))) !== null) {
+            const hit = String(m[1] ?? m[0] ?? '').trim();
+            if (hit) autoNames.push(hit);
+            // 零长度匹配防死循环 + 单条规则最多取 10 个
+            if (!m[0]) re.lastIndex += 1;
+            if (++guard >= 10) break;
+          }
+        }
+      }
       const names = Array.from(
         new Set(
-          [
-            fileTypeOf(info.mime),
-            ext.replace(/^\./, ''),
-            channelShort(info.channelType),
-            normalizeUploadSource(info.uploadSource),
-            String(new Date().getFullYear()),
-          ]
-            .map((v) => String(v || '').trim())
-            .filter(Boolean)
-            // v3.0.0（R14）：调用方追加标签（最多 10 个、每个 ≤20 字符，防滥用）
-            .concat(
-              (info.extraTags || [])
-                .map((t) => String(t || '').trim().slice(0, 20))
-                .filter(Boolean)
-                .slice(0, 10),
-            ),
+          [...autoNames, ...extraTags]
+            .map((v) => String(v || '').trim().slice(0, 20))
+            .filter(Boolean),
         ),
-      );
+      ).slice(0, 30);
       for (const name of names) {
         // v1.0.0：tags 表联合唯一改为 [name, instanceId, owner]，upsert 走新复合键
         const tag = await prisma.tag.upsert({
@@ -707,6 +785,57 @@ export class UploadService {
     } catch (err) {
       appLog.warn('upload', `自动打标签失败（不影响文件本身）`, (err as Error)?.message || String(err));
     }
+  }
+
+  /**
+   * v1.0.1：自动标签的默认规则（与旧版写死的规则等价，保证升级后行为不变）。
+   *
+   *   placeholders —— 文件类型 / 扩展名 / 渠道简称 / 上传方式 / 年份
+   *   regex        —— 文件原名里 `#标签` 的提取规则（原 extractHashTags 的静态实现）
+   */
+  static readonly DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
+  static readonly DEFAULT_TAG_REGEX =
+    '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])';
+
+  /**
+   * v1.0.1：解析「提取指定内容」配置。
+   *
+   * 需求给的书写格式是 `["maomi":"猫咪"]`（不是严格 JSON），
+   * 因此先按 JSON 解析（支持 `{"a":"b"}` / `[["a","b"]]` / `[{"find":"a","tag":"b"}]`），
+   * 失败再走宽松匹配 `"键":"值"`，两种写法都能用。
+   * 键 = 文件名里要出现的内容，值 = 要打的标签名。
+   */
+  static parseTagExtractRules(raw: string): { find: string; tag: string }[] {
+    const out: { find: string; tag: string }[] = [];
+    const s = String(raw || '').trim();
+    if (!s) return out;
+    const push = (find: unknown, tag: unknown) => {
+      const f = String(find ?? '').trim();
+      const t = String(tag ?? '').trim();
+      if (f && t && !out.some((x) => x.find === f)) out.push({ find: f, tag: t });
+    };
+    try {
+      const j = JSON.parse(s);
+      if (Array.isArray(j)) {
+        for (const it of j) {
+          if (Array.isArray(it) && it.length >= 2) push(it[0], it[1]);
+          else if (it && typeof it === 'object') push((it as any).find ?? (it as any).key, (it as any).tag ?? (it as any).value);
+          else if (typeof it === 'string') {
+            const sep = it.indexOf(':');
+            if (sep > 0) push(it.slice(0, sep), it.slice(sep + 1));
+          }
+        }
+      } else if (j && typeof j === 'object') {
+        for (const [k, v] of Object.entries(j as Record<string, unknown>)) push(k, v);
+      }
+      if (out.length) return out;
+    } catch {
+      /* 不是合法 JSON → 走宽松解析 */
+    }
+    const re = /["']([^"']+)["']\s*:\s*["']([^"']*)["']/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(s)) !== null) push(m[1], m[2]);
+    return out;
   }
 
   /**
@@ -2087,8 +2216,11 @@ export class UploadService {
         instanceId: instanceScope,
         // v1.0.0：标签同时按用户隔离 —— 归属到本次上传者
         owner: record.uploader,
-        // v3.0.0（R14）：调用方指定标签 + 文件原名里的 #话题 提取
-        extraTags: [...(opts.extraTags || []), ...UploadService.extractHashTags(originalName)],
+        // v1.0.1：调用方指定标签；`#话题` 的提取改由后台「自定义规则」承担（默认规则即原逻辑）
+        extraTags: [...(opts.extraTags || [])],
+        // v1.0.1：图片 / 视频宽高，供 {width} / {height} 占位符使用
+        width: dims.width,
+        height: dims.height,
       }),
     );
 
@@ -2457,6 +2589,9 @@ export class UploadService {
         instanceId: instanceScope,
         // v1.0.0：标签同时按用户隔离 —— 归属到登记人
         owner: record.uploader,
+        // v1.0.1：宽高供 {width} / {height} 占位符使用
+        width: dims.width,
+        height: dims.height,
       }),
     );
     this.enqueueBackground(() => this.touchIp(uploadIp, uploadAddress));

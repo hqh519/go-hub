@@ -107,6 +107,12 @@ let SysConfigService = class SysConfigService {
                     randomImageAPI: { enabled: true, allowedDir: '', fixed: false },
                     publicBrowse: { enabled: true, allowedDir: '', fixed: false },
                     webdav: { enabled: false, rootPath: '', channelId: '', readonly: false },
+                    autoTag: {
+                        enabled: true,
+                        placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
+                        extract: '',
+                        regex: '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])',
+                    },
                 };
             case 'ai':
                 return { canStoreCredentials: false, defaults: { tagPrompt: '' }, models: [] };

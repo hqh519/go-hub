@@ -181,10 +181,29 @@ export const LOCAL_FILES_FIELDS = () => [
  * objectPrefix、nameTemplate、sizeLimitEnabled / sizeLimitGB、note。
  */
 export const LOCAL_CUSTOM_FIELDS = () => [
+    /*
+     * v1.0.1：存储地址改为「可输入的下拉」——
+     * 选项只来自容器内**已真实映射**的目录（后端 /api/manage/channels/mounts），
+     * 未映射的路径不会出现在选项里、也无法被选中。
+     * 原因：写进未映射的容器路径时，文件只落在容器可写层，容器重建后连同实体文件一起丢失。
+     */
     f('rootPath', '存储地址（容器内路径）', {
+        type: 'pathSelect',
         required: true,
-        placeholder: '/data/uploads',
-        tip: '容器内的绝对路径，上传的实体文件会写入该目录；可选择映射到容器的宿主机目录（下方「宿主机映射目录」）。直接手填即可。'
+        placeholder: '从已映射目录中选择，或输入关键字筛选',
+        tip: '只能选择容器内**已映射**的目录（下拉列表即容器内真实可写的挂载点），支持输入关键字快速筛选。' +
+            '未映射的路径不允许选择 —— 那种路径的文件只存在于容器可写层，容器重建后会全部丢失。' +
+            '如需新增目录，请先在 docker -v / compose volumes 里把它映射进容器。'
+    }),
+    /*
+     * v1.0.1：同步到本地文件管理 —— 打开后这个存储地址会直接出现在
+     * 「本地文件」页（/localFiles）的渠道选择里，可浏览、预览、批量上传到图床。
+     */
+    f('syncToLocalFiles', '同步到本地文件管理', {
+        type: 'switch',
+        def: false,
+        tip: '开启后，该渠道的存储地址会自动出现在「本地文件」页（/localFiles）的渠道选择中，' +
+            '可直接浏览、预览、批量上传目录内的文件；关闭则从该选择列表中移除（不影响已上传的文件）。'
     }),
     f('hostPath', '宿主机映射目录（可选）', {
         placeholder: '/vol1/docker/gohub-data',

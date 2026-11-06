@@ -5,6 +5,7 @@ import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
 import { AdapterError, ChannelInfo, CopyInfo, StorageAdapter, UploadResult } from './adapter.interface';
 import { backendRoot, backendSub } from '../common/project-paths';
+import { appLog } from '../common/app-log';
 import { LOCAL_DEFAULT_PREFIX, renderFileName, renderObjectPrefix, randomUuid } from '../common/path-template';
 
 /**
@@ -381,9 +382,10 @@ export class LocalAdapter implements StorageAdapter {
     const rel = String(copy.remoteKey || '').replace(/\\/g, '/').replace(/^\/+/, '');
     if (!rel) return;
     // 按本渠道的落盘根定位（内置 → uploads；自定义 → rootPath），兼容历史 202610/ 形态
+    const root = this.baseRoot(channel);
     let abs: string;
     try {
-      abs = LocalAdapter.safeJoin(this.baseRoot(channel), LocalAdapter.toRelativePath(rel));
+      abs = LocalAdapter.safeJoin(root, LocalAdapter.toRelativePath(rel));
     } catch {
       return;
     }
@@ -394,6 +396,49 @@ export class LocalAdapter implements StorageAdapter {
       if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
         throw new AdapterError(`删除本地文件失败：${(err as Error).message}`, 'local');
       }
+    }
+    /*
+     * v1.0.1：文件删掉后，若所在目录已空则一并回收，并一直向上递归，
+     * 直到遇到「还有内容」的目录或渠道根为止（渠道根永不删除）。
+     * 只删空目录（readdir 为空才 rmdir），并行写入的其它文件不会被动到。
+     */
+    await LocalAdapter.pruneEmptyDirs(root, dirname(abs));
+  }
+
+  /**
+   * v1.0.1：向上回收空目录。
+   *   · 起点为被删文件所在目录，逐级向上；
+   *   · 遇到非空目录立即停止（不越权清理别人还有文件的目录）；
+   *   · 到达渠道根即停止（根目录本身永不删除）；
+   *   · 任何一级失败（权限、占用）只记日志并停止，不影响主流程。
+   */
+  private static async pruneEmptyDirs(root: string, startDir: string): Promise<void> {
+    let cur: string;
+    let rootAbs: string;
+    try {
+      cur = normalize(startDir);
+      rootAbs = normalize(root || '');
+    } catch {
+      return;
+    }
+    if (!rootAbs) return;
+    const rootWithSep = rootAbs.endsWith(sep) ? rootAbs : rootAbs + sep;
+    while (cur !== rootAbs && cur.startsWith(rootWithSep)) {
+      try {
+        const entries = await fsp.readdir(cur);
+        if (entries.length) return;
+        await fsp.rmdir(cur);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException)?.code;
+        // 目录已被别的请求清掉 / 不存在：继续向上没问题
+        if (code !== 'ENOENT') {
+          appLog.warn('upload', `回收空目录失败（已跳过）`, `${cur} ｜ ${(err as Error).message}`);
+          return;
+        }
+      }
+      const parent = dirname(cur);
+      if (parent === cur) return;
+      cur = parent;
     }
   }
 

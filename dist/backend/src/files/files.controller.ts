@@ -42,6 +42,7 @@ import { CryptoService } from '../common/crypto.service';
 import { verifyTotp } from '../common/totp';
 import { ensureBucketInKey, publicDomainOf, publicizeExternalUrl } from '../common/channel-domain';
 import { hasRecordDomains, joinRecordUrl, recordLoadOrigin } from '../common/record-link';
+import { userInInstance } from '../common/instance-access';
 import {
   extraFoldersKey,
   extraFoldersOf,
@@ -1357,19 +1358,8 @@ export class LinkController {
    */
   private async canAccessInstance(req: Request, instanceId: string): Promise<boolean> {
     if (this.sessionAdmin(req)) return true;
-    const id = String(instanceId || '');
-    if (!id) return true;
-    const me = this.sessionUser(req);
-    if (!me) return false;
-    const inst = await prisma.instance.findUnique({ where: { id } });
-    if (!inst) return false;
-    if (inst.ownerName === me) return true;
-    try {
-      const members = JSON.parse(inst.metas || '{}')?.members;
-      return Array.isArray(members) && members.map((m: unknown) => String(m)).includes(me);
-    } catch {
-      return false;
-    }
+    // v1.0.1：判定逻辑抽到 common/instance-access，管理控制器的跨实例移动复用同一套
+    return userInInstance(this.sessionUser(req), instanceId);
   }
 
   /**
@@ -2966,18 +2956,26 @@ export class ManageController {
   async trashRestore(@Req() req: Request) {
     if (!(await this.userPerm(req, 'delete'))) return { success: false, message: '没有恢复权限' };
     const key = wildcardParam(req);
+    /*
+     * v1.0.1：恢复同样要限定归属（管理员不受限）——
+     * 原来按 id 直接取记录，普通用户猜到别人的记录 id 就能把别人的文件从回收站里恢复出来。
+     */
+    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
     if (key.startsWith('folder:')) {
       const path = key.slice('folder:'.length);
-      const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
       // v1.0.0：同一个路径在不同实例下可能各有一条回收站记录，取实例对得上的那条
       const entry = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
       if (!entry) return { success: false, message: '回收站中不存在该目录' };
       const restored = await this.restoreFolderEntry(owner, path, String(entry.instanceId || ''));
       return { success: true, folder: true, restoredFiles: restored.filesRestored };
     }
-    const record = await prisma.fileRecord.findFirst({ where: { id: key, status: 'deleted' } });
+    const record = await prisma.fileRecord.findFirst({
+      where: { id: key, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
+    });
     if (!record) return { success: false, message: '回收站中不存在该文件' };
     await this.uploadSvc.restoreFile(record.id, record.name);
+    // v1.0.1：文件回到原目录；原目录若还在回收站里，一并把目录（含属性）恢复回来
+    await this.restoreFolderChain(record.uploader || owner, record.folder || '', record.instanceId || '');
     return { success: true };
   }
 
@@ -3070,7 +3068,11 @@ export class ManageController {
       try {
         const rec = rows.find((r) => r.id === id)!;
         if (action === 'purge') await this.uploadSvc.removeFile(rec.id, rec.name);
-        else await this.uploadSvc.restoreFile(rec.id, rec.name);
+        else {
+          await this.uploadSvc.restoreFile(rec.id, rec.name);
+          // v1.0.1：文件回到原目录；原目录还在回收站里则一并恢复（含属性）
+          await this.restoreFolderChain(rec.uploader || owner, rec.folder || '', rec.instanceId || '');
+        }
         results.push({ id, ok: true });
       } catch (err) {
         results.push({ id, ok: false, message: (err as Error).message });
@@ -3137,6 +3139,42 @@ export class ManageController {
     path: string,
     instanceId = '',
   ): Promise<{ metaRestored: number; filesRestored: number }> {
+    const metaRestored = await this.reinstateFolder(owner, path, instanceId);
+    /*
+     * v3.0.0（R15）：恢复目录 = 连同目录内的文件一起还原。
+     * 之前只恢复目录登记与属性，目录里的文件仍留在回收站里散着，
+     * 用户看到「恢复了文件夹但文件没回来」，就等于没有恢复。
+     * 这里按目录前缀（含子目录）批量把软删文件置回 active ——
+     * 文件的 folder 字段从未改动，恢复后自然回到删除前的层级。
+     */
+    let filesRestored = 0;
+    try {
+      const res = await prisma.fileRecord.updateMany({
+        where: {
+          status: 'deleted',
+          ...(owner ? { uploader: owner } : {}),
+          // v1.0.0：只恢复本实例下同路径的文件，别把其它实例的同名目录一起拉回来
+          instanceId,
+          OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
+        },
+        data: { status: 'active', deletedAt: null },
+      });
+      filesRestored = res.count;
+    } catch (err) {
+      appLog.warn('file', `回收站恢复目录内的文件失败：${path}`, (err as Error).message);
+    }
+    appLog.info('file', `目录已从回收站恢复：${path}`, `目录属性还原 ${metaRestored} 条 ｜ 连带恢复文件 ${filesRestored} 条`);
+    return { metaRestored, filesRestored };
+  }
+
+  /**
+   * v1.0.1：把一个「已删除目录」在结构上恢复回来（不碰文件状态）。
+   *   · 重新登记到 settings.extraFolders（空目录也能在文件管理里出现）；
+   *   · 从 settings.deletedFolders 里摘掉（回收站不再显示这个已删文件夹）；
+   *   · 属性快照写回 FolderMeta（同名属性行已存在则不覆盖）。
+   * 返回还原的属性条数（0 / 1）。
+   */
+  private async reinstateFolder(owner: string, path: string, instanceId = ''): Promise<number> {
     try {
       const raw = await this.settings.get('extraFolders', '{}');
       const map = safeParse(raw) as Record<string, string[]>;
@@ -3166,31 +3204,40 @@ export class ManageController {
         appLog.warn('file', `回收站恢复目录属性失败：${path}`, (err as Error).message);
       }
     }
-    /*
-     * v3.0.0（R15）：恢复目录 = 连同目录内的文件一起还原。
-     * 之前只恢复目录登记与属性，目录里的文件仍留在回收站里散着，
-     * 用户看到「恢复了文件夹但文件没回来」，就等于没有恢复。
-     * 这里按目录前缀（含子目录）批量把软删文件置回 active ——
-     * 文件的 folder 字段从未改动，恢复后自然回到删除前的层级。
-     */
-    let filesRestored = 0;
+    return metaRestored;
+  }
+
+  /**
+   * v1.0.1：单个文件恢复时，把它原来所在的目录链一并恢复。
+   *
+   * 场景：删除目录 → 目录登记（extraFolders / FolderMeta）被清、回收站里留下文件夹条目，
+   * 此时只恢复其中一个文件，文件虽然回到了原 folder，但目录本身仍在回收站里（且属性已丢）。
+   * 这里按「从最外层到最内层」的顺序，把仍挂在回收站里、且是目标目录祖先的每一级都恢复回来：
+   * 重新登记目录 + 还原属性快照 + 从回收站文件夹列表里摘掉。
+   * 只处理「回收站里确实登记过」的层级；目录链上从未删除的层级不动。
+   */
+  private async restoreFolderChain(owner: string, folder: string, instanceId = '') {
+    const f = String(folder || '').replace(/^\/+|\/+$/g, '').trim();
+    if (!f) return 0;
+    let entries: { path: string; instanceId?: string }[] = [];
     try {
-      const res = await prisma.fileRecord.updateMany({
-        where: {
-          status: 'deleted',
-          ...(owner ? { uploader: owner } : {}),
-          // v1.0.0：只恢复本实例下同路径的文件，别把其它实例的同名目录一起拉回来
-          instanceId,
-          OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
-        },
-        data: { status: 'active', deletedAt: null },
-      });
-      filesRestored = res.count;
+      entries = await this.listDeletedFolders(owner);
     } catch (err) {
-      appLog.warn('file', `回收站恢复目录内的文件失败：${path}`, (err as Error).message);
+      appLog.warn('file', `读取回收站目录登记失败（跳过目录链恢复）`, (err as Error).message);
+      return 0;
     }
-    appLog.info('file', `目录已从回收站恢复：${path}`, `目录属性还原 ${metaRestored} 条 ｜ 连带恢复文件 ${filesRestored} 条`);
-    return { metaRestored, filesRestored };
+    if (!entries.length) return 0;
+    const sameInstance = (e: { instanceId?: string }) => String(e.instanceId || '') === String(instanceId || '');
+    const segs = f.split('/').filter(Boolean);
+    let restored = 0;
+    for (let i = 1; i <= segs.length; i++) {
+      const path = segs.slice(0, i).join('/');
+      if (!entries.some((e) => e.path === path && sameInstance(e))) continue;
+      await this.reinstateFolder(owner, path, instanceId);
+      restored += 1;
+    }
+    if (restored) appLog.info('file', `文件恢复时一并恢复目录链：${f}`, `共恢复 ${restored} 级目录`);
+    return restored;
   }
 
   /** 彻底删除回收站里的文件夹：清登记 + 连带清掉该前缀下所有软删文件记录 */
@@ -3549,6 +3596,14 @@ export class ManageController {
     if (targetInstance) {
       const inst = await prisma.instance.findUnique({ where: { id: targetInstance }, select: { id: true } });
       if (!inst) throw new BadRequestException('目标实例不存在');
+      /*
+       * v1.0.1：跨实例移动只允许「移动到我有权限的实例」——
+       * 原来只校验实例是否存在，普通用户可以把文件塞进别人的实例里。
+       * 默认实例（空串）是每个账户自己的初始空间，恒放行（canAccessInstance 内部处理）。
+       */
+      if (!(await this.canAccessInstance(req, targetInstance))) {
+        return { success: false, message: '无权移动到该实例' };
+      }
     }
     const data: { folder?: string; instanceId?: string } = {};
     if (targetInstance !== undefined) data.instanceId = targetInstance;
@@ -3557,6 +3612,8 @@ export class ManageController {
     else if (targetInstance !== undefined) data.folder = '';
     const failed: { id: string; error: string }[] = [];
     let moved = 0;
+    // v1.0.1：跨实例移动时复制过去的标签关联条数（仅用于日志与响应）
+    let tagCopied = 0;
 
     // ---------- 目录移动 ----------
     let movedFolders = 0;
@@ -3589,11 +3646,13 @@ export class ManageController {
             ...moveInst,
             OR: [{ folder: f }, { folder: { startsWith: `${f}/` } }],
           },
-          select: { id: true, folder: true },
+          select: { id: true, folder: true, instanceId: true, uploader: true },
         });
         for (const r of rowsInFolder) {
           const suffix = String(r.folder || '').slice(f.length).replace(/^\/+/, '');
           try {
+            const fromInst = String(r.instanceId || '');
+            const toInst = targetInstance !== undefined ? String(targetInstance) : fromInst;
             await prisma.fileRecord.update({
               where: { id: r.id },
               data: {
@@ -3601,6 +3660,10 @@ export class ManageController {
                 ...(targetInstance !== undefined ? { instanceId: targetInstance } : {}),
               },
             });
+            // v1.0.1：目录跨实例搬家时，目录内文件的标签同样复制到目标实例
+            if (targetInstance !== undefined && toInst !== fromInst) {
+              tagCopied += await this.copyTagsToInstance(r.id, fromInst, toInst, r.uploader || '');
+            }
             moved += 1;
           } catch (err) {
             failed.push({ id: r.id, error: (err as Error).message });
@@ -3642,7 +3705,17 @@ export class ManageController {
     const { ok: rows } = await this.dropReadonlyShared(await this.loadOwned(ids, req), req);
     for (const r of rows) {
       try {
+        const fromInst = String(r.instanceId || '');
+        const toInst = targetInstance !== undefined ? String(targetInstance) : fromInst;
         await prisma.fileRecord.update({ where: { id: r.id }, data });
+        /*
+         * v1.0.1：跨实例移动时把标签「复制」过去（源实例的标签保留在原实例，不搬走）。
+         * 目标实例里已有同名标签则直接复用，避免重复创建。
+         */
+        if (targetInstance !== undefined && toInst !== fromInst) {
+          const n = await this.copyTagsToInstance(r.id, fromInst, toInst, r.uploader || '');
+          if (n) tagCopied += n;
+        }
         moved += 1;
       } catch (err) {
         failed.push({ id: r.id, error: (err as Error).message });
@@ -3652,18 +3725,80 @@ export class ManageController {
     appLog.info(
       'manage',
       `批量移动 ${rows.length} 个文件 / ${movedFolders} 个目录 → 实例 ${targetInstance !== undefined ? targetInstance || 'default' : '(不变)'}`,
-      `请求 ${ids.length} 个文件，成功 ${moved} 条记录，失败 ${failed.length} 个 ｜ 目标目录=${dirText}`,
+      `请求 ${ids.length} 个文件，成功 ${moved} 条记录，失败 ${failed.length} 个 ｜ 目标目录=${dirText}${tagCopied ? ` ｜ 复制标签 ${tagCopied} 条` : ''}`,
     );
     return {
       success: true,
       moved,
       movedFolders,
       movedRegistered,
+      // v1.0.1：跨实例移动时复制过去的标签关联条数
+      tagCopied,
       // 兼容旧字段：历史调用方读的是 updated
       updated: moved,
       ...(targetInstance !== undefined ? { instanceId: targetInstance } : {}),
       failed,
     };
+  }
+
+  /**
+   * v1.0.1：实例归属校验（管理端控制器用）。
+   * 与标签控制器那个同名方法走同一套判定（common/instance-access），避免两处漂移。
+   */
+  private async canAccessInstance(req: Request, instanceId: string): Promise<boolean> {
+    if (this.admin(req)) return true;
+    return userInInstance(currentSession(req)?.user || '', instanceId);
+  }
+
+  /**
+   * v1.0.1：跨实例移动文件时把标签复制到目标实例。
+   *
+   * 语义是「复制」而不是「搬走」——源实例下的标签与关联原样保留，
+   * 目标实例里按 (name, instanceId, owner) 找同一条标签：
+   *   · 已存在 → 直接复用（不重复创建，也不覆盖原有 metas）；
+   *   · 不存在 → 新建一条，继承源标签的 metas（颜色等展示属性）。
+   * 返回新增的文件-标签关联条数。
+   */
+  private async copyTagsToInstance(
+    fileId: string,
+    fromInst: string,
+    toInst: string,
+    fallbackOwner = '',
+  ): Promise<number> {
+    if (String(fromInst) === String(toInst)) return 0;
+    let copied = 0;
+    try {
+      const links = await prisma.fileTag.findMany({ where: { fileId }, include: { tag: true } });
+      for (const link of links) {
+        const src = link.tag;
+        if (!src) continue;
+        // 该关联已经指向目标实例的标签（历史脏数据）→ 无需复制
+        if (String(src.instanceId || '') === String(toInst)) continue;
+        const owner = String(src.owner || fallbackOwner || '');
+        let target = await prisma.tag.findFirst({
+          where: { name: src.name, instanceId: toInst, owner },
+          select: { id: true },
+        });
+        if (!target) {
+          target = await prisma.tag.create({
+            data: { name: src.name, instanceId: toInst, owner, metas: src.metas || '{}' },
+            select: { id: true },
+          });
+        }
+        const exists = await prisma.fileTag.findFirst({
+          where: { fileId, tagId: target.id },
+          select: { id: true },
+        });
+        if (!exists) {
+          await prisma.fileTag.create({ data: { fileId, tagId: target.id } });
+          copied += 1;
+        }
+      }
+    } catch (err) {
+      // 标签复制失败不影响文件本身已经搬家成功，只记日志便于排查
+      appLog.warn('manage', `跨实例移动时复制标签失败：${fileId}`, (err as Error).message);
+    }
+    return copied;
   }
 
   /**

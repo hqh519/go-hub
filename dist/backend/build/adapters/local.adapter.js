@@ -43,6 +43,7 @@ const path_1 = require("path");
 const promises_1 = require("stream/promises");
 const adapter_interface_1 = require("./adapter.interface");
 const project_paths_1 = require("../common/project-paths");
+const app_log_1 = require("../common/app-log");
 const path_template_1 = require("../common/path-template");
 class LocalAdapter {
     static root() {
@@ -279,9 +280,10 @@ class LocalAdapter {
         const rel = String(copy.remoteKey || '').replace(/\\/g, '/').replace(/^\/+/, '');
         if (!rel)
             return;
+        const root = this.baseRoot(channel);
         let abs;
         try {
-            abs = LocalAdapter.safeJoin(this.baseRoot(channel), LocalAdapter.toRelativePath(rel));
+            abs = LocalAdapter.safeJoin(root, LocalAdapter.toRelativePath(rel));
         }
         catch {
             return;
@@ -293,6 +295,40 @@ class LocalAdapter {
             if (err?.code !== 'ENOENT') {
                 throw new adapter_interface_1.AdapterError(`删除本地文件失败：${err.message}`, 'local');
             }
+        }
+        await LocalAdapter.pruneEmptyDirs(root, (0, path_1.dirname)(abs));
+    }
+    static async pruneEmptyDirs(root, startDir) {
+        let cur;
+        let rootAbs;
+        try {
+            cur = (0, path_1.normalize)(startDir);
+            rootAbs = (0, path_1.normalize)(root || '');
+        }
+        catch {
+            return;
+        }
+        if (!rootAbs)
+            return;
+        const rootWithSep = rootAbs.endsWith(path_1.sep) ? rootAbs : rootAbs + path_1.sep;
+        while (cur !== rootAbs && cur.startsWith(rootWithSep)) {
+            try {
+                const entries = await fs_1.promises.readdir(cur);
+                if (entries.length)
+                    return;
+                await fs_1.promises.rmdir(cur);
+            }
+            catch (err) {
+                const code = err?.code;
+                if (code !== 'ENOENT') {
+                    app_log_1.appLog.warn('upload', `回收空目录失败（已跳过）`, `${cur} ｜ ${err.message}`);
+                    return;
+                }
+            }
+            const parent = (0, path_1.dirname)(cur);
+            if (parent === cur)
+                return;
+            cur = parent;
         }
     }
     buildDirectUrl(_copy, _channel) {

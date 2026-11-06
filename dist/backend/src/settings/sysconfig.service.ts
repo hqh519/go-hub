@@ -113,6 +113,22 @@ export class SysConfigService {
           // 对外 WebDAV：把图床挂成网盘（Finder / 资源管理器 / RaiDrive 可挂载）
           // 上传渠道换用新系统渠道（channelName 存渠道 6 位 ID，空表示走全局主渠道）
           webdav: { enabled: false, rootPath: '', channelId: '', readonly: false },
+          /*
+           * v1.0.1：文件标签添加设置 —— 上传成功后自动打标签的规则。
+           * 原来写死在 upload.service 里的静态规则已移除，改为这里可配：
+           *   placeholders —— 占位符模板（逗号 / 换行分隔，每段渲染成一个标签）
+           *                   支持 {mime} {ext} {channelName} {uploadSource}
+           *                        {y} {m} {d} {width} {height}
+           *   extract      —— 提取指定内容，格式 ["文件名片段":"标签名"]
+           *   regex        —— 自定义规则，一行一条正则，取捕获组 1 作为标签名
+           * 默认值与旧版行为等价（文件类型 / 扩展名 / 渠道简称 / 上传方式 / 年份 + #话题提取）。
+           */
+          autoTag: {
+            enabled: true,
+            placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
+            extract: '',
+            regex: '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])',
+          },
         };
       case 'ai':
         return { canStoreCredentials: false, defaults: { tagPrompt: '' }, models: [] };

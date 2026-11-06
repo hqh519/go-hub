@@ -512,7 +512,8 @@
         "statsBadgeResetDone": "已清空搜索与筛选条件",
         "deletingHint": "正在删除…",
         "trashProcessing": "正在处理…",
-        "shiftRangeSelected": "已按住 Shift 选中 {count} 项（区间选择）"
+        "shiftRangeSelected": "已按住 Shift 选中 {count} 项（区间选择）",
+        "folderNotSelectable": "文件夹不支持勾选，请进入目录后选择其中的文件"
     },
     "dashboardTabs": {
         "fileManagement": "图床文件",
@@ -1556,6 +1557,18 @@
         "settingsSaved": "设置已保存",
         "webdavAccessDomain": "访问域名",
         "webdavAccountNote": "用户和密码统一在「用户管理」中配置，并且可以根据账户配置指定的存储渠道；账户未指定时，使用「渠道设置」中的全局主/备渠道。WebDAV 是否受文件类型与大小限制，取决于该账户在「用户管理」中的「类型和大小限制」开关（开启则受限）。",
+        "tagAddSettings": "文件标签添加设置",
+        "tagAddSettingsTooltip": "上传成功后按这里的规则自动打标签。三项规则可同时使用，结果自动去重（单标签最多 20 字，单次最多 30 个）。全部留空则只保留调用方显式传入的标签（如「本地上传 / 视频抓拍」）。",
+        "tagEnabled": "启用自动添加标签",
+        "tagPlaceholders": "设置占位符",
+        "tagPlaceholdersTooltip": "用占位符拼出「要自动添加的标签名」，多个用英文逗号或换行分隔，每段生成一个标签。<br>支持：{mime} 文件类型（image / video / audio）、{ext} 扩展名（不含点）、{channelName} 渠道类型简称、{uploadSource} 上传方式、{y} 年份（4 位）、{m} 月份（2 位）、{d} 日期（2 位）、{width} 文件宽度、{height} 文件高度。<br>取不到值的占位符（如非图片的 {width}）会自动跳过，不会产生空标签或半截标签。",
+        "tagPlaceholdersPlaceholder": "{mime},{ext},{channelName},{uploadSource},{y}",
+        "tagExtract": "提取指定内容",
+        "tagExtractTooltip": "按「文件名里出现的内容 → 要打的标签」配置，格式：[\"指定内容\":\"标签名\"]。<br>例：[\"maomi\":\"猫咪\"] 表示文件名含 maomi 就打上「猫咪」；[\"喝喜酒\":\"婚礼\"] 同理。<br>可写多组：[\"maomi\":\"猫咪\",\"喝喜酒\":\"婚礼\"]。",
+        "tagExtractPlaceholder": "[\"maomi\":\"猫咪\",\"喝喜酒\":\"婚礼\"]",
+        "tagRegex": "自定义规则",
+        "tagRegexTooltip": "一行一条正则表达式，从文件名中匹配并提取标签（优先取第 1 个捕获组，没有捕获组则取整段匹配）。<br>例：<code>#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])</code><br>即「# 开头，中文最多 8 字 / 中英数最多 14 字，遇符号截断」。每条规则最多取 10 个，非法正则会被跳过并写入系统日志。",
+        "tagRegexPlaceholder": "#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])",
         "uploadRelatedConfig": "上传相关配置",
         "uploadRelatedConfigTooltip": "原本在「网页设置 → 客户端设置」里的上传相关项：目录候选项、默认上传目录、默认命名方式、默认转换 WebP、默认压缩参数、默认外链格式、允许的上传格式与单文件大小上限。",
         "shareRecords": "分享记录",

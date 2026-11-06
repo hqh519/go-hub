@@ -86,6 +86,76 @@
                 </el-form-item>
             </el-form>
 
+            <!--
+                v1.0.1：文件标签添加设置 —— 上传成功后自动打标签的规则（原写死规则已移除）。
+                紧跟在「图片尺寸处理」之后，与系统内其它设置块保持同一套标题 + 表单样式。
+            -->
+            <h3 class="first-title">{{ $t('sysOthers.tagAddSettings') }}
+                <el-tooltip :content="$t('sysOthers.tagAddSettingsTooltip')" placement="right" raw-content>
+                    <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
+                </el-tooltip>
+            </h3>
+            <el-form :model="autoTag" label-width="150px" :disabled="saving">
+                <el-form-item :label="$t('sysOthers.tagEnabled')">
+                    <el-switch v-model="autoTag.enabled"/>
+                </el-form-item>
+                <template v-if="autoTag.enabled">
+                    <!-- 设置占位符 -->
+                    <el-form-item>
+                        <template #label>
+                            {{ $t('sysOthers.tagPlaceholders') }}
+                            <el-tooltip :content="$t('sysOthers.tagPlaceholdersTooltip')" placement="top" raw-content>
+                                <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
+                            </el-tooltip>
+                        </template>
+                        <div class="tag-rule-field">
+                            <el-input
+                                v-model="autoTag.placeholders"
+                                :placeholder="$t('sysOthers.tagPlaceholdersPlaceholder')"
+                            />
+                            <div class="tag-placeholder-chips">
+                                <el-button
+                                    v-for="chip in TAG_PLACEHOLDER_CHIPS"
+                                    :key="chip.token"
+                                    size="small"
+                                    link
+                                    type="primary"
+                                    @click.prevent="appendTagPlaceholder(chip.token)"
+                                >{{ chip.label }}</el-button>
+                            </div>
+                        </div>
+                    </el-form-item>
+                    <!-- 提取指定内容 -->
+                    <el-form-item>
+                        <template #label>
+                            {{ $t('sysOthers.tagExtract') }}
+                            <el-tooltip :content="$t('sysOthers.tagExtractTooltip')" placement="top" raw-content>
+                                <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
+                            </el-tooltip>
+                        </template>
+                        <el-input
+                            v-model="autoTag.extract"
+                            :placeholder="$t('sysOthers.tagExtractPlaceholder')"
+                        />
+                    </el-form-item>
+                    <!-- 自定义规则 -->
+                    <el-form-item>
+                        <template #label>
+                            {{ $t('sysOthers.tagRegex') }}
+                            <el-tooltip :content="$t('sysOthers.tagRegexTooltip')" placement="top" raw-content>
+                                <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
+                            </el-tooltip>
+                        </template>
+                        <el-input
+                            v-model="autoTag.regex"
+                            type="textarea"
+                            :autosize="{ minRows: 3 }"
+                            :placeholder="$t('sysOthers.tagRegexPlaceholder')"
+                        />
+                    </el-form-item>
+                </template>
+            </el-form>
+
             <!-- 上传相关配置（原「网页设置 → 客户端设置」迁移至此，统一归到这一块） -->
             <h3 class="first-title">{{ $t('sysOthers.uploadRelatedConfig') }}
                 <el-tooltip :content="$t('sysOthers.uploadRelatedConfigTooltip')" placement="right" raw-content>
@@ -172,6 +242,28 @@ data() {
         },
         // 图片尺寸处理：数据仍在 sysConfig 的 security 分区（access.*）
         imageTransform: { enabled: false, allowedSizes: '' },
+        /*
+         * v1.0.1：文件标签添加设置（数据在 sysConfig 的 others 分区 → others.autoTag）。
+         * 默认值与后端 DEFAULT_TAG_* 保持一致，保证「未保存过」时看到的就是实际生效的规则。
+         */
+        autoTag: {
+            enabled: true,
+            placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
+            extract: '',
+            regex: '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])'
+        },
+        // 占位符快插按钮（点击追加到「设置占位符」输入框末尾）
+        TAG_PLACEHOLDER_CHIPS: [
+            { label: '文件类型', token: '{mime}' },
+            { label: '扩展名', token: '{ext}' },
+            { label: '渠道简称', token: '{channelName}' },
+            { label: '上传方式', token: '{uploadSource}' },
+            { label: '年', token: '{y}' },
+            { label: '月', token: '{m}' },
+            { label: '日', token: '{d}' },
+            { label: '宽度', token: '{width}' },
+            { label: '高度', token: '{height}' }
+        ],
         // 上传相关配置：数据仍在 sysConfig 的 page 分区（config 数组）
         pageSettings: { config: [] },
         // 加载状态
@@ -180,12 +272,14 @@ data() {
     };
 },
 computed: {
-    /** 脏值追踪：三类设置都算在内 */
+    /** 脏值追踪：四类设置都算在内 */
     editableSettings() {
         return {
             others: this.settings,
             imageTransform: this.imageTransform,
-            page: this.pageSettings.config.map(({ id, value }) => ({ id, value }))
+            page: this.pageSettings.config.map(({ id, value }) => ({ id, value })),
+            // v1.0.1：文件标签添加设置（others.autoTag）
+            autoTag: this.autoTag
         };
     },
     isEn() {
@@ -279,6 +373,16 @@ methods: {
         window.open('/share-records', '_blank', 'noopener');
     },
     /**
+     * v1.0.1：把占位符追加到「设置占位符」输入框末尾（逗号分隔）。
+     * 已存在同一个占位符时不重复追加。
+     */
+    appendTagPlaceholder(token) {
+        const cur = String(this.autoTag.placeholders || '');
+        if (cur.split(/[,，\n]/).map((s) => s.trim()).includes(token)) return;
+        const next = cur.trim() ? `${cur.replace(/[,，\s]+$/, '')},${token}` : token;
+        this.autoTag.placeholders = next;
+    },
+    /**
      * 从配置数组里读一个布尔项（同时兼容真布尔与 'true'/'false' 字符串 ——
      * 配置项存库后可能被序列化成字符串）。
      */
@@ -310,8 +414,15 @@ methods: {
         if (this.saving) return;
         this.saving = true;
         try {
-            // 1) 其他设置分区（遥测 / 随机图 / 公开画廊）
+            // 1) 其他设置分区（遥测 / 随机图 / 公开画廊 / 文件标签添加设置）
             const othersPayload = JSON.parse(JSON.stringify(this.settings));
+            // v1.0.1：文件标签添加设置随 others 分区一起提交（后端深合并，不影响其它字段）
+            othersPayload.autoTag = {
+                enabled: this.autoTag.enabled === true,
+                placeholders: String(this.autoTag.placeholders || ''),
+                extract: String(this.autoTag.extract || ''),
+                regex: String(this.autoTag.regex || '')
+            };
 
             // 2) 安全设置分区：只提交图片尺寸处理这一段，后端深合并，不影响认证等其它字段
             const securityPayload = {
@@ -378,6 +489,17 @@ mounted() {
         if (typeof this.settings.publicBrowse.allowedDir !== 'string') this.settings.publicBrowse.allowedDir = '';
         // 历史存档里可能带有已迁移的 webdav 段：本页不再处理，但保留原值以免保存时被覆盖丢失
         if (!this.settings.webdav) this.settings.webdav = { enabled: false, rootPath: '', readonly: false };
+        /*
+         * v1.0.1：文件标签添加设置 —— 未保存过时用默认值兜底（等价于旧版写死的规则），
+         * 避免界面上看到空白却不知道实际生效的规则是什么。
+         */
+        const at = this.settings.autoTag || {};
+        this.autoTag = {
+            enabled: at.enabled === undefined ? true : !(at.enabled === false || String(at.enabled) === 'false'),
+            placeholders: at.placeholders === undefined ? this.autoTag.placeholders : String(at.placeholders ?? ''),
+            extract: at.extract === undefined ? '' : String(at.extract ?? ''),
+            regex: at.regex === undefined ? this.autoTag.regex : String(at.regex ?? '')
+        };
 
         const access = security?.access || {};
         this.imageTransform = {
@@ -403,6 +525,25 @@ mounted() {
 </script>
 
 <style scoped>
+/* v1.0.1：文件标签添加设置 —— 占位符输入框 + 快插按钮 */
+.tag-rule-field {
+    width: 100%;
+}
+.tag-placeholder-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px 10px;
+    margin-top: 4px;
+}
+.tag-placeholder-chips :deep(.el-button) {
+    padding: 0;
+    height: auto;
+    font-size: 12px;
+}
+.tag-placeholder-chips :deep(.el-button + .el-button) {
+    margin-left: 0;
+}
 /* v3.0.0（R5）：文本类配置项一行内可带「复制默认值」按钮 */
 .setting-text-row {
     display: flex;

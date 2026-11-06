@@ -124,7 +124,14 @@ export class LocalFilesController {
   private async resolveChannel(req: Request, channelId: string) {
     const id = String(channelId || '').trim();
     if (!id) return { error: '请选择本地文件渠道' as string };
-    const ch = await prisma.channel.findFirst({ where: { type: 'localfiles', OR: [{ id }, { code: id }] } });
+    /*
+     * v1.0.1：除了专门的「本地文件」渠道，自定义本地存储渠道只要打开了
+     * 「同步到本地文件管理」开关（cfg.syncToLocalFiles），也在这里可用 ——
+     * 管理员可以直接浏览该存储目录，无需再单独建一条本地文件渠道。
+     */
+    const ch = await prisma.channel.findFirst({
+      where: { type: { in: ['localfiles', 'local'] }, OR: [{ id }, { code: id }] },
+    });
     if (!ch) return { error: '渠道不存在或不是「本地文件」渠道' };
     if (!ch.enabled) return { error: '该渠道已停用' };
     if (!localFilesAdminOnly(this.role(req))) {
@@ -135,6 +142,11 @@ export class LocalFilesController {
       cfg = JSON.parse(ch.config || '{}');
     } catch {
       cfg = {};
+    }
+    // 自定义本地存储渠道：只有显式开启「同步到本地文件管理」才允许浏览
+    if (ch.type === 'local') {
+      const on = cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true';
+      if (!on) return { error: '该本地存储渠道未开启「同步到本地文件管理」' };
     }
     // 解析浏览目录清单（rootPaths 优先，回落 rootPath）
     let wanted: string[] = [];
@@ -182,17 +194,36 @@ export class LocalFilesController {
     if (!this.session(req)) return { success: false, message: '请先登录' };
     // v3.0.0（R5）：本地文件渠道仅管理员可见可用（不做渠道授权）
     if (!localFilesAdminOnly(this.role(req))) return { success: true, data: [] };
-    const rows = await prisma.channel.findMany({ where: { type: 'localfiles' }, orderBy: [{ typeCode: 'asc' }, { name: 'asc' }] });
+    /*
+     * v1.0.1：列表里同时带上「开启了同步开关的自定义本地存储渠道」——
+     * 这类渠道的浏览目录就是它的存储地址（rootPath），无需再单独建一条本地文件渠道。
+     */
+    const rows = await prisma.channel.findMany({
+      where: { type: { in: ['localfiles', 'local'] } },
+      orderBy: [{ typeCode: 'asc' }, { name: 'asc' }],
+    });
     const list = rows
       .map((ch) => {
-        let rootPath = '';
+        let cfg: Record<string, any> = {};
         try {
-          rootPath = String(JSON.parse(ch.config || '{}').rootPath || '');
+          cfg = JSON.parse(ch.config || '{}');
         } catch {
-          rootPath = '';
+          cfg = {};
         }
-        return { id: ch.id, code: ch.code, name: ch.name, rootPath, enabled: ch.enabled };
-      });
+        const synced = ch.type === 'local' && (cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true');
+        // 自定义本地存储渠道：没开同步开关 / 没配存储地址 → 不出现在本地文件渠道选择里
+        if (ch.type === 'local' && (!synced || !String(cfg.rootPath || '').trim())) return null;
+        return {
+          id: ch.id,
+          code: ch.code,
+          name: ch.name,
+          rootPath: String(cfg.rootPath || ''),
+          enabled: ch.enabled,
+          // v1.0.1：来源类型 —— 前端据此标注「本地存储同步」角标
+          source: ch.type === 'local' ? 'local' : 'localfiles',
+        };
+      })
+      .filter(Boolean);
     return { success: true, data: list };
   }
 

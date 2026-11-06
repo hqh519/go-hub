@@ -98,6 +98,36 @@
                 :placeholder="field.placeholder"
             />
 
+            <!--
+                v1.0.1：容器内「已映射路径」下拉（本地存储渠道的存储地址）。
+                只能从真实映射进容器的目录里选（filterable 仅用于输入筛选），
+                刻意不开 allow-create —— 手填一个未映射的容器路径，文件只落在容器可写层，
+                容器重建后会随镜像层一起消失。
+            -->
+            <div v-else-if="field.type === 'pathSelect'" class="path-select-wrap">
+                <el-select
+                    v-model="model[field.key]"
+                    filterable
+                    clearable
+                    :loading="mountsLoading"
+                    :placeholder="field.placeholder"
+                    style="width: 100%; max-width: 320px;"
+                    @focus="loadMounts"
+                    @visible-change="(v) => v && loadMounts()"
+                >
+                    <el-option
+                        v-for="m in mounts"
+                        :key="m.path"
+                        :label="m.writable ? m.path : `${m.path}（只读）`"
+                        :value="m.path"
+                    />
+                </el-select>
+                <div v-if="pathNotMapped" class="path-select-warning">
+                    <font-awesome-icon icon="exclamation-triangle"/>
+                    当前填写的路径不在「已映射目录」列表中，容器重建后该目录内的文件会丢失，请重新选择。
+                </div>
+            </div>
+
             <!-- 普通文本（v3.0.0：field.fixed=true 时只读，如内置本地渠道的 uploads）
                  v3.0.0（R11）：不设置 autocomplete="off" —— 存储地址这类输入允许浏览器历史补全 -->
             <el-input
@@ -118,6 +148,7 @@
  * 支持字段级 showWhen 联动（例如「启用容量限制」未开启时隐藏容量上限 / 告警阈值）。
  */
 import { visibleFields } from './channel-schema';
+import fetchWithAuth from '@/utils/fetchWithAuth';
 
 /** v3.0.0：占位符快插按钮定义（追加到输入框已有内容末尾）
  *  v3.0.0（R9）：前缀按钮补齐「渠道ID / 用户名 / 域名」，统一带前导斜杠；
@@ -147,11 +178,29 @@ export default {
         model: { type: Object, required: true }
     },
     data() {
-        return { QUICK_PREFIX, QUICK_NAME };
+        return {
+            QUICK_PREFIX,
+            QUICK_NAME,
+            /* v1.0.1：容器内已映射目录（pathSelect 字段的选项，只加载一次） */
+            mounts: [],
+            mountsLoading: false,
+            mountsLoaded: false
+        };
     },
     computed: {
         renderedFields() {
             return visibleFields(this.fields, this.model);
+        },
+        /**
+         * v1.0.1：当前「存储地址」值是否不在已映射目录里。
+         * 只在清单已加载、且值非空时判断，避免加载中误报红字。
+         */
+        pathNotMapped() {
+            const field = this.renderedFields.find((x) => x.type === 'pathSelect');
+            if (!field || !this.mountsLoaded) return false;
+            const val = String(this.model[field.key] ?? '').trim();
+            if (!val) return false;
+            return !this.mounts.some((m) => m.path === val);
         }
     },
     methods: {
@@ -159,7 +208,31 @@ export default {
         appendQuick(field, token) {
             const cur = String(this.model[field.key] ?? '');
             this.model[field.key] = cur + token;
+        },
+        /**
+         * v1.0.1：加载容器内已映射目录清单。
+         * 失败时静默降级（下拉为空），不阻塞渠道编辑 —— 用户仍可保存原有配置。
+         */
+        async loadMounts() {
+            if (this.mountsLoading || this.mountsLoaded) return;
+            this.mountsLoading = true;
+            try {
+                const resp = await fetchWithAuth('/api/manage/channels/mounts');
+                const data = await resp.json().catch(() => ({}));
+                const list = Array.isArray(data?.data) ? data.data : [];
+                this.mounts = list.map((m) => ({ path: String(m.path || ''), writable: !!m.writable }))
+                    .filter((m) => m.path);
+            } catch (e) {
+                this.mounts = [];
+            } finally {
+                this.mountsLoading = false;
+                this.mountsLoaded = true;
+            }
         }
+    },
+    mounted() {
+        // 表单里只要出现 pathSelect 字段就预取一次，点开下拉时不用等
+        if (this.renderedFields.some((f) => f.type === 'pathSelect')) this.loadMounts();
     }
 };
 </script>
@@ -183,6 +256,24 @@ export default {
     font-size: 13px;
     margin-left: 6px;
     transition: color 0.2s;
+}
+
+/* v1.0.1：存储地址下拉 + 未映射告警 */
+.path-select-wrap {
+    width: 100%;
+    max-width: 320px;
+}
+.path-select-wrap :deep(.el-select) {
+    width: 100%;
+}
+.path-select-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--el-color-warning);
 }
 
 .inline-help-icon:hover {

@@ -106,6 +106,7 @@
                             @focus="folderEditing = true"
                             @blur="commitFolder"
                             :placeholder="$t('uploadSettings.uploadDirectoryPlaceholder')"
+                            name="gohub-upload-folder"
                             autocomplete="on"
                             class="setting-input"
                         ></el-input>

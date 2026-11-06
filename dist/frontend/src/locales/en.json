@@ -512,7 +512,8 @@
         "statsBadgeResetDone": "Search and filters cleared",
         "deletingHint": "Deleting…",
         "trashProcessing": "Processing…",
-        "shiftRangeSelected": "{count} items selected (Shift range)"
+        "shiftRangeSelected": "{count} items selected (Shift range)",
+        "folderNotSelectable": "Folders can't be selected — open the folder and pick the files inside"
     },
     "dashboardTabs": {
         "fileManagement": "File Management",
@@ -1556,6 +1557,18 @@
         "settingsSaved": "Settings saved",
         "webdavAccessDomain": "Access domain",
         "webdavAccountNote": "Accounts and passwords are configured in User Management, where each account can also be bound to a specific storage channel; when an account has none, the global main/backup channels from Channel Settings are used. Whether WebDAV uploads are subject to file type and size limits follows that account's \"Type & size limits\" switch in User Management (on = restricted).",
+        "tagAddSettings": "File tag rules",
+        "tagAddSettingsTooltip": "Tags added automatically after a successful upload, according to the rules below. All three rule types can be combined and results are de-duplicated (20 chars per tag, 30 tags at most). Leave everything empty to keep only the tags the caller passes explicitly (e.g. \"local upload\" / \"video snapshot\").",
+        "tagEnabled": "Enable automatic tags",
+        "tagPlaceholders": "Placeholders",
+        "tagPlaceholdersTooltip": "Compose the tag names to add from placeholders. Separate with commas or newlines — each segment becomes one tag.<br>Supported: {mime} file type (image / video / audio), {ext} extension without the dot, {channelName} channel type short name, {uploadSource} upload source, {y} year (4 digits), {m} month (2 digits), {d} day (2 digits), {width} width, {height} height.<br>Placeholders with no value (e.g. {width} for a non-image) are skipped, so no empty or half-built tags are produced.",
+        "tagPlaceholdersPlaceholder": "{mime},{ext},{channelName},{uploadSource},{y}",
+        "tagExtract": "Extract from file name",
+        "tagExtractTooltip": "Map \"text found in the file name\" to \"tag to add\", format: [\"text\":\"tag\"].<br>Example: [\"maomi\":\"cat\"] adds the tag \"cat\" when the file name contains maomi.<br>Multiple pairs are allowed: [\"maomi\":\"cat\",\"wedding\":\"wedding day\"].",
+        "tagExtractPlaceholder": "[\"maomi\":\"cat\"]",
+        "tagRegex": "Custom rules",
+        "tagRegexTooltip": "One regular expression per line. The first capture group (or the whole match when there is no group) becomes a tag.<br>Example: <code>#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])</code><br>i.e. \"starts with #, up to 8 CJK chars or 14 alphanumeric chars, cut at the first symbol\". Each rule yields at most 10 tags; invalid regexes are skipped and written to the system log.",
+        "tagRegexPlaceholder": "#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])",
         "uploadRelatedConfig": "Upload-related settings",
         "uploadRelatedConfigTooltip": "Items previously under Page Settings → Client settings: directory suggestions, default upload folder, default naming mode, default WebP conversion, default compression options, default link format, allowed upload formats and max file size.",
         "shareRecords": "Share records",

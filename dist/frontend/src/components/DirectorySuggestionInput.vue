@@ -4,6 +4,7 @@
             ref="inputRef"
             v-model="inputValue"
             :placeholder="placeholder"
+            name="gohub-upload-folder"
             autocomplete="on"
             @focus="handleFocus"
             @blur="handleBlur"

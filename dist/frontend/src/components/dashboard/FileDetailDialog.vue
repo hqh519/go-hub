@@ -37,11 +37,17 @@
             </el-button>
             <!-- 回收站模式：删除按钮替换为「恢复」+「彻底删除」 -->
             <template v-if="trashMode">
-                <el-button type="success" @click="$emit('restore')" round size="small" class="detail-action" v-if="canDeleteAction">
-                    <font-awesome-icon icon="undo" style="margin-right: 3px;"></font-awesome-icon> {{ $t('fileDetail.restoreBtn') }}
+                <!--
+                    v1.0.1：恢复 / 彻底删除执行期间按钮转圈并禁用 ——
+                    回收站操作常在详情弹窗里发起，卡片上的遮罩被弹窗盖住，用户看不到任何反馈。
+                -->
+                <el-button type="success" @click="$emit('restore')" round size="small" class="detail-action" v-if="canDeleteAction" :loading="trashBusy" :disabled="trashBusy">
+                    <font-awesome-icon v-if="!trashBusy" icon="undo" style="margin-right: 3px;"></font-awesome-icon>
+                    {{ trashBusy ? $t('dashboard.trashProcessing') : $t('fileDetail.restoreBtn') }}
                 </el-button>
-                <el-button type="danger" @click="$emit('purge')" round size="small" class="detail-action" v-if="canDeleteAction">
-                    <font-awesome-icon icon="trash-alt" style="margin-right: 3px;"></font-awesome-icon> {{ $t('fileDetail.purgeBtn') }}
+                <el-button type="danger" @click="$emit('purge')" round size="small" class="detail-action" v-if="canDeleteAction" :loading="trashBusy" :disabled="trashBusy">
+                    <font-awesome-icon v-if="!trashBusy" icon="trash-alt" style="margin-right: 3px;"></font-awesome-icon>
+                    {{ trashBusy ? $t('dashboard.trashProcessing') : $t('fileDetail.purgeBtn') }}
                 </el-button>
             </template>
             <!-- 删除：须拥有「可删除」权限，否则不加载删除按钮 -->
@@ -637,6 +643,8 @@ export default {
         showAdvanced: { type: Boolean, default: true },
         /** 回收站模式：隐藏普通编辑动作，只显示「恢复 / 彻底删除」 */
         trashMode: { type: Boolean, default: false },
+        /** v1.0.1：回收站恢复 / 彻底删除执行中（按钮转圈 + 禁用，与软删除的转圈反馈一致） */
+        trashBusy: { type: Boolean, default: false },
     },
     emits: ['update:modelValue', 'download', 'tagManagement', 'block', 'white', 'delete', 'restore', 'purge', 'metadataUpdated', 'fileRenamed'],
     watch: {

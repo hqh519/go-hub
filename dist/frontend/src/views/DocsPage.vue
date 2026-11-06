@@ -486,6 +486,23 @@ const ZH = {
         { t: '返回键与 Esc 改为「一次只关最上面一层」', d: '以前灯箱和叠在它上面的文件详情页各自往历史里压哨兵、各自监听 popstate，按一次返回会被两边同时消费，详情页和灯箱一起关掉。现在两者共用一个浮层栈：移动端的返回键 / 边缘返回、桌面端的 Esc，每次只关栈顶那一层 —— 先关详情页，再按一次才关灯箱，一层一层往下退。' },
         { t: '标签管理精确到「每个用户的每个实例」', d: '标签管理里每个账户只管自己名下、当前实例下的标签：拆分、合并、改名、备注、加密、对外分享、删除全部按（用户 + 实例）校验，管理员也不再代管他人标签。同时修掉两个越权点：标签对外分享不再能匹配到同实例下别人的同名标签，标签筛选 / 自动补全接口在未登录时不再返回该实例的全部标签。' },
       ]
+    },
+    {
+      title: '十八、v1.0.1 更新要点',
+      intro: 'v1.0.1 把「自动打标签」从写死改成可配置，并补齐本地存储渠道的安全边界、回收站恢复完整性与灯箱键盘操作。数据库结构无变更，可直接覆盖升级。',
+      items: [
+        { t: '自动添加标签改为后台可配置', d: '原来写死在代码里的规则（文件类型 / 扩展名 / 渠道简称 / 上传方式 / 年份 + 文件名 #话题提取）已全部移除，改到「系统管理 → 其他设置 → 文件标签添加设置」，紧跟「图片尺寸处理」之后。共有三项：①「设置占位符」用占位符拼标签名，支持 {mime} 文件类型、{ext} 扩展名、{channelName} 渠道简称、{uploadSource} 上传方式、{y} 年、{m} 月、{d} 日、{width} 宽、{height} 高，逗号或换行分隔，每段一个标签，取不到值的占位符自动跳过；②「提取指定内容」按 ["文件名片段":"标签名"] 配置，文件名含该片段就打上对应标签；③「自定义规则」一行一条正则，取第 1 个捕获组作为标签名（默认就是原来的 #话题 规则）。三项可同时生效，结果去重（单标签最多 20 字、单次最多 30 个），非法正则跳过并写入系统日志。' },
+        { t: '本地存储渠道的「存储地址」只能在已映射目录中选', d: '「存储地址（容器内路径）」由普通输入框改为可输入筛选的下拉框，选项来自容器内真实的挂载点（/api/manage/channels/mounts 解析 /proc/self/mountinfo，并过滤 /proc、/sys、/dev、/etc/hosts 这类伪挂载）。未映射的路径不会出现在选项里、也无法被选中 —— 因为写进未映射路径的文件只存在于容器可写层，容器一重建就全部丢失。若当前配置的路径不在列表里，下方会显示一行橙色警告。' },
+        { t: '本地存储渠道可「同步到本地文件管理」', d: '存储地址后面新增同名开关。开启后该渠道的存储目录会直接出现在「本地文件」页（/localFiles）的渠道选择中，可浏览、预览、批量上传到图床；关闭即从选择列表中移除（不影响已上传的文件）。无需再单独建一条「本地文件」渠道。' },
+        { t: '回收站恢复会带回原来的文件夹', d: '删除目录时目录登记与目录属性会被清理，只恢复其中一个文件时，原来那层文件夹仍留在回收站、属性也丢了。现在恢复文件（单个或批量）会自动把「仍在回收站里、且是目标目录祖先」的每一级目录恢复回来：重新登记目录、还原属性快照、并从回收站文件夹列表里摘掉。' },
+        { t: '彻底删除后自动回收空目录', d: '本地存储渠道的文件被彻底删除后，若所在目录已经空了，会把该空目录一并删除并逐级向上递归，直到遇到还有内容的目录或渠道根目录为止（渠道根永不删除）。只删「读出来是空」的目录，不会影响并发写入的其它文件；失败只记日志不阻断删除。' },
+        { t: '回收站彻底删除也有转圈反馈', d: '在与普通文件软删除一致的卡片 / 列表行遮罩之外，文件详情弹窗里的「恢复 / 彻底删除」按钮现在也会显示转圈并禁用（此前从详情弹窗操作时遮罩被弹窗盖住，点了没有任何反馈）。' },
+        { t: '文件夹不再参与勾选', d: '图床文件管理里文件夹一律不可选中：卡片 / 列表行不再显示勾选框，「本页全选」与 Shift 区间选择都只作用于文件，移动端长按菜单选「选择」也会提示「文件夹不支持勾选」。文件夹仍可进入、看属性、复制链接、移动与删除（走目录自身入口）。' },
+        { t: '跨实例移动文件会复制标签', d: '文件从一个实例移动到另一个实例时，源实例下的标签会「复制」到目标实例（源实例的标签与关联原样保留）。目标实例已有同名标签则直接复用，不重复创建；标签归属沿用原标签的用户。目录整体跨实例搬家时，目录内文件的标签同样会复制。' },
+        { t: '灯箱键盘：↓ 随机切换、↑ 打开详情', d: '桌面端图片 / 视频灯箱里，按 ↓ 在同类型文件之间随机跳一个；按 ↑ 打开文件详情并暂停正在播放的视频 / 音频（详情关闭后灯箱原样保留）。← → 仍是按顺序切上一个 / 下一个，Esc 仍交给浮层栈逐层关闭。' },
+        { t: '上传目录输入框恢复浏览器历史记忆', d: '首页上传设置 / 上传页的目录路径输入框统一带上稳定的 name 与 autocomplete="on"，浏览器可以正常记住并补全历史上填过的目录。' },
+        { t: '发布目录调整', d: '自 v1.0.1 起，Docker 相关文件（Dockerfile、compose、部署脚本、镜像 tar）统一放在项目根的 docker/ 目录；dist/ 仅保留可发布到 Git 仓库的脱敏生产源码。' },
+      ]
     }
   ]
 };
@@ -909,6 +926,23 @@ const EN = {
         { t: 'No more back-swipe animation at the screen edge on mobile', d: 'A horizontal swipe starting at the left or right screen edge is treated by WebKit / Chromium as a back gesture and draws a stretch animation at the edge. It is now suppressed everywhere: only a gesture that starts inside the 16px edge band and is dominated by horizontal movement is swallowed, so in-page horizontal toolbars (search bar, breadcrumb button row, filter tabs) still scroll. Applies to the dashboard background and every dialog / lightbox.' },
         { t: 'Back and Esc close one layer at a time', d: 'The lightbox and the file detail dialog stacked above it each pushed their own history sentinel and each listened for popstate, so one back press was consumed by both and both layers closed. They now share a single layer stack: the mobile back key / edge swipe and the desktop Esc close only the topmost layer — the detail dialog first, then the lightbox on the next press.' },
         { t: 'Tag management is scoped to each user on each instance', d: 'In tag management every account only manages the tags it owns inside the current instance: split, merge, rename, note, encryption, public sharing and delete are all checked against (user + instance), and administrators no longer manage other people\'s tags. Two privilege leaks were fixed as well: tag public sharing can no longer match a same-named tag owned by someone else, and the tag filter / autocomplete endpoints no longer return the whole instance when no one is signed in.' },
+      ]
+    },
+    {
+      title: '18. What is new in v1.0.1',
+      intro: 'v1.0.1 turns automatic tagging from hard-coded rules into configuration, tightens the local storage channel, completes trash restore, and adds keyboard control to the lightbox. No database changes — a straight overwrite upgrade works.',
+      items: [
+        { t: 'Automatic tags are now configurable in the backend', d: 'The hard-coded rules (file type / extension / channel short name / upload source / year, plus #hashtag extraction) are gone. They live in System settings → Other settings → File tag rules, right after Image transform. Three parts: (1) Placeholders compose tag names with {mime}, {ext}, {channelName}, {uploadSource}, {y}, {m}, {d}, {width} and {height}; separate with commas or newlines, one tag per segment, and placeholders without a value are skipped. (2) Extract from file name maps ["text":"tag"] so any file name containing the text gets the tag. (3) Custom rules take one regular expression per line and use capture group 1 as the tag name (the default is the old #hashtag rule). All three can be combined, results are de-duplicated (20 chars per tag, 30 tags at most), and invalid regexes are skipped and written to the system log.' },
+        { t: 'Local storage path must be a mapped directory', d: 'Storage path (in-container path) is now a filterable dropdown instead of a free-text field. Options come from the container\'s real mount points (/api/manage/channels/mounts parses /proc/self/mountinfo and filters out pseudo mounts such as /proc, /sys, /dev and /etc/hosts). Unmapped paths never appear and cannot be selected, because files written there live only in the container writable layer and vanish when the container is rebuilt. An amber warning appears when the current value is not in the list.' },
+        { t: 'Sync a local storage channel into Local files', d: 'A new switch sits right after the storage path. When enabled, that storage directory shows up in the channel picker of the Local files page (/localFiles) for browsing, previewing and batch upload; disabling it removes the entry without touching uploaded files. No separate "local files" channel is needed.' },
+        { t: 'Restoring from trash brings the folder back', d: 'Deleting a folder also clears its folder registration and properties, so restoring a single file left the folder itself in the trash and its properties lost. Restoring files (single or batch) now reinstates every ancestor folder that is still in the trash: it re-registers the folder, restores its property snapshot and removes it from the trash folder list.' },
+        { t: 'Empty directories are reclaimed after a permanent delete', d: 'When a file on a local storage channel is permanently deleted and its directory becomes empty, the directory is removed as well and the cleanup walks upward until it hits a non-empty directory or the channel root (the root is never deleted). Only directories that read as empty are removed, concurrent writes are unaffected, and a failure is logged without blocking the delete.' },
+        { t: 'Permanent delete shows a spinner too', d: 'Besides the card / row overlay used by soft delete, the Restore and Delete-permanently buttons inside the file detail dialog now spin and disable as well — previously the overlay was hidden behind the dialog, so clicking gave no feedback at all.' },
+        { t: 'Folders can no longer be selected', d: 'In the dashboard folders are never selectable: cards and list rows no longer show a checkbox, "Select this page" and Shift range selection only apply to files, and the mobile long-press "Select" action tells you to open the folder instead. Folders can still be entered, inspected, copied, moved and deleted through their own entry points.' },
+        { t: 'Moving across instances copies tags', d: 'When a file moves from one instance to another, its tags are copied into the target instance while the source instance keeps its own tags and links. An existing tag with the same name in the target instance is reused instead of duplicated, and ownership follows the original tag. Folders moved across instances copy the tags of every file inside them.' },
+        { t: 'Lightbox keys: ↓ random, ↑ details', d: 'On desktop, in the image / video lightbox, ↓ jumps to a random file of the same type and ↑ opens the file details while pausing the running video / audio (closing the details keeps the lightbox open). ← → still step through in order, and Esc is still handled by the layer stack.' },
+        { t: 'Browser history works again for the upload directory field', d: 'The upload directory inputs on the home page and in Upload settings now carry a stable name plus autocomplete="on", so the browser remembers and suggests directories you typed before.' },
+        { t: 'Release layout', d: 'From v1.0.1 on, all Docker-related files (Dockerfile, compose files, deploy scripts, image tarballs) live in the docker/ directory at the project root; dist/ only holds the sanitized production sources that can be published to Git.' },
       ]
     }
   ]

@@ -10,6 +10,7 @@ import { ChannelInfo } from '../adapters/adapter.interface';
 import { StorageChannelService, StorageChannelInfo } from '../storage/storage-channel.service';
 import { appLog } from '../common/app-log';
 import { normalizeBucketDomain } from '../common/channel-domain';
+import { listContainerMounts } from './mounts';
 
 /** 各渠道配置中的敏感字段名 —— 返回时脱敏、保存时加密（须与适配器读取的字段名一致） */
 const SECRET_FIELDS: Record<string, string[]> = {
@@ -491,8 +492,24 @@ export class ChannelManageController {
   }
 
   /**
-   * 编辑渠道用：返回**解密后的完整配置**（含明文密钥）。
+   * v1.0.1：容器内「已映射路径」清单 —— 本地存储渠道「存储地址」下拉的数据源。
    *
+   * 只返回真实映射进来（或镜像内真实存在）的目录，避免用户填一个未映射的容器路径 ——
+   * 那种目录的内容只存在于容器可写层，容器一重建就全部丢失。
+   */
+  @Get('mounts')
+  async mounts() {
+    try {
+      const list = await listContainerMounts();
+      return { success: true, data: list };
+    } catch (err) {
+      appLog.warn('channel', '读取容器内映射路径失败', (err as Error).message);
+      return { success: false, message: '读取容器内映射路径失败', data: [] };
+    }
+  }
+
+  /**
+   * 编辑渠道用：返回**解密后的完整配置**（含明文密钥）。
    * 列表接口出于安全只回脱敏值（形如 `AKID****1234`），编辑弹窗点开「小眼睛」
    * 也只能看到这个掩码。管理端本身就有权查看与修改凭据，故编辑时单独拉一次明文回填，
    * 让「小眼睛」真的能看到完整值（保存时后端照旧重新加密写库）。
