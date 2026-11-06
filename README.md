@@ -1,10 +1,10 @@
-**基于（https://github.com/hqh519/go-hub ） 项目基础上进一步升级的笔记功能型图床**
+**基于（[go-imgbed](https://github.com/hqh519/go-imgbed)）项目基础上进一步升级的笔记功能型图床**
 
 ## 板块规划
 
 ### 一、图床板块
 
-> 用于上传、管理图床文件。前身是（[go-imgbed](https://github.com/hqh519/go-hub)）
+> 用于上传、管理图床文件。前身是（[go-imgbed](https://github.com/hqh519/go-imgbed)）
 
 
 ### 二、内容板块
