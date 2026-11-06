@@ -1,0 +1,581 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.LocalFilesController = void 0;
+const common_1 = require("@nestjs/common");
+const fs_1 = require("fs");
+const path = __importStar(require("path"));
+const prisma_1 = require("../common/prisma");
+const app_log_1 = require("../common/app-log");
+const auth_guard_1 = require("../auth/auth.guard");
+const settings_service_1 = require("../settings/settings.service");
+const upload_service_1 = require("../upload/upload.service");
+const localfiles_util_1 = require("./localfiles.util");
+const K_PAGE_SIZE = 'localFilesPageSize';
+const K_MAX_PER_DIR = 'localFilesMaxPerDir';
+const K_PREVIEW_MB = 'localFilesPreviewMB';
+const MIME_MAP = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+    webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', avif: 'image/avif', ico: 'image/x-icon',
+    tif: 'image/tiff', tiff: 'image/tiff', heic: 'image/heic',
+    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v', avi: 'video/x-msvideo',
+    mkv: 'video/x-matroska', flv: 'video/x-flv', wmv: 'video/x-ms-wmv', mpg: 'video/mpeg', mpeg: 'video/mpeg',
+    mp3: 'audio/mpeg', wav: 'audio/wav', flac: 'audio/flac', aac: 'audio/aac', m4a: 'audio/mp4',
+    ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/opus', wma: 'audio/x-ms-wma', ape: 'audio/x-ape', aiff: 'audio/aiff',
+    pdf: 'application/pdf',
+    txt: 'text/plain', text: 'text/plain', md: 'text/markdown', markdown: 'text/markdown', json: 'application/json',
+    log: 'text/plain', csv: 'text/csv', tsv: 'text/tab-separated-values', ini: 'text/plain', conf: 'text/plain',
+    cfg: 'text/plain', yml: 'text/yaml', yaml: 'text/yaml', xml: 'application/xml', html: 'text/html', htm: 'text/html',
+    css: 'text/css', js: 'text/javascript', mjs: 'text/javascript', ts: 'text/typescript', jsx: 'text/javascript',
+    tsx: 'text/typescript', sh: 'text/x-sh', bash: 'text/x-sh', bat: 'text/plain', ps1: 'text/plain',
+    py: 'text/x-python', go: 'text/x-go', java: 'text/x-java', c: 'text/x-c', h: 'text/x-c', cpp: 'text/x-c++', sql: 'text/plain',
+    php: 'application/x-httpd-php', phtml: 'application/x-httpd-php',
+    vue: 'text/plain', svelte: 'text/plain', rs: 'text/x-rust', rb: 'text/x-ruby', kt: 'text/x-kotlin',
+    swift: 'text/x-swift', lua: 'text/x-lua', pl: 'text/x-perl', r: 'text/x-r', scala: 'text/x-scala',
+    dart: 'text/x-dart', gradle: 'text/plain', toml: 'application/toml', properties: 'text/plain',
+    plist: 'text/xml', lock: 'text/plain', map: 'application/json', graphql: 'application/graphql',
+    gql: 'application/graphql', proto: 'text/plain', tex: 'application/x-latex', rst: 'text/plain',
+    srt: 'text/plain', vtt: 'text/vtt', diff: 'text/plain', patch: 'text/plain',
+    env: 'text/plain', service: 'text/plain', nginx: 'text/plain', htaccess: 'text/plain',
+    dockerfile: 'text/plain', makefile: 'text/plain', gitignore: 'text/plain', editorconfig: 'text/plain',
+    xaml: 'application/xml', svgx: 'application/xml', asm: 'text/plain', s: 'text/plain',
+};
+function mimeOf(ext) {
+    return MIME_MAP[String(ext || '').toLowerCase()] || 'application/octet-stream';
+}
+const INLINE_TYPES = new Set(['image', 'video', 'audio', 'pdf']);
+let LocalFilesController = class LocalFilesController {
+    settings;
+    uploads;
+    constructor(settings, uploads) {
+        this.settings = settings;
+        this.uploads = uploads;
+    }
+    session(req) {
+        return (0, auth_guard_1.currentSession)(req);
+    }
+    role(req) {
+        return this.session(req)?.role || '';
+    }
+    userName(req) {
+        return this.session(req)?.user || '';
+    }
+    async readSettings() {
+        const [ps, mx, pm] = await Promise.all([
+            this.settings.get(K_PAGE_SIZE, String(localfiles_util_1.DEFAULT_PAGE_SIZE)),
+            this.settings.get(K_MAX_PER_DIR, String(localfiles_util_1.DEFAULT_MAX_PER_DIR)),
+            this.settings.get(K_PREVIEW_MB, String(localfiles_util_1.DEFAULT_PREVIEW_THRESHOLD_MB)),
+        ]);
+        return {
+            pageSize: Math.min(200, Math.max(12, Number(ps) || localfiles_util_1.DEFAULT_PAGE_SIZE)),
+            maxPerDir: Math.min(5000, Math.max(100, Number(mx) || localfiles_util_1.DEFAULT_MAX_PER_DIR)),
+            previewThresholdMB: Math.min(4096, Math.max(1, Number(pm) || localfiles_util_1.DEFAULT_PREVIEW_THRESHOLD_MB)),
+        };
+    }
+    async resolveChannel(req, channelId) {
+        const id = String(channelId || '').trim();
+        if (!id)
+            return { error: '请选择本地文件渠道' };
+        const ch = await prisma_1.prisma.channel.findFirst({ where: { type: 'localfiles', OR: [{ id }, { code: id }] } });
+        if (!ch)
+            return { error: '渠道不存在或不是「本地文件」渠道' };
+        if (!ch.enabled)
+            return { error: '该渠道已停用' };
+        if (!(0, localfiles_util_1.localFilesAdminOnly)(this.role(req))) {
+            return { error: '本地文件渠道仅管理员可用' };
+        }
+        let cfg = {};
+        try {
+            cfg = JSON.parse(ch.config || '{}');
+        }
+        catch {
+            cfg = {};
+        }
+        let wanted = [];
+        if (Array.isArray(cfg.rootPaths))
+            wanted = cfg.rootPaths.map((s) => String(s || '').trim());
+        else if (typeof cfg.rootPaths === 'string' && cfg.rootPaths.trim()) {
+            wanted = cfg.rootPaths.split(/\r?\n/).map((s) => s.trim());
+        }
+        if (!wanted.length && cfg.rootPath)
+            wanted = [String(cfg.rootPath).trim()];
+        wanted = wanted.filter(Boolean);
+        if (!wanted.length)
+            return { error: '该渠道没有配置浏览目录' };
+        const roots = [];
+        const broken = [];
+        const usedNames = new Set();
+        for (const display of wanted) {
+            try {
+                const real = await fs_1.promises.realpath(display);
+                const st = await fs_1.promises.stat(real);
+                if (!st.isDirectory())
+                    throw new Error('not a directory');
+                let name = path.basename(real) || real;
+                while (usedNames.has(name))
+                    name = `${name}-2`;
+                usedNames.add(name);
+                roots.push({ name, display, real, mtime: st.mtimeMs });
+            }
+            catch (err) {
+                broken.push(display);
+                (0, localfiles_util_1.logLocalFileError)('读取浏览目录', `渠道=${ch.name} 路径=${display}`, err);
+            }
+        }
+        if (!roots.length)
+            return { error: '浏览目录不存在或不可访问' };
+        return { channel: ch, root: roots[0].real, roots, broken };
+    }
+    resolveInsideRoot(roots, dir) {
+        const segs = String(dir || '').split('/').filter(Boolean);
+        if (!segs.length)
+            return null;
+        const hit = roots.find((r) => r.name === segs[0]);
+        if (!hit)
+            return null;
+        return { root: hit, inside: segs.slice(1).join('/') };
+    }
+    async channels(req) {
+        if (!this.session(req))
+            return { success: false, message: '请先登录' };
+        if (!(0, localfiles_util_1.localFilesAdminOnly)(this.role(req)))
+            return { success: true, data: [] };
+        const rows = await prisma_1.prisma.channel.findMany({ where: { type: 'localfiles' }, orderBy: [{ typeCode: 'asc' }, { name: 'asc' }] });
+        const list = rows
+            .map((ch) => {
+            let rootPath = '';
+            try {
+                rootPath = String(JSON.parse(ch.config || '{}').rootPath || '');
+            }
+            catch {
+                rootPath = '';
+            }
+            return { id: ch.id, code: ch.code, name: ch.name, rootPath, enabled: ch.enabled };
+        });
+        return { success: true, data: list };
+    }
+    async getSettings(req) {
+        if (!this.session(req))
+            return { success: false, message: '请先登录' };
+        return { success: true, data: await this.readSettings() };
+    }
+    async saveSettings(body, req) {
+        if (!this.session(req))
+            return { success: false, message: '请先登录' };
+        const cur = await this.readSettings();
+        const pageSize = Math.min(200, Math.max(12, Number(body?.pageSize) || cur.pageSize));
+        const maxPerDir = Math.min(5000, Math.max(100, Number(body?.maxPerDir) || cur.maxPerDir));
+        const previewThresholdMB = Math.min(4096, Math.max(1, Number(body?.previewThresholdMB) || cur.previewThresholdMB));
+        await Promise.all([
+            this.settings.set(K_PAGE_SIZE, String(pageSize)),
+            this.settings.set(K_MAX_PER_DIR, String(maxPerDir)),
+            this.settings.set(K_PREVIEW_MB, String(previewThresholdMB)),
+        ]);
+        app_log_1.appLog.info('localfiles', '更新本地文件浏览设置', `每页=${pageSize} 单目录上限=${maxPerDir} 预览阈值=${previewThresholdMB}MB`);
+        return { success: true, data: { pageSize, maxPerDir, previewThresholdMB } };
+    }
+    async tree(req, q) {
+        const r = await this.resolveChannel(req, q.channelId);
+        if (r.error)
+            return { success: false, message: r.error };
+        const roots = r.roots;
+        const TREE_LIMIT = 3000;
+        const dirs = [];
+        let truncated = false;
+        for (const rt of roots) {
+            dirs.push(rt.name);
+            const subs = await (0, localfiles_util_1.collectDirs)(rt.real, rt.real, TREE_LIMIT);
+            if (subs.length >= TREE_LIMIT)
+                truncated = true;
+            for (const s of subs)
+                dirs.push(`${rt.name}/${s}`);
+        }
+        if (truncated) {
+            app_log_1.appLog.warn('localfiles', '目录树条目超过上限已截断', `渠道=${r.channel.name} 上限=${TREE_LIMIT}`);
+        }
+        dirs.sort((a, b) => a.localeCompare(b, 'zh-CN'));
+        return { success: true, data: { root: '', dirs, total: dirs.length, truncated } };
+    }
+    async list(req, q) {
+        const r = await this.resolveChannel(req, q.channelId);
+        if (r.error)
+            return { success: false, message: r.error };
+        const roots = r.roots;
+        const dir = (0, localfiles_util_1.sanitizeRelativeDir)(q.dir);
+        if (dir === null)
+            return { success: false, message: '目录路径不合法' };
+        const cfg = await this.readSettings();
+        const page = Math.max(1, Number(q.page) || 1);
+        const pageSize = Math.min(200, Math.max(1, Number(q.pageSize) || cfg.pageSize));
+        const type = String(q.type || '').toLowerCase();
+        const search = String(q.search || '').trim().toLowerCase();
+        const sort = String(q.sort || 'name');
+        const order = String(q.order || 'asc');
+        let entries = [];
+        let truncated = false;
+        let dirs = [];
+        if (dir === '') {
+            entries = roots.map((rt) => ({
+                path: rt.name,
+                name: rt.name,
+                kind: 'dir',
+                size: 0,
+                mtime: rt.mtime,
+                ext: '',
+                type: '',
+            }));
+            dirs = roots.map((rt) => rt.name);
+        }
+        else {
+            const hit = this.resolveInsideRoot(roots, dir);
+            if (!hit)
+                return { success: false, message: '目录路径越界' };
+            const abs = (0, localfiles_util_1.safeJoin)(hit.root.real, hit.inside || '.');
+            if (!abs)
+                return { success: false, message: '目录路径越界' };
+            let read;
+            try {
+                read = await (0, localfiles_util_1.readDirEntries)(abs, abs, cfg.maxPerDir);
+            }
+            catch (err) {
+                (0, localfiles_util_1.logLocalFileError)('读取目录', `渠道=${r.channel.name} 目录=${dir || '/'}`, err);
+                return { success: false, message: '目录读取失败' };
+            }
+            const prefix = dir;
+            entries = read.entries.map((e) => ({ ...e, path: prefix ? `${prefix}/${e.path}` : e.path }));
+            truncated = read.truncated;
+            dirs = read.dirs;
+        }
+        let list = entries;
+        if (type === 'inlibrary') {
+            const probe = list.filter((e) => e.kind === 'file').slice(0, 400);
+            const libMap = await this.markInLibrary(roots, probe);
+            list = list.filter((e) => e.kind === 'dir' || libMap.has(e.path));
+        }
+        else if (type) {
+            list = list.filter((e) => e.kind === 'dir' || e.type === type);
+        }
+        if (search)
+            list = list.filter((e) => e.name.toLowerCase().includes(search) || e.path.toLowerCase().includes(search));
+        list = (0, localfiles_util_1.sortEntries)(list, sort, order);
+        const LIB_SORT_LIMIT = 400;
+        let inLibrary = null;
+        if (sort === 'inLibrary') {
+            inLibrary = await this.markInLibrary(roots, list.filter((e) => e.kind === 'file').slice(0, LIB_SORT_LIMIT));
+            const dir = order === 'desc' ? -1 : 1;
+            const rank = (e) => (inLibrary.has(e.path) ? 0 : 1);
+            list = [...list].sort((a, b) => {
+                if (a.kind !== b.kind)
+                    return a.kind === 'dir' ? -1 : 1;
+                const cmp = (rank(a) - rank(b)) * dir;
+                if (cmp)
+                    return cmp;
+                return a.name.localeCompare(b.name, 'zh-CN');
+            });
+        }
+        const total = list.length;
+        const start = (page - 1) * pageSize;
+        const pageEntries = list.slice(start, start + pageSize);
+        const marked = inLibrary ?? (await this.markInLibrary(roots, pageEntries));
+        return {
+            success: true,
+            data: {
+                dir,
+                entries: pageEntries.map((e) => ({ ...e, inLibrary: marked.get(e.path) || '' })),
+                total,
+                page,
+                pageSize,
+                truncated,
+                dirs,
+                settings: cfg,
+            },
+        };
+    }
+    async markInLibrary(roots, entries, limit = 200) {
+        const out = new Map();
+        const files = entries.filter((e) => e.kind === 'file' && e.size > 0).slice(0, Math.max(1, limit));
+        if (!files.length)
+            return out;
+        const sizes = Array.from(new Set(files.map((f) => f.size)));
+        let rows = [];
+        try {
+            rows = await prisma_1.prisma.fileRecord.findMany({
+                where: { status: 'active', OR: [{ size: { in: sizes } }, { originalSize: { in: sizes } }] },
+                select: { name: true, size: true, originalSize: true, md5: true },
+                take: 500,
+            });
+        }
+        catch {
+            return out;
+        }
+        if (!rows.length)
+            return out;
+        const bySize = new Map();
+        for (const r of rows) {
+            for (const s of new Set([r.size, r.originalSize])) {
+                if (!s)
+                    continue;
+                if (!bySize.has(s))
+                    bySize.set(s, []);
+                bySize.get(s).push({ name: r.name, md5: r.md5 || '' });
+            }
+        }
+        for (const f of files) {
+            const cands = bySize.get(f.size);
+            if (!cands || !cands.length)
+                continue;
+            const hit = this.resolveInsideRoot(roots, f.path);
+            if (!hit)
+                continue;
+            const abs = (0, localfiles_util_1.safeJoin)(hit.root.real, hit.inside || '.');
+            if (!abs)
+                continue;
+            try {
+                const md5 = await (0, localfiles_util_1.hashFile)(abs);
+                const match = cands.find((c) => c.md5 && c.md5 === md5);
+                if (match)
+                    out.set(f.path, match.name);
+            }
+            catch {
+            }
+        }
+        return out;
+    }
+    async preview(req, res, q) {
+        if (!this.session(req)) {
+            res.status(401).json({ success: false, message: '请先登录' });
+            return;
+        }
+        const r = await this.resolveChannel(req, q.channelId);
+        if (r.error) {
+            res.status(403).json({ success: false, message: r.error });
+            return;
+        }
+        const roots = r.roots;
+        const rel = (0, localfiles_util_1.sanitizeRelativeDir)(q.path);
+        if (rel === null || !rel) {
+            res.status(400).json({ success: false, message: '文件路径不合法' });
+            return;
+        }
+        const hit = this.resolveInsideRoot(roots, rel);
+        const abs = hit ? (0, localfiles_util_1.safeJoin)(hit.root.real, hit.inside || '.') : null;
+        if (!abs) {
+            res.status(400).json({ success: false, message: '文件路径越界' });
+            return;
+        }
+        let st;
+        try {
+            st = await fs_1.promises.stat(abs);
+        }
+        catch (err) {
+            (0, localfiles_util_1.logLocalFileError)('预览定位文件', `渠道=${r.channel.name} 路径=${rel}`, err);
+            res.status(404).json({ success: false, message: '文件不存在' });
+            return;
+        }
+        if (!st.isFile()) {
+            res.status(400).json({ success: false, message: '不是文件' });
+            return;
+        }
+        const ext = path.extname(abs).replace(/^\./, '').toLowerCase();
+        const type = (0, localfiles_util_1.localTypeOf)(ext);
+        const download = q.download === '1' || q.download === 'true';
+        const cfg = await this.readSettings();
+        const tooBig = st.size > cfg.previewThresholdMB * 1024 * 1024;
+        const asAttachment = download || tooBig || !INLINE_TYPES.has(type);
+        const mime = mimeOf(ext);
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'private, max-age=60');
+        const fileName = path.basename(abs);
+        res.setHeader('Content-Disposition', `${asAttachment ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        const range = String(req.headers.range || '');
+        if (range && /^bytes=/.test(range)) {
+            const m = /^bytes=(\d*)-(\d*)$/.exec(range.replace(/\s/g, ''));
+            if (!m) {
+                res.status(416).end();
+                return;
+            }
+            const start = m[1] ? Number(m[1]) : 0;
+            const end = m[2] ? Math.min(Number(m[2]), st.size - 1) : st.size - 1;
+            if (Number.isNaN(start) || start >= st.size || end < start) {
+                res.setHeader('Content-Range', `bytes */${st.size}`);
+                res.status(416).end();
+                return;
+            }
+            res.status(206);
+            res.setHeader('Content-Range', `bytes ${start}-${end}/${st.size}`);
+            res.setHeader('Content-Length', String(end - start + 1));
+            (0, fs_1.createReadStream)(abs, { start, end }).pipe(res);
+            return;
+        }
+        res.setHeader('Content-Length', String(st.size));
+        (0, fs_1.createReadStream)(abs).pipe(res);
+    }
+    async upload(body, req) {
+        const session = this.session(req);
+        if (!session)
+            return { success: false, message: '请先登录' };
+        const r = await this.resolveChannel(req, String(body?.channelId || ''));
+        if (r.error)
+            return { success: false, message: r.error };
+        const roots = r.roots;
+        const paths = Array.isArray(body?.paths) ? body.paths.slice(0, 200) : [];
+        if (!paths.length)
+            return { success: false, message: '请选择要上传的文件' };
+        const ip = String(req.ip || '').replace(/^::ffff:/, '');
+        const results = [];
+        for (const raw of paths) {
+            const rel = (0, localfiles_util_1.sanitizeRelativeDir)(raw);
+            const name = rel ? path.basename(rel) : '';
+            if (rel === null || !rel) {
+                results.push({ path: String(raw || ''), name, success: false, error: '路径不合法' });
+                continue;
+            }
+            const hit = this.resolveInsideRoot(roots, rel);
+            const abs = hit ? (0, localfiles_util_1.safeJoin)(hit.root.real, hit.inside || '.') : null;
+            if (!abs) {
+                results.push({ path: rel, name, success: false, error: '路径越界' });
+                continue;
+            }
+            try {
+                const st = await fs_1.promises.stat(abs);
+                if (!st.isFile()) {
+                    results.push({ path: rel, name, success: false, error: '不是文件' });
+                    continue;
+                }
+                const ext = path.extname(abs).replace(/^\./, '').toLowerCase();
+                const res = await this.uploads.upload({ buffer: Buffer.alloc(0), path: abs, size: st.size, mime: mimeOf(ext), originalName: name }, {
+                    channelId: String(body?.targetChannelId || '') || undefined,
+                    uploader: session.user,
+                    owner: session.user,
+                    ip,
+                    uploadFolder: String(body?.uploadFolder || '') || undefined,
+                    instanceId: String(body?.instanceId || '') || undefined,
+                    uploadSource: 'Default',
+                    extraTags: ['本地上传'],
+                    skipFileLimits: true,
+                });
+                if (res.error) {
+                    results.push({ path: rel, name, success: false, error: res.error });
+                    app_log_1.appLog.warn('localfiles', `上传到图床失败：${name}`, `${rel} ｜ ${res.error}`);
+                }
+                else {
+                    results.push({ path: rel, name, success: true, id: res.id, dedup: !!res.dedup });
+                    app_log_1.appLog.info('localfiles', `本地文件已上传到图床：${name}`, `${rel} ｜ 文件ID=${res.id}${res.dedup ? ' ｜ 命中已有内容（去重）' : ''}`, ip);
+                }
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                results.push({ path: rel, name, success: false, error: msg });
+                (0, localfiles_util_1.logLocalFileError)('上传', `渠道=${r.channel.name} 文件=${rel}`, err);
+            }
+        }
+        return { success: true, data: results };
+    }
+};
+exports.LocalFilesController = LocalFilesController;
+__decorate([
+    (0, common_1.Get)('channels'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "channels", null);
+__decorate([
+    (0, common_1.Get)('settings'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "getSettings", null);
+__decorate([
+    (0, common_1.Post)('settings'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "saveSettings", null);
+__decorate([
+    (0, common_1.Get)('tree'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "tree", null);
+__decorate([
+    (0, common_1.Get)('list'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "list", null);
+__decorate([
+    (0, common_1.Get)('preview'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Res)()),
+    __param(2, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "preview", null);
+__decorate([
+    (0, common_1.Post)('upload'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "upload", null);
+exports.LocalFilesController = LocalFilesController = __decorate([
+    (0, common_1.Controller)('api/localfiles'),
+    __metadata("design:paramtypes", [settings_service_1.SettingsService,
+        upload_service_1.UploadService])
+], LocalFilesController);

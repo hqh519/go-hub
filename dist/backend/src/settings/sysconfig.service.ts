@@ -1,0 +1,309 @@
+import { Injectable } from '@nestjs/common';
+import { SettingsService } from './settings.service';
+import { PAGE_CONFIG_DEFAULTS } from './page-config';
+import { hashSecret, isHashedSecret } from '../common/secret';
+import { CryptoService } from '../common/crypto.service';
+
+/** 深合并（数组直接替换，对象递归合并） */
+function deepMerge<T>(base: T, patch: any): T {
+  if (patch === undefined || patch === null) return base;
+  if (Array.isArray(base) || Array.isArray(patch)) return (patch ?? base) as T;
+  if (typeof base !== 'object' || typeof patch !== 'object') return (patch ?? base) as T;
+  const out: any = { ...(base as any) };
+  for (const [k, v] of Object.entries(patch)) {
+    out[k] = k in (base as any) ? deepMerge((base as any)[k], v) : v;
+  }
+  return out;
+}
+
+function safeJson(raw: string, fallback: any) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * 系统设置服务 —— 对齐原系统（CloudFlare-ImgBed）的 /api/manage/sysConfig/* 契约。
+ *
+ * 每个分区以整段 JSON 存于 settings 表（key = sysConfig:<section>），
+ * GET 时与「默认结构」深合并后返回，POST 时整体保存。
+ * 这样前端的设置页可以原样使用，后端也不必理解每个字段的语义。
+ */
+@Injectable()
+export class SysConfigService {
+  constructor(private settings: SettingsService) {}
+
+  private key(section: string) {
+    return `sysConfig:${section}`;
+  }
+
+  /** 各分区的默认结构 */
+  defaults(section: string): any {
+    switch (section) {
+      case 'page':
+        return JSON.parse(JSON.stringify(PAGE_CONFIG_DEFAULTS));
+      case 'security':
+        return {
+          auth: { user: { authCode: '' }, admin: { adminUsername: '', adminPassword: '' } },
+          upload: {
+            moderate: {
+              enabled: false,
+              channel: 'moderatecontent.com',
+              moderateContentApiKey: '',
+              nsfwApiPath: '',
+            },
+            ipQuery: {
+              enabled: false,
+              channel: 'customApi',
+              customApi: { url: '', params: [{ key: 'ip', value: '{ip}' }], responseFields: [] },
+            },
+          },
+          access: {
+            allowedDomains: '',
+            whiteListMode: false,
+            imageTransformEnabled: false,
+            imageTransformAllowedSizes: '',
+            sessionSecure: false,
+            // 会话有效期（天）：0 表示永久有效（不设置过期时间）
+            userSessionMaxAge: 14,
+            adminSessionMaxAge: 14,
+            // ---- 失效文件替换（v2.3.0）----
+            // 任何「不能正常访问」的文件链接（无权限 / 不存在 / 未开放 / 已过期）
+            // 都改为加载 fallbackUrl：
+            //   fallbackType = 'image'    → 直接下发该图片（访问链接不变，内容变成替换图）
+            //   fallbackType = 'redirect' → 302 跳到该链接
+            fallbackEnabled: false,
+            fallbackType: 'image',
+            fallbackUrl: '',
+          },
+          // ---- 发信邮箱（v2.3.0）----
+          // 用于「邮箱验证 / 两步验证验证码 / 关闭 2FA 校验」，密码字段加密存储。
+          mail: {
+            enabled: false,
+            host: '',
+            port: 465,
+            secure: true,
+            user: '',
+            pass: '',
+            fromName: 'GoHub',
+            fromAddress: '',
+            replyTo: '',
+          },
+        };
+      case 'upload':
+        return {
+          cos: this.emptyChannelType(),
+          minio: this.emptyChannelType(),
+          r2: this.emptyChannelType(),
+          s3: this.emptyChannelType(),
+          aliyun: this.emptyChannelType(),
+          easyimages: this.emptyChannelType(),
+          lsky: this.emptyChannelType(),
+          webdav: this.emptyChannelType(),
+          immich: this.emptyChannelType(),
+          custom: this.emptyChannelType(),
+        };
+      case 'others':
+        return {
+          telemetry: { enabled: false, fixed: false }, // 远端遥测：按方案裁剪（不实现上报）
+          randomImageAPI: { enabled: true, allowedDir: '', fixed: false }, // 随机图 API：默认开启，可关
+          publicBrowse: { enabled: true, allowedDir: '', fixed: false }, // 公开画廊：默认开启，可关
+          // 对外 WebDAV：把图床挂成网盘（Finder / 资源管理器 / RaiDrive 可挂载）
+          // 上传渠道换用新系统渠道（channelName 存渠道 6 位 ID，空表示走全局主渠道）
+          webdav: { enabled: false, rootPath: '', channelId: '', readonly: false },
+        };
+      case 'ai':
+        return { canStoreCredentials: false, defaults: { tagPrompt: '' }, models: [] };
+      default:
+        return {};
+    }
+  }
+
+  private emptyChannelType() {
+    return { channels: [], loadBalance: { enabled: false, channels: [] } };
+  }
+
+  /** 读取分区配置（默认值 + 已保存值） */
+  async get(section: string): Promise<any> {
+    const raw = await this.settings.get(this.key(section), '');
+    const stored = raw ? safeJson(raw, {}) : {};
+
+    if (section === 'page') return this.mergePage(stored);
+    if (section === 'security') return this.mergeSecurity(stored);
+    return deepMerge(this.defaults(section), stored);
+  }
+
+  /** 保存分区配置 */
+  async save(section: string, body: any): Promise<any> {
+    if (section === 'page') {
+      const prevRaw = await this.settings.get(this.key(section), '');
+      const prev = prevRaw ? safeJson(prevRaw, {}) : {};
+      const next = this.processAnnouncement(body || {}, prev);
+      await this.settings.set(this.key(section), JSON.stringify(next));
+      return next;
+    }
+    if (section === 'security') {
+      const prevRaw = await this.settings.get(this.key(section), '');
+      const prev = prevRaw ? safeJson(prevRaw, {}) : {};
+      const { next, adminChanged } = this.mergeSecurityForSave(body || {}, prev);
+      await this.settings.set(this.key(section), JSON.stringify(next));
+      // adminPasswordChanged：管理端账号发生变化，前端据此提示重新登录
+      return { message: 'security settings saved', adminPasswordChanged: adminChanged };
+    }
+    // 其余分区：与已存值深合并后再写入。
+    // 前端各设置页都提交完整对象，合并结果与「整体替换」一致；
+    // 但支持「只提交自己关心的那一段」（例如安全设置页只写 webdav、
+    // 其他设置页只写 access 的图片尺寸），不会把同分区的其它字段抹掉。
+    const prevRaw = await this.settings.get(this.key(section), '');
+    const prev = prevRaw ? safeJson(prevRaw, {}) : {};
+    const next = deepMerge(prev, body || {});
+    await this.settings.set(this.key(section), JSON.stringify(next));
+    return next;
+  }
+
+  /**
+   * 读取 security 分区的【原始存储内容】（不脱敏、不补默认值）。
+   * 仅供内部使用：get() 会把密码置空，绝不能用它回写，否则会抹掉已存口令。
+   */
+  async readSecurityRaw(): Promise<any> {
+    const raw = await this.settings.get(this.key('security'), '');
+    return raw ? safeJson(raw, {}) : {};
+  }
+
+  /**
+   * 直接写入 security 分区（不做任何密码语义处理）。
+   * 仅供内部使用：把历史明文口令升级为散列后原地回写。
+   */
+  async writeSecurityRaw(next: any): Promise<void> {
+    await this.settings.set(this.key('security'), JSON.stringify(next));
+  }
+
+  /* ---------------- page ---------------- */
+
+  /** 把已保存的 config 值合并进 26 项描述数组 */
+  private mergePage(stored: any) {
+    const base: any = JSON.parse(JSON.stringify(PAGE_CONFIG_DEFAULTS));
+    const storedItems: any[] = Array.isArray(stored?.config) ? stored.config : [];
+    for (const item of storedItems) {
+      const idx = base.config.findIndex((x: any) => x.id === item.id);
+      if (idx !== -1) base.config[idx].value = item.value;
+    }
+    if (Number.isFinite(Number(stored?.announcementRefreshAt))) {
+      base.announcementRefreshAt = Number(stored.announcementRefreshAt);
+    }
+    return base;
+  }
+
+  /** 公告内容变化时刷新 announcementRefreshAt（照搬原系统行为） */
+  private processAnnouncement(settings: any, previousSettings: any) {
+    const pick = (s: any) =>
+      Array.isArray(s?.config) ? s.config.find((i: any) => i?.id === 'announcement')?.value ?? '' : '';
+    const shouldRefresh = pick(settings) !== pick(previousSettings) || settings.refreshAnnouncement === true;
+    delete settings.refreshAnnouncement;
+    if (shouldRefresh) settings.announcementRefreshAt = Date.now();
+    else if (previousSettings.announcementRefreshAt) settings.announcementRefreshAt = previousSettings.announcementRefreshAt;
+    else delete settings.announcementRefreshAt;
+    return settings;
+  }
+
+  /* ---------------- security ---------------- */
+
+  /** 读取时隐藏密码明文（对齐原系统：返回 _hasPassword 标记） */
+  private mergeSecurity(stored: any) {
+    const merged = deepMerge(this.defaults('security'), stored) as any;
+    if (merged.auth?.user?.authCode) {
+      merged.auth.user._hasPassword = true;
+      merged.auth.user.authCode = '';
+    }
+    if (merged.auth?.admin?.adminPassword) {
+      merged.auth.admin._hasPassword = true;
+      merged.auth.admin.adminPassword = '';
+    }
+    // 发信邮箱密码同样脱敏（v2.3.0）
+    if (merged.mail?.pass) {
+      merged.mail._hasPassword = true;
+      merged.mail.pass = '';
+    }
+    return merged;
+  }
+
+  /**
+   * 保存时：
+   *   - 空密码表示「不修改」（保留原值）
+   *   - _clear 表示显式清除
+   *   - 新密码/认证码一律散列存储（scrypt），绝不落明文
+   * 返回 { next, adminChanged }，adminChanged 用于判断是否需要让管理端重新登录。
+   */
+  private mergeSecurityForSave(body: any, prev: any): { next: any; adminChanged: boolean } {
+    const base = deepMerge(this.defaults('security'), prev) as any;
+    const out: any = { ...base };
+    let adminChanged = false;
+
+    if (body.upload) out.upload = deepMerge(base.upload, body.upload);
+    if (body.access) {
+      out.access = deepMerge(base.access, body.access);
+      out.access.sessionSecure = out.access.sessionSecure === true;
+      out.access.imageTransformEnabled = out.access.imageTransformEnabled === true;
+      // 失效文件替换（v2.3.0）：类型只允许 image / redirect
+      out.access.fallbackEnabled = out.access.fallbackEnabled === true;
+      out.access.fallbackType = out.access.fallbackType === 'redirect' ? 'redirect' : 'image';
+      out.access.fallbackUrl = String(out.access.fallbackUrl || '').trim();
+    }
+    // 发信邮箱（v2.3.0）：密码加密落库，空值 = 不修改
+    if (body.mail) {
+      const prevMail: any = base.mail || {};
+      const m: any = { ...prevMail, ...body.mail };
+      if (body.mail._clear) m.pass = '';
+      else if (body.mail.pass) m.pass = `enc:${CryptoService.encrypt(String(body.mail.pass))}`;
+      else m.pass = prevMail.pass || '';
+      delete m._clear;
+      delete m._hasPassword;
+      m.port = Number(m.port) || 465;
+      m.secure = m.secure !== false;
+      m.enabled = m.enabled === true;
+      for (const k of ['host', 'user', 'fromName', 'fromAddress', 'replyTo'] as const) {
+        m[k] = String(m[k] ?? '').trim();
+      }
+      out.mail = m;
+    }
+    if (body.auth) {
+      if (body.auth.user) {
+        const u = { ...body.auth.user };
+        if (u._clear) u.authCode = '';
+        else if (u.authCode) u.authCode = this.toStoredSecret(u.authCode);
+        else u.authCode = base.auth?.user?.authCode || '';
+        delete u._clear;
+        out.auth = { ...base.auth, user: u };
+      }
+      if (body.auth.admin) {
+        const prevUser = String(base.auth?.admin?.adminUsername || '');
+        const prevPass = String(base.auth?.admin?.adminPassword || '');
+        const a = { ...body.auth.admin };
+        if (a._clear) {
+          a.adminPassword = '';
+          a.adminUsername = '';
+        } else if (a.adminPassword) {
+          a.adminPassword = this.toStoredSecret(a.adminPassword);
+        } else {
+          a.adminPassword = prevPass; // 未填写密码 = 不修改
+        }
+        delete a._clear;
+        out.auth = { ...(out.auth || base.auth), admin: a };
+        adminChanged =
+          String(out.auth.admin.adminPassword || '') !== prevPass ||
+          String(out.auth.admin.adminUsername || '') !== prevUser;
+      }
+    }
+    delete out.auth?.user?._hasPassword;
+    delete out.auth?.admin?._hasPassword;
+    return { next: out, adminChanged };
+  }
+
+  /** 明文 → 散列；已是散列则原样保留 */
+  private toStoredSecret(plain: unknown): string {
+    const v = String(plain ?? '');
+    return isHashedSecret(v) ? v : hashSecret(v);
+  }
+}

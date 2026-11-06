@@ -1,0 +1,1 @@
+const i=/\/file\//i;function u(r,n=320){const t=String(r||"").trim();if(!t)return"";if(!i.test(t)||/[?&]thumb=/.test(t))return t;const e=Math.max(64,Math.min(640,Number(n)||320));return`${t}${t.includes("?")?"&":"?"}thumb=${e}`}export{u as t};

@@ -1,0 +1,447 @@
+// ============================================================
+//  GoHub v2.0.0 数据模型 —— PostgreSQL 版（唯一版本）
+//
+//  v2.0.0 起数据库只支持 PostgreSQL（推荐 pgvector/pgvector:pg17 及以上任意 PG 15+），
+//  SQLite 双轨（schema.postgres.prisma）已随旧版终结删除，旧库不兼容、不做迁移。
+//
+//  设计约定：
+//   1) 每张表都带 metas 字段（JSON 字符串），用于扩展数据；
+//      但凡需要查询/筛选/排序的字段必须独立成列，禁止塞进 metas。
+//      （保持 String 而非 Prisma Json：应用层全部按 JSON.parse/parse(stringify) 契约读写，
+//        换 Json 类型需重写全部读写点，收益仅是 JSONB 运算符 —— 列为后续可选演进。）
+//   2) 主键统一 cuid()（25 位字符串，见下方说明），不用自增整数。
+//   3) 索引按真实查询路径规划（v2.0.0 重新规划）：
+//        - 管理列表 / 目录浏览：status + folder/createdAt 复合
+//        - 用户 / IP 归集：status + uploader 复合、ip 单列
+//        - 去重（秒传）：md5 单列
+//        - 渠道容量统计：channelId + status 复合
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// 关于主键 cuid（用户常见疑问）：
+//   cuid 是 Prisma 默认的分布式友好 ID：25 位小写字母数字串（如 cmvbo02b5000kmuei41gf0ebe），
+//   由「时间戳(毫秒) + 计数器 + 机器指纹 + 随机数」编码而成，全局唯一、按时间粗有序。
+//   不改自增整数的原因：
+//     a) 对外暴露自增 id 会泄露「系统一共处理过多少文件/用户」等信息；
+//     b) 多实例 / 主备写入（file_copies 异步双写）下自增需要额外协调，cuid 天然无冲突；
+//     c) 全站 URL、回收站批量操作、S3 接口都以字符串 id 为契约，改数字需重写全部接口。
+//   对图床场景（万级~百万级记录）字符串主键的索引性能完全够用。
+// ------------------------------------------------------------
+
+// 用户账户 —— 管理员(admin) 与 普通用户(user)。
+// 普通用户：仅可上传（需「用户名 + 上传密码」）与查看/管理自身账户下的文件（需「用户名 + 用户密码」），
+// 且是否可编辑/删除自身文件、是否禁用由管理员逐个账户控制。
+model User {
+  id              String   @id @default(cuid())
+  username        String   @unique
+  passwordHash    String // 用户密码（唯一登录凭据）scrypt 格式 salt:hash
+  // 历史字段：v202610221824 起「上传密码」功能已下线，登录只认自身的用户名 + 密码。
+  // 列保留是为了 db push 不做破坏性变更（避免删列），代码不再读写。
+  uploadPassword  String   @default("")
+  nickname        String   @default("") // 展示名
+  // 邮箱（v202610221824）：可由用户自行维护，仅用于账户标识与通知，不做登录凭据
+  email           String   @default("")
+  // 头像（v202610221824）：列里存「版本戳」（毫秒时间戳），图片本体固定落在
+  // uploads/avatars/<userId>.webp —— 每次修改覆盖同一文件，保证每个用户仅留存一张。
+  // 前端用 /api/avatar/<username>?v=<avatar> 访问，版本戳变化即刷新缓存。
+  avatar          String   @default("")
+  role            String   @default("admin") // admin | user
+  enabled         Boolean  @default(true) // 禁用后无法登录/上传
+  canEdit         Boolean  @default(true) // 允许编辑自身文件（重命名/元数据/标签）
+  canDelete       Boolean  @default(true) // 允许删除自身文件
+  linkEnabled     Boolean  @default(true) // 链接权限：关闭后该账户的文件外链（/file/*）不可访问
+  // 管理备注（v2.1.0）：仅管理员在「用户管理 → 编辑账户」里可见可改，绝不下发给普通用户
+  adminNote       String   @default("")
+  enforceLimits   Boolean  @default(true) // 类型和大小限制：开启时受「允许上传格式 + 单文件大小上限」约束，关闭则跳过
+  // ---- v2.8.8：用户级「视频兼容转码」策略 ----
+  //   inherit —— 跟随全局（后台「其他设置 → 上传相关配置 → 视频兼容转码」）
+  //   off     —— 该账户所有上传入口都不做兼容转码（不受全局影响）
+  //   on      —— 一律做兼容转码（不受全局影响）
+  //   user    —— 由用户自己在前台上传设置里选（刷新回落到「跟随全局」）
+  transcodePolicy String   @default("inherit")
+  // ---- v2.8.8：用户级单文件大小上限（MB）----
+  // 0 = 留空，按全局「单文件大小上限」执行；>0 = 该账户上传按这个值封顶
+  maxFileSizeMB   Int      @default(0)
+  mainChannelId   String   @default("") // 该账户上传时优先使用的主渠道 ID（空 = 用全局）
+  backupChannelId String   @default("") // 该账户上传时优先使用的备份渠道 ID（空 = 用全局）
+  // ---- 邮箱验证（v2.3.0）----
+  // 邮箱验证码校验通过后置 true；「验证过的邮箱」在编辑页锁定不可改，
+  // 改绑需要重新走一次验证码校验。启用两步验证前必须先通过邮箱验证。
+  emailVerified   Boolean  @default(false)
+  // ---- 两步验证（TOTP，v202610221824）----
+  // totpSecret 为 AES-GCM 加密后的 Base32 密钥；启用后进后台需再输入 6 位验证码
+  totpSecret      String   @default("")
+  totpEnabled     Boolean  @default(false)
+  // 恢复码（v2.3.0）：启用 2FA 时一次性生成 10 个，**只展示一次**。
+  // 库里只存每个恢复码的 HMAC-SHA256（JSON 数组），不存明文 —— 用掉一个删一个。
+  // 用于「验证器丢失」时进后台 / 关闭 2FA。
+  recoveryHashes  String   @default("[]")
+  // 最近一次生成恢复码的时间（仅用于展示与日志）
+  recoveryAt      DateTime?
+  // 后端（管理端）最近一次通过 2FA 的时间；超过 backSessionDays 即视为过期，需重新验证
+  backVerifiedAt  DateTime?
+  // ---- 会话有效期（天，v202610221824）----
+  // 空 = 未设置 → 按 7 天处理。0 = 永久（不下发过期）。
+  // frontSessionDays 管「前端上传页/画廊」登录态；backSessionDays 管「后台管理页」的 2FA 验证态。
+  frontSessionDays Int?
+  backSessionDays  Int?
+  // ---- 对外分享权限（v3.0.0）----
+  // 管理员在「用户管理 → 编辑账户 → 管理员操作 → 分享权限」里开启后，该账户才能
+  // 使用文件夹 / 标签的「对外分享」，用户编辑页也才加载「对外分享」模块。
+  // 默认 false：升级后普通用户不会突然多出对外分享入口，行为与升级前一致。
+  shareEnabled    Boolean  @default(false)
+  metas           String   @default("{}")
+  // ---- v3.0.0（R16）：账户自定义背景图 ----
+  // 存 JSON 数组字符串（如 ["https://a.jpg","https://b.jpg"]），空串 = 跟随系统设置。
+  // 上传页背景图覆盖「网页设置 → 上传页背景图」，管理页背景图覆盖「网页设置 → 管理页背景图」；
+  // 每次刷新在数组里随机取一张（前端 backgroundManager 统一处理）。
+  uploadBkImg     String   @default("")
+  adminBkImg      String   @default("")
+  createdAt       DateTime @default(now())
+
+  @@map("users")
+}
+
+// 系统设置（键值对；安全设置/页面设置/上传设置等各 section 各占一行）
+model Setting {
+  key   String @id
+  value String @default("") // 值；JSON 类型的设置存 JSON 字符串
+  metas String @default("{}")
+
+  @@map("settings")
+}
+
+// 存储渠道配置（密钥字段 AES-GCM 加密后存于 config 内）
+model Channel {
+  id        String   @id @default(cuid())
+  // 渠道业务 ID：6 位数字，创建后固定不变；
+  // 系统内部（默认渠道 / 备份渠道 / 上传指定渠道）一律以 code 识别，渠道名可随意改但不允许重名。
+  code      String   @unique
+  name      String   @unique // 渠道显示名（可修改，不允许重名）
+  type      String // cos | minio | r2 | s3 | easyimages | lsky | webdav | immich | custom | local
+  enabled   Boolean  @default(true)
+  isMain    Boolean  @default(false) // 主渠道（可多条，上传走 enable 的第一条主渠道）
+  isBackup  Boolean  @default(false) // 备份渠道
+  // 备用库池（v202610221824）：「更多 → 设为备用库」打标，可同时勾选多条。
+  // 前端上传主渠道全部失败后，按 code 升序在这些备用库之间轮流尝试。
+  backupPool Boolean @default(false)
+  // 用户授权（v202610221824）：JSON 数组，存被授权的用户名（["alice","bob"]）。
+  // 空数组 = 未授权任何人（仅管理员可用）；管理员账户恒可用，不受此限制。
+  // 非管理员调用 /api/channels 时只返回 local + 自己获授权的渠道。
+  authorizedUsers String @default("[]")
+  config    String   @default("{}") // JSON：各渠道配置，敏感字段加密存储
+  // 渠道类型编号（排序用，与渠道 code 无关）：
+  //   easyimages 100 / lsky 110 / immich 120 / minio 130 / r2 140 / s3 150
+  //   cos 160 / aliyun 170 / webdav 180 / custom 190 / local 999
+  // 所有渠道下拉框的排序规则（v2.0.0 起）：typeCode 升序 → name a→z
+  typeCode  Int      @default(0)
+  sortOrder Int      @default(0)
+  metas     String   @default("{}")
+  createdAt DateTime @default(now())
+
+  copies FileCopy[]
+
+  @@index([type, enabled])
+  @@map("channels")
+}
+
+// 文件记录（对外文件标识 name 即外链 /file/:name 的 :name，随机生成、与主键 id 相互独立）
+model FileRecord {
+  id           String    @id @default(cuid())
+  name         String    @unique
+  // 重命名历史（v2.3.0）：
+  //   firstName —— 第一次的 File_ID（上传时写入，之后不再变）
+  //   prevName  —— 上一次的 File_ID（每次重命名时把「当时的值」写进来）
+  // 详情页重命名对话框提供「恢复到初始名 / 恢复到上一次」两个快捷键，
+  // 避免改花了就再也回不去原来的名字。
+  firstName    String    @default("")
+  prevName     String    @default("")
+  originalName String
+  size         Int       @default(0) // 字节；单文件上限受上传设置约束（默认远小于 2GB，Int 足够）
+  originalSize Int       @default(0) // 压缩前的初始文件大小（字节）；未压缩时与 size 相同
+  mime         String    @default("")
+  hash         String    @default("") // sha256，用于秒传/去重
+  md5          String    @default("") // md5，用于去重（配合 size）与搜索
+  folder       String    @default("") // 逻辑分类目录（可后台移动，仅改库不改真实路径）
+  uploader     String    @default("") // 上传者用户名（用户账户体系：文件按此归集给用户）
+  // 上传渠道（上传来源入口）：
+  //   Default  —— GoHub 前端上传页
+  //   WebDAV   —— 对外 WebDAV
+  //   API-Web  —— API Token 的「Web 通用」通道
+  //   API-S3   —— API Token 的「S3 协议」通道
+  uploadSource String    @default("Default")
+  ip           String    @default("") // 上传来源 IP
+  // 重定向地址：非空时 /file/:name 直接 302 到该地址（在不改图床外链的前提下替换真实文件源）；
+  // 清空后自动恢复使用渠道真实直链。
+  redirectUrl  String    @default("")
+  // 限时访问（v2.1.0）：非空时 /file/:name 只在该时刻之前可用，过期返回 410 Gone；
+  // 为空 = 永久有效（默认）。由文件详情页「限时」按钮设置/取消。
+  linkExpiresAt DateTime?
+  // 文件备注（v2.1.0）：仅上传者本人（作者）可见，管理端列表不下发；
+  // 与 metas 分开存，避免被通用的 metas 覆盖写回逻辑抹掉。
+  note         String    @default("")
+  // 评分 / 等级（v3.0.0 R8）：详情页直接点击存库 ——
+  //   rating 0-5，支持 0.5 半星（0 = 未评分）；level 0-5 爱心等级（0 = 未设）。
+  // 独立成列（不走 metas）——「筛选 → 评级」要按范围查库。
+  rating       Float     @default(0)
+  level        Int       @default(0)
+  views        Int       @default(0) // 被访问次数（GET /file/:name 命中累计，管理端预览不计）
+  status       String    @default("active") // active | deleted（deleted = 在回收站，可恢复）
+  deletedAt    DateTime? // 进入回收站的时间；恢复时清空。排序/定期清理依据
+  // v3.0.0 多实例：文件归属的实例 ID。
+  //   空串 = 默认实例（用户初始空间，无需创建、不可删除）——
+  //   不设值可以完全兼容既有数据与查询习惯：无值即默认实例。
+  //   WebDAV / API 等外部入口不指定实例，统一落默认实例。
+  instanceId   String    @default("")
+  // 上传计时（后台文件详情 →「上传时长 / 上传速度」）：
+  //   uploadStartedAt  请求到达服务端的时刻（分块上传为第一片 init 的时刻）
+  //   uploadFinishedAt 文件记录落库的时刻
+  uploadStartedAt  DateTime?
+  uploadFinishedAt DateTime?
+  metas        String    @default("{}") // 标签、备注等扩展
+  createdAt    DateTime  @default(now())
+
+  copies FileCopy[]
+  tags   FileTag[]
+
+  @@index([status, folder, createdAt]) // 目录浏览：过滤回收站 + 目录 + 时间排序
+  @@index([status, instanceId, createdAt]) // v3.0.0 多实例：按实例归集文件列表
+  @@index([status, createdAt]) // 全库文件列表 / 回收站列表
+  @@index([status, uploader]) // 用户归集统计
+  @@index([ip]) // IP 归集统计 / 黑白名单关联
+  @@index([md5]) // 秒传去重
+  @@map("files")
+}
+
+// 文件在各渠道的副本（主备双写的核心表）
+model FileCopy {
+  id        String   @id @default(cuid())
+  fileId    String
+  channelId String
+  remoteKey String // 渠道内资源标识（只存 key，不存 URL —— 直链按渠道当前配置动态构造）
+  remoteUrl String   @default("") // 仅「非本渠道上传」的外部地址（登记文件/外链）存完整 URL
+  // ---- v3.0.0（R10）：固化寻址地址 ----
+  // objectPath = 实际上传产出的 URL 去掉 scheme://host 后的 path（不含 ?query）。
+  //   · 域名永不落库：加载时用「渠道当前加载域名 + objectPath」实时拼；
+  //   · 桶名/自定义前缀/文件命名/immich assetId 全部固化在这里 —— 之后改渠道配置不影响已落库文件；
+  //   · 分渠道形态：S3 家族 path-style 含 bucket（test/2026/11/x.png）、
+  //     virtual-host 不含 bucket（2026/11/x.png，bucket 在域名里）；
+  //     webdav = <directory>/<key>；immich = api/assets/<assetId>/original；
+  //     http-post = 响应 URL 的 path；local = 相对渠道根的路径。
+  //   空串 = 老数据，读取侧回退 buildDirectUrl（兼容期永不需要回填）。
+  objectPath String   @default("")
+  // urlQuery = 文件级查询串（不含 ?）。immich 的 key=<shareKey> 必须固化；
+  //   渠道级参数（COS/OSS 的 suffix）不进这里，仍由配置动态取。
+  urlQuery   String   @default("")
+  status    String   @default("active") // active | pending | failed
+  isPrimary Boolean  @default(false) // 是否主渠道副本
+  metas     String   @default("{}")
+  createdAt DateTime @default(now())
+
+  file    FileRecord @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  channel Channel    @relation(fields: [channelId], references: [id])
+
+  @@unique([fileId, channelId])
+  @@index([channelId, status]) // 渠道容量统计：按渠道聚合 active 副本
+  @@map("file_copies")
+}
+
+// API Token（供自身系统 API 认证使用）
+//   type = 's3'  —— S3 协议专用：配套 Access Key / Secret Key 等，可被外部 S3 客户端直接上传
+//   type = 'web' —— 自定义 Web 通道专用：外部用 multipart POST 上传
+// API Token 上传的文件统一归属管理员账户（或 Token 指定的归属账户）。
+model ApiToken {
+  id            String    @id @default(cuid())
+  name          String
+  type          String    @default("web") // web | s3
+  tokenHash     String    @unique // sha256(token)
+  prefix        String    @default("") // 展示用前缀，如 gb_xxxxxxxx
+  permissions   String    @default("[]") // JSON 数组
+  enabled       Boolean   @default(true)
+  enforceLimits Boolean   @default(true) // 类型和大小限制：开启时该 Token 上传受「允许上传格式 + 单文件大小上限」约束，关闭则跳过
+  lastUsedAt    DateTime?
+  metas         String    @default("{}")
+  createdAt     DateTime  @default(now())
+
+  @@map("api_tokens")
+}
+
+// 标签（v3.0.0 起按实例隔离；v1.0.0 起再按用户隔离）
+model Tag {
+  id        String   @id @default(cuid())
+  // 标签名在同一「实例 + 用户」内唯一。
+  // v3.0.0 时唯一键是 [name, instanceId]；v1.0.0 加入 owner 后改为 [name, instanceId, owner]，
+  // 既有数据 owner 全为空串（由 v1.0.0 迁移脚本按文件上传者回填），不会产生重复冲突。
+  name      String
+  // v3.0.0：标签所属实例（空 = 默认实例）
+  instanceId String  @default("")
+  // v1.0.0：标签归属用户名（空 = 历史遗留 / 未归属，查询时按「公共标签」兼容放行）
+  owner     String   @default("")
+  metas     String   @default("{}")
+  createdAt DateTime @default(now())
+
+  files FileTag[]
+
+  @@unique([name, instanceId, owner])
+  @@index([instanceId, owner])
+  @@map("tags")
+}
+
+// 文件-标签关联
+model FileTag {
+  id        String     @id @default(cuid())
+  fileId    String
+  tagId     String
+  file      FileRecord @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  tag       Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  createdAt DateTime   @default(now())
+
+  @@unique([fileId, tagId])
+  @@index([tagId]) // 按标签找文件
+  @@map("file_tags")
+}
+
+// IP 记录（用户管理 / IP 归属地）
+model IpRecord {
+  id          String   @id @default(cuid())
+  ip          String   @unique
+  country     String   @default("")
+  region      String   @default("")
+  city        String   @default("")
+  uploadCount Int      @default(0)
+  blocked     Boolean  @default(false)
+  whitelisted Boolean  @default(false)
+  metas       String   @default("{}")
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@map("ip_records")
+}
+
+// 访问记录（v2.3.0）—— 站内页面访问 + 文件外链访问，独立成表。
+//   写入路径：前端路由切换时 POST /api/access/visit（拿到 id）→ 离开时 POST /api/access/stay 回填停留时长；
+//             /file/* 直链访问由服务端中间件直接落库（前端拿不到这些请求）。
+//   prevVisitAt  同一 ip（+ 同账户）上一条记录的访问时间 —— 展示「上次来访」。
+//   targetUrl    「跳转链接」：由后端在收到下一次访问时回填到上一条记录（同一 ip+UA 的相邻两条）。
+model AccessLog {
+  id          String   @id @default(cuid())
+  ip          String   @default("")
+  // IP 归属地（开启「IP 归属地查询」后才会有值，异步补写）
+  ipLocation  String   @default("")
+  // 来路（Referer）：域名与完整链接分开存，前端列表按域名聚合更方便
+  refererHost String   @default("")
+  refererUrl  String   @default("")
+  // 访问页面（站内路径，如 /dashboard 或 /file/abc.png）
+  path        String   @default("")
+  // 跳转链接（基于后续访问回填，空 = 还没跳走 / 直接关页）
+  targetUrl   String   @default("")
+  // 页面标题（前端上报，便于在列表里辨认）
+  title       String   @default("")
+  // 停留时长（毫秒，前端 beacon 回填；0 = 未上报）
+  stayMs      Int      @default(0)
+  // 登录用户（未登录为空串）
+  username    String   @default("")
+  // 客户端环境
+  ua          String   @default("")
+  device      String   @default("") // desktop | mobile | tablet
+  browser     String   @default("")
+  os          String   @default("")
+  method      String   @default("GET")
+  status      Int      @default(200)
+  // 访问类型：page（站内页面）/ file（外链直链）/ api
+  kind        String   @default("page")
+  prevVisitAt DateTime?
+  metas       String   @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([ip, createdAt])
+  @@index([username, createdAt])
+  @@map("access_logs")
+}
+
+// ------------------------------------------------------------
+// v3.0.0 多实例方案
+// ------------------------------------------------------------
+
+// 用户实例（多实例方案的核心表）。
+//   · 每个用户可创建多个实例；文件 / 标签按 instanceId 隔离，配置项（页面设置等）共用；
+//   · id 为空串的引用 = 默认实例（用户初始空间，不建行、不可删除）；
+//   · 邀请码 8 位（大小写 + 数字），可随时关闭（置空）与更新。
+model Instance {
+  id         String   @id @default(cuid())
+  ownerId    String // 创建者用户 id（users.id；内建管理员用 "admin"）
+  ownerName  String   @default("") // 创建者用户名（展示 / 排查用）
+  name       String // 实例名称（同一创建者下不可重复）
+  note       String   @default("") // 备注，仅创建者可见
+  inviteCode String   @default("") // 当前邀请码（空 = 邀请关闭）
+  metas      String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@unique([ownerId, name])
+  @@index([ownerId])
+  @@index([inviteCode])
+  @@map("instances")
+}
+
+// 文件夹属性（v3.0.0）：逻辑目录路径 → 属性（加密 / 备注 / 共享 / 访客图库）。
+//   · 目录本身只是 FileRecord.folder 字符串，没有实体行 —— 属性页第一次保存时才落一行；
+//   · 加密后该目录（含子目录）下的文件外链访问需要输入密码；
+//     密码只存 sha256 哈希（metas/验证同规则，任一层级命中即通过）；
+//   · sharedUsers 存用户名 JSON 数组；gallery = 目录对外分享（提交到访客图库）。
+model FolderMeta {
+  id          String   @id @default(cuid())
+  owner       String   @default("") // 归属用户名（空 = 系统/管理员目录）
+  path        String // 逻辑目录路径（FileRecord.folder 原样，如 "2026/10"）
+  instanceId  String   @default("") // 所属实例（空 = 默认实例）
+  passwordHash String  @default("") // 所属文件加密（sha256；空 = 未加密）
+  note        String   @default("") // 备注，仅创建者可见
+  sharedUsers String   @default("[]") // 共享用户名数组（JSON）
+  sharedPerm  String   @default("edit") // 共享权限：edit=可编辑 / readonly=只读（被共享人对目录只读）
+  gallery     Boolean  @default(false) // 目录对外分享（访客图库）
+  metas       String   @default("{}")
+  createdAt   DateTime @default(now())
+
+  @@unique([owner, instanceId, path])
+  @@index([owner])
+  @@map("folder_metas")
+}
+
+// 对外分享记录（v3.0.0）
+//   · 一条记录 = 一个对外可访问的分享地址，来源只有两种：
+//       type=cate → 文件夹属性里的「目录对外分享」，target = 目录路径
+//       type=tag  → 标签属性里的「标签对外分享」，target = 标签名
+//   · 访问地址：/browse/<用户名>/<实例序号>/cate/<目录路径>
+//              /browse/<用户名>/<实例序号>/tag/<标签名>
+//     实例序号：0 = 默认实例，>=1 = 按 createdAt 升序的第 n 个已创建实例
+//   · enabled=false 或 expireAt 已过期 → 分享停止访问（记录保留，便于恢复）
+//   · passwordHash 为分享级访问密码（sha256，空 = 无密码）
+model ShareLink {
+  id           String    @id @default(cuid())
+  owner        String    @default("") // 分享发起人用户名
+  instanceId   String    @default("") // 空 = 默认实例
+  type         String    @default("cate") // cate | tag
+  target       String    @default("") // 目录路径 / 标签名
+  tagId        String    @default("") // type=tag 时的标签 id（改名后仍可定位）
+  enabled      Boolean   @default(true)
+  passwordHash String    @default("")
+  expireAt     DateTime?
+  note         String    @default("")
+  metas        String    @default("{}")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([owner, instanceId, type, target])
+  @@index([owner])
+  @@index([instanceId])
+  @@map("share_links")
+}

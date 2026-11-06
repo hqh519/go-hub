@@ -1,0 +1,190 @@
+/**
+ * 统一浮层栈（v1.0.0）
+ *
+ * 解决的问题：
+ *   灯箱（MediaPreviewOverlay）和 Element Plus 弹窗（文件详情页等）原先各自往历史里压
+ *   自己的「哨兵」，两边都监听 popstate。一次返回会被两套逻辑同时消费 —— 结果灯箱和
+ *   叠在它上面的详情页一起关掉。
+ *
+ * 现在的约定：
+ *   · 每一层浮层在打开时 registerLayer(id, close)，关闭时 unregisterLayer(id)；
+ *   · 移动端：**整个栈只压一条历史哨兵**。一次返回只调用栈顶那一层的 close()，
+ *     关完若还有层就把哨兵补回去，保证下一次返回仍然是「关一层」而不是退出页面；
+ *   · 桌面端：一个 keydown 捕获监听接管 Esc，同样只关栈顶一层，并阻止事件继续冒泡，
+ *     避免 Element Plus 自己的 close-on-press-escape 再关一次。
+ *
+ * 栈顺序 = 注册顺序。后注册的在上面（灯箱先开、详情页后开 → 详情页在栈顶）。
+ */
+
+const MOBILE_MAX_WIDTH = 768
+
+/** 层列表：[{ id, close }] */
+const layers = []
+
+/** 历史里是否已经放了哨兵条目（移动端） */
+let sentinel = false
+/** 正在自己退哨兵，忽略随之而来的 popstate */
+let selfPopping = false
+/** 正在由本模块关闭某一层，用于忽略它内部再派发的 Esc */
+let closing = false
+/** 归还哨兵的延时句柄（见 schedulePopSentinel） */
+let popTimer = null
+let installed = false
+
+function isMobile() {
+    try {
+        return window.innerWidth <= MOBILE_MAX_WIDTH
+    } catch (e) {
+        return false
+    }
+}
+
+function pushSentinel() {
+    if (sentinel || !isMobile()) return
+    try {
+        window.history.pushState({ __gohubLayer: 1 }, '', window.location.href)
+        sentinel = true
+    } catch (e) {
+        // 隐私模式 / 异常环境：退化为不做返回键接管
+        sentinel = false
+    }
+}
+
+function popSentinel() {
+    if (!sentinel) return
+    sentinel = false
+    selfPopping = true
+    /*
+     * 页面自己也有 popstate 处理器（例如文件管理页的「返回上一级目录」）。
+     * 这里退哨兵是程序触发的，必须打时间戳让页面在 500ms 内忽略掉这次 popstate，
+     * 否则关掉浮层会顺带回上一级目录。沿用旧的全局键名，兼容既有判断。
+     */
+    try { window.__gohubMediaViewerPopAt = Date.now() } catch (e) { /* 忽略 */ }
+    try {
+        window.history.back()
+    } catch (e) {
+        selfPopping = false
+    }
+}
+
+/**
+ * 延时归还哨兵。
+ * 「关掉一个浮层、紧接着又打开另一个」很常见（弹窗里点按钮换到另一个弹窗），
+ * 如果一空栈就立刻 history.back()，会在两次打开之间多退一条历史，
+ * 之后按返回就可能直接退出页面。这里给一个短延时窗口，窗口内又压了新层就作废。
+ */
+function schedulePopSentinel() {
+    if (popTimer) window.clearTimeout(popTimer)
+    popTimer = window.setTimeout(() => {
+        popTimer = null
+        if (!layers.length) popSentinel()
+    }, 120)
+}
+
+function cancelPopSentinel() {
+    if (!popTimer) return
+    window.clearTimeout(popTimer)
+    popTimer = null
+}
+
+/** 关掉栈顶一层；返回是否真的关掉了 */
+function closeTop() {
+    const top = layers[layers.length - 1]
+    if (!top) return false
+    closing = true
+    try {
+        top.close()
+    } catch (e) {
+        /* 单层关闭抛错不应影响栈本身 */
+    }
+    // 关闭动作通常是异步的（弹窗有动画），下一帧再放开重入保护
+    window.setTimeout(() => { closing = false }, 0)
+    return true
+}
+
+function install() {
+    if (installed || typeof window === 'undefined') return
+    installed = true
+
+    /* ── 移动端：返回键 / 边缘滑动返回 ───────────────────────── */
+    window.addEventListener('popstate', () => {
+        if (selfPopping) {
+            selfPopping = false
+            return
+        }
+        // 不是本模块压的哨兵被退（例如页面自己的目录历史）：不理会
+        if (!sentinel) return
+        sentinel = false
+        if (!closeTop()) return
+        /*
+         * 告诉页面「这次返回已被浮层消费」：浮层关掉的瞬间 hasOpenFloatingLayer()
+         * 就变 false 了，不打这个时间戳页面会把它当成自己的返回键，顺手回上一级目录。
+         */
+        try { window.__gohubBackGuardAt = Date.now() } catch (e) { /* 忽略 */ }
+        // 关掉一层后若下面还有层，把哨兵补回来（多层逐层关闭）
+        window.setTimeout(() => {
+            if (layers.length) pushSentinel()
+        }, 80)
+    })
+
+    /* ── 桌面端：Esc 只关最上面一层 ──────────────────────────── */
+    document.addEventListener('keydown', (e) => {
+        if (closing) return
+        if (e.key !== 'Escape' && e.keyCode !== 27) return
+        if (!layers.length) return
+        const top = layers[layers.length - 1]
+        /*
+         * Element Plus 弹窗自己就吃 Esc（close-on-press-escape），而且它的处理更聪明：
+         * 下拉框展开、输入法候选未结束时只收下拉不关弹窗。这类层标注 esc:false，
+         * 交给组件原生处理，我们只在自定义层（灯箱等）上接管 Esc。
+         */
+        if (top.esc === false) return
+        // 阻止组件自己的 Esc 处理再关一次下层
+        e.preventDefault()
+        e.stopPropagation()
+        closeTop()
+    }, true)
+}
+
+/**
+ * 注册一层浮层。
+ * 重复注册同一个 id 时以最后一次为准（幂等，避免组件重复触发生成重复层）。
+ *
+ * @param {string} id     层标识
+ * @param {Function} close 关闭该层的回调
+ * @param {{ esc?: boolean }} [opts] esc:false 表示这层的 Esc 交给组件自己处理
+ */
+export function registerLayer(id, close, opts) {
+    if (typeof window === 'undefined') return
+    install()
+    const i = layers.findIndex((l) => l.id === id)
+    if (i >= 0) layers.splice(i, 1)
+    layers.push({ id, close, esc: !(opts && opts.esc === false) })
+    // 新层压上来了：取消可能正在等待的「归还哨兵」
+    cancelPopSentinel()
+    pushSentinel()
+}
+
+/** 注销一层（组件自己关闭 / 卸载时调用） */
+export function unregisterLayer(id) {
+    const i = layers.findIndex((l) => l.id === id)
+    if (i >= 0) layers.splice(i, 1)
+    // 全部关完才归还哨兵，否则用户下次要按两下返回才有反应
+    if (!layers.length) schedulePopSentinel()
+}
+
+/** 该层是否仍注册着 */
+export function hasLayer(id) {
+    return layers.some((l) => l.id === id)
+}
+
+/** 当前栈顶的 id（无层时返回空串） */
+export function topLayerId() {
+    const top = layers[layers.length - 1]
+    return top ? top.id : ''
+}
+
+/** 当前层数 */
+export function layerCount() {
+    return layers.length
+}

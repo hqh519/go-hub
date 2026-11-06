@@ -1,0 +1,1 @@
+import{d as i,e as r}from"./index-Cc51lpcC.js";let a=!1;async function n(e,t={}){e.startsWith("/api")||(e=`/api${e}`),t.credentials="include",t.headers={...t.headers};const s=await fetch(e,t);return s.status===401&&!a&&(a=!0,i.commit("setAdminLoggedIn",!1),r.push("/adminLogin").finally(()=>{a=!1})),s}export{n as f};

@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>go图床 · 上传测试页</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; background: #f1f5f9; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+  .card { background: #fff; border-radius: 16px; padding: 32px; width: 100%; max-width: 560px; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+  h1 { font-size: 20px; color: #0f172a; margin-bottom: 4px; }
+  .sub { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+  #drop { border: 2px dashed #cbd5e1; border-radius: 12px; padding: 40px 16px; text-align: center; color: #64748b; font-size: 14px; cursor: pointer; transition: all .2s; }
+  #drop.over { border-color: #3b82f6; background: #eff6ff; }
+  input[type=text] { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px; margin-top: 12px; font-size: 14px; }
+  button { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-size: 14px; cursor: pointer; margin-top: 12px; }
+  button:hover { background: #1d4ed8; }
+  #results { margin-top: 20px; }
+  .item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 10px; font-size: 13px; word-break: break-all; }
+  .item img { max-width: 100%; border-radius: 6px; margin-top: 8px; }
+  .item a { color: #2563eb; }
+  .copy { background: #f1f5f9; color: #334155; padding: 2px 8px; border-radius: 6px; cursor: pointer; margin-left: 6px; font-size: 12px; }
+  #login { margin-bottom: 16px; display: flex; gap: 8px; }
+  #login input { margin-top: 0; flex: 1; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>go图床 · 上传测试页</h1>
+  <div class="sub">支持点击选择 / 拖入 / Ctrl+V 粘贴 / 链接上传。正式版前端为 Vue3 + Element Plus（M3 阶段接入）。</div>
+  <div id="login">
+    <input type="password" id="authCode" placeholder="认证码（默认 GoHub-user）">
+    <button onclick="login()">登录</button>
+  </div>
+  <div id="drop">点击选择图片，或把图片拖到这里，或直接 Ctrl+V 粘贴截图</div>
+  <input type="file" id="picker" multiple accept="image/*" style="display:none">
+  <div style="display:flex; gap:8px;">
+    <input type="text" id="urlInput" placeholder="或粘贴图片链接上传">
+    <button onclick="uploadUrl()">链接上传</button>
+  </div>
+  <div id="results"></div>
+</div>
+<script>
+async function login() {
+  const r = await fetch('/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ authCode: document.getElementById('authCode').value }), credentials: 'include' });
+  const j = await r.json();
+  alert(j.success ? '登录成功' : (j.message || '登录失败'));
+}
+async function uploadFile(f) {
+  const fd = new FormData();
+  fd.append('file', f);
+  const r = await fetch('/upload?serverCompress=true&uploadNameType=default&uploadChannel=default', { method: 'POST', body: fd, credentials: 'include' });
+  return r.json();
+}
+async function uploadUrl() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) return;
+  const r = await fetch('/api/fetchRes', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }), credentials: 'include' });
+  const j = await r.json();
+  if (j.success) addResult(j.data[0]); else alert(j.message);
+}
+function addResult(item) {
+  const div = document.createElement('div');
+  div.className = 'item';
+  const link = location.origin + item.src;
+  div.innerHTML = '<b>' + (item.name || '') + '</b> <span class="copy" onclick="copyText(this)">复制外链</span><br><a href="' + link + '" target="_blank">' + link + '</a><img src="' + link + '" loading="lazy">';
+  document.getElementById('results').prepend(div);
+}
+function copyText(el) {
+  const link = el.parentElement.querySelector('a').href;
+  navigator.clipboard.writeText(link);
+  el.textContent = '已复制';
+}
+const drop = document.getElementById('drop');
+const picker = document.getElementById('picker');
+drop.onclick = () => picker.click();
+picker.onchange = () => [...picker.files].forEach(async f => { const j = await uploadFile(f); if (j.success) addResult(j.data[0]); else alert(j.message); });
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); [...e.dataTransfer.files].forEach(async f => { const j = await uploadFile(f); if (j.success) addResult(j.data[0]); else alert(j.message); }); };
+document.addEventListener('paste', async e => {
+  for (const item of (e.clipboardData || {}).items || []) {
+    if (item.type.startsWith('image/')) {
+      const j = await uploadFile(item.getAsFile());
+      if (j.success) addResult(j.data[0]); else alert(j.message);
+    }
+  }
+});
+</script>
+</body>
+</html>

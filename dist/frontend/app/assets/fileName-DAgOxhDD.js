@@ -1,0 +1,1 @@
+function N(e){const t=String(e??"");if(!t)return{start:"",end:""};if(t.length<=6)return{start:t,end:""};let n=Math.round(t.length*.4);return n<4&&(n=4),n>12&&(n=12),t.length-n<4&&(n=t.length-4),n<=0?{start:t,end:""}:{start:t.slice(0,t.length-n),end:t.slice(-n)}}export{N as s};

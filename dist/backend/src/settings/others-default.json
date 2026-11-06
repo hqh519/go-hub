@@ -1,0 +1,29 @@
+{
+  "telemetry": {
+    "enabled": true,
+    "fixed": false
+  },
+  "randomImageAPI": {
+    "enabled": false,
+    "allowedDir": "",
+    "fixed": false
+  },
+  "cloudflareApiToken": {
+    "fixed": false
+  },
+  "webDAV": {
+    "enabled": false,
+    "username": "",
+    "password": "",
+    "uploadChannel": "",
+    "channelName": "",
+    "internalToken": "",
+    "internalTokenId": "",
+    "fixed": false
+  },
+  "publicBrowse": {
+    "enabled": false,
+    "allowedDir": "",
+    "fixed": false
+  }
+}

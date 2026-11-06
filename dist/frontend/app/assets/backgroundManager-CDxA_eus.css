@@ -1,0 +1,1 @@
+.background-image1:not([src]),.background-image2:not([src]){display:none}body.wallpaper-active{background-color:transparent!important}body.wallpaper-active .wallpaper-background-active{background:transparent!important;background-color:transparent!important}

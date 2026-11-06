@@ -1,0 +1,38 @@
+# # =============================================================================
+# # go图床 —— 目录说明（先读这段再改规则）
+# #
+# #   debug/   本地调试：源码、node_modules、真实 .env、SQLite 库、日志、截图
+# #            → 全部不入库
+# #   dist/    生产包：脱敏后的源码 + 产物 + 配置模板，**这个目录才是要上传 git 的**
+# #            → dist/ 内有自己的 .gitignore（由 debug/tools/sync-dist.js 生成）
+# #   docs/    文档（会同步一份到 dist/docs）
+# #
+# # 常规用法：cd dist && git init && git add -A && git commit -m "v1.6.0"
+# # 本文件仅在「误在项目根执行 git init」时兜底：只放行 dist/ 与文档。
+# # =============================================================================
+
+
+
+
+# 1. 先忽略所有内容
+*
+
+# 2. 必须放行 .gitignore 本身
+!.gitignore
+
+# 3. 放行根目录的 dist（让 Git 能进大门）
+!/dist/
+
+# 4. 放行 dist 下的 frontend 和 backend（让 Git 能进小门）
+!/dist/frontend/
+!/dist/backend/
+
+# 5. 给 frontend 和 backend 里面所有内容全部放行
+!/dist/frontend/**
+!/dist/backend/**
+
+# 6. 进一步排除指定目录（双重保险，其实前面 * 已经排除了）
+dist/docker/
+dist/docs/
+.vscode
+

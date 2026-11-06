@@ -1,0 +1,29 @@
+# dist/ 是「可公开的生产包」。本文件只负责兜底：
+# 正常情况下 sync-dist.js 已把敏感文件挡在外面（不会出现在这里），
+# 这里的规则是为了防止以后有人手工把 .env / 数据库 / 日志塞进来。
+
+# 环境变量（真实密钥，绝不入库）
+.env
+.env.*
+!.env.example
+
+# 运行期数据
+data/
+**/prisma/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+logs/
+*.log
+# 内置「本地存储」渠道的实体文件（属于运行期数据，不进仓库）
+uploads/
+**/uploads/
+
+# 依赖与构建缓存（各机自装）
+node_modules/
+*.tsbuildinfo
+
+# 镜像包体积过大，走发布包分发
+*.tar
+*.tar.gz
