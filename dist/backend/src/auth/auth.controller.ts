@@ -13,6 +13,8 @@ import { appLog } from '../common/app-log';
 
 /** 会话有效期默认值（天）—— 账户未设置时生效（v202610221824） */
 const DEFAULT_SESSION_DAYS = 7;
+/** 超级管理员会话有效期（天）—— v1.0.3：固定 1 天，不可配置 */
+const SUPER_ADMIN_SESSION_DAYS = 1;
 
 /**
  * 认证接口 —— 统一账户体系。
@@ -154,8 +156,14 @@ export class AuthController {
         canEdit: true,
         canDelete: true,
         totpEnabled: false,
-        frontDays: 7,
-        backDays: 7,
+        /*
+         * v1.0.3：超级管理员是「应急找回」角色，不该长期挂着登录态。
+         * 会话固定 1 天、不读「用户管理」里的账户设置、也不做可配置项 ——
+         * 用完就过期，避免长期有效的超管凭据留在浏览器里。
+         * （管理员 admin 走下面的 users 表分支，按各自账户的 frontSessionDays 生效。）
+         */
+        frontDays: SUPER_ADMIN_SESSION_DAYS,
+        backDays: SUPER_ADMIN_SESSION_DAYS,
       };
     }
 

@@ -12,9 +12,10 @@ import { prisma } from './prisma';
  *   · type 为后续内容系统预留（file / note / article / todo / nav …），
  *     不同类型的同名标签互不影响（「猫咪」可以同时是文件标签和笔记标签）。
  *
- * 唯一性由应用层保证：数据库不建 (instanceId, type, name) 唯一索引，
- * 原因是老库里同名标签可能分属多个 owner，直接加唯一索引会让 upgrade 时 db push 失败。
- * 历史重复数据由启动时的合并逻辑处理（tag-dedupe）。
+ * v1.0.3：唯一性已下沉到数据库层 —— schema 里是
+ *   `@@unique([name, instanceId, type])`（旧键 [name, instanceId, owner] 已删除）。
+ *   升级前由 prisma/compat-sync.js 先合并历史重复，因此 db push 不会因重复数据失败。
+ *   应用层仍保留「先查后建」的写法：并发插入撞唯一键时回查一次，不把错误抛给调用方。
  */
 export const TAG_TYPE_FILE = 'file';
 
@@ -25,7 +26,7 @@ export function tagScope(instanceId: string, type: string = TAG_TYPE_FILE): TagS
   return { instanceId: String(instanceId || ''), type: String(type || TAG_TYPE_FILE) };
 }
 
-type TagRow = { id: string; name: string; instanceId: string; type?: string; owner: string; metas?: string };
+export type TagRow = { id: string; name: string; instanceId: string; type?: string; owner: string; metas?: string };
 
 /**
  * 取标签（不存在则创建）。按「实例 + 类型 + 名称」定位，取最早创建的那条。
@@ -49,11 +50,15 @@ export async function findOrCreateTag(
   });
   if (existed) return existed as unknown as TagRow;
   try {
-    return (await prisma.tag.create({
-      data: { name: n, instanceId: scope.instanceId, type: scope.type, owner: String(operator || '') },
-    })) as unknown as TagRow;
+    // v1.0.3：数据库已有 (name, instanceId, type) 唯一键 → 直接用 upsert，省掉一次竞态窗口
+    const created = await prisma.tag.upsert({
+      where: { name_instanceId_type: { name: n, instanceId: scope.instanceId, type: scope.type } },
+      update: {},
+      create: { name: n, instanceId: scope.instanceId, type: scope.type, owner: String(operator || '') },
+    });
+    return created as unknown as TagRow;
   } catch {
-    // 并发下可能被别人先建（或命中旧的复合唯一键）→ 再查一次
+    // 兜底：极端情况下（老库结构未同步）再查一次
     const again = await prisma.tag.findFirst({ where: { ...scope, name: n }, orderBy: { createdAt: 'asc' } });
     if (again) return again as unknown as TagRow;
     throw new Error(`标签创建失败：${n}`);

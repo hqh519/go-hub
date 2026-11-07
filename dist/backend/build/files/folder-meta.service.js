@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.FOLDER_TYPE_FILE = void 0;
 exports.sha256Hex = sha256Hex;
 exports.normalizeFolderPath = normalizeFolderPath;
 exports.extraFoldersKey = extraFoldersKey;
@@ -23,6 +24,7 @@ const file_view_1 = require("../common/file-view");
 function sha256Hex(text) {
     return (0, node_crypto_1.createHash)('sha256').update(String(text || ''), 'utf8').digest('hex');
 }
+exports.FOLDER_TYPE_FILE = 'file';
 function normalizeFolderPath(p) {
     return String(p || '')
         .replace(/\.\./g, '_')
@@ -84,7 +86,7 @@ async function findFolderMeta(path, instanceId, owner) {
     if (!p)
         return null;
     return prisma_1.prisma.folderMeta.findFirst({
-        where: { path: p, instanceId: instanceId || '', ...(owner ? { owner } : {}) },
+        where: { path: p, instanceId: instanceId || '', type: exports.FOLDER_TYPE_FILE, ...(owner ? { owner } : {}) },
     });
 }
 function parseGalleryDirs(allowedDir) {
@@ -110,7 +112,10 @@ async function listSharedFoldersFor(username, instanceId) {
     if (!u)
         return [];
     const rows = await prisma_1.prisma.folderMeta.findMany({
-        where: String(instanceId) === '*' ? {} : { instanceId: instanceId || '' },
+        where: {
+            type: exports.FOLDER_TYPE_FILE,
+            ...(String(instanceId) === '*' ? {} : { instanceId: instanceId || '' }),
+        },
     });
     return rows
         .filter((r) => r.owner && r.owner !== u && parseSharedUsers(r.sharedUsers).includes(u))
@@ -129,6 +134,7 @@ async function listFoldersSharedBy(username, instanceId) {
     const rows = await prisma_1.prisma.folderMeta.findMany({
         where: {
             owner: u,
+            type: exports.FOLDER_TYPE_FILE,
             ...(String(instanceId) === '*' ? {} : { instanceId: instanceId || '' }),
         },
     });
@@ -155,7 +161,7 @@ async function folderSharedPermission(folderPath, instanceId, username) {
     for (let i = parts.length; i >= 1; i--)
         chain.push(parts.slice(0, i).join('/'));
     const rows = await prisma_1.prisma.folderMeta.findMany({
-        where: { instanceId: instanceId || '', path: { in: chain } },
+        where: { instanceId: instanceId || '', type: exports.FOLDER_TYPE_FILE, path: { in: chain } },
     });
     const hit = rows
         .filter((r) => r.owner && r.owner !== u && parseSharedUsers(r.sharedUsers).includes(u))

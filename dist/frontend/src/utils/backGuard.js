@@ -34,6 +34,19 @@ function visibleOverlays() {
     const list = Array.from(document.querySelectorAll('.el-overlay'))
     return list.filter((el) => {
         if (!el || !el.isConnected) return false
+        /*
+         * v1.0.3：已经由组件自己显式登记过的浮层，这里**不再重复登记**。
+         *
+         * 以前「灯箱里打开文件详情」会有两层记录指向同一个弹窗：
+         *   ① AdminDashBoard 在 watcher 里 registerLayer('file-detail', …)
+         *   ② 本文件的 MutationObserver 又给它登记了一个 overlay:N
+         * 栈就变成 [media-viewer, file-detail, overlay:N]，栈顶是 overlay:N ——
+         * 移动端返回时走的是「点关闭按钮 / 派发 Esc」这条兜底路径（有时弹窗没有
+         * 可点的关闭按钮，于是这次返回被白白消费掉），表现就是「有时能关、有时关不掉」。
+         * 现在带 data-gohub-layer 标记的弹窗只由组件自己登记，栈顺序恒为
+         * [灯箱, 详情页]，一次返回稳定关一层。
+         */
+        if (el.querySelector('[data-gohub-layer]')) return false
         const style = window.getComputedStyle(el)
         if (style.display === 'none' || style.visibility === 'hidden') return false
         // 关闭动画期间仍留在 DOM 里，用是否有渲染盒子兜底
@@ -51,9 +64,13 @@ function closeOverlay(el) {
         btn.click()
         return
     }
-    // 没有关闭按钮（如 :show-close="false"）：请 Element Plus 按 ESC 逻辑处理，
-    // 组件显式关掉了 ESC（close-on-press-escape=false）时它不会响应，
-    // 这种弹窗本身就是"必须处理完才能走"，返回键不生效是预期行为。
+    /*
+     * 没有关闭按钮（如 :show-close="false"）：请 Element Plus 按 ESC 逻辑处理。
+     * v1.0.3：事件必须派发到**弹窗元素本身**—— Element Plus 的 Esc 监听挂在
+     * dialog / overlay 上，派发到 document 时事件不会向下传播，等于什么都没发生
+     * （「按了返回没反应」的另一半原因）。这里先在弹窗内派发，再兜底到 document。
+     */
+    const target = el.querySelector('.el-dialog, .el-drawer, .el-message-box') || el
     const evt = new KeyboardEvent('keydown', {
         key: 'Escape',
         code: 'Escape',
@@ -62,7 +79,7 @@ function closeOverlay(el) {
         bubbles: true,
         cancelable: true
     })
-    document.dispatchEvent(evt)
+    target.dispatchEvent(evt)
 }
 
 let installed = false

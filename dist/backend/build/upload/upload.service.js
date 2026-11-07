@@ -2302,6 +2302,116 @@ let UploadService = class UploadService {
             create: { fileId: rec.id, channelId: backup.id, ...this.copyWriteData(result, backup), status: 'active' },
         });
     }
+    async convertChannel(input) {
+        const rec = await prisma_1.prisma.fileRecord.findFirst({
+            where: {
+                uploader: input.uploader,
+                status: 'active',
+                OR: [{ id: input.recordId }, { name: input.recordId }],
+            },
+            include: { copies: { include: { channel: true } } },
+        });
+        if (!rec)
+            return { ok: false, message: '文件不存在或无权操作' };
+        const activeCopies = rec.copies.filter((c) => c.status === 'active');
+        if (!activeCopies.length)
+            return { ok: false, message: '该文件没有可用的渠道副本，无法转存' };
+        const sourceCopy = activeCopies.find((c) => c.isPrimary) || activeCopies[0];
+        const sourceCh = sourceCopy.channel;
+        if (!sourceCh)
+            return { ok: false, message: '源渠道记录已不存在，无法转存' };
+        const targetCh = await prisma_1.prisma.channel.findUnique({ where: { id: input.targetChannelId } });
+        if (!targetCh)
+            return { ok: false, message: '目标渠道不存在' };
+        if (!targetCh.enabled)
+            return { ok: false, message: `目标渠道「${targetCh.name}」已停用` };
+        if (targetCh.id === sourceCh.id)
+            return { ok: false, message: '目标渠道与当前渠道相同，无需转存' };
+        const isLocalType = (t) => t === 'local' || t === 'localfiles';
+        const srcLocal = isLocalType(sourceCh.type);
+        const dstLocal = isLocalType(targetCh.type);
+        if (targetCh.type === 'localfiles') {
+            return { ok: false, message: '「本地文件」是浏览入口，不能作为转存目标，请选择本地存储渠道' };
+        }
+        if (srcLocal && dstLocal)
+            return { ok: false, message: '源渠道与目标渠道都是本地存储，无需转存' };
+        if (!srcLocal && !dstLocal) {
+            return { ok: false, message: '第三方渠道之间不支持直接转存，请先「转本地」再「转异地」' };
+        }
+        const registered = String(rec.uploadSource || '') === 'Record';
+        const deleteSource = srcLocal ? true : input.deleteSource === true;
+        if (deleteSource && registered) {
+            return { ok: false, message: '登记文件不允许删除源件（源文件不在本系统管理范围内）' };
+        }
+        const srcInfo = this.toChannelInfo(sourceCh);
+        const srcAdapter = (0, adapter_factory_1.createAdapter)(srcInfo);
+        let buf;
+        if (srcLocal) {
+            const abs = await (0, local_adapter_1.localFileAbsOf)(sourceCopy.remoteKey);
+            if (!abs)
+                return { ok: false, message: '本地源文件已不存在（可能被手工删除），无法转存' };
+            buf = await fs_1.promises.readFile(abs);
+        }
+        else {
+            const url = srcAdapter.buildDirectUrl((0, adapter_factory_1.toCopyInfo)(sourceCopy), srcInfo, true);
+            if (!url)
+                return { ok: false, message: '无法构造源渠道直链，转存失败' };
+            const resp = await fetch(url);
+            if (!resp.ok)
+                return { ok: false, message: `拉取源文件失败（HTTP ${resp.status}）` };
+            buf = Buffer.from(await resp.arrayBuffer());
+        }
+        if (!buf.length)
+            return { ok: false, message: '源文件为空，已取消转存' };
+        const dstInfo = this.toChannelInfo(targetCh);
+        const dstAdapter = (0, adapter_factory_1.createAdapter)(dstInfo);
+        const dstKey = this.makeKeyFor({ id: targetCh.id, code: targetCh.code, name: targetCh.name, type: targetCh.type, config: targetCh.config }, rec.originalName, undefined, rec.md5 || (0, crypto_1.createHash)('md5').update(buf).digest('hex'), rec.uploader || '');
+        let result;
+        try {
+            result = await dstAdapter.upload({ buffer: buf, mime: rec.mime, originalName: rec.originalName }, dstKey, dstInfo, { owner: rec.uploader || '', instanceId: rec.instanceId || '' });
+        }
+        catch (err) {
+            app_log_1.appLog.warn('channel', `文件转存失败：写入目标渠道「${targetCh.name}」出错`, `${err.message} ｜ 文件=${rec.name}`, input.ip);
+            return { ok: false, message: `写入目标渠道失败：${err.message}` };
+        }
+        try {
+            await prisma_1.prisma.$transaction(async (tx) => {
+                await tx.fileCopy.updateMany({ where: { fileId: rec.id }, data: { isPrimary: false } });
+                await tx.fileCopy.upsert({
+                    where: { fileId_channelId: { fileId: rec.id, channelId: targetCh.id } },
+                    update: { ...this.copyWriteData(result, targetCh), status: 'active', isPrimary: true },
+                    create: {
+                        fileId: rec.id,
+                        channelId: targetCh.id,
+                        ...this.copyWriteData(result, targetCh),
+                        status: 'active',
+                        isPrimary: true,
+                    },
+                });
+            });
+        }
+        catch (err) {
+            return { ok: false, message: `更新文件渠道数据失败：${err.message}` };
+        }
+        let deletedSource = false;
+        if (deleteSource) {
+            try {
+                await srcAdapter.delete((0, adapter_factory_1.toCopyInfo)(sourceCopy), srcInfo);
+            }
+            catch (err) {
+                app_log_1.appLog.warn('channel', `转存后删除源件失败（记录已摘除）：${sourceCh.name}`, `${err.message} ｜ 文件=${rec.name}`, input.ip);
+            }
+            await prisma_1.prisma.fileCopy.deleteMany({ where: { fileId: rec.id, channelId: sourceCh.id } }).catch(() => undefined);
+            deletedSource = true;
+        }
+        app_log_1.appLog.info('channel', `文件转存成功：${sourceCh.name}（${sourceCh.type}）→ ${targetCh.name}（${targetCh.type}）`, `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ 外链不变`, input.ip);
+        return {
+            ok: true,
+            channelName: targetCh.name,
+            direction: dstLocal ? 'to-local' : 'to-remote',
+            deletedSource,
+        };
+    }
 };
 exports.UploadService = UploadService;
 exports.UploadService = UploadService = UploadService_1 = __decorate([

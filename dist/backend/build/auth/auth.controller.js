@@ -27,6 +27,7 @@ const recovery_1 = require("../common/recovery");
 const mail_service_1 = require("../mail/mail.service");
 const app_log_1 = require("../common/app-log");
 const DEFAULT_SESSION_DAYS = 7;
+const SUPER_ADMIN_SESSION_DAYS = 1;
 let AuthController = class AuthController {
     static { AuthController_1 = this; }
     sysConfig;
@@ -112,8 +113,8 @@ let AuthController = class AuthController {
                 canEdit: true,
                 canDelete: true,
                 totpEnabled: false,
-                frontDays: 7,
-                backDays: 7,
+                frontDays: SUPER_ADMIN_SESSION_DAYS,
+                backDays: SUPER_ADMIN_SESSION_DAYS,
             };
         }
         const u = await prisma_1.prisma.user.findUnique({ where: { username } });

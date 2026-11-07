@@ -45,6 +45,7 @@ import { hasRecordDomains, joinRecordUrl, recordLoadOrigin } from '../common/rec
 import { userInInstance } from '../common/instance-access';
 import { TAG_TYPE_FILE, findOrCreateTag } from '../common/tags';
 import {
+  FOLDER_TYPE_FILE,
   extraFoldersKey,
   extraFoldersOf,
   findFolderMeta,
@@ -1101,6 +1102,8 @@ export class LinkController {
           owner: me,
           path,
           instanceId,
+          // v1.0.3：目录属性按「实例 + 类型」隔离，这里固定写文件分类
+          type: FOLDER_TYPE_FILE,
           passwordHash,
           note: String(body?.note || '').slice(0, 4000),
           sharedUsers,
@@ -1493,9 +1496,13 @@ export class ManageController {
     return isAdminRole(currentSession(req)?.role);
   }
 
-  /** 把入参 fileIds 收敛为「当前用户有权操作」的子集（管理员不限制） */
+  /**
+   * 把入参 fileIds 收敛为「当前用户有权操作」的子集。
+   *
+   * v1.0.3：**管理员不再豁免** —— 文件管理里每个账户（含管理员）只能看到、只能操作
+   * 自己 uploader 名下的文件；跨账户的文件共享走「目录共享 / 对外分享」，不走管理端。
+   */
   private async filterOwned(fileIds: string[], req: Request): Promise<string[]> {
-    if (this.admin(req)) return fileIds;
     const user = currentSession(req)?.user || '';
     const rows = await prisma.fileRecord.findMany({
       where: { uploader: user, OR: [{ id: { in: fileIds } }, { name: { in: fileIds } }] },
@@ -1591,6 +1598,7 @@ export class ManageController {
     if (!user) return [];
     const rows = await prisma.folderMeta.findMany({
       where: {
+        type: FOLDER_TYPE_FILE,
         ...(String(instanceId) === '*' ? {} : { instanceId: instanceId || '' }),
         sharedUsers: { not: '[]' },
       },
@@ -1846,8 +1854,17 @@ export class ManageController {
     }
 
     const session = currentSession(req);
-    // 归属过滤：普通用户只能看到自身账户的文件；管理员可用 ?user= 切换（空 / all = 全部用户）
-    const ownerFilter = this.admin(req) ? (q.user && q.user !== 'all' ? q.user : '') : session?.user || '';
+    /*
+     * 归属过滤（v1.0.3）：
+     *   每个账户（含管理员）只列出自己 uploader 名下的文件。
+     *   旧实现里管理员不传 ?user= 时 ownerFilter 为空串 = 全库可见，
+     *   于是「管理员在文件管理里能看到并操作别人文件」——
+     *   这是本次修复的核心：数据面一律按登录账户收窄，跨账户只能通过共享 / 对外分享。
+     *   ?user= 参数保留但只允许等于自己（老前端 / 老书签不会报错）。
+     */
+    const ownerFilter = String(q.user || '') && q.user !== 'all' && String(q.user) === String(session?.user || '')
+      ? String(q.user)
+      : session?.user || '';
     const recursive = q.recursive === 'true';
     const dir = normalizeDir(q.dir);
     const search = (q.search || '').trim().toLowerCase();
@@ -2295,6 +2312,7 @@ export class ManageController {
       try {
         const metaRows = await prisma.folderMeta.findMany({
           where: {
+            type: FOLDER_TYPE_FILE,
             // 「全部实例」查看时不限实例（与列表口径一致）
             ...(allInstances ? {} : { instanceId: instanceFilter || '' }),
             path: { in: directories },
@@ -2665,7 +2683,7 @@ export class ManageController {
     const key = wildcardParam(req);
     if (!key) return { success: false, message: '缺少文件名' };
     // 普通用户只能删自己的文件
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     const own = owner ? { uploader: owner } : {};
     /*
      * v1.0.0：删除也必须限定实例 —— 原来只按 folder 前缀匹配，
@@ -2717,6 +2735,7 @@ export class ManageController {
       try {
         const metas = await prisma.folderMeta.findMany({
           where: {
+            type: FOLDER_TYPE_FILE,
             OR: [{ path: prefix }, { path: { startsWith: `${prefix}/` } }],
             ...(owner ? { owner } : {}),
             // v1.0.0：目录属性行同样按实例隔离，避免误删其它实例的同名目录属性
@@ -2798,7 +2817,7 @@ export class ManageController {
    */
   @Get('trash')
   async trashList(@Req() req: Request, @Query() q: Record<string, string>) {
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     // v3.0.0：回收站同样按实例隔离（空串/不传 = 默认实例）
     const instanceFilter = String(q.instanceId ?? '');
     const rows = await prisma.fileRecord.findMany({
@@ -2918,42 +2937,95 @@ export class ManageController {
     const pageSize = Math.min(200, Math.max(1, Number(q.pageSize) || 48));
     const page = Math.max(1, Number(q.page) || 1);
     /*
-     * v3.0.0（R14）：回收站合并显示「文件夹」条目（settings.deletedFolders）——
-     * 目录删除后文件是散条进回收站，这里把目录本体也作为一条 isFolder 条目排进去
-     * （按删除时间倒序混排），支持整体恢复（重新登记目录 + 还原属性）与彻底删除
-     * （连带清掉该前缀下所有仍处于软删状态的文件记录）。
+     * v1.0.3：回收站改为「按目录层级浏览」。
+     *
+     * 旧行为：所有软删文件 + 已删目录条目拉平成一条列表，靠 folderHint 提示原目录，
+     * 文件一多就完全看不出层级 —— 用户没法「进到某个目录里看看它删了什么」。
+     *
+     * 新行为：与文件管理列表一致 ——
+     *   · 只有「当前目录」的直接子目录 + 直接子文件会被返回；
+     *   · 子目录既包括 settings.deletedFolders 里登记过的已删目录，
+     *     也包括「只删了里面的文件、目录本身没删」的隐式目录（由文件路径反推）；
+     *   · 进入子目录用 ?dir=<路径>，返回上级用响应里的 parent。
      */
-    let folderItems: Record<string, unknown>[] = [];
+    const dirParam = String(q.dir || '').replace(/^\/+|\/+$/g, '');
+    const parentOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+
+    let folderEntries: { path: string; instanceId?: string; deletedAt: any }[] = [];
     try {
-      folderItems = (await this.listDeletedFolders(owner))
-        .filter((e) => (e.instanceId || '') === instanceFilter)
-        .map((e) => {
-          const base = e.path.split('/').pop() || e.path;
-          return {
-            id: `folder:${e.path}`,
-            name: base,
-            originalName: base,
-            size: 0,
-            mime: '',
-            folder: e.path.includes('/') ? e.path.slice(0, e.path.lastIndexOf('/')) : '',
-            uploader: owner,
-            uploadSource: '',
-            status: 'deleted',
-            deletedAt: e.deletedAt,
-            isFolder: true,
-            channels: [],
-          };
-        });
+      folderEntries = (await this.listDeletedFoldersFor(req, owner)).filter(
+        (e) => (e.instanceId || '') === instanceFilter,
+      ) as typeof folderEntries;
     } catch (err) {
       appLog.warn('file', `回收站目录条目读取失败`, (err as Error).message);
     }
-    const merged = [...folderItems as typeof mapped, ...mapped].sort(
-      (a, b) => new Date(b.deletedAt as any).getTime() - new Date(a.deletedAt as any).getTime(),
-    );
+
+    // 所有仍然「存在层级」的路径（含逐级父目录），用于算出当前层的子目录
+    const pathSet = new Set<string>();
+    const addChain = (raw: string) => {
+      const segs = String(raw || '').split('/').filter(Boolean);
+      for (let i = 1; i <= segs.length; i += 1) pathSet.add(segs.slice(0, i).join('/'));
+    };
+    for (const r of filtered) if (r.folder) addChain(r.folder);
+    for (const e of folderEntries) if (e.path) addChain(e.path);
+
+    const children = Array.from(pathSet).filter((p) => parentOf(p) === dirParam);
+    const latestDeletedAtUnder = (prefix: string) => {
+      let latest = 0;
+      for (const r of filtered) {
+        const f = String(r.folder || '');
+        if (f === prefix || f.startsWith(`${prefix}/`)) latest = Math.max(latest, new Date(r.deletedAt as any).getTime());
+      }
+      for (const e of folderEntries) {
+        if (e.path === prefix || String(e.path).startsWith(`${prefix}/`)) {
+          latest = Math.max(latest, new Date(e.deletedAt as any).getTime());
+        }
+      }
+      return latest ? new Date(latest) : null;
+    };
+
+    const folderItems = children.map((p) => {
+      const base = p.split('/').pop() || p;
+      return {
+        id: `folder:${p}`,
+        name: base,
+        originalName: base,
+        size: 0,
+        mime: '',
+        folder: parentOf(p),
+        // 前端据此进入回收站内的子目录（与 folder 字段区分：folder 是「原所在目录」）
+        trashPath: p,
+        uploader: owner,
+        uploadSource: '',
+        status: 'deleted',
+        deletedAt: latestDeletedAtUnder(p),
+        isFolder: true,
+        registered: folderEntries.some((e) => e.path === p),
+        channels: [],
+      };
+    });
+
+    // 当前层的文件：folder 正好等于当前目录（不是「以它开头」，保证只显示直接子项）
+    const levelFiles = mapped.filter((m) => String((m as any).folder || '') === dirParam);
+    const merged = [
+      ...(folderItems as unknown as typeof mapped),
+      ...levelFiles,
+    ];
     const total = merged.length;
     const start = (page - 1) * pageSize;
     const items = merged.slice(start, start + pageSize);
-    return { success: true, items, total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) };
+    return {
+      success: true,
+      items,
+      total,
+      page,
+      pageSize,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
+      // v1.0.3：当前所在目录 + 上一级目录（前端面包屑 / 返回上级用）
+      path: dirParam,
+      parent: dirParam ? parentOf(dirParam) : '',
+      isRoot: !dirParam,
+    };
   }
 
   /** 从回收站恢复单个文件（撤销软删除标记）；v3.0.0（R14）：支持恢复文件夹条目 */
@@ -2965,14 +3037,34 @@ export class ManageController {
      * v1.0.1：恢复同样要限定归属（管理员不受限）——
      * 原来按 id 直接取记录，普通用户猜到别人的记录 id 就能把别人的文件从回收站里恢复出来。
      */
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     if (key.startsWith('folder:')) {
       const path = key.slice('folder:'.length);
       // v1.0.0：同一个路径在不同实例下可能各有一条回收站记录，取实例对得上的那条
-      const entry = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
-      if (!entry) return { success: false, message: '回收站中不存在该目录' };
-      const restored = await this.restoreFolderEntry(owner, path, String(entry.instanceId || ''));
-      return { success: true, folder: true, restoredFiles: restored.filesRestored };
+      const entry = (await this.listDeletedFoldersFor(req, owner)).find((e) => e.path === path);
+      if (entry) {
+        const restored = await this.restoreFolderEntry(owner, path, String(entry.instanceId || ''));
+        return { success: true, folder: true, restoredFiles: restored.filesRestored };
+      }
+      /*
+       * v1.0.3：隐式目录 —— 目录本身没被删，只是里面的文件被删了。
+       * 回收站按层级浏览时它同样是一个可进入的「文件夹」，恢复 = 把该路径下
+       * （含各级子目录）仍在回收站里的文件全部恢复回原位。
+       */
+      const rows = await prisma.fileRecord.findMany({
+        where: {
+          status: 'deleted',
+          uploader: owner,
+          OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
+        },
+        select: { id: true, name: true, folder: true, uploader: true, instanceId: true },
+      });
+      if (!rows.length) return { success: false, message: '回收站中不存在该目录' };
+      for (const r of rows) {
+        await this.uploadSvc.restoreFile(r.id, r.name);
+        await this.restoreFolderChain(r.uploader || owner, r.folder || '', r.instanceId || '');
+      }
+      return { success: true, folder: true, restoredFiles: rows.length };
     }
     const record = await prisma.fileRecord.findFirst({
       where: { id: key, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
@@ -2998,16 +3090,34 @@ export class ManageController {
   private async trashPurgeOne(req: Request, totpCode = '') {
     if (!(await this.userPerm(req, 'delete'))) return { success: false, message: '没有删除权限' };
     const key = wildcardParam(req);
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     // v3.0.0（R14）：文件夹条目彻底删除 = 清登记 + 连带清掉该前缀下所有软删文件
     if (key.startsWith('folder:')) {
       const path = key.slice('folder:'.length);
-      const hit = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
-      if (!hit) return { success: false, message: '回收站中不存在该目录' };
-      const gate = await this.verifyTrashTotp(req, totpCode);
-      if (gate) return gate;
-      const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
-      return { success: true, folder: true, purged: n };
+      const hit = (await this.listDeletedFoldersFor(req, owner)).find((e) => e.path === path);
+      if (hit) {
+        const gate = await this.verifyTrashTotp(req, totpCode);
+        if (gate) return gate;
+        const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
+        return { success: true, folder: true, purged: n };
+      }
+      // v1.0.3：隐式目录（目录本身没删，只删了里面的文件）→ 逐条彻底删除该前缀下的软删文件
+      const rows = await prisma.fileRecord.findMany({
+        where: {
+          status: 'deleted',
+          uploader: owner,
+          OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
+        },
+        select: { id: true, name: true, uploader: true, folder: true, instanceId: true },
+      });
+      if (!rows.length) return { success: false, message: '回收站中不存在该目录' };
+      const gate2 = await this.verifyTrashTotp(req, totpCode);
+      if (gate2) return gate2;
+      for (const r of rows) {
+        await this.uploadSvc.removeFile(r.id, r.name);
+        await this.cleanupEmptiedFolderChain(r.uploader || owner, r.folder || '', r.instanceId || '');
+      }
+      return { success: true, folder: true, purged: rows.length };
     }
     const record = await prisma.fileRecord.findFirst({
       where: { id: key, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
@@ -3033,13 +3143,13 @@ export class ManageController {
     const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
     const action = body.action === 'purge' ? 'purge' : 'restore';
     if (!ids.length) return { success: false, message: '缺少 ids' };
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     // v3.0.0（R14）：2FA 闸门 —— 开启两步验证的账户，彻底删除前必须验证动态码
     if (action === 'purge') {
       const gate = await this.verifyTrashTotp(req, body?.totpCode);
       if (gate) return gate;
     }
-    const folderPaths = new Set((await this.listDeletedFolders(owner)).map((e) => e.path));
+    const folderPaths = new Set((await this.listDeletedFoldersFor(req, owner)).map((e) => e.path));
     const rows = await prisma.fileRecord.findMany({
       where: { id: { in: ids }, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
     });
@@ -3050,12 +3160,41 @@ export class ManageController {
       if (id.startsWith('folder:')) {
         const path = id.slice('folder:'.length);
         if (!folderPaths.has(path)) {
-          results.push({ id, ok: false, message: '目录不存在或无权限' });
+          /*
+           * v1.0.3：可能是「隐式目录」—— 目录本身没被删，只有里面的文件进了回收站。
+           * 这种目录在回收站里同样以文件夹形式出现，批量恢复 / 彻底删除按前缀整批处理。
+           */
+          try {
+            const under = await prisma.fileRecord.findMany({
+              where: {
+                status: 'deleted',
+                uploader: owner,
+                OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
+              },
+              select: { id: true, name: true, uploader: true, folder: true, instanceId: true },
+            });
+            if (!under.length) {
+              results.push({ id, ok: false, message: '目录不存在或无权限' });
+              continue;
+            }
+            for (const r of under) {
+              if (action === 'purge') {
+                await this.uploadSvc.removeFile(r.id, r.name);
+                await this.cleanupEmptiedFolderChain(r.uploader || owner, r.folder || '', r.instanceId || '');
+              } else {
+                await this.uploadSvc.restoreFile(r.id, r.name);
+                await this.restoreFolderChain(r.uploader || owner, r.folder || '', r.instanceId || '');
+              }
+            }
+            results.push({ id, ok: true, message: `${action === 'purge' ? '连带删除' : '连带恢复'}文件 ${under.length} 条` });
+          } catch (err) {
+            results.push({ id, ok: false, message: (err as Error).message });
+          }
           continue;
         }
         try {
           // v1.0.2：同名目录可能存在于多个实例 —— 取出实例，彻底删除时按实例清理登记
-          const entry = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
+          const entry = (await this.listDeletedFoldersFor(req, owner)).find((e) => e.path === path);
           if (action === 'purge') {
             const n = await this.purgeFolderEntry(owner, path, String(entry?.instanceId || ''));
             results.push({ id, ok: true, message: `连带文件 ${n} 条` });
@@ -3120,6 +3259,22 @@ export class ManageController {
   private async listDeletedFolders(owner: string) {
     const map = await this.deletedFoldersRead();
     return Array.isArray(map[owner]) ? map[owner] : [];
+  }
+
+  /**
+   * v1.0.3：带「旧键兼容」的回收站目录读取。
+   *
+   * v1.0.2 及以前管理员删除目录时用的是空 owner 键（''），v1.0.3 起归到本人账户名下。
+   * 升级后如果只看本人键，管理员原来删过的目录会在回收站里「凭空消失」，
+   * 所以这里在管理员场景下把旧键条目一并合并进来（按 路径 + 实例 去重，本人键优先）。
+   */
+  private async listDeletedFoldersFor(req: Request, owner: string) {
+    const mine = await this.listDeletedFolders(owner);
+    if (!this.admin(req) || !owner) return mine;
+    const legacy = await this.listDeletedFolders('');
+    if (!legacy.length) return mine;
+    const seen = new Set(mine.map((e) => `${e.path}\u0000${e.instanceId || ''}`));
+    return [...mine, ...legacy.filter((e) => !seen.has(`${e.path}\u0000${e.instanceId || ''}`))];
   }
 
   private async addDeletedFolder(owner: string, entry: { path: string; deletedAt: string; instanceId: string; meta: Record<string, unknown> | null }) {
@@ -3203,7 +3358,7 @@ export class ManageController {
     if (entry?.meta && Object.keys(entry.meta).length) {
       try {
         const exists = await prisma.folderMeta.findFirst({
-          where: { path, instanceId, ...(owner ? { owner } : {}) },
+          where: { path, instanceId, type: FOLDER_TYPE_FILE, ...(owner ? { owner } : {}) },
           select: { id: true },
         });
         // 同名属性行已存在（软删期间重建目录并设置了属性）→ 不覆盖，保留用户的新配置
@@ -3279,7 +3434,7 @@ export class ManageController {
         if (under > 0) break;
         const removedReg = await this.unregisterFolders(owner, path, instanceId);
         const delMeta = await prisma.folderMeta.deleteMany({
-          where: { path, instanceId, ...(owner ? { owner } : {}) },
+          where: { path, instanceId, type: FOLDER_TYPE_FILE, ...(owner ? { owner } : {}) },
         });
         if (removedReg || delMeta.count) cleaned += 1;
       } catch (err) {
@@ -3320,6 +3475,7 @@ export class ManageController {
     try {
       await prisma.folderMeta.deleteMany({
         where: {
+          type: FOLDER_TYPE_FILE,
           ...(instanceId ? { instanceId } : {}),
           ...(owner ? { owner } : {}),
           OR: [{ path }, { path: { startsWith: `${path}/` } }],
@@ -3377,7 +3533,8 @@ export class ManageController {
     if (!ids.length) return [];
     return prisma.fileRecord.findMany({
       where: {
-        ...(this.admin(req) ? {} : { uploader: currentSession(req)?.user || '' }),
+        // v1.0.3：管理员同样只操作自己账户下的文件
+        uploader: currentSession(req)?.user || '',
         OR: [{ id: { in: ids } }, { name: { in: ids } }],
       },
     });
@@ -3618,7 +3775,7 @@ export class ManageController {
   @Post(':id/password')
   async setPassword(@Req() req: Request, @Param('id') id: string, @Body() body: { password?: string }) {
     if (!(await this.userPerm(req, 'edit'))) return { success: false, message: '没有编辑权限' };
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     const rec = await this.resolveFile(id, owner);
     if (!rec) return { success: false, message: '文件不存在' };
     await this.applyFilePassword(rec, String(body?.password ?? ''));
@@ -3757,7 +3914,7 @@ export class ManageController {
         // 目录属性（加密 / 共享 / 访客图库标记 / 自定义名称）跟着搬家
         try {
           const metas = await prisma.folderMeta.findMany({
-            where: { ...moveInst, OR: [{ path: f }, { path: { startsWith: `${f}/` } }] },
+            where: { ...moveInst, type: FOLDER_TYPE_FILE, OR: [{ path: f }, { path: { startsWith: `${f}/` } }] },
           });
           for (const m of metas) {
             const suffix = String(m.path || '').slice(f.length).replace(/^\/+/, '');
@@ -4025,7 +4182,7 @@ export class ManageController {
     const target = String(body.newFileId ?? body.newName ?? '').trim();
     if (!target) throw new BadRequestException('缺少 newFileId');
 
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     const rec = await this.resolveFile(oldId, owner);
     if (!rec) throw new NotFoundException('文件不存在');
     if (target === rec.name) throw new BadRequestException('文件名未发生变化');
@@ -4093,7 +4250,7 @@ export class ManageController {
 
   @Get('metadata/*')
   async getMeta(@Req() req: Request) {
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     const rec = await this.resolveFile(wildcardParam(req), owner);
     if (!rec) return { success: false, message: '文件不存在' };
     const metadata = serializeFile(rec, rec.copies, {
@@ -4176,7 +4333,7 @@ export class ManageController {
     @Body() body: { seconds?: number | string; expiresAt?: string | number | null; clear?: boolean },
   ) {
     if (!(await this.userPerm(req, 'edit'))) return { success: false, message: '没有编辑权限' };
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     const rec = await this.resolveFile(wildcardParam(req), owner);
     if (!rec) return { success: false, message: '文件不存在' };
     if (!this.isAuthor(req, rec)) return { success: false, message: '只有上传者本人可以设置限时' };
@@ -4230,7 +4387,7 @@ export class ManageController {
 
   private async saveMeta(req: Request, body: { metas?: string | Record<string, unknown> }) {
     if (!(await this.userPerm(req, 'edit'))) return { success: false, message: '没有编辑权限' };
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     const rec = await this.resolveFile(wildcardParam(req), owner);
     if (!rec) return { success: false, message: '文件不存在' };
 
@@ -4356,7 +4513,7 @@ export class ManageController {
   @Post('files/redirect/*')
   async setRedirect(@Req() req: Request, @Body() body: { url?: string }) {
     if (!(await this.userPerm(req, 'edit'))) return { success: false, message: '没有编辑权限' };
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     const rec = await this.resolveFile(wildcardParam(req), owner);
     if (!rec) return { success: false, message: '文件不存在' };
     const url = String(body.url || '').trim();
@@ -4421,7 +4578,7 @@ export class ManageController {
 
   /** 登记逻辑目录（按账户 + 实例隔离） */
   private async registerFolder(req: Request, full: string, instanceId = '') {
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     const raw = await this.settings.get('extraFolders', '{}');
     let map: Record<string, string[]> = {};
     try {
@@ -4431,20 +4588,36 @@ export class ManageController {
     }
     const key = this.extraFoldersKey(owner, instanceId);
     const list = new Set(Array.isArray(map[key]) ? map[key] : []);
-    list.add(full.replace(/^\/+|\/+$/g, ''));
+    const fullPath = full.replace(/^\/+|\/+$/g, '');
+    list.add(fullPath);
     map[key] = Array.from(list).sort();
+    /*
+     * v1.0.3：管理员登记目录的归属键从「空 owner」改成本人账户 ——
+     * 顺手把旧键里的同一条摘掉，避免同目录在列表里出现两次（自愈式迁移）。
+     */
+    if (this.admin(req)) {
+      const legacyKey = this.extraFoldersKey('', instanceId);
+      if (Array.isArray(map[legacyKey])) {
+        map[legacyKey] = map[legacyKey].filter((p: string) => p !== fullPath);
+        if (!map[legacyKey].length) delete map[legacyKey];
+      }
+    }
     await this.settings.set('extraFolders', JSON.stringify(map));
   }
 
   /**
    * 读取当前用户在当前实例下可见的额外（空）目录列表。
    * v1.0.0：instanceId 为 '*' 时合并该账户全部实例（历史记录页「全部实例」用）。
+   * v1.0.3：管理员额外合并旧版「空 owner 键」里的登记（升级后不会丢历史空目录）。
    */
   private async extraFolders(req: Request, instanceId = ''): Promise<string[]> {
-    const owner = this.admin(req) ? '' : currentSession(req)?.user || '';
+    const owner = currentSession(req)?.user || '';
     try {
       const map = JSON.parse((await this.settings.get('extraFolders', '{}')) || '{}');
-      return this.extraFoldersOf(map, owner, instanceId);
+      const mine = this.extraFoldersOf(map, owner, instanceId);
+      if (!this.admin(req) || !owner) return mine;
+      const legacy = this.extraFoldersOf(map, '', instanceId);
+      return Array.from(new Set([...mine, ...legacy])).sort();
     } catch {
       return [];
     }
@@ -4543,6 +4716,88 @@ export class ManageController {
    * （与 /api/manage/list 的可见范围保持一致，避免泄露他人目录路径）。
    * 返回 { success: true, data: ['2026', '2026/10', '登记文件', ...] }（已按路径排序）。
    */
+  /**
+   * v1.0.3：文件转存（本地 ↔ 第三方）—— 候选目标渠道与当前状态。
+   *
+   * GET /api/manage/convert/options/:id
+   * 返回：
+   *   direction        to-local（当前在第三方，要转本地）/ to-remote（当前在本地，要转异地）
+   *   currentChannel   当前主副本所在渠道 { name, type }
+   *   registered       是否登记文件（登记文件禁止删除源件）
+   *   canDeleteSource  是否允许选择「删除源件」（转本地时才有意义）
+   *   channels         候选目标渠道 [{ id, name, type }]（已停用的、浏览用的 localfiles 都排除）
+   */
+  @Get('convert/options/:id')
+  async convertOptions(@Req() req: Request, @Param('id') id: string) {
+    const me = currentSession(req)?.user || '';
+    const rec = await prisma.fileRecord.findFirst({
+      where: { uploader: me, status: 'active', OR: [{ id }, { name: id }] },
+      include: { copies: { include: { channel: true } } },
+    });
+    if (!rec) return { success: false, message: '文件不存在或无权操作' };
+
+    const copy =
+      rec.copies.find((c) => c.status === 'active' && c.isPrimary) ||
+      rec.copies.find((c) => c.status === 'active');
+    const ch = copy?.channel || null;
+    const isLocalType = (t: string) => t === 'local' || t === 'localfiles';
+    const srcLocal = !!ch && isLocalType(ch.type);
+
+    const all = await prisma.channel.findMany({
+      where: { enabled: true },
+      orderBy: [{ typeCode: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, type: true },
+    });
+    // 本地 → 只要第三方（排除一切本地形态）；第三方 → 只要本地存储渠道
+    const channels = all.filter((c) =>
+      srcLocal ? !isLocalType(c.type) : c.type === 'local',
+    );
+    const registered = String(rec.uploadSource || '') === 'Record';
+
+    return {
+      success: true,
+      direction: srcLocal ? 'to-remote' : 'to-local',
+      currentChannel: ch ? { name: ch.name, type: ch.type } : null,
+      registered,
+      // 转异地时本地源件必然删除，不给选择；转本地时才让用户选，登记文件一律禁止删除源件
+      canDeleteSource: !srcLocal && !registered,
+      forceDeleteSource: srcLocal,
+      channels,
+    };
+  }
+
+  /**
+   * v1.0.3：执行转存。
+   *
+   * POST /api/manage/convert  { id, channelId, deleteSource? }
+   * - 只搬实体文件与「跟随渠道变化」的数据（固化地址 / 渠道名 / 删除接口），
+   *   文件名、类型、尺寸、分类、标签、上传时间全部不动，签发外链不变；
+   * - 本地 → 第三方：原样上传后删除本地实体文件；
+   * - 第三方 → 本地：deleteSource=true 时删除源渠道文件；登记文件禁止删除源件。
+   */
+  @Post('convert')
+  async convertFile(@Req() req: Request, @Body() body: { id?: string; channelId?: string; deleteSource?: boolean }) {
+    const me = currentSession(req)?.user || '';
+    if (!me) return { success: false, message: '未登录' };
+    if (!(await this.userPerm(req, 'edit'))) return { success: false, message: '没有编辑权限' };
+    const id = String(body?.id || '');
+    const channelId = String(body?.channelId || '');
+    if (!id || !channelId) return { success: false, message: '缺少文件或目标渠道' };
+
+    const r = await this.uploadSvc.convertChannel({
+      recordId: id,
+      targetChannelId: channelId,
+      deleteSource: body?.deleteSource === true,
+      uploader: me,
+      ip: req.ip,
+    });
+    if (!r.ok) {
+      appLog.warn('channel', `文件转存失败：${r.message || '未知原因'}`, `fileId=${id}`, req.ip);
+      return { success: false, message: r.message || '转存失败' };
+    }
+    return { success: true, ...r };
+  }
+
   @Get('folders/all')
   async foldersAll(@Req() req: Request, @Query() q: Record<string, string>) {
     const instanceId = String(q.instanceId ?? '');
@@ -4551,7 +4806,7 @@ export class ManageController {
 
     const rows = await prisma.fileRecord.groupBy({
       by: ['folder'],
-      where: { status: 'active', instanceId, ...(admin ? {} : { uploader: me }) },
+      where: { status: 'active', instanceId, uploader: me },
     });
     const base = new Set<string>(rows.map((r) => r.folder).filter(Boolean) as string[]);
 
@@ -4561,7 +4816,7 @@ export class ManageController {
     }
     // 目录属性行（FolderMeta.path）
     const metas = await prisma.folderMeta.findMany({
-      where: { instanceId, ...(admin ? {} : { owner: me }) },
+      where: { instanceId, type: FOLDER_TYPE_FILE, ...(admin ? {} : { owner: me }) },
       select: { path: true, metas: true },
     });
     // v3.0.0（R12）：目录属性里改过的名称（path → 自定义名称），随全局目录树一起下发
@@ -5137,6 +5392,11 @@ export class UserConfigController {
       bkInterval: Number(pv('bkInterval', 3000)) || 3000,
       bkOpacity: Number(pv('bkOpacity', 1)) || 1,
       /*
+       * v1.0.3：白天/夜间自动切换时间（网页设置 · 全局设置）。
+       * 原样下发给前端解析；留空表示用默认 08:00—20:00。
+       */
+      themeAutoRange: String(pv('themeAutoRange', '') || ''),
+      /*
        * v3.0.0（R16）：账户自定义背景图优先 ——
        * 账户在「用户管理 → 编辑」里设置了就用账户的（覆盖系统「网页设置」里的同名字段），
        * 没设置（空数组）则回落到系统设置。每次刷新前端随机取一张。
@@ -5161,10 +5421,9 @@ export class UserConfigController {
    */
   @Get('directoryTree')
   async directoryTree(@Req() req: Request, @Query() q: Record<string, string>) {
-    // 普通用户只看到自己的目录 —— 每个账户一套文件夹记录体系
+    // 每个账户（含管理员）只看到自己的目录 —— v1.0.3 起管理员不再跨账户可见
     const session = currentSession(req);
-    const admin = isAdminRole(session?.role);
-    const owner = admin ? '' : session?.user || '';
+    const owner = session?.user || '';
     // v3.0.0：实例维度（不传 = 默认实例）
     const instanceId = String(q.instanceId ?? '');
     try {

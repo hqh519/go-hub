@@ -24,6 +24,13 @@ export function sha256Hex(text: string): string {
 }
 
 /**
+ * v1.0.3：目录类型（与标签的 type 同一套口径）。
+ * 目前只有文件分类；内容系统接入后，笔记 / 文章 / 待办 / 导航各自的分类
+ * 用各自的 type 存，同名路径可以各存一份属性、互不覆盖。
+ */
+export const FOLDER_TYPE_FILE = 'file';
+
+/**
  * 目录路径规范化：反斜杠转正、压缩重复斜杠、去首尾斜杠、路径穿越替换。
  * FileRecord.folder 本身就是「无首尾斜杠」的形态，这里保持同一规范。
  */
@@ -129,7 +136,7 @@ export async function findFolderMeta(path: string, instanceId: string, owner?: s
   const p = normalizeFolderPath(path);
   if (!p) return null;
   return prisma.folderMeta.findFirst({
-    where: { path: p, instanceId: instanceId || '', ...(owner ? { owner } : {}) },
+    where: { path: p, instanceId: instanceId || '', type: FOLDER_TYPE_FILE, ...(owner ? { owner } : {}) },
   });
 }
 
@@ -179,7 +186,10 @@ export async function listSharedFoldersFor(
   const u = String(username || '').trim();
   if (!u) return [];
   const rows = await prisma.folderMeta.findMany({
-    where: String(instanceId) === '*' ? {} : { instanceId: instanceId || '' },
+    where: {
+      type: FOLDER_TYPE_FILE,
+      ...(String(instanceId) === '*' ? {} : { instanceId: instanceId || '' }),
+    },
   });
   return rows
     .filter((r) => r.owner && r.owner !== u && parseSharedUsers(r.sharedUsers).includes(u))
@@ -208,6 +218,7 @@ export async function listFoldersSharedBy(
   const rows = await prisma.folderMeta.findMany({
     where: {
       owner: u,
+      type: FOLDER_TYPE_FILE,
       ...(String(instanceId) === '*' ? {} : { instanceId: instanceId || '' }),
     },
   });
@@ -261,7 +272,7 @@ export async function folderSharedPermission(
   const chain: string[] = [];
   for (let i = parts.length; i >= 1; i--) chain.push(parts.slice(0, i).join('/'));
   const rows = await prisma.folderMeta.findMany({
-    where: { instanceId: instanceId || '', path: { in: chain } },
+    where: { instanceId: instanceId || '', type: FOLDER_TYPE_FILE, path: { in: chain } },
   });
   const hit = rows
     .filter((r) => r.owner && r.owner !== u && parseSharedUsers(r.sharedUsers).includes(u))

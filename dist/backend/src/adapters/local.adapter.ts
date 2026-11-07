@@ -237,6 +237,43 @@ export class LocalAdapter implements StorageAdapter {
     channel: ChannelInfo,
     ctx?: { owner?: string; instanceId?: string },
   ): Promise<string> {
+    return LocalAdapter.sanitizeRelKey(await this.buildRelKeyInner(key, file, channel, ctx));
+  }
+
+  /**
+   * v1.0.3：落盘前的路径消毒 —— 这是**兜底**，不是主修方案。
+   *
+   * 主修在 `UploadService.convertChannel`：转存的 key 改为按目标渠道配置重新生成
+   * （`makeKeyFor`），不再沿用源件的 remoteKey。所以第三方渠道那种 `assetId|checksum`
+   * 的 key 已经不会出现在本地路径里了。
+   *
+   * 这里剩下的唯一来源是「用户上传的原始文件名本身就带非法字符」（如从 URL 登记下来的
+   * `a|b.png`），文件名会被原样拼进 key。不消毒的话，Windows 上 writeFile 会抛
+   * `EPERM: operation not permitted`，一次上传直接把整个流程打挂。
+   *
+   * 只替换「当前平台确实非法」的字符：Windows 处理 `<>:"|?*`、控制字符与结尾的点/空格；
+   * 其余平台原样返回，保证已有文件的磁盘路径一个字节都不变（不会让老文件失联）。
+   */
+  private static sanitizeRelKey(relKey: string): string {
+    const raw = String(relKey || '');
+    if (process.platform !== 'win32') return raw;
+    return raw
+      .split('/')
+      .map((seg) =>
+        seg
+          .replace(/[<>:"|?*\u0000-\u001f]/g, '_')
+          // Windows 会悄悄吃掉结尾的点与空格，显式换成下划线避免「写入名 ≠ 读取名」
+          .replace(/[. ]+$/, (m) => '_'.repeat(m.length)),
+      )
+      .join('/');
+  }
+
+  private async buildRelKeyInner(
+    key: string,
+    file: { buffer?: Buffer; originalName: string },
+    channel: ChannelInfo,
+    ctx?: { owner?: string; instanceId?: string },
+  ): Promise<string> {
     const cfg = LocalAdapter.readChannelCfg(channel);
     const ownerSeg = LocalAdapter.ownerSegment(ctx?.owner);
     const instSeg = LocalAdapter.instanceSegment(ctx?.instanceId);

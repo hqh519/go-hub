@@ -521,6 +521,22 @@ const ZH = {
         { t: '两个输入框改成多行文本', d: '本地文件渠道的「宿主机映射目录（可选）」改成多行文本框，一行一个目录，与「浏览目录」按顺序一一对应；「其他设置 → 提取指定内容」也改成多行文本，规则多了可以一行一条，不用再挤在一行里横向滚动。' },
         { t: '会话有效期设置真正生效', d: '修掉「用户管理里把会话有效期设成 90 天，实际一天被登出好几次」的问题：一是任何一次接口返回未登录信号都会立刻清会话跳登录（后端重启、瞬时 502、被反代拦一下都算），现在会先向服务端二次确认，确认确实过期才登出；二是登录时签发的 Cookie 生命周期按账户设置的最大值计算，设置保存后会重新按新值签发。' },
       ]
+    },
+    {
+      title: '二十、v1.0.3 更新要点',
+      intro: 'v1.0.3 做三件事：把「文件管理」的数据权限收回到每个账户自己名下、给本地存储与第三方渠道之间加上「转存」能力、补齐回收站的目录层级。数据库会自动加两处索引与一列，升级前会先合并历史重复数据，直接覆盖升级即可。',
+      items: [
+        { t: '文件管理只显示自己的文件', d: '以前管理员进「图床文件管理」时，不指定用户就等于看到全站所有账户的文件，还能直接改名、移动、删除 —— 这是权限设计上的疏漏。现在每个账户（含管理员）只列出自己上传的文件，批量操作、回收站、目录树、目录导航全部按登录账户收窄；需要跨账户只读，请用「目录共享」或「对外分享」。' },
+        { t: '新增「转本地 / 转异地」：不换外链也能换存储', d: '文件详情页「下载」按钮后面新增一个转存按钮：本地存储渠道的文件显示「转异地」，第三方渠道的文件显示「转本地」。选好目标渠道即可把实体文件原样搬过去（不压缩、不转码、不转 webp、不改文件名），外链、文件名、类型、尺寸、分类、标签、上传时间全部不变，只有「存在哪个渠道、用什么地址取、删除时找谁」这些数据跟着换。' },
+        { t: '转存时的源件处理', d: '从第三方渠道转回本地时，必须二选一：保留源件（只下载并更新数据，原渠道文件不动）或删除源件（转存成功后删除原渠道文件，不可恢复）。本地转异地则一定删除本地实体文件 —— 否则同一份文件会长期占两份本地空间。登记文件（只登记了地址、没真正上传过的）一律禁止删除源件，因为源文件不在本系统管理范围内。' },
+        { t: '回收站按目录层级浏览', d: '回收站不再是一条大平铺：根目录只显示「被删的文件夹」和原本就在根目录的删除文件，要进到对应文件夹里才看得到它内部删掉的东西。顶部显示当前所在目录，带「返回上级」。目录条目支持整包恢复 / 整包彻底删除（含只删了文件、目录本身没删的情况）。' },
+        { t: '移动文件 / 文件夹有全屏遮罩', d: '移动（单个或批量）执行期间显示全屏「正在移动…」并锁定操作，结束自动收起，不会再出现「点了没反应、以为卡死」。' },
+        { t: '灯箱里打开详情后的返回层级修稳了', d: '以前同一个文件详情弹窗会被登记两次（组件登记一次、自动监听又登记一次），栈顶变成那条兜底记录，移动端返回时走「点关闭按钮 / 派发 Esc」的备用路径 —— 弹窗没有可点的关闭按钮时，这次返回就被白白吃掉，表现为「有时能关、有时关不掉」。现在每个弹窗只登记一次，返回 / Esc 稳定地先关详情、再关灯箱；弹窗里展开的下拉框仍会先收起。' },
+        { t: '白天/夜间自动切换时间可配', d: '「系统管理 → 网页设置 → 全局设置」在「背景图透明度」下面新增一项「白天/夜间切换时间」，默认留空即 08:00—20:00（08:00 切白天、20:00 切夜间）。主题切到「自动」后按这个时间判断，不再跟随系统深色偏好；页面挂了一整天也会在整点自动切换。' },
+        { t: '标签唯一性下沉到数据库', d: '标签的唯一键正式改为「实例 + 类型 + 名称」，旧键「名称 + 实例 + 创建人」已删除 —— 同一实例里同名标签从此只有一条，不会再出现「明明有这个标签，筛选却漏文件」。升级前会先把历史重复合并成一条，所以不会因为重复数据导致升级失败。' },
+        { t: '目录分类也支持类型维度', d: '目录属性表新增「类型」字段，与标签同一套口径：目前只有文件分类，后续笔记 / 文章 / 待办 / 导航接入时各自的分类互不影响，同名路径可以各存一份属性。' },
+        { t: '超级管理员会话固定 1 天', d: '用环境变量配置的超级管理员是「应急找回」角色，会话有效期固定为 1 天，不读取「用户管理」里的账户设置、也不提供配置项；普通管理员仍按自己账户里设置的天数生效。' },
+      ]
     }
   ]
 };
@@ -979,6 +995,22 @@ const EN = {
         { t: 'Inside the lightbox, back closes the details first', d: 'With file details opened on top of the image / video lightbox, the back button, edge-swipe back and Esc now always close the details first and only the next press closes the lightbox. The two layers used to fight over the same event, leaving the details dialog behind after the lightbox was gone.' },
         { t: 'Two inputs became multi-line', d: 'Host mapping directories (optional) on local file channels is now a multi-line text box — one directory per line, matched to Browse directories in order. Extract from file name in Other settings is multi-line too, so longer rule sets can be written one per line instead of scrolling horizontally.' },
         { t: 'Session lifetime settings now really apply', d: 'Fixed "set 90 days in user management but still logged out several times a day". First, any single unauthenticated response used to clear the session immediately — a backend restart, a momentary 502 or a proxy hiccup all counted; the client now re-confirms with the server and only logs out when the session is genuinely gone. Second, the cookie issued at login uses the largest of the account settings, and saving a new value re-issues it under the new lifetime.' },
+      ]
+    },
+    {
+      title: '20. What is new in v1.0.3',
+      intro: 'v1.0.3 does three things: it scopes the file manager to each account, adds moving files between local and third-party channels, and gives the trash a real folder hierarchy. Two index changes and one column are applied automatically, with duplicate data merged before the upgrade — a straight overwrite works.',
+      items: [
+        { t: 'The file manager only shows your own files', d: 'Previously, when an administrator opened the dashboard without picking a user, the list showed every account\'s files — and allowed renaming, moving and deleting them. Now every account, administrators included, only lists the files it uploaded; batch actions, the trash, the folder tree and folder navigation are all scoped to the signed-in account. For read-only cross-account access use folder sharing or public sharing.' },
+        { t: 'New Move to Local / Move to Remote: switch storage without changing the link', d: 'A new button after Download in the file details: files on a local storage channel offer Move to Remote, files on a third-party channel offer Move to Local. Pick the target channel and the file is transferred byte-for-byte — no compression, no transcoding, no WebP conversion, same name. The issued link, name, type, size, category, tags and upload time all stay the same; only the channel, the resolved address and the delete target change.' },
+        { t: 'Source handling when moving', d: 'Moving from a third-party channel back to local requires a choice: keep source (download and update the data only) or delete source (remove the original channel file after a successful move, irreversible). Moving from local to remote always deletes the local file, otherwise the same data would occupy local disk twice. Registered files — records whose bytes were never uploaded here — can never have their source deleted, because the source lives outside GoHub.' },
+        { t: 'The trash browses by folder', d: 'The trash is no longer one flat list: the root shows deleted folders plus files that were deleted from the root, and you enter a folder to see what was deleted inside it. The banner shows the current folder with an Up one level button. Folder entries restore or purge as a whole package, including folders that only lost their files.' },
+        { t: 'Moving shows a full-screen overlay', d: 'While a move runs (single or batch), the page shows "Moving…" and locks interaction, then closes automatically — no more "clicked and nothing happened".' },
+        { t: 'Back navigation inside the lightbox is stable now', d: 'The same file-details dialog used to be registered twice — once by the component, once by the automatic overlay watcher — so the fallback entry ended up on top. Back then went through the "click the close button / dispatch Esc" path, and when there was no clickable close button the press was simply swallowed, which is exactly the "sometimes it works" symptom. Each dialog is now registered once: back / Esc reliably closes the details first and the lightbox second, while open dropdowns inside the dialog still collapse first.' },
+        { t: 'Day / night switch time is configurable', d: 'System settings → Page settings → Global settings now has Day / Night Switch Time right below Background Opacity. Leave it empty for 08:00—20:00 (day at 08:00, night at 20:00). With the theme set to Auto it is evaluated against this range instead of the OS colour scheme, and a page left open all day flips at the boundary on its own.' },
+        { t: 'Tag uniqueness moved into the database', d: 'The tag key is now instance + type + name; the old name + instance + creator key is gone. One tag per name per instance, so the "tag exists but some files are missing from the filter" case disappears. Historical duplicates are merged before the upgrade, so it cannot fail on existing data.' },
+        { t: 'Folder categories gained a type dimension', d: 'The folder properties table now carries a type field with the same semantics as tags: file categories today, and independent note / article / todo / navigation categories later, each able to keep its own properties for the same path.' },
+        { t: 'Super admin sessions are fixed at 1 day', d: 'The environment-configured super administrator is an emergency recovery role, so its session is fixed at one day, ignoring the per-account setting and offering no configuration. Regular administrators still follow the days configured on their own account.' },
       ]
     }
   ]

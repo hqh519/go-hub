@@ -52,17 +52,55 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
  * 主题初始化。
  *
  * v2.4.0：「夜间/白天强制切换」（autoDarkMode）已按需求移除 ——
- * 主题一律以右上角切换按钮为准（亮 / 暗 / 自动三态），
- * 其中「自动」态按 19:00—07:00 + 系统深色偏好判断。
- * 老库存量配置里即使还有 autoDarkMode=true 也不再读取。
+ * 主题一律以右上角切换按钮为准（亮 / 暗 / 自动三态）。
+ *
+ * v1.0.3：「自动」态改为按【网页设置 → 白天/夜间切换时间】判断，
+ * 不再跟随系统深色偏好。区间内 = 白天，区间外 = 夜间；
+ * 配置留空时用默认 08:00—20:00（08:00 切白天、20:00 切夜间）。
+ * 因此同一台设备不论系统主题如何，全站观感一致，也方便统一运营。
  */
-const NIGHT_START_HOUR = 19;
-const NIGHT_END_HOUR = 7;
+const DEFAULT_DAY_START = '08:00';
+const DEFAULT_DAY_END = '20:00';
 
-/** 按 19:00—07:00 判断当前是否属于夜间 */
-const isNightNow = () => {
-    const hour = new Date().getHours();
-    return hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR;
+/** 把 "H:MM" / "8点" / "8" 归一化成当天分钟数；非法返回 null */
+const parseClock = (raw) => {
+    const s = String(raw || '').trim();
+    if (!s) return null;
+    const m = s.match(/^(\d{1,2})\s*[:：点时.]?\s*(\d{0,2})/);
+    if (!m) return null;
+    const h = Math.min(23, Math.max(0, Number(m[1]) || 0));
+    const mi = Math.min(59, Math.max(0, Number(m[2]) || 0));
+    return h * 60 + mi;
+};
+
+/**
+ * 解析「白天/夜间切换时间」配置。
+ * 兼容三种写法（都是同一件事：几点切白天、几点切夜间）：
+ *   ["08:00":"20:00"]  —— 后台输入框的默认展示形态
+ *   08:00-20:00 / 08:00~20:00 / 08:00 20:00 / 08:00,20:00
+ * 解析不出来时回落到默认 08:00—20:00。
+ */
+const parseDayNightRange = (raw) => {
+    const text = String(raw || '');
+    const clocks = text.match(/\d{1,2}\s*[:：点时.]?\s*\d{0,2}/g) || [];
+    const nums = clocks.map(parseClock).filter((n) => n !== null);
+    const start = nums.length >= 1 ? nums[0] : parseClock(DEFAULT_DAY_START);
+    const end = nums.length >= 2 ? nums[1] : parseClock(DEFAULT_DAY_END);
+    if (start === null || end === null || start === end) {
+        return { start: parseClock(DEFAULT_DAY_START), end: parseClock(DEFAULT_DAY_END) };
+    }
+    return { start, end };
+};
+
+/** 当前是否属于「白天」（按网页设置里的时间段；跨零点区间也支持） */
+const isDaytimeNow = () => {
+    const raw = store.getters.userConfig?.themeAutoRange;
+    const { start, end } = parseDayNightRange(raw);
+    const now = new Date();
+    const cur = now.getHours() * 60 + now.getMinutes();
+    if (start < end) return cur >= start && cur < end;
+    // 跨零点（如 20:00—06:00 表示白天在夜里）：反过来判断
+    return cur >= start || cur < end;
 };
 
 const initDarkModeClass = () => {
@@ -73,8 +111,8 @@ const initDarkModeClass = () => {
         // 用户手动设置了亮色 / 暗色
         isDarkMode = store.state.useDarkMode;
     } else {
-        // 自动态：跟随系统深色偏好，系统为亮色时再按 19:00—07:00 判断
-        isDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches || isNightNow();
+        // 自动态：按「白天/夜间切换时间」判断（v1.0.3，不再跟随系统偏好）
+        isDarkMode = !isDaytimeNow();
         store.commit('setUseDarkMode', isDarkMode);
     }
 
@@ -134,6 +172,13 @@ const presetSiteIcon = (isDarkMode, userConfig) => {
  * 现在 8 秒拿不到配置就先用默认配置挂载，后续真实配置回来会响应式更新。
  */
 const bootConfig = store.dispatch('fetchUserConfig');
+/*
+ * v1.0.3：配置可能晚于「6 秒兜底」才回来（此时上面已经按默认 08:00—20:00 挂载）。
+ * 拿到真实「白天/夜间切换时间」后再算一次，避免用户在后台改了时间却要等下一次刷新。
+ */
+bootConfig.then(() => {
+    if (!store.state.cusDarkMode) initDarkModeClass();
+}).catch(() => {});
 const bootTimeout = new Promise((resolve) => {
     window.setTimeout(() => resolve('boot-timeout'), 6000);
 });
@@ -184,8 +229,8 @@ Promise.race([bootConfig, bootTimeout]).then(() => {
     });
 
     /*
-     * 跨过 19:00 / 07:00 这个时间点时页面不会自己重载，所以定时（每分钟）
-     * 以及「标签页重新可见」时各重算一次主题 —— 长时间挂着的页面也能自动切换。
+     * v1.0.3：跨过「白天/夜间切换时间」的两个时间点时页面不会自己重载，
+     * 所以定时（每分钟）以及「标签页重新可见」时各重算一次主题 —— 长时间挂着的页面也能自动切换。
      */
     const refreshThemeByTime = () => {
         if (!store.state.cusDarkMode) initDarkModeClass();

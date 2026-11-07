@@ -227,6 +227,14 @@
             <div v-if="trashMode" class="trash-banner" role="status">
                 <font-awesome-icon icon="trash-alt" class="trash-banner-icon"/>
                 <span class="trash-banner-text">{{ $t('dashboard.trashBanner') }}</span>
+                <!-- v1.0.3：回收站内层级导航 —— 当前所在目录 + 返回上一级 -->
+                <span class="trash-path" :title="trashPath || $t('dashboard.trashRoot')">
+                    <font-awesome-icon icon="folder" class="trash-path-icon"/>
+                    {{ trashPath || $t('dashboard.trashRoot') }}
+                </span>
+                <button v-if="trashPath" type="button" class="trash-up-btn" @click="leaveTrashDir">
+                    <font-awesome-icon icon="arrow-left"/> {{ $t('dashboard.trashBackUp') }}
+                </button>
             </div>
             <!-- 目录导航（v3.0.0：标签管理模式下第二行整行隐藏，第一行工具栏保留） -->
             <!-- v3.0.0（R4）：外层只做「吸顶时的占位」，移动端吸顶由 JS 切 fixed 实现 -->
@@ -541,9 +549,9 @@
                 </div>
                 <!-- 文件夹和文件列表 -->
                 <template v-else v-for="(item, index) in paginatedTableData" :key="`${item.isFolder ? 'folder' : 'file'}:${item.name}`">
-                    <!-- 文件夹卡片（回收站里的文件夹条目走文件卡片外观，见 FileCard 的 isFolderItem） -->
+                    <!-- 文件夹卡片（v1.0.3：回收站里同样是文件夹卡片 —— 点进去看这一层删了什么） -->
                     <FolderCard
-                        v-if="isFolder(item) && !trashMode"
+                        v-if="isFolder(item)"
                         :name="item.name"
                         v-model:selected="item.selected"
                         :folderStats="item.metadata?.folderStats || null"
@@ -552,17 +560,17 @@
                         :sharedSelf="!!item.sharedSelf"
                         :sharedReadonly="isSharedReadonly(item)"
                         :displayName="item.displayName || ''"
-                        :showActions="!isSearchMode"
+                        :showActions="!isSearchMode && !trashMode"
                         :deleting="isDeleting(item)"
                         :deleting-label="trashMode ? $t('dashboard.trashProcessing') : ''"
                         :disableTooltip="disableTooltip"
                         :showSelect="hasSelectedFolders"
                         @click.capture="handleShiftClickCapture($event, index)"
-                        @enter="enterFolder(item.name)"
-                        @props="openFolderProps(item)"
-                        @copy="handleFolderCopy(item.name)"
-                        @move="handleMove(index, item.name)"
-                        @delete="handleDelete(index, item.name)"
+                        @enter="enterFolderItem(item)"
+                        @props="trashMode ? null : openFolderProps(item)"
+                        @copy="trashMode ? null : handleFolderCopy(item.name)"
+                        @move="trashMode ? null : handleMove(index, item.name)"
+                        @delete="trashMode ? null : handleDelete(index, item.name)"
                         @touchstart="handleFolderTouchStart(item, index)"
                         @touchend="handleTouchEnd"
                         @touchmove="handleTouchEnd"
@@ -628,7 +636,7 @@
                         :deleting-label="trashMode ? $t('dashboard.trashProcessing') : ''"
                         :folderHint="trashMode && !isFolder(item) ? (item.folder || '') : ''"
                         @click.capture="handleShiftClickCapture($event, index)"
-                        @enter="enterFolder(item.name)"
+                        @enter="enterFolderItem(item)"
                         @props="openFolderProps(item)"
                         @detail="openDetailDialog(index, item.name)"
                         @copy="handleCopy(index, item.name)"
@@ -1145,6 +1153,12 @@ data() {
         // 回收站模式：查看软删除文件，可恢复 / 彻底删除
         trashMode: false,
         trashLoading: false,
+        /*
+         * v1.0.3：回收站内当前所在目录（与普通浏览的 currentPath 分开，互不干扰）。
+         * 空串 = 回收站根目录；进入子目录后只显示该层的子目录与文件。
+         */
+        trashPath: '',
+        trashParent: '',
         normalTableData: [], // 退出回收站时还原普通文件列表
         // v3.0.0（R12）：进入回收站前的分页状态（退出时还原，避免沿用回收站的总数/页码）
         normalListState: null,
@@ -1693,9 +1707,13 @@ computed: {
     pagerCount() {
         return window.innerWidth < 768 ? 5 : 7;
     },
-    /** v2.9.0：筛选弹窗「用户」页的候选（仅管理员；普通用户只有自己，没必要单选） */
+    /**
+     * v2.9.0：筛选弹窗「用户」页的候选。
+     * v1.0.3：文件管理已改为「每个账户只看自己名下的文件」（管理员不再跨账户可见），
+     * 用户筛选失去意义，直接不给候选 —— 弹窗里的「用户」页会自动隐藏。
+     */
     userFilterOptions() {
-        return this.isAdminRole ? this.userOptions : [];
+        return [];
     }
 },
 watch: {
@@ -1757,8 +1775,13 @@ watch: {
              * 灯箱晚一帧甚至更久；叠在灯箱上时如果登记还没生效，返回键 / Esc 会认为栈顶
              * 仍是灯箱 → 先关灯箱、详情页反而留在屏幕上（用户反馈的原问题）。
              * 这里在弹窗真正打开时立即登记（此时灯箱早已在栈里），栈顶顺序天然正确。
+             *
+             * v1.0.3：`esc: false` —— 桌面端 Esc 交给 Element Plus 自己处理，
+             * 这样弹窗里展开的下拉框 / 输入法候选会先收起来，而不是一按 Esc 就关整个详情页；
+             * 弹窗关掉后栈顶回到灯箱，再按一次 Esc 才关灯箱。移动端返回键仍由浮层栈
+             * 调用下面这个 close 回调，逐层关闭。
              */
-            registerLayer('file-detail', () => { this.showdetailDialog = false; });
+            registerLayer('file-detail', () => { this.showdetailDialog = false; }, { esc: false });
         } else {
             unregisterLayer('file-detail');
         }
@@ -2513,6 +2536,9 @@ methods: {
             this.tableData = this.normalTableData;
             this.showdetailDialog = false;
             this.trashMode = false;
+            // v1.0.3：退出回收站时回到回收站根目录，下次进入不会停在深层目录
+            this.trashPath = '';
+            this.trashParent = '';
             /*
              * v3.0.0（R12）：回收站改服务端分页（每页 48）后会改写 listTotal / 窗口状态，
              * 退出时必须把普通列表的分页状态还原，否则页码/总数会沿用回收站的数字。
@@ -2550,11 +2576,17 @@ methods: {
              * 以前是整表返回，条目多时首屏明显卡；现在 page/pageSize 交给后端切片。
              */
             const pageQ = `&page=${Math.max(1, Number(page) || 1)}&pageSize=${TRASH_PAGE_SIZE}`;
+            /*
+             * v1.0.3：回收站按目录层级浏览 —— 带上当前所在目录（空串 = 根）。
+             * 后端只返回该层的子目录 + 直接子文件，进入子目录后文件才可见。
+             */
+            const dirQ = `&dir=${encodeURIComponent(this.trashPath || '')}`;
             const resp = await fetchWithAuth(
-                `/api/manage/trash?1=1${filterParams}${searchQ}${instanceQ}${pageQ}`
+                `/api/manage/trash?1=1${filterParams}${searchQ}${instanceQ}${pageQ}${dirQ}`
             );
             if (!resp.ok) throw new Error('Request failed');
             const data = await resp.json();
+            this.trashParent = String(data.parent || '');
             // 备份普通列表，切换渲染数据（v2.9.0：回收站内刷新时不要覆盖这份备份）
             if (!preserveNormal) {
                 this.normalTableData = this.tableData;
@@ -2593,6 +2625,29 @@ methods: {
             this.trashLoading = false;
         }
     },
+    /**
+     * v1.0.3：进入回收站内的子目录（只显示这一层的子目录与文件）。
+     * 目录树在回收站里由「已删目录登记 + 文件原路径」共同反推，所以任何一层都能进。
+     */
+    async enterTrashDir(path) {
+        const next = String(path || '').replace(/^\/+|\/+$/g, '');
+        if (next === this.trashPath) return;
+        this.trashPath = next;
+        await this.enterTrashMode(true, 1, false);
+    },
+    /** 回收站里「返回上一级」 */
+    async leaveTrashDir() {
+        if (!this.trashPath) return;
+        await this.enterTrashDir(String(this.trashParent || ''));
+    },
+    /** 统一的「进入目录」入口：普通模式进当前浏览目录，回收站模式进回收站目录 */
+    enterFolderItem(item) {
+        if (this.trashMode) {
+            this.enterTrashDir(item?.trashPath || item?.name || '');
+            return;
+        }
+        this.enterFolder(item?.name);
+    },
     /** 把回收站接口的条目转成卡片/列表渲染需要的结构 */
     convertTrashItem(it) {
         const primary = (it.channels || []).find(c => c.isPrimary) || (it.channels || [])[0] || {};
@@ -2601,6 +2656,11 @@ methods: {
             name: it.name,
             // v3.0.0（R14）：后端会把「已删除的文件夹」作为 isFolder 条目混排进回收站，这里原样透传
             isFolder: !!it.isFolder,
+            /*
+             * v1.0.3：回收站内的目录路径（id 形如 folder:<路径>）。
+             * 点击文件夹卡片就是进入这一层，看它里面删掉的内容。
+             */
+            trashPath: it.isFolder ? String(it.trashPath || String(it.id || '').replace(/^folder:/, '')) : '',
             selected: false,
             trashId: it.id,
             // 详情页「文件状态」据此显示「已删除」
@@ -3299,6 +3359,22 @@ methods: {
             this.executeSingleMove(newPath, instanceForMove);
         }
     },
+    /**
+     * v1.0.3：全屏「正在移动…」遮罩。
+     *
+     * 与回收站彻底删除的写法保持一致：$loading({ lock: true }) 锁定交互，
+     * 返回的关闭函数做成**幂等**（内部 closed 标志位），
+     * 这样 finally / catch / 早退分支里重复调用都不会报 "close of undefined"。
+     */
+    beginMoving() {
+        const loading = this.$loading({ lock: true, text: this.$t('dashboard.movingHint') });
+        let closed = false;
+        return () => {
+            if (closed) return;
+            closed = true;
+            try { loading.close(); } catch (e) { /* 已关闭 */ }
+        };
+    },
     // 执行单个文件 / 目录移动
     executeSingleMove(newPath, targetInstanceId = this.instanceId) {
         const key = this.moveFileKey;
@@ -3319,6 +3395,8 @@ methods: {
         const body = isFolder
             ? { folders: [key], folder: targetFolder, instanceId: moveInstance, fromInstanceId: String(this.instanceId || '') }
             : { ids: [key], folder: targetFolder, instanceId: moveInstance, fromInstanceId: String(this.instanceId || '') };
+        // v1.0.3：移动期间显示全屏「正在移动…」遮罩（幂等关闭）
+        const closeMoving = this.beginMoving();
         fetchWithAuth('/api/manage/batch/move', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3348,7 +3426,8 @@ methods: {
                 await this.loadListWindow({ page: this.currentPage || 1 });
                 this.refreshLocalFileList();
             })
-            .catch(() => this.$message.error(this.$t('dashboard.moveFailed')));
+            .catch(() => this.$message.error(this.$t('dashboard.moveFailed')))
+            .finally(closeMoving);
     },
     /**
      * 执行批量移动（v3.0.0）
@@ -3358,6 +3437,8 @@ methods: {
         const files = this.selectedFiles.filter((f) => !f.isFolder);
         const folders = this.selectedFiles.filter((f) => f.isFolder);
         const targetFolder = String(newPath || '').replace(/^\/+/, '').replace(/\/+$/, '');
+        // v1.0.3：批量移动同样加全屏「正在移动…」遮罩
+        const closeMoving = this.beginMoving();
         try {
             /*
              * v3.0.0（R12）：文件与目录合并成一次请求（后端 batch/move 同时支持 folders）。
@@ -3401,6 +3482,8 @@ methods: {
             this.loadAllFolders().catch(() => undefined);
         } catch (e) {
             this.$message.error(this.$t('dashboard.moveFailed'));
+        } finally {
+            closeMoving();
         }
     },
     handleBatchBlock(){
@@ -5186,6 +5269,44 @@ beforeUnmount() {
 }
 .trash-banner-text {
     line-height: 1.4;
+}
+/* v1.0.3：回收站层级导航——当前目录 + 返回上一级 */
+.trash-path {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 46%;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    background: color-mix(in srgb, var(--el-color-danger) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--el-color-danger) 32%, transparent);
+}
+.trash-path-icon {
+    font-size: 12px;
+    flex: none;
+}
+.trash-up-btn {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--el-color-danger);
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--el-color-danger) 40%, transparent);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.15s ease;
+    flex: none;
+}
+.trash-up-btn:hover {
+    background: color-mix(in srgb, var(--el-color-danger) 14%, transparent);
 }
 /* 回收站按钮：激活态高亮（v3.0.0 R7 改版）——
    日间模式下原来是「透明底 + 白图标」，在白底工具栏上几乎看不到；

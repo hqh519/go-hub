@@ -76,6 +76,17 @@ exports.PAGE_CONFIG_DEFAULTS = {
             "category_en": "Global Settings"
         },
         {
+            "id": "themeAutoRange",
+            "label": "白天/夜间切换时间",
+            "label_en": "Day / Night Switch Time",
+            "placeholder": "[\"08:00\":\"20:00\"]",
+            "placeholder_en": "[\"08:00\":\"20:00\"]",
+            "tooltip": "主题选择「自动」时按此时间切换：区间内为白天、区间外为夜间。<br/>留空 = 默认 08:00—20:00，表示 08:00 切白天、20:00 切夜间。<br/>也支持 08:00-20:00 或 08:00,20:00 的写法。",
+            "tooltip_en": "Used when the theme is set to Auto: inside the range is day mode, outside is night mode.<br/>Leave empty for the default 08:00—20:00 (day at 08:00, night at 20:00).<br/>08:00-20:00 and 08:00,20:00 are also accepted.",
+            "category": "全局设置",
+            "category_en": "Global Settings"
+        },
+        {
             "id": "urlPrefix",
             "label": "默认URL前缀",
             "label_en": "Default URL Prefix",

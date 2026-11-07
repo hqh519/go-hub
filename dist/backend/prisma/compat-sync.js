@@ -75,16 +75,21 @@ async function main() {
 
   try {
     // ------------------------------------------------------------
-    // 规则 1：tags 唯一约束（name[, instanceId]）
-    //   · 旧结构（没有 instanceId 列）→ 按 name 合并
-    //   · 新结构 → 按 name + instanceId 合并
+    // 规则 1：tags 唯一约束（name[, instanceId][, type]）
+    //   · 最旧结构（没有 instanceId 列）→ 按 name 合并
+    //   · v3.0.0 结构 → 按 name + instanceId 合并
+    //   · v1.0.3 结构（有 type 列）→ 按 name + instanceId + type 合并
     // 合并策略：保留「关联文件最多、创建最早」的那一行，其余行的 file_tags
     // 重新指向保留下来的行（重复关联忽略），随后删除多余标签行。
     // ------------------------------------------------------------
     if (await tableExists('tags')) {
       const hasInstance = await columnExists('tags', 'instanceId');
-      const keyExpr = hasInstance ? 'name, "instanceId"' : 'name';
-      const keySelect = hasInstance ? 'name, "instanceId"' : 'name';
+      const hasType = await columnExists('tags', 'type');
+      const keyCols = ['name'];
+      if (hasInstance) keyCols.push('"instanceId"');
+      if (hasType) keyCols.push('type');
+      const keyExpr = keyCols.join(', ');
+      const keySelect = keyExpr;
 
       const groups = await q(
         `SELECT ${keySelect}, count(*)::int AS c
@@ -96,10 +101,17 @@ async function main() {
       } else {
         log(`tags：发现 ${groups.length} 组重复标签${CHECK_ONLY ? '（--check 模式，不改数据）' : '，开始合并'}`);
         for (const g of groups) {
-          const where = hasInstance
-            ? 'name = $1 AND "instanceId" = $2'
-            : 'name = $1';
-          const args = hasInstance ? [g.name, g.instanceId] : [g.name];
+          const conds = ['name = $1'];
+          const args = [g.name];
+          if (hasInstance) {
+            args.push(g.instanceId);
+            conds.push(`"instanceId" = $${args.length}`);
+          }
+          if (hasType) {
+            args.push(g.type);
+            conds.push(`type = $${args.length}`);
+          }
+          const where = conds.join(' AND ');
           const rows = await q(
             `SELECT t.id, t.metas,
                     (SELECT count(*)::int FROM file_tags ft WHERE ft."tagId" = t.id) AS refs,

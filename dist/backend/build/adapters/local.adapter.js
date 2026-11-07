@@ -180,6 +180,20 @@ class LocalAdapter {
         }
     }
     async buildRelKey(key, file, channel, ctx) {
+        return LocalAdapter.sanitizeRelKey(await this.buildRelKeyInner(key, file, channel, ctx));
+    }
+    static sanitizeRelKey(relKey) {
+        const raw = String(relKey || '');
+        if (process.platform !== 'win32')
+            return raw;
+        return raw
+            .split('/')
+            .map((seg) => seg
+            .replace(/[<>:"|?*\u0000-\u001f]/g, '_')
+            .replace(/[. ]+$/, (m) => '_'.repeat(m.length)))
+            .join('/');
+    }
+    async buildRelKeyInner(key, file, channel, ctx) {
         const cfg = LocalAdapter.readChannelCfg(channel);
         const ownerSeg = LocalAdapter.ownerSegment(ctx?.owner);
         const instSeg = LocalAdapter.instanceSegment(ctx?.instanceId);

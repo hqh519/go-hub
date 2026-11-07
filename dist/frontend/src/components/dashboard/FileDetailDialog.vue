@@ -4,6 +4,8 @@
         v-model="visible"
         :width="dialogWidth"
         ref="detailDialog"
+        class="gohub-layer-file-detail"
+        data-gohub-layer="file-detail"
         @closed="stopAllMedia"
     >
         <!-- 详情内容统一包一层：任一加载值超过 80 字符时整体字号降一号 -->
@@ -194,6 +196,21 @@
                     @click="$emit('download')"
                 >
                     <font-awesome-icon icon="download" class="preview-toolbar-icon" />{{ $t('fileDetail.download') }}
+                </el-button>
+                <!--
+                    v1.0.3：转存按钮（紧跟「下载」之后）——
+                    当前在本地存储渠道时显示「转异地」，否则显示「转本地」。
+                    只换渠道与跟随变化的数据，文件名 / 类型 / 分类 / 标签 / 外链全部不变。
+                -->
+                <el-button
+                    v-if="!isEditing && !trashMode"
+                    class="preview-toolbar-convert"
+                    size="small"
+                    plain
+                    :loading="convertLoading"
+                    @click="openConvertDialog"
+                >
+                    <font-awesome-icon icon="right-left" class="preview-toolbar-icon" />{{ convertDirectionLabel }}
                 </el-button>
                 <!--
                     v3.0.0（R14）：声音开关从「图床文件管理页右上角」迁到这里（下载按钮后面）——
@@ -615,6 +632,70 @@
             :qrValue="qrValue"
             :urls="urls"
         />
+        <!--
+            v1.0.3：转存弹窗（转本地 / 转异地）。
+            append-to-body + 独立 z-index：必须盖在详情弹窗之上。
+            只做两件事：选目标渠道（转本地还要选保留/删除源件），点确定执行。
+        -->
+        <el-dialog
+            v-model="showConvertDialog"
+            :title="convertDirection === 'to-local' ? $t('fileDetail.convertToLocal') : $t('fileDetail.convertToRemote')"
+            width="460px"
+            append-to-body
+            class="convert-dialog"
+        >
+            <div v-loading="convertLoading" class="convert-body">
+                <div class="convert-row">
+                    <span class="convert-label">{{ $t('fileDetail.convertCurrent') }}</span>
+                    <span class="convert-value">{{ convertCurrentChannel }}</span>
+                </div>
+                <div class="convert-row is-column">
+                    <span class="convert-label">{{ $t('fileDetail.convertTarget') }}</span>
+                    <el-select
+                        v-model="convertChannelId"
+                        :placeholder="$t('fileDetail.convertTargetPlaceholder')"
+                        style="width: 100%"
+                        filterable
+                    >
+                        <el-option
+                            v-for="ch in convertChannels"
+                            :key="ch.id"
+                            :label="ch.name"
+                            :value="ch.id"
+                        >
+                            <span>{{ ch.name }}</span>
+                            <span class="convert-option-type">{{ ch.type }}</span>
+                        </el-option>
+                    </el-select>
+                </div>
+                <!-- 第三方 → 本地才需要选「保留源件 / 删除源件」；默认不选，必须二选一 -->
+                <div v-if="convertDirection === 'to-local'" class="convert-row is-column">
+                    <span class="convert-label">{{ $t('fileDetail.convertSourceMode') }}</span>
+                    <el-radio-group v-model="convertDeleteSource" class="convert-radio">
+                        <el-radio :label="false">{{ $t('fileDetail.convertKeepSource') }}</el-radio>
+                        <el-radio :label="true" :disabled="!convertCanDeleteSource">
+                            {{ $t('fileDetail.convertDeleteSource') }}
+                        </el-radio>
+                    </el-radio-group>
+                    <p v-if="!convertCanDeleteSource" class="convert-hint is-warn">
+                        {{ $t('fileDetail.convertDeleteForbidden') }}
+                    </p>
+                </div>
+                <p v-else class="convert-hint">{{ $t('fileDetail.convertRemoteHint') }}</p>
+                <p v-if="convertDirection === 'to-local'" class="convert-hint">
+                    {{ $t('fileDetail.convertKeepHint') }}
+                </p>
+            </div>
+            <template #footer>
+                <el-button @click="showConvertDialog = false">{{ $t('common.cancel') }}</el-button>
+                <el-button
+                    type="primary"
+                    :loading="convertLoading"
+                    :disabled="!convertChannelId || (convertDirection === 'to-local' && convertDeleteSource === null)"
+                    @click="submitConvert"
+                >{{ $t('fileDetail.convertConfirm') }}</el-button>
+            </template>
+        </el-dialog>
         </div>
     </el-dialog>
 </template>
@@ -664,6 +745,10 @@ export default {
             this.resetDetailState();
         },
         visible(val) {
+            if (val) {
+                // v1.0.3：打开详情即确认「转本地 / 转异地」按钮该显示哪个（一次轻量查询）
+                this.loadConvertOptions();
+            }
             if (!val) {
                 // v3.0.0：关闭弹窗时退出编辑状态
                 this.isEditing = false;
@@ -706,6 +791,21 @@ export default {
             passwordSaving: false,
             // v3.0.0：分享卡片弹窗
             showShareDialog: false,
+            /*
+             * v1.0.3：转存（本地 ↔ 第三方）——
+             * direction 由后端按「当前主副本所在渠道类型」判定：
+             *   to-remote = 当前在本地存储渠道，按钮显示「转异地」
+             *   to-local  = 当前在第三方渠道，按钮显示「转本地」
+             */
+            showConvertDialog: false,
+            convertLoading: false,
+            convertDirection: 'to-remote',
+            convertCurrentChannel: '',
+            convertChannels: [],
+            convertChannelId: '',
+            // null = 还没选（转本地时必须二选一才能提交）
+            convertDeleteSource: null,
+            convertCanDeleteSource: true,
             // v3.0.0：「所属实例」行 —— GET /api/instances 的缓存（同一会话内只拉一次）
             instances: [],
             instancesLoaded: false,
@@ -762,6 +862,12 @@ export default {
         }
     },
     computed: {
+        /** v1.0.3：转存按钮文案 —— 当前在本地渠道就「转异地」，否则「转本地」 */
+        convertDirectionLabel() {
+            return this.convertDirection === 'to-local'
+                ? this.$t('fileDetail.convertToLocal')
+                : this.$t('fileDetail.convertToRemote');
+        },
         /** v2.8.7：全局视频静音开关（文件管理右上角按钮；本弹窗被多页面共用，取不到 store 时默认静音） */
         videoMuted() {
             return this.$store ? this.$store.state.globalVideoMuted : true;
@@ -1265,6 +1371,83 @@ export default {
         }
     },
     methods: {
+        /**
+         * v1.0.3：读取转存候选（当前渠道类型 + 可选目标渠道）。
+         * 失败时静默隐藏按钮（详情页其它功能不受影响）。
+         */
+        async loadConvertOptions() {
+            const key = String(this.file?.name || '');
+            if (!key || this.trashMode) {
+                this.convertChannels = [];
+                return;
+            }
+            try {
+                const resp = await fetchWithAuth(`/api/manage/convert/options/${encodeURIComponent(key)}`);
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || data?.success === false) {
+                    this.convertChannels = [];
+                    return;
+                }
+                this.convertDirection = data.direction === 'to-local' ? 'to-local' : 'to-remote';
+                this.convertCurrentChannel = data.currentChannel?.name
+                    ? `${data.currentChannel.name}（${data.currentChannel.type}）`
+                    : '—';
+                this.convertChannels = Array.isArray(data.channels) ? data.channels : [];
+                this.convertCanDeleteSource = data.canDeleteSource !== false;
+            } catch (e) {
+                this.convertChannels = [];
+            }
+        },
+        /** 打开转存弹窗：每次重新拉一次候选，避免渠道刚增删过导致选到停用渠道 */
+        async openConvertDialog() {
+            if (this.convertLoading) return;
+            await this.loadConvertOptions();
+            if (!this.convertChannels.length) {
+                ElMessage.warning(this.$t('fileDetail.convertNoChannel'));
+                return;
+            }
+            this.convertChannelId = '';
+            this.convertDeleteSource = null;
+            this.showConvertDialog = true;
+        },
+        /** 执行转存 */
+        async submitConvert() {
+            const key = String(this.file?.name || '');
+            if (!key || !this.convertChannelId) return;
+            /*
+             * 转本地必须明确「保留源件 / 删除源件」（默认留空，不预选），
+             * 避免误点导致源文件被删。
+             */
+            if (this.convertDirection === 'to-local' && this.convertDeleteSource === null) {
+                ElMessage.warning(this.$t('fileDetail.convertSourceRequired'));
+                return;
+            }
+            this.convertLoading = true;
+            try {
+                const resp = await fetchWithAuth('/api/manage/convert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: key,
+                        channelId: this.convertChannelId,
+                        deleteSource: this.convertDeleteSource === true
+                    })
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok || data?.success === false) {
+                    throw new Error(data?.message || this.$t('fileDetail.convertFailed'));
+                }
+                this.showConvertDialog = false;
+                ElMessage.success(this.$t('fileDetail.convertSuccess', { channel: data.channelName || '' }));
+                // 让父级刷新列表行（渠道列 / 渠道类型都会变）
+                this.$emit('metadataUpdated');
+            } catch (e) {
+                ElMessage.error(e?.message || this.$t('fileDetail.convertFailed'));
+            } finally {
+                this.convertLoading = false;
+            }
+        },
+
         /**
          * 上传渠道展示名（v2.8.6）：
          *   Default = 历史网页上传 ｜ Upload = 文件模式 ｜ Fetch = 链接模式转存
@@ -2011,6 +2194,58 @@ export default {
 .preview-toolbar-source {
     margin-left: 0;
     margin-right: 0;
+}
+/* v1.0.3：转存按钮（排在下载前面，样式与同排其它 plain 小按钮一致） */
+.preview-toolbar-convert {
+    margin-left: 0;
+}
+/* v1.0.3：转存弹窗 */
+.convert-body {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 60px;
+}
+.convert-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.convert-row.is-column {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+}
+.convert-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-text-color-regular);
+    flex: none;
+}
+.convert-value {
+    font-size: 13px;
+    color: var(--el-text-color-primary);
+    word-break: break-all;
+}
+.convert-option-type {
+    float: right;
+    margin-left: 12px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+.convert-radio {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+.convert-hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+}
+.convert-hint.is-warn {
+    color: var(--el-color-warning);
 }
 /* v2.6.0 #301：换行格式（ip␤归属地）按多行展示 */
 .ip-display-multiline {

@@ -19,9 +19,12 @@ async function findOrCreateTag(name, instanceId, operator = '', type = exports.T
     if (existed)
         return existed;
     try {
-        return (await prisma_1.prisma.tag.create({
-            data: { name: n, instanceId: scope.instanceId, type: scope.type, owner: String(operator || '') },
-        }));
+        const created = await prisma_1.prisma.tag.upsert({
+            where: { name_instanceId_type: { name: n, instanceId: scope.instanceId, type: scope.type } },
+            update: {},
+            create: { name: n, instanceId: scope.instanceId, type: scope.type, owner: String(operator || '') },
+        });
+        return created;
     }
     catch {
         const again = await prisma_1.prisma.tag.findFirst({ where: { ...scope, name: n }, orderBy: { createdAt: 'asc' } });

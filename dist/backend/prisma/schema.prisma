@@ -298,9 +298,14 @@ model Tag {
 
   files FileTag[]
 
-  @@unique([name, instanceId, owner])
-  @@index([instanceId, owner])
+  // v1.0.3：唯一键正式改为「实例 + 类型 + 名称」（数据库层生效）。
+  //   · 旧键 [name, instanceId, owner] 已删除 —— 它允许同一实例下不同用户各存一份同名标签，
+  //     这正是「同名标签筛选筛不全」的根源；
+  //   · 升级前由 prisma/compat-sync.js 先把历史重复合并成一条，因此 db push 不会失败；
+  //   · owner 仅记录创建人，不再参与唯一性。
+  @@unique([name, instanceId, type])
   @@index([instanceId, type])
+  @@index([instanceId, owner])
   @@map("tags")
 }
 
@@ -411,6 +416,11 @@ model FolderMeta {
   owner       String   @default("") // 归属用户名（空 = 系统/管理员目录）
   path        String // 逻辑目录路径（FileRecord.folder 原样，如 "2026/10"）
   instanceId  String   @default("") // 所属实例（空 = 默认实例）
+  // v1.0.3：目录属性也引入「类型」维度，与标签保持同一套确权口径。
+  //   目前只有文件分类（file）；后续笔记 / 文章 / 待办 / 导航接入时，
+  //   各自的分类互不影响，同名路径可以各存一份属性。
+  //   唯一性 = 归属人 + 实例 + 类型 + 路径。
+  type        String   @default("file")
   passwordHash String  @default("") // 所属文件加密（sha256；空 = 未加密）
   note        String   @default("") // 备注，仅创建者可见
   sharedUsers String   @default("[]") // 共享用户名数组（JSON）
@@ -419,8 +429,8 @@ model FolderMeta {
   metas       String   @default("{}")
   createdAt   DateTime @default(now())
 
-  @@unique([owner, instanceId, path])
-  @@index([owner])
+  @@unique([owner, instanceId, type, path])
+  @@index([owner, instanceId, type])
   @@map("folder_metas")
 }
 
