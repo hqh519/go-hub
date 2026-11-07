@@ -125,7 +125,7 @@
                             </div>
                         </div>
                     </el-form-item>
-                    <!-- 提取指定内容 -->
+                    <!-- 提取指定内容（v1.0.2：改为多行文本，一行一条更直观） -->
                     <el-form-item>
                         <template #label>
                             {{ $t('sysOthers.tagExtract') }}
@@ -135,10 +135,15 @@
                         </template>
                         <el-input
                             v-model="autoTag.extract"
+                            type="textarea"
+                            :autosize="{ minRows: 3 }"
                             :placeholder="$t('sysOthers.tagExtractPlaceholder')"
                         />
                     </el-form-item>
-                    <!-- 自定义规则 -->
+                    <!--
+                        自定义规则（v1.0.2）：裸正则换成「起始符 + 截断符 + 最大长度」三段式。
+                        正则写错只会静默失效、还不易自查；三段式所见即所得，谁都能看懂。
+                    -->
                     <el-form-item>
                         <template #label>
                             {{ $t('sysOthers.tagRegex') }}
@@ -146,12 +151,36 @@
                                 <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
                             </el-tooltip>
                         </template>
-                        <el-input
-                            v-model="autoTag.regex"
-                            type="textarea"
-                            :autosize="{ minRows: 3 }"
-                            :placeholder="$t('sysOthers.tagRegexPlaceholder')"
-                        />
+                        <div class="tag-rule-field">
+                            <div class="tag-marker-row">
+                                <div class="tag-marker-item">
+                                    <span class="tag-marker-label">{{ $t('sysOthers.tagStartChars') }}</span>
+                                    <el-input
+                                        v-model="autoTag.startChars"
+                                        :placeholder="$t('sysOthers.tagStartCharsPlaceholder')"
+                                    />
+                                </div>
+                                <div class="tag-marker-item">
+                                    <span class="tag-marker-label">{{ $t('sysOthers.tagStopChars') }}</span>
+                                    <el-input
+                                        v-model="autoTag.stopChars"
+                                        :placeholder="$t('sysOthers.tagStopCharsPlaceholder')"
+                                    />
+                                </div>
+                                <div class="tag-marker-item tag-marker-len">
+                                    <span class="tag-marker-label">{{ $t('sysOthers.tagMaxLen') }}</span>
+                                    <el-input-number
+                                        v-model="autoTag.maxLen"
+                                        :min="0"
+                                        :max="50"
+                                        :step="1"
+                                        controls-position="right"
+                                        style="width: 100%"
+                                    />
+                                </div>
+                            </div>
+                            <div class="tag-rule-hint">{{ $t('sysOthers.tagRuleHint') }}</div>
+                        </div>
                     </el-form-item>
                 </template>
             </el-form>
@@ -250,7 +279,10 @@ data() {
             enabled: true,
             placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
             extract: '',
-            regex: '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])'
+            // v1.0.2：起始符 / 截断符 / 最大长度（替代原来的裸正则）
+            startChars: '#',
+            stopChars: '!！,，.。-—_、;；:：?？()（）[]【】{}<>《》|/\\',
+            maxLen: 14
         },
         // 占位符快插按钮（点击追加到「设置占位符」输入框末尾）
         TAG_PLACEHOLDER_CHIPS: [
@@ -421,7 +453,9 @@ methods: {
                 enabled: this.autoTag.enabled === true,
                 placeholders: String(this.autoTag.placeholders || ''),
                 extract: String(this.autoTag.extract || ''),
-                regex: String(this.autoTag.regex || '')
+                startChars: String(this.autoTag.startChars || ''),
+                stopChars: String(this.autoTag.stopChars || ''),
+                maxLen: Math.max(0, Number(this.autoTag.maxLen) || 0)
             };
 
             // 2) 安全设置分区：只提交图片尺寸处理这一段，后端深合并，不影响认证等其它字段
@@ -498,7 +532,9 @@ mounted() {
             enabled: at.enabled === undefined ? true : !(at.enabled === false || String(at.enabled) === 'false'),
             placeholders: at.placeholders === undefined ? this.autoTag.placeholders : String(at.placeholders ?? ''),
             extract: at.extract === undefined ? '' : String(at.extract ?? ''),
-            regex: at.regex === undefined ? this.autoTag.regex : String(at.regex ?? '')
+            startChars: at.startChars === undefined ? this.autoTag.startChars : String(at.startChars ?? ''),
+            stopChars: at.stopChars === undefined ? this.autoTag.stopChars : String(at.stopChars ?? ''),
+            maxLen: at.maxLen === undefined ? this.autoTag.maxLen : Math.max(0, Number(at.maxLen) || 0)
         };
 
         const access = security?.access || {};
@@ -543,6 +579,34 @@ mounted() {
 }
 .tag-placeholder-chips :deep(.el-button + .el-button) {
     margin-left: 0;
+}
+/* v1.0.2：自定义规则三段式（起始符 / 截断符 / 限长） */
+.tag-marker-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.tag-marker-item {
+    flex: 1 1 180px;
+    min-width: 140px;
+}
+.tag-marker-len {
+    flex: 0 0 140px;
+    min-width: 120px;
+}
+.tag-marker-label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+    line-height: 1.2;
+}
+.tag-rule-hint {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
 }
 /* v3.0.0（R5）：文本类配置项一行内可带「复制默认值」按钮 */
 .setting-text-row {

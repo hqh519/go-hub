@@ -43,6 +43,7 @@ import { verifyTotp } from '../common/totp';
 import { ensureBucketInKey, publicDomainOf, publicizeExternalUrl } from '../common/channel-domain';
 import { hasRecordDomains, joinRecordUrl, recordLoadOrigin } from '../common/record-link';
 import { userInInstance } from '../common/instance-access';
+import { TAG_TYPE_FILE, findOrCreateTag } from '../common/tags';
 import {
   extraFoldersKey,
   extraFoldersOf,
@@ -1170,8 +1171,7 @@ export class LinkController {
   /**
    * GET /api/tags/manage?instanceId=&sort=createdAt|name|count&order=asc|desc
    * 当前实例（空 = 默认实例）下的全部标签，带 active 文件数与加密状态。
-   * v1.0.0：再叠加「按用户隔离」—— 只返回当前账户自己的标签（owner='' 的历史标签兼容放行），
-   * 不再把同实例下其它账户的标签一起返回。
+   * v1.0.2：改为「实例 + 类型」确权 —— 同实例内标签共享（owner 只作创建人展示）。
    */
   @Get('api/tags/manage')
   @UseGuards(ManageAuthGuard)
@@ -1180,12 +1180,11 @@ export class LinkController {
     const me = this.sessionUser(req);
     if (!me) return { success: true, data: [] };
     /*
-     * v1.0.0：严格按 (owner, instanceId) 收窄 —— 只返回「当前账户 + 当前实例」下的标签。
-     * 空 owner 的历史公共标签只给管理员看（回填后应已不存在）。
+     * v1.0.2：不再按 owner 收窄 —— 标签属于实例，实例内成员共用一套；
+     * 用 type 区分用途（当前只有文件标签，后续内容系统接自己的 type）。
      */
-    const ownerWhere = this.sessionAdmin(req) ? { in: [me, ''] } : me;
     const tags = await prisma.tag.findMany({
-      where: { instanceId, owner: ownerWhere },
+      where: { instanceId, type: TAG_TYPE_FILE },
       orderBy: { createdAt: 'asc' },
     });
     // count：该标签下 status=active 的文件数（file_tags 关联 + 文件状态过滤）
@@ -1202,8 +1201,11 @@ export class LinkController {
       name: t.name,
       count: counts.get(t.id) || 0,
       encrypted: !!safeParse(t.metas).passwordHash,
-      // v3.0.0：标签备注（仅创建者可读，存在 metas.note）
+      // v3.0.0：标签备注（存在 metas.note）
       note: String(safeParse(t.metas).note || ''),
+      // v1.0.2：创建人（只作展示，不参与隔离）
+      creator: t.owner || '',
+      mine: String(t.owner || '') === me,
       createdAt: t.createdAt,
     }));
     const order = String(q.order || 'desc').toLowerCase() === 'asc' ? 1 : -1;
@@ -1239,8 +1241,9 @@ export class LinkController {
       const name = String(body.name || '').trim();
       if (!name) return { success: false, message: '标签名不能为空' };
       if (name !== tag.name) {
+        // v1.0.2：查重口径改成「同实例 + 同类型」
         const dup = await prisma.tag.findFirst({
-          where: { name, instanceId: tag.instanceId, owner: tag.owner, NOT: { id } },
+          where: { name, instanceId: tag.instanceId, type: (tag as { type?: string }).type || TAG_TYPE_FILE, NOT: { id } },
         });
         if (dup) return { success: false, message: `同实例下已存在标签「${name}」` };
         data.name = name;
@@ -1320,15 +1323,13 @@ export class LinkController {
       const row = await prisma.tag.findUnique({ where: { id: String(body.targetId) } });
       if (row && this.canEditTag(req, row)) target = { id: row.id, name: row.name };
     }
-    if (!target && body?.targetName) {
-      const name = String(body.targetName || '').trim();
-      if (!name) return { success: false, message: 'targetName 不能为空' };
-      const row =
-        (await prisma.tag.findFirst({ where: { name, instanceId, owner } })) ||
-        (await prisma.tag.create({ data: { name, instanceId, owner } }));
+    if (!target) {
+      const name = String(body?.targetName || '').trim();
+      if (!name) return { success: false, message: '缺少 targetId 或 targetName' };
+      // v1.0.2：按「同实例 + 同类型」找/建，owner 只记创建人
+      const row = await findOrCreateTag(name, instanceId, this.sessionUser(req), TAG_TYPE_FILE);
       target = { id: row.id, name: row.name };
     }
-    if (!target) return { success: false, message: '缺少 targetId 或 targetName' };
     if (sourceIdSet.has(target.id)) return { success: false, message: '目标标签不能同时是源标签' };
 
     // 迁移关联：目标上已存在的直接删源关联，否则改挂到目标
@@ -1372,12 +1373,17 @@ export class LinkController {
    *     仍只允许管理员整理，避免普通用户误删老数据。
    * 实例维度由调用方配合 canAccessInstance() 校验（见 tagSplit）。
    */
-  private canEditTag(req: Request, tag: { owner?: string | null }): boolean {
-    const me = this.sessionUser(req);
-    if (!me) return false;
-    const owner = String(tag.owner || '');
-    if (!owner) return this.sessionAdmin(req);
-    return owner === me;
+  /**
+   * v1.0.2：标签编辑权限。
+   *
+   * 旧的判定是「只能改自己 owner 的标签」—— 那是标签按用户隔离时代的规则。
+   * 现在标签属于实例（instanceId + type + name 确权），实例内成员共用一套，
+   * 因此「能进这个实例」就视为有权维护该实例的标签；creator 只用于展示。
+   * 调用方（tagUpdate / tagDelete / tagMerge / tagSplit）都已先校验 canAccessInstance。
+   */
+  private canEditTag(req: Request, _tag: { owner?: string | null }): boolean {
+    // 登录且能进该实例即可（实例校验在调用方完成）
+    return !!this.sessionUser(req);
   }
 
   /**
@@ -1418,9 +1424,8 @@ export class LinkController {
     const created: { id: string; name: string }[] = [];
     let linked = 0;
     for (const name of names) {
-      // 同名标签已存在则复用（复合唯一键 name_instanceId_owner，归属与源标签一致）
-      const existed = await prisma.tag.findFirst({ where: { name, instanceId: tag.instanceId, owner } });
-      const target = existed || (await prisma.tag.create({ data: { name, instanceId: tag.instanceId, owner } }));
+      // v1.0.2：按「同实例 + 同类型」找/建（同名已存在则复用，不再按 owner 区分）
+      const target = await findOrCreateTag(name, tag.instanceId, owner, TAG_TYPE_FILE);
       created.push({ id: target.id, name: target.name });
       if (links.length) {
         const res = await prisma.fileTag.createMany({
@@ -2997,11 +3002,11 @@ export class ManageController {
     // v3.0.0（R14）：文件夹条目彻底删除 = 清登记 + 连带清掉该前缀下所有软删文件
     if (key.startsWith('folder:')) {
       const path = key.slice('folder:'.length);
-      const hit = (await this.listDeletedFolders(owner)).some((e) => e.path === path);
+      const hit = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
       if (!hit) return { success: false, message: '回收站中不存在该目录' };
       const gate = await this.verifyTrashTotp(req, totpCode);
       if (gate) return gate;
-      const n = await this.purgeFolderEntry(owner, path);
+      const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
       return { success: true, folder: true, purged: n };
     }
     const record = await prisma.fileRecord.findFirst({
@@ -3011,6 +3016,8 @@ export class ManageController {
     const gate = await this.verifyTrashTotp(req, totpCode);
     if (gate) return gate;
     await this.uploadSvc.removeFile(record.id, record.name);
+    // v1.0.2：删完若该目录已空，登记与属性一起清掉（否则文件管理里留一个空条目）
+    await this.cleanupEmptiedFolderChain(record.uploader || owner, record.folder || '', record.instanceId || '');
     return { success: true };
   }
 
@@ -3047,12 +3054,13 @@ export class ManageController {
           continue;
         }
         try {
+          // v1.0.2：同名目录可能存在于多个实例 —— 取出实例，彻底删除时按实例清理登记
+          const entry = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
           if (action === 'purge') {
-            const n = await this.purgeFolderEntry(owner, path);
+            const n = await this.purgeFolderEntry(owner, path, String(entry?.instanceId || ''));
             results.push({ id, ok: true, message: `连带文件 ${n} 条` });
           } else {
             // v1.0.0：把实例一并带过去（同名目录可能存在于多个实例）
-            const entry = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
             const restored = await this.restoreFolderEntry(owner, path, String(entry?.instanceId || ''));
             results.push({ id, ok: true, message: `连带恢复文件 ${restored.filesRestored} 条` });
           }
@@ -3067,8 +3075,11 @@ export class ManageController {
       }
       try {
         const rec = rows.find((r) => r.id === id)!;
-        if (action === 'purge') await this.uploadSvc.removeFile(rec.id, rec.name);
-        else {
+        if (action === 'purge') {
+          await this.uploadSvc.removeFile(rec.id, rec.name);
+          // v1.0.2：同单条彻底删除 —— 目录因此变空则清理登记与属性
+          await this.cleanupEmptiedFolderChain(rec.uploader || owner, rec.folder || '', rec.instanceId || '');
+        } else {
           await this.uploadSvc.restoreFile(rec.id, rec.name);
           // v1.0.1：文件回到原目录；原目录还在回收站里则一并恢复（含属性）
           await this.restoreFolderChain(rec.uploader || owner, rec.folder || '', rec.instanceId || '');
@@ -3240,8 +3251,50 @@ export class ManageController {
     return restored;
   }
 
+  /**
+   * v1.0.2：彻底删除后，把「因此变空」的目录登记与属性快照一并清掉。
+   *
+   * 场景（用户反馈）：本地存储渠道里最后一张图被彻底删除 → 物理目录已被适配器递归回收，
+   * 但 settings.extraFolders 的登记和 FolderMeta 行还在，文件管理里仍留着一个点进去空空的条目。
+   * 处理：从最深一级往上走，只要该路径下（含子目录）已无 active 文件，
+   * 就摘掉登记 + 删掉属性行；遇到第一个非空层级立刻停止（更上层必然也非空）。
+   * 只删「确实变空」的层级，不碰还有文件的目录。
+   */
+  private async cleanupEmptiedFolderChain(owner: string, folder: string, instanceId = ''): Promise<number> {
+    const f = String(folder || '').replace(/^\/+|\/+$/g, '').trim();
+    if (!f) return 0;
+    const segs = f.split('/').filter(Boolean);
+    let cleaned = 0;
+    for (let i = segs.length; i >= 1; i--) {
+      const path = segs.slice(0, i).join('/');
+      try {
+        const under = await prisma.fileRecord.count({
+          where: {
+            status: 'active',
+            instanceId,
+            ...(owner ? { uploader: owner } : {}),
+            OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
+          },
+        });
+        if (under > 0) break;
+        const removedReg = await this.unregisterFolders(owner, path, instanceId);
+        const delMeta = await prisma.folderMeta.deleteMany({
+          where: { path, instanceId, ...(owner ? { owner } : {}) },
+        });
+        if (removedReg || delMeta.count) cleaned += 1;
+      } catch (err) {
+        appLog.warn('file', `空目录登记清理失败：${path}`, (err as Error).message);
+        break;
+      }
+    }
+    if (cleaned) {
+      appLog.info('file', `彻底删除后已清理空目录登记：${f}`, `共清理 ${cleaned} 级（登记 + 目录属性）`);
+    }
+    return cleaned;
+  }
+
   /** 彻底删除回收站里的文件夹：清登记 + 连带清掉该前缀下所有软删文件记录 */
-  private async purgeFolderEntry(owner: string, path: string): Promise<number> {
+  private async purgeFolderEntry(owner: string, path: string, instanceId = ''): Promise<number> {
     await this.removeDeletedFolder(owner, path);
     const rows = await prisma.fileRecord.findMany({
       where: {
@@ -3259,6 +3312,22 @@ export class ManageController {
       } catch (err) {
         appLog.warn('file', `回收站目录连带删除失败：${r.name}`, (err as Error).message);
       }
+    }
+    /*
+     * v1.0.2：目录连同内容一起彻底删除后，属性的残行与「变空的上级目录」登记也要清掉，
+     * 否则文件管理里会留下点进去空空的条目（用户反馈的原问题）。
+     */
+    try {
+      await prisma.folderMeta.deleteMany({
+        where: {
+          ...(instanceId ? { instanceId } : {}),
+          ...(owner ? { owner } : {}),
+          OR: [{ path }, { path: { startsWith: `${path}/` } }],
+        },
+      });
+      await this.cleanupEmptiedFolderChain(owner, path, instanceId);
+    } catch (err) {
+      appLog.warn('file', `回收站目录彻底删除后清理登记失败：${path}`, (err as Error).message);
     }
     appLog.info('file', `回收站目录已彻底删除：${path}`, `连带文件 ${n} 条（已恢复到别处/重建目录中的活跃文件不受影响）`);
     return n;
@@ -3572,7 +3641,7 @@ export class ManageController {
   @Post('batch/move')
   async batchMove(
     @Req() req: Request,
-    @Body() body: { ids?: string[]; folders?: string[]; folder?: string; instanceId?: string },
+    @Body() body: { ids?: string[]; folders?: string[]; folder?: string; instanceId?: string; fromInstanceId?: string },
   ) {
     if (!(await this.userPerm(req, 'edit'))) return { success: false, message: '没有编辑权限' };
     const ids = this.bodyIds(body);
@@ -3593,6 +3662,11 @@ export class ManageController {
     }
     // undefined = 不改实例；'' = 默认实例；其余 = 指定实例（必须已存在）
     const targetInstance = body?.instanceId !== undefined ? String(body.instanceId ?? '') : undefined;
+    /*
+     * v1.0.2：源实例（可选）。跨实例移动时必须知道「从哪个实例搬走」，
+     * 否则源数据按目标实例过滤会一条都查不到（移动看起来没生效）。
+     */
+    const fromInstance = body?.fromInstanceId !== undefined ? String(body.fromInstanceId ?? '') : undefined;
     if (targetInstance) {
       const inst = await prisma.instance.findUnique({ where: { id: targetInstance }, select: { id: true } });
       if (!inst) throw new BadRequestException('目标实例不存在');
@@ -3623,6 +3697,17 @@ export class ManageController {
       const me = currentSession(req)?.user || '';
       const isAdmin = this.admin(req);
       const distBase = data.folder !== undefined ? data.folder : '';
+      /*
+       * v1.0.2：跨实例移动目录时的「源实例」——
+       * 旧实现用 targetInstance 过滤源数据，跨实例时源行（在 A 实例）一条都查不到，
+       * 表现就是「移动到另一个实例不生效」。现在区分 fromInstanceId（源）/ instanceId（目标）：
+       *   · 前端会同时传两个；只传 instanceId 的老调用方按「同实例移动」处理。
+       */
+      const srcInstKey = fromInstance !== undefined
+        ? String(fromInstance)
+        : (targetInstance !== undefined ? String(targetInstance) : undefined);
+      const dstInstKey = targetInstance !== undefined ? String(targetInstance) : srcInstKey;
+      const srcInstWhere = srcInstKey !== undefined ? { instanceId: srcInstKey } : {};
       for (const f of folders) {
         // 只读共享目录不可移动（共享接收方）
         if (me) {
@@ -3636,10 +3721,10 @@ export class ManageController {
         const leaf = f.split('/').filter(Boolean).pop() || '';
         const newRoot = [distBase, leaf].filter(Boolean).join('/');
         /*
-         * v1.0.0：目录搬家同样按实例隔离 —— 前端每次移动都会带当前实例（body.instanceId），
-         * 此时源实例 = 目标实例；不带（老调用方）时保持原有「不按实例收窄」的行为。
+         * v1.0.2：按「源实例」取目录下的记录（同实例移动时源 = 目标，行为不变）。
+         * instanceId 未给的老调用方保持原样（不按实例收窄）。
          */
-        const moveInst = targetInstance !== undefined ? { instanceId: targetInstance } : {};
+        const moveInst = srcInstWhere;
         const rowsInFolder = await prisma.fileRecord.findMany({
           where: {
             ...(isAdmin ? {} : { uploader: me }),
@@ -3676,13 +3761,26 @@ export class ManageController {
           });
           for (const m of metas) {
             const suffix = String(m.path || '').slice(f.length).replace(/^\/+/, '');
-            await prisma.folderMeta.update({
-              where: { id: m.id },
-              data: {
-                path: suffix ? `${newRoot}/${suffix}` : newRoot,
-                ...(targetInstance !== undefined ? { instanceId: targetInstance } : {}),
-              },
-            });
+            const nextPath = suffix ? `${newRoot}/${suffix}` : newRoot;
+            try {
+              await prisma.folderMeta.update({
+                where: { id: m.id },
+                data: {
+                  path: nextPath,
+                  ...(targetInstance !== undefined ? { instanceId: targetInstance } : {}),
+                },
+              });
+            } catch (err) {
+              /*
+               * v1.0.2：目标目录已存在同名属性行 → 合并（保留目标已有配置，丢弃被搬过来的这条），
+               * 否则唯一键 [owner, instanceId, path] 冲突会让整个目录移动报错。
+               */
+              if ((err as { code?: string }).code === 'P2002') {
+                await prisma.folderMeta.delete({ where: { id: m.id } }).catch(() => undefined);
+              } else {
+                throw err;
+              }
+            }
           }
         } catch (err) {
           appLog.warn('file', `目录属性搬家失败：${f}`, (err as Error).message);
@@ -3690,9 +3788,16 @@ export class ManageController {
         /*
          * v3.0.0（R12）：空目录（「新建目录」登记、无任何文件记录）也要搬家 ——
          * 它们只存在于 settings.extraFolders，不改写就会出现「移动后旧目录还在」的假失败。
+         * v1.0.2：跨实例移动时从「源实例」的键搬到「目标实例」的键。
          */
         try {
-          movedRegistered += await this.moveRegisteredFolders(isAdmin ? '' : me, [f], distBase, targetInstance ?? '');
+          movedRegistered += await this.moveRegisteredFolders(
+            isAdmin ? '' : me,
+            [f],
+            distBase,
+            srcInstKey ?? '',
+            dstInstKey ?? '',
+          );
         } catch (err) {
           appLog.warn('file', `登记目录搬家失败：${f}`, (err as Error).message);
         }
@@ -3705,6 +3810,13 @@ export class ManageController {
     const { ok: rows } = await this.dropReadonlyShared(await this.loadOwned(ids, req), req);
     for (const r of rows) {
       try {
+        /*
+         * v1.0.2：给了源实例时必须对得上 —— 防止在 A 实例里误把 B 实例的同 id 记录搬走。
+         */
+        if (fromInstance !== undefined && String(r.instanceId || '') !== String(fromInstance)) {
+          failed.push({ id: r.id, error: '文件不属于当前实例' });
+          continue;
+        }
         const fromInst = String(r.instanceId || '');
         const toInst = targetInstance !== undefined ? String(targetInstance) : fromInst;
         await prisma.fileRecord.update({ where: { id: r.id }, data });
@@ -3774,16 +3886,20 @@ export class ManageController {
         if (!src) continue;
         // 该关联已经指向目标实例的标签（历史脏数据）→ 无需复制
         if (String(src.instanceId || '') === String(toInst)) continue;
-        const owner = String(src.owner || fallbackOwner || '');
-        let target = await prisma.tag.findFirst({
-          where: { name: src.name, instanceId: toInst, owner },
-          select: { id: true },
-        });
-        if (!target) {
-          target = await prisma.tag.create({
-            data: { name: src.name, instanceId: toInst, owner, metas: src.metas || '{}' },
-            select: { id: true },
-          });
+        /*
+         * v1.0.2：目标实例里按「实例 + 类型 + 名称」复用同名标签（实例内只有一条），
+         * 没有才新建；owner 记为创建人（源标签的创建人优先，回落到文件上传者）。
+         */
+        const target = await findOrCreateTag(
+          src.name,
+          toInst,
+          String(src.owner || fallbackOwner || ''),
+          String((src as { type?: string }).type || TAG_TYPE_FILE),
+        );
+        // 目标标签的展示属性（颜色等）以源标签为准补齐 —— 已有则不覆盖
+        const srcMetas = String(src.metas || '{}');
+        if (srcMetas && srcMetas !== '{}' && String(target.metas || '{}') === '{}') {
+          await prisma.tag.update({ where: { id: target.id }, data: { metas: srcMetas } }).catch(() => undefined);
         }
         const exists = await prisma.fileTag.findFirst({
           where: { fileId, tagId: target.id },
@@ -4363,9 +4479,16 @@ export class ManageController {
   /**
    * v3.0.0（R12）：目录移动时同步改写 settings.extraFolders。
    * 空目录（无文件记录）只能靠这份登记存活，不改写就会出现「移动后旧目录还在、新目录没出现」。
+   * v1.0.2：支持跨实例 —— fromInstance 的键里搬走，写进 toInstance 的键（同名目录自动合并）。
    * @returns 被改写的条目数
    */
-  private async moveRegisteredFolders(owner: string, folders: string[], distBase: string, instanceId = ''): Promise<number> {
+  private async moveRegisteredFolders(
+    owner: string,
+    folders: string[],
+    distBase: string,
+    fromInstance = '',
+    toInstance = '',
+  ): Promise<number> {
     if (!folders.length) return 0;
     let map: Record<string, string[]> = {};
     try {
@@ -4373,9 +4496,10 @@ export class ManageController {
     } catch {
       map = {};
     }
-    // v1.0.0：按「账户 + 实例」键读写
-    const key = this.extraFoldersKey(owner, instanceId);
-    let list: string[] = Array.isArray(map[key]) ? [...map[key]] : [];
+    // v1.0.0：按「账户 + 实例」键读写；v1.0.2：源 / 目标实例可以是不同的键
+    const srcKey = this.extraFoldersKey(owner, fromInstance);
+    const dstKey = this.extraFoldersKey(owner, toInstance);
+    let list: string[] = Array.isArray(map[srcKey]) ? [...map[srcKey]] : [];
     let changed = 0;
     for (const raw of folders) {
       const f = String(raw || '').replace(/^\/+|\/+$/g, '');
@@ -4395,7 +4519,12 @@ export class ManageController {
       list = next;
     }
     if (changed > 0) {
-      map[key] = Array.from(new Set(list)).sort();
+      map[srcKey] = Array.from(new Set(list)).sort();
+      if (dstKey !== srcKey) {
+        // 跨实例：目标键合并（去重），源键已在上一步剔除
+        const dstList = Array.isArray(map[dstKey]) ? map[dstKey] : [];
+        map[dstKey] = Array.from(new Set([...dstList, ...list])).sort();
+      }
       await this.settings.set('extraFolders', JSON.stringify(map));
     }
     return changed;

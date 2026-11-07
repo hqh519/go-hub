@@ -18,6 +18,7 @@ const request_origin_1 = require("../common/request-origin");
 const common_1 = require("@nestjs/common");
 const crypto_1 = require("crypto");
 const prisma_1 = require("../common/prisma");
+const tags_1 = require("../common/tags");
 const crypto_service_1 = require("../common/crypto.service");
 const auth_guard_1 = require("../auth/auth.guard");
 const settings_service_1 = require("../settings/settings.service");
@@ -63,7 +64,7 @@ function parseStrArray(raw) {
 }
 function tagOwnerScope(req) {
     const me = (0, auth_guard_1.currentSession)(req)?.user || '';
-    return me ? { owner: me } : { owner: { in: [] } };
+    return me ? { type: tags_1.TAG_TYPE_FILE } : { id: { in: [] } };
 }
 let PublicCompatController = class PublicCompatController {
     bingWallpaper() {
@@ -353,11 +354,7 @@ let ManageCompatController = class ManageCompatController {
             const name = String(raw).trim();
             if (!name)
                 continue;
-            const tag = await prisma_1.prisma.tag.upsert({
-                where: { name_instanceId_owner: { name, instanceId, owner: tagOwner } },
-                update: {},
-                create: { name, instanceId, owner: tagOwner },
-            });
+            const tag = await (0, tags_1.findOrCreateTag)(name, instanceId, tagOwner, tags_1.TAG_TYPE_FILE);
             if (action === 'remove') {
                 await prisma_1.prisma.fileTag.deleteMany({ where: { fileId: rec.id, tagId: tag.id } });
             }

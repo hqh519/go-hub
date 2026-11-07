@@ -7,7 +7,7 @@
     -->
     <div
         class="folder-card"
-        :class="{ 'is-selected': localSelected, 'is-deleting': deleting }"
+        :class="{ 'is-selected': localSelected, 'is-deleting': deleting, 'is-force-select': showSelect }"
         @contextmenu.prevent
         @touchstart="$emit('touchstart', $event)"
         @touchend="$emit('touchend', $event)"
@@ -21,7 +21,18 @@
         <!-- 上半部分：文件夹图标 -->
         <div class="folder-preview" @click="$emit('enter')">
             <font-awesome-icon icon="folder-open" class="folder-icon-svg"/>
-            <!-- 悬浮层：操作（文件夹已不可选中，这里不再有选择圆圈） -->
+            <!--
+                v1.0.2：恢复文件夹可选中（上一版禁选是因为移动/删除不生效，根因已修复）。
+                圆圈与文件卡片一致：绝对定位右上角、选中态恒显、只读共享目录不可选。
+            -->
+            <el-checkbox
+                v-if="!sharedReadonly"
+                v-model="localSelected"
+                class="card-select"
+                @click.stop
+                @change="$emit('update:selected', localSelected)"
+            ></el-checkbox>
+            <!-- 悬浮层：操作按钮（复制链接 / 移动） -->
             <div class="folder-overlay">
                 <div v-if="showActions" class="overlay-actions" @click.stop>
                     <el-tooltip :disabled="disableTooltip" :content="$t('dashboard.copyLink')" placement="top" :show-after="600">
@@ -232,7 +243,45 @@ export default {
     opacity: 1;
     pointer-events: auto;
 }
-/* v1.0.1：文件夹不可选中 → is-force-select / .card-select / .overlay-top 相关样式一并移除 */
+/* v1.0.2：恢复选择圆圈 —— 与 FileCard 完全同一套定位与配色 */
+.card-select {
+    position: absolute;
+    top: 5px;
+    right: 8px;
+    z-index: 3;
+    margin: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+}
+.folder-card:hover .card-select,
+.folder-card:focus-within .card-select,
+.folder-card.is-selected .card-select,
+/* 列表里已有一个文件夹被选中 → 其余文件夹也常显圆圈（批量操作更直观） */
+.folder-card.is-force-select .card-select {
+    opacity: 1;
+    pointer-events: auto;
+}
+@media (max-width: 1199px) {
+    .card-select {
+        top: 1px;
+    }
+}
+.card-select :deep(.el-checkbox__inner) {
+    width: 18px !important;
+    min-width: 18px;
+    height: 18px !important;
+    min-height: 18px;
+    border-radius: 50% !important;
+    background: transparent;
+}
+.card-select :deep(.el-checkbox__input.is-checked .el-checkbox__inner) {
+    background-color: var(--el-color-primary);
+    border-color: var(--el-color-primary);
+}
+.card-select :deep(.el-checkbox__input.is-checked .el-checkbox__inner::after) {
+    border-color: #fff;
+}
 .overlay-actions {
     display: flex;
     align-items: center;

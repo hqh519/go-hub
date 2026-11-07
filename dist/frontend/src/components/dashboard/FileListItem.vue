@@ -18,10 +18,10 @@
             <span class="card-deleting-spinner"></span>
             <span class="card-deleting-text">{{ deletingLabel || $t('dashboard.deletingHint') }}</span>
         </div>
-        <!-- 1. 选择按钮（v3.0.0 R8：只读共享不可选中 → 隐藏；v1.0.1：文件夹一律不可选中） -->
+        <!-- 1. 选择按钮（v3.0.0 R8：只读共享不可选中 → 隐藏；v1.0.2：文件夹恢复可选中） -->
         <div class="list-col list-col-checkbox">
             <el-checkbox
-                v-if="!sharedReadonly && !isFolder"
+                v-if="!sharedReadonly"
                 v-model="localSelected"
                 @click.stop
                 @change="handleSelectChange"

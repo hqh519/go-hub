@@ -16,6 +16,7 @@ import { prisma } from './common/prisma';
 import { SESSION_COOKIE, parseSession } from './auth/auth.guard';
 import { rateLimiter } from './common/rate-limit';
 import { appLog } from './common/app-log';
+import { mergeDuplicateTags } from './common/tags';
 import { CryptoService } from './common/crypto.service';
 import { backendSub, frontendAppDir } from './common/project-paths';
 
@@ -529,6 +530,20 @@ async function bootstrap() {
       '[security] ⚠️ CONFIG_SECRET 未配置或仍是模板默认值：渠道密钥将使用内置开发密钥加密，' +
         '请尽快在 .env / compose 里设置随机长串（修改后已保存的渠道密钥需重新填写）。',
     );
+  }
+
+  /*
+   * v1.0.2：标签确权模型迁移 —— 旧库里同实例同名标签可能分属不同 owner（多条），
+   * 新模型下它们应当合并成一条。这里在启动时做一次幂等合并，把 file_tags 关联并到最早那条。
+   */
+  try {
+    const merged = await mergeDuplicateTags();
+    if (merged) {
+      console.log(`[tag] 已合并历史重复标签 ${merged} 条（实例 + 类型 + 名称 确权迁移）`);
+      appLog.info('file', `标签确权迁移：合并重复标签 ${merged} 条`, '实例 + 类型 + 名称 作为唯一口径');
+    }
+  } catch (err) {
+    console.warn(`[tag] 标签去重失败：${(err as Error).message}`);
   }
 
   const port = Number(process.env.PORT || 3619);

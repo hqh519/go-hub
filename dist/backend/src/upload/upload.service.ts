@@ -4,6 +4,7 @@ import { createReadStream, promises as fsp } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { prisma } from '../common/prisma';
+import { TAG_TYPE_FILE, findOrCreateTag } from '../common/tags';
 import { CryptoService } from '../common/crypto.service';
 import { SettingsService } from '../settings/settings.service';
 import { SysConfigService } from '../settings/sysconfig.service';
@@ -678,11 +679,13 @@ export class UploadService {
        * 原来写死的「文件类型 / 扩展名 / 渠道简称 / 上传方式 / 年份」已移除，
        * 统一由 autoTag.placeholders / extract / regex 三项决定。
        */
-      let rules: { enabled: boolean; placeholders: string; extract: string; regex: string } = {
+      let rules: { enabled: boolean; placeholders: string; extract: string; startChars: string; stopChars: string; maxLen: number } = {
         enabled: true,
         placeholders: UploadService.DEFAULT_TAG_PLACEHOLDERS,
         extract: '',
-        regex: UploadService.DEFAULT_TAG_REGEX,
+        startChars: UploadService.DEFAULT_TAG_START,
+        stopChars: UploadService.DEFAULT_TAG_STOP,
+        maxLen: UploadService.DEFAULT_TAG_MAX_LEN,
       };
       try {
         const cfg = await this.sysConfig.get('others');
@@ -692,7 +695,10 @@ export class UploadService {
           placeholders:
             at.placeholders === undefined ? UploadService.DEFAULT_TAG_PLACEHOLDERS : String(at.placeholders ?? ''),
           extract: at.extract === undefined ? '' : String(at.extract ?? ''),
-          regex: at.regex === undefined ? UploadService.DEFAULT_TAG_REGEX : String(at.regex ?? ''),
+          startChars:
+            at.startChars === undefined ? UploadService.DEFAULT_TAG_START : String(at.startChars ?? ''),
+          stopChars: at.stopChars === undefined ? UploadService.DEFAULT_TAG_STOP : String(at.stopChars ?? ''),
+          maxLen: at.maxLen === undefined ? UploadService.DEFAULT_TAG_MAX_LEN : Math.max(0, Number(at.maxLen) || 0),
         };
       } catch (err) {
         appLog.warn('upload', `读取自动标签规则失败，使用默认规则`, (err as Error)?.message || String(err));
@@ -740,26 +746,14 @@ export class UploadService {
         for (const rule of UploadService.parseTagExtractRules(rules.extract)) {
           if (String(info.originalName || '').includes(rule.find)) autoNames.push(rule.tag);
         }
-        // ③ 自定义规则：一行一条正则，取捕获组 1（没有捕获组则取整段匹配）
-        for (const line of String(rules.regex || '').split('\n')) {
-          const pattern = line.trim();
-          if (!pattern) continue;
-          let re: RegExp;
-          try {
-            re = new RegExp(pattern, 'g');
-          } catch (err) {
-            appLog.warn('upload', `自动标签正则无效，已跳过：${pattern}`, (err as Error)?.message || String(err));
-            continue;
-          }
-          let m: RegExpExecArray | null;
-          let guard = 0;
-          while ((m = re.exec(String(info.originalName || ''))) !== null) {
-            const hit = String(m[1] ?? m[0] ?? '').trim();
-            if (hit) autoNames.push(hit);
-            // 零长度匹配防死循环 + 单条规则最多取 10 个
-            if (!m[0]) re.lastIndex += 1;
-            if (++guard >= 10) break;
-          }
+        // ③ 自定义规则（v1.0.2）：起始符集合 + 截断符集合 + 最大长度
+        for (const hit of UploadService.extractByMarkers(
+          String(info.originalName || ''),
+          rules.startChars,
+          rules.stopChars,
+          rules.maxLen,
+        )) {
+          autoNames.push(hit);
         }
       }
       const names = Array.from(
@@ -770,12 +764,8 @@ export class UploadService {
         ),
       ).slice(0, 30);
       for (const name of names) {
-        // v1.0.0：tags 表联合唯一改为 [name, instanceId, owner]，upsert 走新复合键
-        const tag = await prisma.tag.upsert({
-          where: { name_instanceId_owner: { name, instanceId, owner } },
-          update: {},
-          create: { name, instanceId, owner },
-        });
+        // v1.0.2：按「实例 + 类型 + 名称」找/建标签，owner 只记创建人（上传者）
+        const tag = await findOrCreateTag(name, instanceId, owner, TAG_TYPE_FILE);
         const exists = await prisma.fileTag.findFirst({
           where: { fileId, tagId: tag.id },
           select: { id: true },
@@ -788,14 +778,103 @@ export class UploadService {
   }
 
   /**
-   * v1.0.1：自动标签的默认规则（与旧版写死的规则等价，保证升级后行为不变）。
+   * v1.0.2：自动标签的默认规则。
    *
    *   placeholders —— 文件类型 / 扩展名 / 渠道简称 / 上传方式 / 年份
-   *   regex        —— 文件原名里 `#标签` 的提取规则（原 extractHashTags 的静态实现）
+   *   起始符 / 截断符 / 限长 —— 从文件名里取 `#关键词` 这类标签
+   *
+   * 说明：v1.0.1 用的是裸正则（DEFAULT_TAG_REGEX），写错一个字符就静默失效；
+   * v1.0.2 换成「起始符 + 截断符 + 最大长度」三段式，默认值与旧的 `#` 规则基本等价。
    */
   static readonly DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
-  static readonly DEFAULT_TAG_REGEX =
-    '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])';
+  static readonly DEFAULT_TAG_START = '#';
+  /** 空白恒为截断符（见 extractByMarkers），这里只列额外的符号 */
+  static readonly DEFAULT_TAG_STOP = '!！,，.。-—_、;；:：?？()（）[]【】{}<>《》|/\\';
+  static readonly DEFAULT_TAG_MAX_LEN = 14;
+
+  /**
+   * v1.0.2：解析「起始符 / 截断符」配置。
+   *
+   * 支持三种写法，避免用户被格式卡住：
+   *   `#,@,&`          —— 逗号 / 顿号 / 分号 / 空格分隔（推荐）
+   *   `["#","@","&"]`  —— JSON 数组（需求原文的写法）
+   *   `#`              —— 单个记号
+   * 每个记号是「字面量」，可以是多字符（例如 `tag-` 作为起始符）。
+   */
+  static parseMarkerList(raw: string): string[] {
+    const s = String(raw || '').trim();
+    if (!s) return [];
+    let items: string[] = [];
+    if (s.startsWith('[')) {
+      try {
+        const j = JSON.parse(s);
+        if (Array.isArray(j)) items = j.map((v) => String(v ?? ''));
+      } catch {
+        items = [];
+      }
+    }
+    if (!items.length) items = s.split(/[,，;；\s]+/);
+    return Array.from(new Set(items.map((v) => String(v || '').trim()).filter(Boolean)));
+  }
+
+  /**
+   * v1.0.2：按「起始符 + 截断符 + 最大长度」从文件原名里抽取标签。
+   *
+   * 规则（与需求描述一致）：
+   *   · 命中任一「起始符」后开始取内容；
+   *   · 若紧跟的又是起始符（例如 `##标签`、`#@标签`），以**最后一个**为起始 —— 连续吃掉；
+   *   · 一直取到「截断符」或空白（空白恒为截断符）或文件名结尾；
+   *   · 取到的内容超过 maxLen（>0 时生效）就整条丢弃，不做截短；
+   *   · 一条文件名里可以抽出多个标签，重复的只保留一次。
+   */
+  static extractByMarkers(originalName: string, startRaw: string, stopRaw: string, maxLen = 0): string[] {
+    const name = String(originalName || '');
+    if (!name) return [];
+    const starts = UploadService.parseMarkerList(startRaw);
+    if (!starts.length) return [];
+    const stops = UploadService.parseMarkerList(stopRaw);
+    const isStop = (ch: string) => /[\s]/.test(ch) || stops.some((s) => ch.startsWith(s));
+    const matchStart = (idx: number): string | null => {
+      for (const s of starts) {
+        if (s && name.startsWith(s, idx)) return s;
+      }
+      return null;
+    };
+    const out: string[] = [];
+    let pos = 0;
+    let guard = 0;
+    while (pos < name.length && guard < 50) {
+      guard += 1;
+      // 找最近的一个起始符
+      let hit = -1;
+      let hitLen = 0;
+      for (let i = pos; i < name.length; i += 1) {
+        const s = matchStart(i);
+        if (s) {
+          hit = i;
+          hitLen = s.length;
+          break;
+        }
+      }
+      if (hit < 0) break;
+      let cur = hit + hitLen;
+      // 连续起始符：以最后一个为起始
+      for (;;) {
+        const s = matchStart(cur);
+        if (!s) break;
+        cur += s.length;
+      }
+      // 一直取到截断符 / 空白 / 结尾
+      let end = cur;
+      while (end < name.length && !isStop(name[end])) end += 1;
+      const content = name.slice(cur, end).trim();
+      if (content && (maxLen <= 0 || content.length <= maxLen) && !out.includes(content)) out.push(content);
+      // 从截断处继续找下一个（避免同一个起始符被重复消费）
+      pos = end > hit ? end : hit + hitLen;
+      if (out.length >= 20) break;
+    }
+    return out;
+  }
 
   /**
    * v1.0.1：解析「提取指定内容」配置。
@@ -2210,7 +2289,18 @@ export class UploadService {
       this.autoTag(record.id, {
         originalName,
         mime,
-        channelType: usedChannel.type,
+        /*
+         * v1.0.2：`{channelName}` 的取值口径。
+         *
+         * 只要本次允许「主备双写」（opts.backup !== false，且账户 / 全局确实配了备渠道），
+         * 同一份文件在两条渠道里都存在 —— 此时标签里的渠道名**固定取主渠道**，
+         * 不再跟随 `usedChannel`（它会在主渠道报错时变成备渠道），否则同一批文件
+         * 会出现「一半标主渠道、一半标备渠道」的标签漂移。
+         *
+         * 明确关闭备份（opts.backup === false）时只有一条渠道落库，
+         * 就按实际落库的渠道打标签，主渠道失败自动切换也不会标错。
+         */
+        channelType: opts.backup === false ? usedChannel.type : main.type,
         uploadSource: opts.uploadSource,
         // v3.0.0：标签按实例隔离（与文件同实例）
         instanceId: instanceScope,

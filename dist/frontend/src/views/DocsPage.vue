@@ -503,6 +503,24 @@ const ZH = {
         { t: '上传目录输入框恢复浏览器历史记忆', d: '首页上传设置 / 上传页的目录路径输入框统一带上稳定的 name 与 autocomplete="on"，浏览器可以正常记住并补全历史上填过的目录。' },
         { t: '发布目录调整', d: '自 v1.0.1 起，Docker 相关文件（Dockerfile、compose、部署脚本、镜像 tar）统一放在项目根的 docker/ 目录；dist/ 仅保留可发布到 Git 仓库的脱敏生产源码。' },
       ]
+    },
+    {
+      title: '十九、v1.0.2 更新要点',
+      intro: 'v1.0.2 把 v1.0.1 里「文件夹不可勾选」的临时限制撤销，并修掉它背后的根因（移动不生效、跨实例搬家丢目录、回收站恢复不成整包），同时把标签确权从「名称 + 实例 + 用户」升级为「实例 + 类型 + 名称」。数据库会自动加一列，直接覆盖升级即可。',
+      items: [
+        { t: '文件夹恢复可勾选，批量移动 / 删除真正生效', d: '卡片、列表行、本页全选、Shift 区间选择、移动端长按菜单共五处重新支持文件夹：勾选一个文件夹就等于勾选它里面的全部内容。移动是整包搬走（目录连同内部所有文件一起到新位置），删除是整包进回收站。只读共享出来的条目仍然不可勾选。' },
+        { t: '回收站里的文件夹可以整包恢复', d: '整包删除的目录在回收站里显示为一条「文件夹」，展开能看到当时一起进去的全部内容；恢复时整包还原，文件与文件夹全部回到原位。若原位已经存在同名目录，则自动合并（一份不丢，也不产生重名目录）。' },
+        { t: '跨实例移动同名目录改为合并', d: '以前把文件夹移到另一个实例、而目标实例里已经有同名目录时，会因为目录属性表的唯一约束直接失败。现在改为合并：目录属性沿用目标实例已有的那份，文件按目标目录落位，不再报错也不会新建重复目录。' },
+        { t: '空目录被回收后，登记与属性快照一并清掉', d: '彻底删除导致某级目录变空并被物理删除时，「已添加目录」列表里的登记、以及这个目录的属性快照会同步移除，不会再留下一个点进去空空的幽灵目录。清理从最深层往上走，遇到还有内容的目录就停下，渠道根目录永远保留。' },
+        { t: '标签按「实例 + 类型 + 名称」确权', d: '标签的唯一性判定从「名称 + 实例 + 用户」改为「实例 + 类型 + 名称」：同一个实例里同名标签只会有一条，所有账户共用，创建人记在 owner 上仅供追溯。标签表新增「类型」列（当前为 file，为后续笔记 / 文章 / 待办 / 导航等类型预留），登录、上传、分享、批量打标、合并拆分全部走同一套查找逻辑。启动时会自动把历史上重复的同名标签合并成一条，只跑一次、可重复执行。' },
+        { t: '自定义标签规则改成「三段式」', d: '原来要求手写正则，现在是三个直观的输入项：①起始符集合（如 # 或 @、&），②截断符集合（如空格、逗号、句号、破折号），③最多字数。连续出现多个起始符时以最后一个为准，超长的一律丢弃，遇到空白恒截断。默认值等价于原来的 #话题 规则，升级后无需重新配置。' },
+        { t: '渠道简称标签固定取主渠道', d: '开启主备双写时，同一份文件在两条渠道里都存在，此前标签里的渠道简称可能跟随「本次实际落库的渠道」变成备渠道，导致同一批文件的标签忽主忽备。现在只要允许双写就固定取主渠道；明确关闭备份时才按实际落库的渠道打标签。' },
+        { t: '改本地存储地址要验管理员密码', d: '本地存储渠道的「存储地址（容器内路径）」保存后再修改，会先要求输入当前管理员密码，验证通过才落库，并写入系统日志。防止有人把存储根目录悄悄指向别处，导致后续上传的文件全部跑到预期之外的位置。' },
+        { t: '回收站彻底删除有转圈了', d: '彻底删除（单个或批量）执行期间，整个页面会显示一个带「正在删除…」文字的遮罩并锁定操作，结束（成功或失败）自动收起，不会再出现「点了没反应、以为卡死」的情况。' },
+        { t: '灯箱里打开详情页，返回先关详情', d: '在图片 / 视频灯箱上打开文件详情后，返回键、边缘返回、Esc 现在一定先关详情页，再按一次才关灯箱。此前两层的关闭顺序会打架，出现「灯箱关了、详情页还在」的残留。' },
+        { t: '两个输入框改成多行文本', d: '本地文件渠道的「宿主机映射目录（可选）」改成多行文本框，一行一个目录，与「浏览目录」按顺序一一对应；「其他设置 → 提取指定内容」也改成多行文本，规则多了可以一行一条，不用再挤在一行里横向滚动。' },
+        { t: '会话有效期设置真正生效', d: '修掉「用户管理里把会话有效期设成 90 天，实际一天被登出好几次」的问题：一是任何一次接口返回未登录信号都会立刻清会话跳登录（后端重启、瞬时 502、被反代拦一下都算），现在会先向服务端二次确认，确认确实过期才登出；二是登录时签发的 Cookie 生命周期按账户设置的最大值计算，设置保存后会重新按新值签发。' },
+      ]
     }
   ]
 };
@@ -943,6 +961,24 @@ const EN = {
         { t: 'Lightbox keys: ↓ random, ↑ details', d: 'On desktop, in the image / video lightbox, ↓ jumps to a random file of the same type and ↑ opens the file details while pausing the running video / audio (closing the details keeps the lightbox open). ← → still step through in order, and Esc is still handled by the layer stack.' },
         { t: 'Browser history works again for the upload directory field', d: 'The upload directory inputs on the home page and in Upload settings now carry a stable name plus autocomplete="on", so the browser remembers and suggests directories you typed before.' },
         { t: 'Release layout', d: 'From v1.0.1 on, all Docker-related files (Dockerfile, compose files, deploy scripts, image tarballs) live in the docker/ directory at the project root; dist/ only holds the sanitized production sources that can be published to Git.' },
+      ]
+    },
+    {
+      title: '19. What is new in v1.0.2',
+      intro: 'v1.0.2 withdraws the temporary "folders are not selectable" limit from v1.0.1 and fixes the root causes behind it (moves silently doing nothing, cross-instance folder moves losing the folder, trash restores not bringing the folder back). Tag identity also moves from "name + instance + user" to "instance + type + name". The database gains one column automatically, so a straight overwrite upgrade works.',
+      items: [
+        { t: 'Folders are selectable again, and batch actions really work', d: 'Cards, list rows, Select-this-page, Shift range selection and the mobile long-press menu all support folders again: selecting a folder means selecting everything inside it. Moving takes the whole folder (with all its files) to the new location, and deleting puts the whole folder into the trash. Read-only shared entries still cannot be selected.' },
+        { t: 'Folders in the trash restore as a whole package', d: 'A folder deleted as a package appears as a single "folder" entry in the trash, and expanding it shows exactly what went in with it. Restoring brings the files and the folder back to their original place. If a folder with the same name already exists there, the two are merged — nothing is lost and no duplicate folder is created.' },
+        { t: 'Moving a folder with a duplicate name across instances now merges', d: 'Previously, moving a folder into another instance that already had a folder with the same name failed on the folder-properties unique constraint. It now merges: the target instance keeps its own folder properties, files land inside that folder, and no error or duplicate folder appears.' },
+        { t: 'Reclaimed empty directories drop their registration and property snapshot', d: 'When a permanent delete leaves a directory empty and it gets removed from disk, its entry in the Added directories list and its property snapshot are removed as well, so no ghost folder is left behind. Cleanup walks upward from the deepest level, stops at the first directory that still has content, and never touches the channel root.' },
+        { t: 'Tags are identified by instance + type + name', d: 'Uniqueness moved from "name + instance + user" to "instance + type + name": one tag per name per instance, shared by all accounts, with the creator kept on owner for auditing only. The tag table gains a type column (currently file, reserved for notes / articles / todos / navigation later), and login, upload, sharing, batch tagging, merge and split all go through the same lookup. Duplicate historical tags are merged once at startup — idempotent and safe to run again.' },
+        { t: 'Custom tag rules are now three plain fields', d: 'Instead of writing a regular expression, you now fill in three inputs: the start characters (such as # or @ and &), the stop characters (space, comma, full stop, dash and so on), and the maximum length. When several start characters appear in a row the last one wins, over-long matches are dropped, and whitespace always stops a match. The defaults reproduce the old #hashtag behaviour, so nothing needs re-configuring after the upgrade.' },
+        { t: 'The channel short name always comes from the main channel', d: 'With main + backup dual write, a file exists on both channels, and the channel tag used to follow whichever channel actually stored the file — so a batch could end up with mixed tags. As long as dual write is allowed the tag now always uses the main channel; only when backup is explicitly disabled does it follow the channel that really stored the file.' },
+        { t: 'Changing the local storage path requires the admin password', d: 'Editing Storage path (in-container path) on a local storage channel after it has been saved now asks for the current admin password first. Only a successful check is written to the database, and the change is recorded in the system log. This prevents the storage root from being silently pointed elsewhere.' },
+        { t: 'Permanent delete from the trash shows a spinner', d: 'While a permanent delete (single or batch) runs, the whole page shows an overlay with "Deleting…" and locks interaction; it closes automatically when the operation finishes, so it no longer looks frozen.' },
+        { t: 'Inside the lightbox, back closes the details first', d: 'With file details opened on top of the image / video lightbox, the back button, edge-swipe back and Esc now always close the details first and only the next press closes the lightbox. The two layers used to fight over the same event, leaving the details dialog behind after the lightbox was gone.' },
+        { t: 'Two inputs became multi-line', d: 'Host mapping directories (optional) on local file channels is now a multi-line text box — one directory per line, matched to Browse directories in order. Extract from file name in Other settings is multi-line too, so longer rule sets can be written one per line instead of scrolling horizontally.' },
+        { t: 'Session lifetime settings now really apply', d: 'Fixed "set 90 days in user management but still logged out several times a day". First, any single unauthenticated response used to clear the session immediately — a backend restart, a momentary 502 or a proxy hiccup all counted; the client now re-confirms with the server and only logs out when the session is genuinely gone. Second, the cookie issued at login uses the largest of the account settings, and saving a new value re-issues it under the new lifetime.' },
       ]
     }
   ]

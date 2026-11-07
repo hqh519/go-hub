@@ -275,16 +275,23 @@ model ApiToken {
   @@map("api_tokens")
 }
 
-// 标签（v3.0.0 起按实例隔离；v1.0.0 起再按用户隔离）
+// 标签（v3.0.0 起按实例隔离；v1.0.0 加用户维度；v1.0.2 改为「实例 + 类型 + 名称」确权）
 model Tag {
   id        String   @id @default(cuid())
-  // 标签名在同一「实例 + 用户」内唯一。
-  // v3.0.0 时唯一键是 [name, instanceId]；v1.0.0 加入 owner 后改为 [name, instanceId, owner]，
-  // 既有数据 owner 全为空串（由 v1.0.0 迁移脚本按文件上传者回填），不会产生重复冲突。
+  // v1.0.2 确权模型：标签的身份 = instanceId + type + name。
+  //   · 同一实例内同名同类型的标签只有一条，实例内所有成员共用；
+  //   · owner 退化为「创建人」，不再参与查重与查询过滤；
+  //   · type 为后续内容系统预留（file / note / article / todo / nav …），
+  //     不同类型下的同名标签互不影响。
+  // 唯一性由应用层（common/tags.ts findOrCreateTag）保证：老库里同名标签可能
+  // 分属多个 owner，直接加 (instanceId,type,name) 唯一索引会让升级时 db push 失败。
+  // 历史重复数据由启动时的 mergeDuplicateTags 合并。
   name      String
   // v3.0.0：标签所属实例（空 = 默认实例）
   instanceId String  @default("")
-  // v1.0.0：标签归属用户名（空 = 历史遗留 / 未归属，查询时按「公共标签」兼容放行）
+  // v1.0.2：标签类型（默认文件标签）
+  type      String   @default("file")
+  // v1.0.2：仅记录创建人，不参与隔离
   owner     String   @default("")
   metas     String   @default("{}")
   createdAt DateTime @default(now())
@@ -293,6 +300,7 @@ model Tag {
 
   @@unique([name, instanceId, owner])
   @@index([instanceId, owner])
+  @@index([instanceId, type])
   @@map("tags")
 }
 

@@ -960,16 +960,36 @@ export default {
         async confirmEditChannel() {
             this.saving = true;
             try {
-                const resp = await fetchWithAuth(`/api/manage/channels/${this.editChannel.id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        name: this.editChannel.name,
-                        enabled: this.editChannel.enabled,
-                        config: this.collectConfig(this.editChannel.config)
-                    })
-                });
-                const data = await resp.json();
+                const payload = {
+                    name: this.editChannel.name,
+                    enabled: this.editChannel.enabled,
+                    config: this.collectConfig(this.editChannel.config)
+                };
+                let data = await this.putChannel(payload);
+                /*
+                 * v1.0.2：本地存储渠道改了「存储地址（容器内路径）」时后端要求管理员密码二次确认
+                 * （防止随手改成一个未被映射的路径，导致容器重建后文件全丢）。
+                 */
+                if (data && data.needAdminPassword) {
+                    let pwd = '';
+                    try {
+                        const r = await this.$prompt(
+                            data.message || '修改「存储地址（容器内路径）」需要验证管理员密码',
+                            '安全验证',
+                            {
+                                confirmButtonText: '确认修改',
+                                cancelButtonText: '取消',
+                                inputType: 'password',
+                                inputPlaceholder: '请输入当前管理员密码',
+                                inputValidator: (v) => (!!String(v || '').trim() || '请输入管理员密码')
+                            }
+                        );
+                        pwd = String(r.value || '');
+                    } catch {
+                        return; // 用户取消 → 什么都不做
+                    }
+                    data = await this.putChannel({ ...payload, adminPassword: pwd });
+                }
                 if (data.success) {
                     this.$message.success('保存成功');
                     this.showEditDialog = false;
@@ -982,6 +1002,16 @@ export default {
             } finally {
                 this.saving = false;
             }
+        },
+
+        /** v1.0.2：更新渠道（抽出来便于「需要密码 → 带密码重试」复用） */
+        async putChannel(payload) {
+            const resp = await fetchWithAuth(`/api/manage/channels/${this.editChannel.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            return resp.json();
         },
 
         /* ------------ 渠道操作 ------------ */

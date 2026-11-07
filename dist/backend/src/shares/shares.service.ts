@@ -19,6 +19,7 @@ import { appLog } from '../common/app-log';
 import { fileTypeOf, safeParse, serializeFile } from '../common/file-view';
 import { normalizeFolderPath, parseGalleryDirs, sha256Hex } from '../files/folder-meta.service';
 import { readInstanceMembers } from '../instances/instances.service';
+import { TAG_TYPE_FILE } from '../common/tags';
 
 /** 分享密码验证通过后种下的 Cookie：值 = 该分享的 passwordHash（sha256 十六进制） */
 export const SHARE_PW_COOKIE = 'gohub_share_pw';
@@ -402,8 +403,12 @@ export class SharesService {
     // 等于把自己的分享挂到了他人的标签上（浏览时看到的是别人的文件）。
     let tagId = '';
     if (type === 'tag') {
+      /*
+       * v1.0.2：标签按「实例 + 类型 + 名称」确权，实例内同名标签只有一条，
+       * 不再按 owner 收窄（否则同实例其他成员创建的标签会「不存在」）。
+       */
       const tag = await prisma.tag.findFirst({
-        where: { name: target, instanceId, owner },
+        where: { name: target, instanceId, type: TAG_TYPE_FILE },
         select: { id: true },
       });
       if (!tag) return { error: `标签「${target}」不存在`, status: 400 };

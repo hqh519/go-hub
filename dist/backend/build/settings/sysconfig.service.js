@@ -111,7 +111,9 @@ let SysConfigService = class SysConfigService {
                         enabled: true,
                         placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
                         extract: '',
-                        regex: '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])',
+                        startChars: '#',
+                        stopChars: '!！,，.。-—_、;；:：?？()（）[]【】{}<>《》|/\\',
+                        maxLen: 14,
                     },
                 };
             case 'ai':

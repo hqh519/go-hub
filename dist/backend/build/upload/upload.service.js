@@ -17,6 +17,7 @@ const fs_1 = require("fs");
 const os_1 = require("os");
 const path_1 = require("path");
 const prisma_1 = require("../common/prisma");
+const tags_1 = require("../common/tags");
 const crypto_service_1 = require("../common/crypto.service");
 const settings_service_1 = require("../settings/settings.service");
 const sysconfig_service_1 = require("../settings/sysconfig.service");
@@ -407,7 +408,9 @@ let UploadService = class UploadService {
                 enabled: true,
                 placeholders: UploadService_1.DEFAULT_TAG_PLACEHOLDERS,
                 extract: '',
-                regex: UploadService_1.DEFAULT_TAG_REGEX,
+                startChars: UploadService_1.DEFAULT_TAG_START,
+                stopChars: UploadService_1.DEFAULT_TAG_STOP,
+                maxLen: UploadService_1.DEFAULT_TAG_MAX_LEN,
             };
             try {
                 const cfg = await this.sysConfig.get('others');
@@ -416,7 +419,9 @@ let UploadService = class UploadService {
                     enabled: at.enabled === undefined ? true : !(at.enabled === false || String(at.enabled) === 'false'),
                     placeholders: at.placeholders === undefined ? UploadService_1.DEFAULT_TAG_PLACEHOLDERS : String(at.placeholders ?? ''),
                     extract: at.extract === undefined ? '' : String(at.extract ?? ''),
-                    regex: at.regex === undefined ? UploadService_1.DEFAULT_TAG_REGEX : String(at.regex ?? ''),
+                    startChars: at.startChars === undefined ? UploadService_1.DEFAULT_TAG_START : String(at.startChars ?? ''),
+                    stopChars: at.stopChars === undefined ? UploadService_1.DEFAULT_TAG_STOP : String(at.stopChars ?? ''),
+                    maxLen: at.maxLen === undefined ? UploadService_1.DEFAULT_TAG_MAX_LEN : Math.max(0, Number(at.maxLen) || 0),
                 };
             }
             catch (err) {
@@ -466,40 +471,15 @@ let UploadService = class UploadService {
                     if (String(info.originalName || '').includes(rule.find))
                         autoNames.push(rule.tag);
                 }
-                for (const line of String(rules.regex || '').split('\n')) {
-                    const pattern = line.trim();
-                    if (!pattern)
-                        continue;
-                    let re;
-                    try {
-                        re = new RegExp(pattern, 'g');
-                    }
-                    catch (err) {
-                        app_log_1.appLog.warn('upload', `自动标签正则无效，已跳过：${pattern}`, err?.message || String(err));
-                        continue;
-                    }
-                    let m;
-                    let guard = 0;
-                    while ((m = re.exec(String(info.originalName || ''))) !== null) {
-                        const hit = String(m[1] ?? m[0] ?? '').trim();
-                        if (hit)
-                            autoNames.push(hit);
-                        if (!m[0])
-                            re.lastIndex += 1;
-                        if (++guard >= 10)
-                            break;
-                    }
+                for (const hit of UploadService_1.extractByMarkers(String(info.originalName || ''), rules.startChars, rules.stopChars, rules.maxLen)) {
+                    autoNames.push(hit);
                 }
             }
             const names = Array.from(new Set([...autoNames, ...extraTags]
                 .map((v) => String(v || '').trim().slice(0, 20))
                 .filter(Boolean))).slice(0, 30);
             for (const name of names) {
-                const tag = await prisma_1.prisma.tag.upsert({
-                    where: { name_instanceId_owner: { name, instanceId, owner } },
-                    update: {},
-                    create: { name, instanceId, owner },
-                });
+                const tag = await (0, tags_1.findOrCreateTag)(name, instanceId, owner, tags_1.TAG_TYPE_FILE);
                 const exists = await prisma_1.prisma.fileTag.findFirst({
                     where: { fileId, tagId: tag.id },
                     select: { id: true },
@@ -513,7 +493,80 @@ let UploadService = class UploadService {
         }
     }
     static DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
-    static DEFAULT_TAG_REGEX = '#([\\u4e00-\\u9fa5]{1,8}|[\\u4e00-\\u9fa5a-zA-Z0-9]{1,14})(?![\\u4e00-\\u9fa5a-zA-Z0-9])';
+    static DEFAULT_TAG_START = '#';
+    static DEFAULT_TAG_STOP = '!！,，.。-—_、;；:：?？()（）[]【】{}<>《》|/\\';
+    static DEFAULT_TAG_MAX_LEN = 14;
+    static parseMarkerList(raw) {
+        const s = String(raw || '').trim();
+        if (!s)
+            return [];
+        let items = [];
+        if (s.startsWith('[')) {
+            try {
+                const j = JSON.parse(s);
+                if (Array.isArray(j))
+                    items = j.map((v) => String(v ?? ''));
+            }
+            catch {
+                items = [];
+            }
+        }
+        if (!items.length)
+            items = s.split(/[,，;；\s]+/);
+        return Array.from(new Set(items.map((v) => String(v || '').trim()).filter(Boolean)));
+    }
+    static extractByMarkers(originalName, startRaw, stopRaw, maxLen = 0) {
+        const name = String(originalName || '');
+        if (!name)
+            return [];
+        const starts = UploadService_1.parseMarkerList(startRaw);
+        if (!starts.length)
+            return [];
+        const stops = UploadService_1.parseMarkerList(stopRaw);
+        const isStop = (ch) => /[\s]/.test(ch) || stops.some((s) => ch.startsWith(s));
+        const matchStart = (idx) => {
+            for (const s of starts) {
+                if (s && name.startsWith(s, idx))
+                    return s;
+            }
+            return null;
+        };
+        const out = [];
+        let pos = 0;
+        let guard = 0;
+        while (pos < name.length && guard < 50) {
+            guard += 1;
+            let hit = -1;
+            let hitLen = 0;
+            for (let i = pos; i < name.length; i += 1) {
+                const s = matchStart(i);
+                if (s) {
+                    hit = i;
+                    hitLen = s.length;
+                    break;
+                }
+            }
+            if (hit < 0)
+                break;
+            let cur = hit + hitLen;
+            for (;;) {
+                const s = matchStart(cur);
+                if (!s)
+                    break;
+                cur += s.length;
+            }
+            let end = cur;
+            while (end < name.length && !isStop(name[end]))
+                end += 1;
+            const content = name.slice(cur, end).trim();
+            if (content && (maxLen <= 0 || content.length <= maxLen) && !out.includes(content))
+                out.push(content);
+            pos = end > hit ? end : hit + hitLen;
+            if (out.length >= 20)
+                break;
+        }
+        return out;
+    }
     static parseTagExtractRules(raw) {
         const out = [];
         const s = String(raw || '').trim();
@@ -1480,7 +1533,7 @@ let UploadService = class UploadService {
         this.enqueueBackground(() => this.autoTag(record.id, {
             originalName,
             mime,
-            channelType: usedChannel.type,
+            channelType: opts.backup === false ? usedChannel.type : main.type,
             uploadSource: opts.uploadSource,
             instanceId: instanceScope,
             owner: record.uploader,

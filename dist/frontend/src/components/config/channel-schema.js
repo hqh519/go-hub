@@ -148,8 +148,10 @@ export const LOCAL_FILES_BUILTIN_FIELDS = () => [
             '如需浏览其它目录，请用「添加渠道 → 本地文件」新建一个渠道。'
     }),
     f('hostPath', '宿主机映射目录（可选）', {
+        // v1.0.2：与「浏览目录」保持一致的书写形态 —— 多行文本，一行对应一个容器内目录
+        type: 'textarea',
         placeholder: '/vol1/docker/gohub-data',
-        tip: '仅用于说明：填写 uploads 在宿主机上对应的目录，方便运维对照，不参与任何读写。'
+        tip: '仅用于说明：填写 uploads 在宿主机上对应的目录，方便运维对照，不参与任何读写。一行一个，与「浏览目录」按顺序对应。'
     })
 ];
 
@@ -170,8 +172,10 @@ export const LOCAL_FILES_FIELDS = () => [
             '以 . 开头、以 # 开头的文件以及 node_modules / .git 等目录默认隐藏。'
     }),
     f('hostPath', '宿主机映射目录（可选）', {
-        placeholder: '/vol1/docker/share',
-        tip: '仅用于说明：填写浏览目录在宿主机上对应的目录，方便运维对照，不参与任何读写。'
+        // v1.0.2：改为多行文本，一行对应上面「浏览目录」里的一个容器内路径
+        type: 'textarea',
+        placeholder: '/vol1/docker/share\n/mnt/photos',
+        tip: '仅用于说明：填写浏览目录在宿主机上对应的目录，方便运维对照，不参与任何读写。一行一个，与「浏览目录」按顺序对应。'
     })
 ];
 
@@ -206,8 +210,10 @@ export const LOCAL_CUSTOM_FIELDS = () => [
             '可直接浏览、预览、批量上传目录内的文件；关闭则从该选择列表中移除（不影响已上传的文件）。'
     }),
     f('hostPath', '宿主机映射目录（可选）', {
+        // v1.0.2：与本地文件渠道统一为多行文本
+        type: 'textarea',
         placeholder: '/vol1/docker/gohub-data',
-        tip: '当 rootPath 已通过 docker -v / compose 卷映射到宿主机时填写对应宿主机目录，便于直接在宿主机查看与管理实体文件；未映射则留空。'
+        tip: '当 rootPath 已通过 docker -v / compose 卷映射到宿主机时填写对应宿主机目录，便于直接在宿主机查看与管理实体文件；未映射则留空。一行一个。'
     }),
     f('objectPrefix', '自定义存储前缀（可选）', {
         placeholder: '{user}/{ID}/{y}/{m}',

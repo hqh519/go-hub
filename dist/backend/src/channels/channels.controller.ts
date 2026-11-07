@@ -537,6 +537,25 @@ export class ChannelManageController {
     }
   }
 
+  /**
+   * v1.0.2：校验「当前登录管理员」的密码（用于修改存储地址这类高风险操作）。
+   * 优先用 users 表里的密码哈希；表里没有该账户时回落到环境变量初始管理员。
+   */
+  private async verifyAdminPassword(req: Request, password: string): Promise<boolean> {
+    const me = currentSession(req)?.user || '';
+    const p = String(password || '');
+    if (!me || !p) return false;
+    try {
+      const u = await prisma.user.findUnique({ where: { username: me } });
+      if (u?.passwordHash) return CryptoService.verifyPassword(p, u.passwordHash);
+    } catch {
+      /* 表异常时继续走环境变量兜底 */
+    }
+    const envUser = (process.env.SUPER_ADMIN_USERNAME || process.env.ADMIN_USER || 'admin').trim();
+    const envPass = process.env.SUPER_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || 'gohub';
+    return me === envUser && p === envPass;
+  }
+
   /** 备份渠道允许与主渠道同类型，但不允许同账户（配置身份字段一致） */
   private async sameAccountAsMain(type: string, selfId: string | null, identity: string): Promise<string | null> {
     const main = await prisma.channel.findFirst({ where: { isMain: true, NOT: selfId ? { id: selfId } : undefined } });
@@ -678,8 +697,18 @@ export class ChannelManageController {
 
   @Put(':id')
   async update(
+    @Req() req: Request,
     @Param('id') id: string,
-    @Body() body: { name?: string; config?: Record<string, string>; enabled?: boolean; isMain?: boolean; isBackup?: boolean },
+    @Body()
+    body: {
+      name?: string;
+      config?: Record<string, string>;
+      enabled?: boolean;
+      isMain?: boolean;
+      isBackup?: boolean;
+      /** v1.0.2：修改本地渠道「存储地址」时要求输入当前管理员密码 */
+      adminPassword?: string;
+    },
   ) {
     const ch = await prisma.channel.findUnique({ where: { id } });
     if (!ch) return { success: false, message: '渠道不存在' };
@@ -734,6 +763,25 @@ export class ChannelManageController {
     if (body.isBackup) {
       const err = await this.sameAccountAsMain(ch.type, id, channelIdentity(ch.type, merged));
       if (err) return { success: false, message: err };
+    }
+    /*
+     * v1.0.2：本地存储渠道的「存储地址（容器内路径）」一旦保存就不能随手改 ——
+     * 改错（或改成未映射路径）会导致容器重建后文件全部丢失。
+     * 这里要求输入当前管理员密码二次确认；路径没变则不需要密码。
+     */
+    if (ch.type === 'local' || ch.type === 'localfiles') {
+      const rootSig = (cfg: Record<string, string>) => {
+        const rp = String(cfg.rootPaths || '').trim();
+        const r = String(cfg.rootPath || '').trim();
+        return `${rp}\u0000${r}`;
+      };
+      // 内置「本地文件」渠道的浏览目录是固定的，不参与校验
+      if (ch.code !== LOCAL_FILES_CHANNEL_CODE && rootSig(old) !== rootSig(merged)) {
+        if (!(await this.verifyAdminPassword(req, String(body?.adminPassword || '')))) {
+          appLog.warn('channel', `修改本地存储地址被拦截：${ch.name}`, '未提供或提供了错误的管理员密码');
+          return { success: false, needAdminPassword: true, message: '修改「存储地址（容器内路径）」需要验证管理员密码' };
+        }
+      }
     }
     const encrypted: Record<string, string> = {};
     // v3.0.0：MinIO 域名去掉历史残留的 /bucket（桶名由后端适配器拼接）

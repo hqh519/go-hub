@@ -20,6 +20,7 @@ const prisma_1 = require("./common/prisma");
 const auth_guard_1 = require("./auth/auth.guard");
 const rate_limit_1 = require("./common/rate-limit");
 const app_log_1 = require("./common/app-log");
+const tags_1 = require("./common/tags");
 const crypto_service_1 = require("./common/crypto.service");
 const project_paths_1 = require("./common/project-paths");
 app_log_1.appLog.patchConsole();
@@ -379,6 +380,16 @@ async function bootstrap() {
     if (!secret || /^(please-change|change-me)/.test(secret)) {
         console.warn('[security] ⚠️ CONFIG_SECRET 未配置或仍是模板默认值：渠道密钥将使用内置开发密钥加密，' +
             '请尽快在 .env / compose 里设置随机长串（修改后已保存的渠道密钥需重新填写）。');
+    }
+    try {
+        const merged = await (0, tags_1.mergeDuplicateTags)();
+        if (merged) {
+            console.log(`[tag] 已合并历史重复标签 ${merged} 条（实例 + 类型 + 名称 确权迁移）`);
+            app_log_1.appLog.info('file', `标签确权迁移：合并重复标签 ${merged} 条`, '实例 + 类型 + 名称 作为唯一口径');
+        }
+    }
+    catch (err) {
+        console.warn(`[tag] 标签去重失败：${err.message}`);
     }
     const port = Number(process.env.PORT || 3619);
     await app.listen(port, '0.0.0.0');

@@ -1,6 +1,6 @@
 {
   "name": "gohub-backend",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "GoHub 后端（NestJS + TypeScript + Prisma + PostgreSQL）",
   "private": true,
   "scripts": {

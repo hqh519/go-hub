@@ -987,6 +987,7 @@ import LanguageSwitcher from '@/components/LanguageSwitcher.vue';
 // v2.8.8：登记文件弹窗（与前台共用同一组件）
 import RecordFileDialog from '@/components/upload/RecordFileDialog.vue';
 import { fileManager } from '@/utils/fileManager';
+import { registerLayer, unregisterLayer } from '@/utils/layerStack';
 // 文件详情通用数据构造器（与「历史记录」页共用同一套模板 + 同一套链接拼装逻辑）
 import {
     buildFileDetailUrls as buildFileDetailUrlsUtil,
@@ -1719,18 +1720,16 @@ watch: {
     tableData: {
         handler(newData) {
             /*
-             * v1.0.1：文件夹不参与多选 —— 兜底把目录条目的 selected 归零，
-             * 防止历史状态 / 拖拽框选 / 旧代码路径把文件夹塞进选中集合。
+             * v1.0.2：恢复文件夹可选中 —— 目录条目参与多选，
+             * 这里只兜底剔除「只读共享」条目（文件 / 目录都适用）。
              */
-            newData.forEach((it) => { if (this.isFolder(it) && it.selected) it.selected = false; });
+            newData.forEach((it) => { if (it.selected && this.isSharedReadonly(it)) it.selected = false; });
             // selectedFiles 增加 newData中新选中，不包含在 selectedFiles 中的文件
             this.selectedFiles = this.selectedFiles.concat(newData.filter(file => file.selected && !this.selectedFiles.includes(file)));
             // selectedFiles 删掉 newData 中已取消选中的文件
             this.selectedFiles = this.selectedFiles.filter(file => file.selected);
             // selectedFiles 删掉 tableData 中已删除的文件
             this.selectedFiles = this.selectedFiles.filter(file => newData.includes(file));
-            // v1.0.1：文件夹一律不留在选中集合里
-            this.selectedFiles = this.selectedFiles.filter(file => !this.isFolder(file));
         },
         deep: true
     },
@@ -1751,6 +1750,17 @@ watch: {
     showdetailDialog(newVal) {
         if (newVal) {
             this.activeUrlTab = this.defaultUrlFormat || 'originUrl';
+            /*
+             * v1.0.2：显式把「文件详情」登记为一层浮层。
+             *
+             * 原来靠 backGuard 用 MutationObserver 观察 .el-overlay 来登记，登记时刻比
+             * 灯箱晚一帧甚至更久；叠在灯箱上时如果登记还没生效，返回键 / Esc 会认为栈顶
+             * 仍是灯箱 → 先关灯箱、详情页反而留在屏幕上（用户反馈的原问题）。
+             * 这里在弹窗真正打开时立即登记（此时灯箱早已在栈里），栈顶顺序天然正确。
+             */
+            registerLayer('file-detail', () => { this.showdetailDialog = false; });
+        } else {
+            unregisterLayer('file-detail');
         }
     },
     customUrlPrefix(val) {
@@ -1792,8 +1802,13 @@ methods: {
     },
     // 列表视图全选当前页
     handleSelectAllPage(val) {
-        // v1.0.1：文件夹永远不可被选中 —— 全选只作用于文件
-        this.paginatedTableData.forEach(file => { file.selected = val ? !this.isFolder(file) : false; });
+        /*
+         * v1.0.2：恢复文件夹可选中 —— 全选覆盖文件与文件夹。
+         * 只读共享条目（文件 / 目录）仍不参与选择。
+         */
+        this.paginatedTableData.forEach(item => {
+            item.selected = val ? !this.isSharedReadonly(item) : false;
+        });
     },
     /*
      * v3.0.0（R16）：Shift + 点击复选框 → 批量选中区间（PC 端）。
@@ -1811,8 +1826,9 @@ methods: {
                 // 没有锚点：退化为单选本次点击行
                 e.preventDefault();
                 e.stopPropagation();
-                // v1.0.1：文件夹不可选中
-                if (!this.isFolder(this.paginatedTableData[index])) this.paginatedTableData[index].selected = true;
+                // v1.0.2：文件夹恢复可选中（只读共享仍排除）
+                const cur = this.paginatedTableData[index];
+                if (cur && !this.isSharedReadonly(cur)) cur.selected = true;
                 this.lastSelectedIndex = index;
                 return;
             }
@@ -1820,10 +1836,10 @@ methods: {
             e.stopPropagation();
             const a = Math.min(this.lastSelectedIndex, index);
             const b = Math.max(this.lastSelectedIndex, index);
-            // v1.0.1：区间选择跳过文件夹
+            // v1.0.2：区间选择包含文件夹，只读共享条目跳过
             let count = 0;
             this.paginatedTableData.forEach((it, i) => {
-                if (i >= a && i <= b && !this.isFolder(it)) { it.selected = true; count += 1; }
+                if (i >= a && i <= b && !this.isSharedReadonly(it)) { it.selected = true; count += 1; }
             });
             if (count) this.$message && this.$message.success(this.$t('dashboard.shiftRangeSelected', { count }));
             return;
@@ -1898,15 +1914,10 @@ methods: {
         }
     },
 
-    /** v3.0.0：把某个文件/文件夹加入多选（移动端长按菜单「选择文件」） */
+    /** v3.0.0：把某个文件/文件夹加入多选（移动端长按菜单「选择」） */
     selectSingleItem(file) {
         if (!file) return;
-        // v1.0.1：文件夹不可被选中（选择只针对文件）
-        if (this.isFolder(file)) {
-            this.$message.info(this.$t('dashboard.folderNotSelectable'));
-            return;
-        }
-        // v3.0.0（R8）：只读共享条目不可选中
+        // v3.0.0（R8）：只读共享条目不可选中（v1.0.2 起文件夹同样可选）
         if (this.isSharedReadonly(file)) {
             this.$message.warning(this.$t('fileManager.sharedReadonlyHint'));
             return;
@@ -2696,9 +2707,22 @@ methods: {
         const keys = items.map((it) => it.trashId || it.name);
         this.setDeleting(keys, true);
         this.trashBusy = true;
+        /*
+         * v1.0.2：除了卡片上的转圈遮罩，再叠一层全屏 loading ——
+         * 用户反馈「回收站删除时看不到正在删除的提示」：单条删除的请求很快，
+         * 卡片遮罩一闪而过等于没有；全屏遮罩能给出确定反馈，也顺便挡住重复点击。
+         */
+        const loading = this.$loading({ lock: true, text: this.$t('dashboard.deletingHint') });
+        let loadingClosed = false;
+        const closeLoading = () => {
+            if (loadingClosed) return;
+            loadingClosed = true;
+            try { loading.close(); } catch { /* 已关闭 */ }
+        };
         try {
             const data = await this.trashBatchRequest(items, 'purge', totpCode);
             if (data.needTotp) {
+                closeLoading();
                 this.setDeleting(keys, false);
                 this.trashBusy = false;
                 let code = '';
@@ -2715,6 +2739,7 @@ methods: {
         } catch (e) {
             this.$message.error(this.$t('dashboard.trashPurgeFailed'));
         } finally {
+            closeLoading();
             this.setDeleting(keys, false);
             this.trashBusy = false;
         }
@@ -2787,7 +2812,9 @@ methods: {
          */
         this.setDeleting([key], true);
         try {
-            const response = await fetchWithAuth(`/api/manage/delete/${key}?folder=${isFolder}&instanceId=${encodeURIComponent(this.instanceId || '')}`, { method: 'GET' });
+            // v1.0.2：目录路径按段编码，避免名字里带 # / ? / 空格时 URL 被截断导致「删除没反应」
+            const encKey = String(key).split('/').map(encodeURIComponent).join('/');
+            const response = await fetchWithAuth(`/api/manage/delete/${encKey}?folder=${isFolder}&instanceId=${encodeURIComponent(this.instanceId || '')}`, { method: 'GET' });
             const body = await response.json().catch(() => ({}));
             // 目录删除返回 { success:true, deleted:0 }（空目录）也算成功
             if (!response.ok || body?.success === false) throw new Error(body?.message || 'failed');
@@ -3268,12 +3295,12 @@ methods: {
             // 批量移动（v3.0.0：带上目标实例）
             this.executeBatchMove(newPath, instanceForMove);
         } else {
-            // 单个文件移动
-            this.executeSingleMove(newPath);
+            // 单个文件/目录移动（v1.0.2：把目标实例一起传下去，跨实例移动才真的生效）
+            this.executeSingleMove(newPath, instanceForMove);
         }
     },
     // 执行单个文件 / 目录移动
-    executeSingleMove(newPath) {
+    executeSingleMove(newPath, targetInstanceId = this.instanceId) {
         const key = this.moveFileKey;
         const item = this.tableData.find(file => file.name === key);
         const isFolder = !!item?.isFolder;
@@ -3283,10 +3310,15 @@ methods: {
          * 原来的 GET /api/manage/move 在 compat 控制器里、只对管理员开放，
          * 普通用户移动自己的文件/目录一律 403（表现为「移动不成功」）。
          * 新接口同时支持文件 ids 与目录 folders，权限与批量移动一致。
+         *
+         * v1.0.2：补上目标实例 —— 之前单个移动恒传「当前实例」，
+         * 在弹窗里选了别的实例也不会生效（看起来像移动失败）。
+         * 后端约定：body.instanceId = 目标实例（空串 = 默认实例）。
          */
+        const moveInstance = String(targetInstanceId ?? this.instanceId ?? '');
         const body = isFolder
-            ? { folders: [key], folder: targetFolder, instanceId: String(this.instanceId || '') }
-            : { ids: [key], folder: targetFolder, instanceId: String(this.instanceId || '') };
+            ? { folders: [key], folder: targetFolder, instanceId: moveInstance, fromInstanceId: String(this.instanceId || '') }
+            : { ids: [key], folder: targetFolder, instanceId: moveInstance, fromInstanceId: String(this.instanceId || '') };
         fetchWithAuth('/api/manage/batch/move', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3339,7 +3371,9 @@ methods: {
                     ids: files.map((f) => f.name),
                     folders: folders.map((f) => f.name),
                     folder: targetFolder,
-                    instanceId: String(targetInstanceId || '')
+                    instanceId: String(targetInstanceId || ''),
+                    // v1.0.2：源实例，跨实例移动时后端据此定位要搬走的数据
+                    fromInstanceId: String(this.instanceId || '')
                 })
             });
             const body = await resp.json().catch(() => ({}));
@@ -4933,6 +4967,8 @@ mounted() {
 },
 beforeUnmount() {
     this.cancelSearchIconPress();
+    // v1.0.2：离开页面时把「文件详情」这一层从浮层栈摘掉，避免残留导致返回键空关
+    unregisterLayer('file-detail');
     this.clearDirHoverTimer();
     this.teardownListObservers();
     window.removeEventListener('resize', this.updateResponsivePageSize);

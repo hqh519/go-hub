@@ -478,6 +478,22 @@ let ChannelManageController = class ChannelManageController {
             });
         }
     }
+    async verifyAdminPassword(req, password) {
+        const me = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const p = String(password || '');
+        if (!me || !p)
+            return false;
+        try {
+            const u = await prisma_1.prisma.user.findUnique({ where: { username: me } });
+            if (u?.passwordHash)
+                return crypto_service_1.CryptoService.verifyPassword(p, u.passwordHash);
+        }
+        catch {
+        }
+        const envUser = (process.env.SUPER_ADMIN_USERNAME || process.env.ADMIN_USER || 'admin').trim();
+        const envPass = process.env.SUPER_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || 'gohub';
+        return me === envUser && p === envPass;
+    }
     async sameAccountAsMain(type, selfId, identity) {
         const main = await prisma_1.prisma.channel.findFirst({ where: { isMain: true, NOT: selfId ? { id: selfId } : undefined } });
         if (!main)
@@ -590,7 +606,7 @@ let ChannelManageController = class ChannelManageController {
         app_log_1.appLog.info('channel', `新增渠道：${body.name}（${body.type}${isLocal ? `，rootPath=${rootPath}` : ''}）`, `code=${ch.code}`);
         return { success: true, data: { id: ch.id, code: ch.code } };
     }
-    async update(id, body) {
+    async update(req, id, body) {
         const ch = await prisma_1.prisma.channel.findUnique({ where: { id } });
         if (!ch)
             return { success: false, message: '渠道不存在' };
@@ -637,6 +653,19 @@ let ChannelManageController = class ChannelManageController {
             const err = await this.sameAccountAsMain(ch.type, id, channelIdentity(ch.type, merged));
             if (err)
                 return { success: false, message: err };
+        }
+        if (ch.type === 'local' || ch.type === 'localfiles') {
+            const rootSig = (cfg) => {
+                const rp = String(cfg.rootPaths || '').trim();
+                const r = String(cfg.rootPath || '').trim();
+                return `${rp}\u0000${r}`;
+            };
+            if (ch.code !== exports.LOCAL_FILES_CHANNEL_CODE && rootSig(old) !== rootSig(merged)) {
+                if (!(await this.verifyAdminPassword(req, String(body?.adminPassword || '')))) {
+                    app_log_1.appLog.warn('channel', `修改本地存储地址被拦截：${ch.name}`, '未提供或提供了错误的管理员密码');
+                    return { success: false, needAdminPassword: true, message: '修改「存储地址（容器内路径）」需要验证管理员密码' };
+                }
+            }
         }
         const encrypted = {};
         for (const [k, v] of Object.entries((0, channel_domain_1.normalizeBucketDomain)(ch.type, merged))) {
@@ -804,10 +833,11 @@ __decorate([
 ], ChannelManageController.prototype, "create", null);
 __decorate([
     (0, common_1.Put)(':id'),
-    __param(0, (0, common_1.Param)('id')),
-    __param(1, (0, common_1.Body)()),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:paramtypes", [Object, String, Object]),
     __metadata("design:returntype", Promise)
 ], ChannelManageController.prototype, "update", null);
 __decorate([

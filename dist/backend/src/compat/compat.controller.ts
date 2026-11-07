@@ -13,6 +13,7 @@ import { Body, Controller, Delete, Get, Header, Param, Post, Put, Query, Req, Us
 import { Request } from 'express';
 import { createHash, randomBytes } from 'crypto';
 import { prisma } from '../common/prisma';
+import { TAG_TYPE_FILE, findOrCreateTag } from '../common/tags';
 import { CryptoService } from '../common/crypto.service';
 import { AdminGuard, currentSession } from '../auth/auth.guard';
 import { SettingsService } from '../settings/settings.service';
@@ -73,9 +74,16 @@ function parseStrArray(raw?: string | null): string[] {
  *   · 未登录 → 一条都不返回。原来这里返回空对象 `{}`，等于把该实例下
  *     **所有用户**的标签名一起吐出来（接口本身没有登录守卫）。
  */
-function tagOwnerScope(req: Request): { owner?: string | { in: string[] } } {
+/**
+ * v1.0.2：标签查询的公共作用域。
+ *
+ * 旧实现在这里按 owner 收窄（只返回自己的标签）。新模型下标签属于「实例 + 类型 + 名称」，
+ * 实例内成员共用一套，因此这里只限定类型（文件标签）；实例条件由调用方补。
+ * 未登录时返回「永不命中」的条件，避免把全库标签吐出去。
+ */
+function tagOwnerScope(req: Request): { type?: string; id?: { in: string[] } } {
   const me = currentSession(req)?.user || '';
-  return me ? { owner: me } : { owner: { in: [] } };
+  return me ? { type: TAG_TYPE_FILE } : { id: { in: [] } };
 }
 
 /* ------------------------------------------------------------------ */
@@ -486,12 +494,8 @@ export class ManageCompatController {
     for (const raw of tags) {
       const name = String(raw).trim();
       if (!name) continue;
-      // v1.0.0：tags 表联合唯一改为 [name, instanceId, owner]
-      const tag = await prisma.tag.upsert({
-        where: { name_instanceId_owner: { name, instanceId, owner: tagOwner } },
-        update: {},
-        create: { name, instanceId, owner: tagOwner },
-      });
+      // v1.0.2：标签按「实例 + 类型 + 名称」确权，owner 只记创建人
+      const tag = await findOrCreateTag(name, instanceId, tagOwner, TAG_TYPE_FILE);
       if (action === 'remove') {
         await prisma.fileTag.deleteMany({ where: { fileId: rec.id, tagId: tag.id } });
       } else {

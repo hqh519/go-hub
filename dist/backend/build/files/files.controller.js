@@ -41,6 +41,7 @@ const totp_1 = require("../common/totp");
 const channel_domain_1 = require("../common/channel-domain");
 const record_link_1 = require("../common/record-link");
 const instance_access_1 = require("../common/instance-access");
+const tags_1 = require("../common/tags");
 const folder_meta_service_1 = require("./folder-meta.service");
 const FILE_PW_COOKIE = 'gohub_fpw';
 function splitCsv(v) {
@@ -799,9 +800,8 @@ let LinkController = class LinkController {
         const me = this.sessionUser(req);
         if (!me)
             return { success: true, data: [] };
-        const ownerWhere = this.sessionAdmin(req) ? { in: [me, ''] } : me;
         const tags = await prisma_1.prisma.tag.findMany({
-            where: { instanceId, owner: ownerWhere },
+            where: { instanceId, type: tags_1.TAG_TYPE_FILE },
             orderBy: { createdAt: 'asc' },
         });
         const links = await prisma_1.prisma.fileTag.findMany({
@@ -819,6 +819,8 @@ let LinkController = class LinkController {
             count: counts.get(t.id) || 0,
             encrypted: !!(0, file_view_1.safeParse)(t.metas).passwordHash,
             note: String((0, file_view_1.safeParse)(t.metas).note || ''),
+            creator: t.owner || '',
+            mine: String(t.owner || '') === me,
             createdAt: t.createdAt,
         }));
         const order = String(q.order || 'desc').toLowerCase() === 'asc' ? 1 : -1;
@@ -848,7 +850,7 @@ let LinkController = class LinkController {
                 return { success: false, message: '标签名不能为空' };
             if (name !== tag.name) {
                 const dup = await prisma_1.prisma.tag.findFirst({
-                    where: { name, instanceId: tag.instanceId, owner: tag.owner, NOT: { id } },
+                    where: { name, instanceId: tag.instanceId, type: tag.type || tags_1.TAG_TYPE_FILE, NOT: { id } },
                 });
                 if (dup)
                     return { success: false, message: `同实例下已存在标签「${name}」` };
@@ -916,16 +918,13 @@ let LinkController = class LinkController {
             if (row && this.canEditTag(req, row))
                 target = { id: row.id, name: row.name };
         }
-        if (!target && body?.targetName) {
-            const name = String(body.targetName || '').trim();
+        if (!target) {
+            const name = String(body?.targetName || '').trim();
             if (!name)
-                return { success: false, message: 'targetName 不能为空' };
-            const row = (await prisma_1.prisma.tag.findFirst({ where: { name, instanceId, owner } })) ||
-                (await prisma_1.prisma.tag.create({ data: { name, instanceId, owner } }));
+                return { success: false, message: '缺少 targetId 或 targetName' };
+            const row = await (0, tags_1.findOrCreateTag)(name, instanceId, this.sessionUser(req), tags_1.TAG_TYPE_FILE);
             target = { id: row.id, name: row.name };
         }
-        if (!target)
-            return { success: false, message: '缺少 targetId 或 targetName' };
         if (sourceIdSet.has(target.id))
             return { success: false, message: '目标标签不能同时是源标签' };
         let moved = 0;
@@ -952,14 +951,8 @@ let LinkController = class LinkController {
             return true;
         return (0, instance_access_1.userInInstance)(this.sessionUser(req), instanceId);
     }
-    canEditTag(req, tag) {
-        const me = this.sessionUser(req);
-        if (!me)
-            return false;
-        const owner = String(tag.owner || '');
-        if (!owner)
-            return this.sessionAdmin(req);
-        return owner === me;
+    canEditTag(req, _tag) {
+        return !!this.sessionUser(req);
     }
     async tagSplit(req, id, body) {
         const tag = await prisma_1.prisma.tag.findUnique({ where: { id: String(id || '') } });
@@ -982,8 +975,7 @@ let LinkController = class LinkController {
         const created = [];
         let linked = 0;
         for (const name of names) {
-            const existed = await prisma_1.prisma.tag.findFirst({ where: { name, instanceId: tag.instanceId, owner } });
-            const target = existed || (await prisma_1.prisma.tag.create({ data: { name, instanceId: tag.instanceId, owner } }));
+            const target = await (0, tags_1.findOrCreateTag)(name, tag.instanceId, owner, tags_1.TAG_TYPE_FILE);
             created.push({ id: target.id, name: target.name });
             if (links.length) {
                 const res = await prisma_1.prisma.fileTag.createMany({
@@ -2243,13 +2235,13 @@ let ManageController = class ManageController {
         const owner = this.admin(req) ? '' : (0, auth_guard_1.currentSession)(req)?.user || '';
         if (key.startsWith('folder:')) {
             const path = key.slice('folder:'.length);
-            const hit = (await this.listDeletedFolders(owner)).some((e) => e.path === path);
+            const hit = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
             if (!hit)
                 return { success: false, message: '回收站中不存在该目录' };
             const gate = await this.verifyTrashTotp(req, totpCode);
             if (gate)
                 return gate;
-            const n = await this.purgeFolderEntry(owner, path);
+            const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
             return { success: true, folder: true, purged: n };
         }
         const record = await prisma_1.prisma.fileRecord.findFirst({
@@ -2261,6 +2253,7 @@ let ManageController = class ManageController {
         if (gate)
             return gate;
         await this.uploadSvc.removeFile(record.id, record.name);
+        await this.cleanupEmptiedFolderChain(record.uploader || owner, record.folder || '', record.instanceId || '');
         return { success: true };
     }
     async trashBatch(req, body) {
@@ -2290,12 +2283,12 @@ let ManageController = class ManageController {
                     continue;
                 }
                 try {
+                    const entry = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
                     if (action === 'purge') {
-                        const n = await this.purgeFolderEntry(owner, path);
+                        const n = await this.purgeFolderEntry(owner, path, String(entry?.instanceId || ''));
                         results.push({ id, ok: true, message: `连带文件 ${n} 条` });
                     }
                     else {
-                        const entry = (await this.listDeletedFolders(owner)).find((e) => e.path === path);
                         const restored = await this.restoreFolderEntry(owner, path, String(entry?.instanceId || ''));
                         results.push({ id, ok: true, message: `连带恢复文件 ${restored.filesRestored} 条` });
                     }
@@ -2311,8 +2304,10 @@ let ManageController = class ManageController {
             }
             try {
                 const rec = rows.find((r) => r.id === id);
-                if (action === 'purge')
+                if (action === 'purge') {
                     await this.uploadSvc.removeFile(rec.id, rec.name);
+                    await this.cleanupEmptiedFolderChain(rec.uploader || owner, rec.folder || '', rec.instanceId || '');
+                }
                 else {
                     await this.uploadSvc.restoreFile(rec.id, rec.name);
                     await this.restoreFolderChain(rec.uploader || owner, rec.folder || '', rec.instanceId || '');
@@ -2439,7 +2434,43 @@ let ManageController = class ManageController {
             app_log_1.appLog.info('file', `文件恢复时一并恢复目录链：${f}`, `共恢复 ${restored} 级目录`);
         return restored;
     }
-    async purgeFolderEntry(owner, path) {
+    async cleanupEmptiedFolderChain(owner, folder, instanceId = '') {
+        const f = String(folder || '').replace(/^\/+|\/+$/g, '').trim();
+        if (!f)
+            return 0;
+        const segs = f.split('/').filter(Boolean);
+        let cleaned = 0;
+        for (let i = segs.length; i >= 1; i--) {
+            const path = segs.slice(0, i).join('/');
+            try {
+                const under = await prisma_1.prisma.fileRecord.count({
+                    where: {
+                        status: 'active',
+                        instanceId,
+                        ...(owner ? { uploader: owner } : {}),
+                        OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
+                    },
+                });
+                if (under > 0)
+                    break;
+                const removedReg = await this.unregisterFolders(owner, path, instanceId);
+                const delMeta = await prisma_1.prisma.folderMeta.deleteMany({
+                    where: { path, instanceId, ...(owner ? { owner } : {}) },
+                });
+                if (removedReg || delMeta.count)
+                    cleaned += 1;
+            }
+            catch (err) {
+                app_log_1.appLog.warn('file', `空目录登记清理失败：${path}`, err.message);
+                break;
+            }
+        }
+        if (cleaned) {
+            app_log_1.appLog.info('file', `彻底删除后已清理空目录登记：${f}`, `共清理 ${cleaned} 级（登记 + 目录属性）`);
+        }
+        return cleaned;
+    }
+    async purgeFolderEntry(owner, path, instanceId = '') {
         await this.removeDeletedFolder(owner, path);
         const rows = await prisma_1.prisma.fileRecord.findMany({
             where: {
@@ -2458,6 +2489,19 @@ let ManageController = class ManageController {
             catch (err) {
                 app_log_1.appLog.warn('file', `回收站目录连带删除失败：${r.name}`, err.message);
             }
+        }
+        try {
+            await prisma_1.prisma.folderMeta.deleteMany({
+                where: {
+                    ...(instanceId ? { instanceId } : {}),
+                    ...(owner ? { owner } : {}),
+                    OR: [{ path }, { path: { startsWith: `${path}/` } }],
+                },
+            });
+            await this.cleanupEmptiedFolderChain(owner, path, instanceId);
+        }
+        catch (err) {
+            app_log_1.appLog.warn('file', `回收站目录彻底删除后清理登记失败：${path}`, err.message);
         }
         app_log_1.appLog.info('file', `回收站目录已彻底删除：${path}`, `连带文件 ${n} 条（已恢复到别处/重建目录中的活跃文件不受影响）`);
         return n;
@@ -2725,6 +2769,7 @@ let ManageController = class ManageController {
             return { success: false, message: '缺少 folder 或 instanceId' };
         }
         const targetInstance = body?.instanceId !== undefined ? String(body.instanceId ?? '') : undefined;
+        const fromInstance = body?.fromInstanceId !== undefined ? String(body.fromInstanceId ?? '') : undefined;
         if (targetInstance) {
             const inst = await prisma_1.prisma.instance.findUnique({ where: { id: targetInstance }, select: { id: true } });
             if (!inst)
@@ -2749,6 +2794,11 @@ let ManageController = class ManageController {
             const me = (0, auth_guard_1.currentSession)(req)?.user || '';
             const isAdmin = this.admin(req);
             const distBase = data.folder !== undefined ? data.folder : '';
+            const srcInstKey = fromInstance !== undefined
+                ? String(fromInstance)
+                : (targetInstance !== undefined ? String(targetInstance) : undefined);
+            const dstInstKey = targetInstance !== undefined ? String(targetInstance) : srcInstKey;
+            const srcInstWhere = srcInstKey !== undefined ? { instanceId: srcInstKey } : {};
             for (const f of folders) {
                 if (me) {
                     const info = await (0, folder_meta_service_1.folderSharedPermission)(f, targetInstance || '', me);
@@ -2759,7 +2809,7 @@ let ManageController = class ManageController {
                 }
                 const leaf = f.split('/').filter(Boolean).pop() || '';
                 const newRoot = [distBase, leaf].filter(Boolean).join('/');
-                const moveInst = targetInstance !== undefined ? { instanceId: targetInstance } : {};
+                const moveInst = srcInstWhere;
                 const rowsInFolder = await prisma_1.prisma.fileRecord.findMany({
                     where: {
                         ...(isAdmin ? {} : { uploader: me }),
@@ -2795,20 +2845,31 @@ let ManageController = class ManageController {
                     });
                     for (const m of metas) {
                         const suffix = String(m.path || '').slice(f.length).replace(/^\/+/, '');
-                        await prisma_1.prisma.folderMeta.update({
-                            where: { id: m.id },
-                            data: {
-                                path: suffix ? `${newRoot}/${suffix}` : newRoot,
-                                ...(targetInstance !== undefined ? { instanceId: targetInstance } : {}),
-                            },
-                        });
+                        const nextPath = suffix ? `${newRoot}/${suffix}` : newRoot;
+                        try {
+                            await prisma_1.prisma.folderMeta.update({
+                                where: { id: m.id },
+                                data: {
+                                    path: nextPath,
+                                    ...(targetInstance !== undefined ? { instanceId: targetInstance } : {}),
+                                },
+                            });
+                        }
+                        catch (err) {
+                            if (err.code === 'P2002') {
+                                await prisma_1.prisma.folderMeta.delete({ where: { id: m.id } }).catch(() => undefined);
+                            }
+                            else {
+                                throw err;
+                            }
+                        }
                     }
                 }
                 catch (err) {
                     app_log_1.appLog.warn('file', `目录属性搬家失败：${f}`, err.message);
                 }
                 try {
-                    movedRegistered += await this.moveRegisteredFolders(isAdmin ? '' : me, [f], distBase, targetInstance ?? '');
+                    movedRegistered += await this.moveRegisteredFolders(isAdmin ? '' : me, [f], distBase, srcInstKey ?? '', dstInstKey ?? '');
                 }
                 catch (err) {
                     app_log_1.appLog.warn('file', `登记目录搬家失败：${f}`, err.message);
@@ -2819,6 +2880,10 @@ let ManageController = class ManageController {
         const { ok: rows } = await this.dropReadonlyShared(await this.loadOwned(ids, req), req);
         for (const r of rows) {
             try {
+                if (fromInstance !== undefined && String(r.instanceId || '') !== String(fromInstance)) {
+                    failed.push({ id: r.id, error: '文件不属于当前实例' });
+                    continue;
+                }
                 const fromInst = String(r.instanceId || '');
                 const toInst = targetInstance !== undefined ? String(targetInstance) : fromInst;
                 await prisma_1.prisma.fileRecord.update({ where: { id: r.id }, data });
@@ -2863,16 +2928,10 @@ let ManageController = class ManageController {
                     continue;
                 if (String(src.instanceId || '') === String(toInst))
                     continue;
-                const owner = String(src.owner || fallbackOwner || '');
-                let target = await prisma_1.prisma.tag.findFirst({
-                    where: { name: src.name, instanceId: toInst, owner },
-                    select: { id: true },
-                });
-                if (!target) {
-                    target = await prisma_1.prisma.tag.create({
-                        data: { name: src.name, instanceId: toInst, owner, metas: src.metas || '{}' },
-                        select: { id: true },
-                    });
+                const target = await (0, tags_1.findOrCreateTag)(src.name, toInst, String(src.owner || fallbackOwner || ''), String(src.type || tags_1.TAG_TYPE_FILE));
+                const srcMetas = String(src.metas || '{}');
+                if (srcMetas && srcMetas !== '{}' && String(target.metas || '{}') === '{}') {
+                    await prisma_1.prisma.tag.update({ where: { id: target.id }, data: { metas: srcMetas } }).catch(() => undefined);
                 }
                 const exists = await prisma_1.prisma.fileTag.findFirst({
                     where: { fileId, tagId: target.id },
@@ -3285,7 +3344,7 @@ let ManageController = class ManageController {
         }
         return removed;
     }
-    async moveRegisteredFolders(owner, folders, distBase, instanceId = '') {
+    async moveRegisteredFolders(owner, folders, distBase, fromInstance = '', toInstance = '') {
         if (!folders.length)
             return 0;
         let map = {};
@@ -3295,8 +3354,9 @@ let ManageController = class ManageController {
         catch {
             map = {};
         }
-        const key = this.extraFoldersKey(owner, instanceId);
-        let list = Array.isArray(map[key]) ? [...map[key]] : [];
+        const srcKey = this.extraFoldersKey(owner, fromInstance);
+        const dstKey = this.extraFoldersKey(owner, toInstance);
+        let list = Array.isArray(map[srcKey]) ? [...map[srcKey]] : [];
         let changed = 0;
         for (const raw of folders) {
             const f = String(raw || '').replace(/^\/+|\/+$/g, '');
@@ -3318,7 +3378,11 @@ let ManageController = class ManageController {
             list = next;
         }
         if (changed > 0) {
-            map[key] = Array.from(new Set(list)).sort();
+            map[srcKey] = Array.from(new Set(list)).sort();
+            if (dstKey !== srcKey) {
+                const dstList = Array.isArray(map[dstKey]) ? map[dstKey] : [];
+                map[dstKey] = Array.from(new Set([...dstList, ...list])).sort();
+            }
             await this.settings.set('extraFolders', JSON.stringify(map));
         }
         return changed;

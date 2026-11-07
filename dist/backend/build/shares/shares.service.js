@@ -13,6 +13,7 @@ const app_log_1 = require("../common/app-log");
 const file_view_1 = require("../common/file-view");
 const folder_meta_service_1 = require("../files/folder-meta.service");
 const instances_service_1 = require("../instances/instances.service");
+const tags_1 = require("../common/tags");
 exports.SHARE_PW_COOKIE = 'gohub_share_pw';
 const SHARE_PW_MAX_AGE = 7 * 24 * 3600;
 const pwLogThrottle = new Map();
@@ -239,7 +240,7 @@ let SharesService = class SharesService {
         let tagId = '';
         if (type === 'tag') {
             const tag = await prisma_1.prisma.tag.findFirst({
-                where: { name: target, instanceId, owner },
+                where: { name: target, instanceId, type: tags_1.TAG_TYPE_FILE },
                 select: { id: true },
             });
             if (!tag)
