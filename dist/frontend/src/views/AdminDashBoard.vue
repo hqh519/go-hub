@@ -995,6 +995,7 @@ import LanguageSwitcher from '@/components/LanguageSwitcher.vue';
 // v2.8.8：登记文件弹窗（与前台共用同一组件）
 import RecordFileDialog from '@/components/upload/RecordFileDialog.vue';
 import { fileManager } from '@/utils/fileManager';
+import { thumbUrl } from '@/utils/thumb';
 import { registerLayer, unregisterLayer } from '@/utils/layerStack';
 // 文件详情通用数据构造器（与「历史记录」页共用同一套模板 + 同一套链接拼装逻辑）
 import {
@@ -1585,6 +1586,12 @@ computed: {
                 url: this.getFileLink(row.name, meta),
                 kind,
                 ext,
+                /*
+                 * v1.0.4：灯箱占位图。与卡片缩略图同源（同为 thumb=320），
+                 * 打开灯箱时浏览器缓存直接命中，原图还在路上就先有画面可看。
+                 * 尺寸与 FileCard 保持 320：尺寸一变就是新 URL，缓存必然落空。
+                 */
+                thumb: kind === 'image' ? thumbUrl(this.getFileLink(row.name, meta), 320) : '',
                 sizeText: this.fileSizeTextOf(meta),
                 user: meta.UploadUser || ''
             });

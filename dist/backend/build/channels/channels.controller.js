@@ -654,13 +654,13 @@ let ChannelManageController = class ChannelManageController {
             if (err)
                 return { success: false, message: err };
         }
-        if (ch.type === 'local' || ch.type === 'localfiles') {
+        if (ch.type === 'local') {
             const rootSig = (cfg) => {
                 const rp = String(cfg.rootPaths || '').trim();
                 const r = String(cfg.rootPath || '').trim();
                 return `${rp}\u0000${r}`;
             };
-            if (ch.code !== exports.LOCAL_FILES_CHANNEL_CODE && rootSig(old) !== rootSig(merged)) {
+            if (rootSig(old) !== rootSig(merged)) {
                 if (!(await this.verifyAdminPassword(req, String(body?.adminPassword || '')))) {
                     app_log_1.appLog.warn('channel', `修改本地存储地址被拦截：${ch.name}`, '未提供或提供了错误的管理员密码');
                     return { success: false, needAdminPassword: true, message: '修改「存储地址（容器内路径）」需要验证管理员密码' };

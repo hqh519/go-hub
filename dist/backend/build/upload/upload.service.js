@@ -494,9 +494,9 @@ let UploadService = class UploadService {
     }
     static DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
     static DEFAULT_TAG_START = '#';
-    static DEFAULT_TAG_STOP = '!！,，.。-—_、;；:：?？()（）[]【】{}<>《》|/\\';
+    static DEFAULT_TAG_STOP = '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]';
     static DEFAULT_TAG_MAX_LEN = 14;
-    static parseMarkerList(raw) {
+    static parseMarkerList(raw, keepEmpty = false) {
         const s = String(raw || '').trim();
         if (!s)
             return [];
@@ -513,14 +513,17 @@ let UploadService = class UploadService {
         }
         if (!items.length)
             items = s.split(/[,，;；\s]+/);
-        return Array.from(new Set(items.map((v) => String(v || '').trim()).filter(Boolean)));
+        const cleaned = items.map((v) => String(v ?? '').trim());
+        return Array.from(new Set(keepEmpty ? cleaned : cleaned.filter(Boolean)));
     }
     static extractByMarkers(originalName, startRaw, stopRaw, maxLen = 0) {
         const name = String(originalName || '');
         if (!name)
             return [];
-        const starts = UploadService_1.parseMarkerList(startRaw);
-        if (!starts.length)
+        const rawStarts = UploadService_1.parseMarkerList(startRaw, true);
+        const hasEmptyStart = rawStarts.includes('');
+        const starts = rawStarts.filter(Boolean);
+        if (!starts.length && !hasEmptyStart)
             return [];
         const stops = UploadService_1.parseMarkerList(stopRaw);
         const isStop = (ch) => /[\s]/.test(ch) || stops.some((s) => ch.startsWith(s));
@@ -546,8 +549,12 @@ let UploadService = class UploadService {
                     break;
                 }
             }
-            if (hit < 0)
-                break;
+            if (hit < 0) {
+                if (!hasEmptyStart || pos > 0)
+                    break;
+                hit = 0;
+                hitLen = 0;
+            }
             let cur = hit + hitLen;
             for (;;) {
                 const s = matchStart(cur);
@@ -558,7 +565,9 @@ let UploadService = class UploadService {
             let end = cur;
             while (end < name.length && !isStop(name[end]))
                 end += 1;
-            const content = name.slice(cur, end).trim();
+            let content = name.slice(cur, end).trim();
+            if (end >= name.length)
+                content = content.replace(/\.[A-Za-z0-9]{1,10}$/, '');
             if (content && (maxLen <= 0 || content.length <= maxLen) && !out.includes(content))
                 out.push(content);
             pos = end > hit ? end : hit + hitLen;
@@ -2374,20 +2383,20 @@ let UploadService = class UploadService {
             app_log_1.appLog.warn('channel', `文件转存失败：写入目标渠道「${targetCh.name}」出错`, `${err.message} ｜ 文件=${rec.name}`, input.ip);
             return { ok: false, message: `写入目标渠道失败：${err.message}` };
         }
+        const writeData = { ...this.copyWriteData(result, targetCh), status: 'active', isPrimary: true };
         try {
             await prisma_1.prisma.$transaction(async (tx) => {
-                await tx.fileCopy.updateMany({ where: { fileId: rec.id }, data: { isPrimary: false } });
-                await tx.fileCopy.upsert({
-                    where: { fileId_channelId: { fileId: rec.id, channelId: targetCh.id } },
-                    update: { ...this.copyWriteData(result, targetCh), status: 'active', isPrimary: true },
-                    create: {
-                        fileId: rec.id,
-                        channelId: targetCh.id,
-                        ...this.copyWriteData(result, targetCh),
-                        status: 'active',
-                        isPrimary: true,
-                    },
-                });
+                const existingTarget = rec.copies.find((c) => c.channelId === targetCh.id && c.id !== sourceCopy.id);
+                if (existingTarget) {
+                    await tx.fileCopy.update({ where: { id: existingTarget.id }, data: writeData });
+                    await tx.fileCopy.delete({ where: { id: sourceCopy.id } });
+                }
+                else {
+                    await tx.fileCopy.update({
+                        where: { id: sourceCopy.id },
+                        data: { channelId: targetCh.id, ...writeData },
+                    });
+                }
             });
         }
         catch (err) {
@@ -2399,10 +2408,28 @@ let UploadService = class UploadService {
                 await srcAdapter.delete((0, adapter_factory_1.toCopyInfo)(sourceCopy), srcInfo);
             }
             catch (err) {
-                app_log_1.appLog.warn('channel', `转存后删除源件失败（记录已摘除）：${sourceCh.name}`, `${err.message} ｜ 文件=${rec.name}`, input.ip);
+                app_log_1.appLog.warn('channel', `转存后删除源件失败（主副本已切到新渠道）：${sourceCh.name}`, `${err.message} ｜ 文件=${rec.name}`, input.ip);
             }
-            await prisma_1.prisma.fileCopy.deleteMany({ where: { fileId: rec.id, channelId: sourceCh.id } }).catch(() => undefined);
             deletedSource = true;
+        }
+        else {
+            await prisma_1.prisma.fileCopy
+                .upsert({
+                where: { fileId_channelId: { fileId: rec.id, channelId: sourceCh.id } },
+                update: { status: 'active', isPrimary: false },
+                create: {
+                    fileId: rec.id,
+                    channelId: sourceCh.id,
+                    remoteKey: sourceCopy.remoteKey,
+                    remoteUrl: sourceCopy.remoteUrl || '',
+                    objectPath: sourceCopy.objectPath || '',
+                    urlQuery: sourceCopy.urlQuery || '',
+                    metas: sourceCopy.metas || '{}',
+                    status: 'active',
+                    isPrimary: false,
+                },
+            })
+                .catch(() => undefined);
         }
         app_log_1.appLog.info('channel', `文件转存成功：${sourceCh.name}（${sourceCh.type}）→ ${targetCh.name}（${targetCh.type}）`, `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ 外链不变`, input.ip);
         return {

@@ -294,18 +294,54 @@ export interface SerializeOptions {
  * 关键：所有派生字段（渠道名、目录、标签、尺寸）都在序列化时从当前配置实时计算，
  * 不依赖落库的快照值 —— 这样改渠道配置 / 改文件名，列表刷新后立即反映。
  */
+/**
+ * v1.0.4：主副本的唯一判定口径。
+ *
+ * 历史包袱：本文件与 files.controller 里曾有 4 处分别用 `channel.isMain`（渠道级全局角色）
+ * 或「数组第一条」来猜主副本。上传场景下两者恰好等价，但**转存会把 isPrimary 指向新渠道**，
+ * 而 channel.isMain 仍停在原渠道 —— 于是数据库说「主在本地」，界面和取源却说「主在旧渠道」，
+ * 表现为：转存后详情页渠道不变、新副本被算成「备份渠道」。
+ *
+ * 统一顺序（越靠前越可信）：
+ *   1) isPrimary 且 active —— 数据层记录的主副本，转存后就是它；
+ *   2) isPrimary（即使非 active）—— 主副本实体暂时不可用时也别乱换渠道；
+ *   3) 渠道 isMain —— 兼容 v1.8.0 之前 isPrimary 全为 false 的历史数据；
+ *   4) 第一条 —— 最后兜底。
+ */
+export function pickPrimaryCopy<
+  T extends { isPrimary?: boolean; status?: string; channel?: { isMain?: boolean } | null },
+>(copies: T[] | null | undefined): T | undefined {
+  const list = Array.isArray(copies) ? copies.filter(Boolean) : [];
+  if (!list.length) return undefined;
+  return (
+    list.find((c) => c.isPrimary === true && (!c.status || c.status === 'active')) ||
+    list.find((c) => c.isPrimary === true) ||
+    list.find((c) => c.channel?.isMain === true) ||
+    list[0]
+  );
+}
+
 export function buildMetadata(
   rec: FileRecord,
   copies: CopyWithChannel[],
   opts: SerializeOptions = {},
 ): Record<string, unknown> {
   const metas = safeParse(rec.metas);
-  const primary = copies.find((c) => c.channel?.isMain) || copies[0];
+  const primary = pickPrimaryCopy(copies);
   const channelLabel = primary?.channel ? CHANNEL_LABEL[primary.channel.type] || primary.channel.type : '';
 
-  // 备份渠道列表：除主渠道外、处于 active 状态的其余副本所在渠道
+  /*
+   * 备份渠道列表（v1.0.4 收紧）：
+   *   只列**渠道上真的打了 isBackup 标记**的 active 副本。
+   *
+   * 旧实现是「除主副本外的所有 active 副本」，于是转存一次就多一条，界面上会出现
+   * 「2 个备份渠道」—— 其中并没有一个是真正的备份渠道。收紧后：
+   *   · 上传时主备双写产生的备份副本 → 仍然显示；
+   *   · 转存留下的其他副本 → 进 OtherCopies（可排查，不当作备份）；
+   * 语义回到「1 主 + 1 备」，与后台的渠道角色设置一致。
+   */
   const backupChannels = copies
-    .filter((c) => c !== primary && c.status === 'active' && c.channel)
+    .filter((c) => c !== primary && c.status === 'active' && c.channel?.isBackup)
     .map((c) => ({
       id: c.channelId,
       code: c.channel!.code || '',
@@ -316,6 +352,20 @@ export function buildMetadata(
       name: c.channel!.name,
       // 该副本在备份渠道内的真实直链（如 WebDAV 上的真实地址）
       url: (opts.resolveDirectUrl ? opts.resolveDirectUrl(c, rec) : '') || '',
+    }));
+
+  /*
+   * 其余 active 副本：既不是主副本、所在渠道也没打 isBackup 标记。
+   * 来源通常是 v1.0.3 及更早的转存（保留源件时留下的旧副本）或历史换渠道数据。
+   * 只供排查 / 未来的「副本管理」使用，不参与「备份渠道」展示，避免出现「2 个备份」的错觉。
+   */
+  const otherCopies = copies
+    .filter((c) => c !== primary && c.status === 'active' && c.channel && !c.channel.isBackup)
+    .map((c) => ({
+      id: c.channelId,
+      type: c.channel!.type,
+      name: c.channel!.name,
+      label: CHANNEL_LABEL[c.channel!.type] || c.channel!.type,
     }));
 
   // 主渠道（存储渠道）副本在渠道内的真实直链（对外公开地址：公开访问域名 + 固化地址）
@@ -383,6 +433,8 @@ export function buildMetadata(
     // 「源」：加载域名 + 固化地址（代理模式优先内网通信域名）
     LoadUrl: loadUrl || storageUrl,
     BackupChannels: backupChannels,
+    // v1.0.4：非主、非备份的其他副本（仅排查用，前端暂不渲染）
+    OtherCopies: otherCopies,
     FileHash: rec.hash || '',
   };
 

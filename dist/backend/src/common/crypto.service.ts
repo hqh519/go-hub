@@ -5,11 +5,25 @@ import { createCipheriv, createDecipheriv, randomBytes, scryptSync, createHmac, 
  * 主密钥来自环境变量 CONFIG_SECRET（.env，不入库不入 git）。
  */
 export class CryptoService {
+  /**
+   * 派生密钥的内存缓存：secret -> 32 字节 key。
+   *
+   * ⚠️ 必须缓存。scrypt 是 memory-hard KDF（默认 N=16384/r=8/p=1），单次 50~100ms。
+   * 早期实现每次 encrypt/decrypt/sign 都重算一遍，导致带 ?from=admin 的请求
+   * （会话验签 → sign() → key()）平白多出约 120ms，图片灯箱明显"等一会才出来"。
+   * 同一进程内 secret 不变，派生结果恒定，缓存不改变任何加密语义。
+   */
+  private static keyCache: { secret: string; key: Buffer } | null = null;
+
   private static key(): Buffer {
     // ⚠️ 下面两个字面量是历史密钥派生参数，**永远不要跟着项目改名而改**：
     //   它们是 scrypt 的 secret 兜底值 + salt，改动会让已加密的渠道密钥全部解不开。
     const secret = process.env.CONFIG_SECRET || 'go-imgbed-dev-secret-change-me';
-    return scryptSync(secret, 'go-imgbed-kdf', 32);
+    const hit = this.keyCache;
+    if (hit && hit.secret === secret) return hit.key;
+    const key = scryptSync(secret, 'go-imgbed-kdf', 32);
+    this.keyCache = { secret, key };
+    return key;
   }
 
   /** AES-256-GCM 加密，输出 base64(iv|tag|ciphertext) */

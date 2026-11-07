@@ -112,7 +112,7 @@ let SysConfigService = class SysConfigService {
                         placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
                         extract: '',
                         startChars: '#',
-                        stopChars: '!！,，.。-—_、;；:：?？()（）[]【】{}<>《》|/\\',
+                        stopChars: '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]',
                         maxLen: 14,
                     },
                 };

@@ -31,8 +31,22 @@ let closing = false
 let popTimer = null
 let installed = false
 
-function isMobile() {
+/**
+ * 是否需要接管「返回键」—— 统一按「触屏优先」判断。
+ *
+ * v1.0.4 修正：旧实现只看 `innerWidth <= 768`，而页面的「返回键回上一级目录」
+ * 用的是 `matchMedia('(hover: none)')`。两套口径在三种设备上打架：
+ *   · iPad（1024）、横屏手机（844）、折叠屏展开（884）—— 手里全是手指操作，
+ *     浮层栈判定「桌面」→ 不压哨兵；页面判定「触屏」→ 接管返回键；
+ *   · 结果就是「移动端没修好」：浮层开着按返回，灯箱不动、目录却退了一级，
+ *     再按一次直接离开页面。
+ * 现在与页面同口径：hover:none 一律算触屏，小屏触屏设备（触屏笔记本的平板模式）也算，
+ * 桌面（有精确指针且屏宽）仍然只在按 Esc 时接管。
+ */
+export function isTouchLayout() {
     try {
+        if (window.matchMedia && window.matchMedia('(hover: none)').matches) return true
+        if (navigator.maxTouchPoints > 0 && window.innerWidth <= MOBILE_MAX_WIDTH) return true
         return window.innerWidth <= MOBILE_MAX_WIDTH
     } catch (e) {
         return false
@@ -40,7 +54,7 @@ function isMobile() {
 }
 
 function pushSentinel() {
-    if (sentinel || !isMobile()) return
+    if (sentinel || !isTouchLayout()) return
     try {
         window.history.pushState({ __gohubLayer: 1 }, '', window.location.href)
         sentinel = true
@@ -144,6 +158,20 @@ function install() {
         e.stopPropagation()
         closeTop()
     }, true)
+
+    /*
+     * 布局切换时校正哨兵（v1.0.4）：
+     *   · 桌面 → 触屏布局（平板转向、窗口拉窄、折叠屏合上）：如果已经有浮层开着，
+     *     立刻补一条哨兵，否则接下来的返回键会直接退页面；
+     *   · 触屏 → 桌面布局：把哨兵还回去，避免历史里留一条永远用不到的条目。
+     */
+    const syncSentinelByLayout = () => {
+        if (!layers.length) return
+        if (isTouchLayout()) pushSentinel()
+        else if (sentinel) popSentinel()
+    }
+    window.addEventListener('resize', syncSentinelByLayout)
+    window.addEventListener('orientationchange', syncSentinelByLayout)
 }
 
 /**

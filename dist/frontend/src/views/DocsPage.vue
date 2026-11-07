@@ -537,6 +537,21 @@ const ZH = {
         { t: '目录分类也支持类型维度', d: '目录属性表新增「类型」字段，与标签同一套口径：目前只有文件分类，后续笔记 / 文章 / 待办 / 导航接入时各自的分类互不影响，同名路径可以各存一份属性。' },
         { t: '超级管理员会话固定 1 天', d: '用环境变量配置的超级管理员是「应急找回」角色，会话有效期固定为 1 天，不读取「用户管理」里的账户设置、也不提供配置项；普通管理员仍按自己账户里设置的天数生效。' },
       ]
+    },
+    {
+      title: '二十一、v1.0.4 更新要点',
+      intro: 'v1.0.4 没有新功能，全部是补齐上一版遗留：文件转存后的归属与副本数量、标签三段式规则的实际生效、移动端回退层级对齐、后台看大图的白等，另外修掉一处缓存头把「登录可见」标成公开的问题。本次没有数据库结构变更，直接覆盖升级即可。',
+      items: [
+        { t: '转存后主记录落在目标渠道，副本不再越转越多', d: 'v1.0.3 勾选「保留源件」转本地时，转存结果会被塞到备份渠道，主渠道原记录没被替换，详情页还会冒出两个「备份渠道」。根因是全系统存在三套「谁是主副本」的判断口径（副本表的 isPrimary、渠道表的 isMain、以及直接取数组第一条），互不通信。现在统一成一个判定入口：isPrimary 且可用 → isPrimary → 所在渠道是主渠道 → 数组第一条，取源、详情页、随机列表全部改用它。' },
+        { t: '转存改为「主副本原地搬迁」', d: '以前每转一次就把所有副本降级、再新增一条，转几次就有几条，永远对不上。现在直接把源副本那一行改写到目标渠道上（含按目标渠道配置重新生成 key），副本总数保持不变；目标渠道已存在同一文件的副本时，覆盖目标那条并删掉源那条，避免一个文件在同一渠道出现两行。' },
+        { t: '「备份渠道」只列真正的备份渠道', d: '以前详情页的「备份渠道」等于「除主副本外的所有可用副本」，把普通副本也算进去了 —— 两个备份渠道就是这么来的。现在只认渠道上的备份标记，普通副本单独列在「其它副本」里，两者不再混为一谈。' },
+        { t: '保留源件 = 主记录换新、旧渠道留一份兜底', d: '明确语义：不论异地转本地还是本地转异地，主副本永远落在被转去的那个渠道上；勾选「保留源件」只是在新渠道留下一条普通副本作兜底。备份渠道里的数据一个字节都不动。' },
+        { t: '标签规则：配了就生效', d: '修掉三处不生效的地方：一是默认截断符的默认值格式不对（按逗号切分后变成多字符记号，单字符匹配永远不命中），不配截断符时规则等于没有；二是起始符框留空现在表示「从文件名开头算起」，并且只在第 0 位生效一次，不会把每一段都收成标签；三是取到文件名结尾的标签会自动剥掉扩展名，不再出现「风景.png」这种结果，也不白吃限长额度。空格恒为截断符，写在应用层、不可配置。' },
+        { t: '「本地文件」渠道浏览目录免管理员密码', d: '「存储地址」改动需要管理员密码二次验证这条保留，但范围收窄到「本地存储」渠道。浏览目录只是列一下里面有什么，不写入也不改路径，不再要求输密码。' },
+        { t: '移动端回退层级与桌面端一致', d: '上一版修好了「弹窗被登记两次导致返回跳级」的根因，但只在桌面端验证过。移动端另有一套「是不是手机」的判断，三处代码各写一份且标准不同，导致手机上返回直接退到底。现在统一按「设备有没有触摸能力」判定，横竖屏切换时还会校正返回哨兵；桌面端把窗口拉窄也不会再被误判成手机。' },
+        { t: '后台看大图不再白等', d: '查出两处原因。其一是每次校验登录状态都在重算一次很耗时的密钥派生（约 120ms），后台一屏三十张缩略图就白等三秒多，现已改为进程内复用。其二是视频与图片的加载方式天生不同：视频边下边播、拿到开头就能出画面，图片必须整份到齐才能解码；加上图片可能在第三方渠道、需要跨公网拉取。界面上补了一层「先用列表已缓存的缩略图铺模糊底、原图到了再淡入替换」，点开瞬间就有画面。' },
+        { t: '登录可见的内容不再被标成公开可缓存', d: '后台预览的响应头里已经声明了「私有」，但后面的取流代码又无条件覆盖成「公开、可缓存一天」，站点前面若有共享缓存或反向代理，存在被他人缓存到的可能。现在只在尚未设置时才写默认值，私有保持私有、公开外链保持公开。' },
+      ]
     }
   ]
 };
@@ -1011,6 +1026,21 @@ const EN = {
         { t: 'Tag uniqueness moved into the database', d: 'The tag key is now instance + type + name; the old name + instance + creator key is gone. One tag per name per instance, so the "tag exists but some files are missing from the filter" case disappears. Historical duplicates are merged before the upgrade, so it cannot fail on existing data.' },
         { t: 'Folder categories gained a type dimension', d: 'The folder properties table now carries a type field with the same semantics as tags: file categories today, and independent note / article / todo / navigation categories later, each able to keep its own properties for the same path.' },
         { t: 'Super admin sessions are fixed at 1 day', d: 'The environment-configured super administrator is an emergency recovery role, so its session is fixed at one day, ignoring the per-account setting and offering no configuration. Regular administrators still follow the days configured on their own account.' },
+      ]
+    },
+    {
+      title: '21. What is new in v1.0.4',
+      intro: 'v1.0.4 adds no features — it closes the gaps left by the previous release: where a moved file actually lands and how many copies it leaves behind, the three-part tag rule actually taking effect, mobile back navigation matching desktop, the wait before a large preview appears, plus a cache header that marked login-only content as publicly cacheable. No schema change; a straight overwrite upgrade is enough.',
+      items: [
+        { t: 'A moved file lands on the target channel and copies stop multiplying', d: 'In v1.0.3, moving a remote file to local with Keep source put the result on the backup channel, left the original primary record untouched, and made the detail panel show two backup channels. The cause was three different notions of "which copy is primary" living side by side — the copy table flag, the channel-level main flag, and simply taking the first array element — with nothing reconciling them. There is now a single resolver: primary and usable, then primary, then the copy on the main channel, then the first element. Serving, the detail panel and the random list all use it.' },
+        { t: 'Moving now relocates the primary copy in place', d: 'Each move used to demote every copy and insert a new one, so copies grew with every transfer and never matched the displayed channel. The source copy row is now rewritten onto the target channel — including regenerating its key from that channel\'s own settings — keeping the total unchanged. If the target channel already holds a copy of the same file, that row is overwritten and the source row removed, so one file never has two rows on one channel.' },
+        { t: 'Backup channels now lists only real backup channels', d: 'The detail panel used to define backup channels as "every usable copy except the primary", which swept ordinary copies in — that is where the second backup channel came from. Only copies on a channel flagged as backup are listed now; ordinary copies are reported separately as other copies.' },
+        { t: 'Keep source means: primary moves, the old channel keeps a fallback', d: 'The semantics are explicit now. Whichever direction you move, the primary copy always ends up on the channel you moved to; Keep source simply leaves an ordinary copy behind as a fallback. Nothing inside the backup channel is touched.' },
+        { t: 'Tag rules now actually apply', d: 'Three fixes. The default stop-character value was in the wrong format — splitting on commas produced multi-character tokens that could never match a single character, so the rule silently did nothing when no stop characters were configured. Leaving the start field empty now means "from the beginning of the file name", and only at position zero, so it cannot turn every segment into a tag. And a tag that runs to the end of the file name has its extension stripped, so no more "landscape.png" results eating into the length limit. Whitespace is always a stop character, hardcoded and not configurable.' },
+        { t: 'Browse directories no longer asks for the admin password on file channels', d: 'The admin password requirement for changing a storage path stays, but it is now scoped to local storage channels only. Browsing a directory just lists what is inside; it writes nothing and changes no path, so it no longer asks for a password.' },
+        { t: 'Mobile back navigation matches desktop', d: 'The previous release fixed the root cause of back navigation skipping a layer, but it was only verified on desktop. Mobile had its own "is this a phone" check, written three times with different criteria, which is why back on a phone dropped straight to the page behind. The check is now unified around touch capability, back sentinels are re-synced on orientation change, and narrowing a desktop window no longer misclassifies it as a phone.' },
+        { t: 'Large previews no longer sit on a blank screen', d: 'Two causes. Every session check recomputed an expensive key derivation (about 120 ms), so a screen of thirty thumbnails wasted three seconds before anything appeared; that result is now reused within the process. Separately, video and images load differently by nature: video streams progressively and shows a first frame from the opening bytes, while an image must arrive whole before it can decode — and the image may live on a third-party channel across the public internet. The lightbox now paints a blurred layer from the already-cached list thumbnail and fades the full image in over it, so there is something on screen the moment you open it.' },
+        { t: 'Login-only content is no longer marked publicly cacheable', d: 'The admin preview declared its response private, but the streaming code further down overwrote that with public, cacheable for a day. With a shared cache or reverse proxy in front, that content could in principle be cached by someone else. Defaults are now written only when no value is set: private stays private, public links stay public.' },
       ]
     }
   ]

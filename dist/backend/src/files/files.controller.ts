@@ -33,7 +33,7 @@ import { UploadService } from '../upload/upload.service';
 import { SettingsService } from '../settings/settings.service';
 import { SysConfigService } from '../settings/sysconfig.service';
 import { AdminGuard, ManageAuthGuard, SESSION_COOKIE, currentSession, isAdminRole, parseSession } from '../auth/auth.guard';
-import { buildDirectoryTree, CHANNEL_LABEL, CopyWithChannel, fileExtOf, fileTypeOf, formatSize, isRecordFile, normalizeDir, normalizeUploadSource, safeParse, serializeFile } from '../common/file-view';
+import { buildDirectoryTree, CHANNEL_LABEL, CopyWithChannel, fileExtOf, fileTypeOf, formatSize, isRecordFile, normalizeDir, normalizeUploadSource, pickPrimaryCopy, safeParse, serializeFile } from '../common/file-view';
 import { appLog } from '../common/app-log';
 import { frontendAppDir } from '../common/project-paths';
 import { qqwryStatus, saveQqwry } from '../common/qqwry';
@@ -433,7 +433,11 @@ export class LinkController {
           };
           res.setHeader('Content-Type', types[out.info.format] || 'application/octet-stream');
           res.setHeader('Content-Length', String(out.data.length));
-          res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+          // v1.0.4：管理员预览（?from=admin）已在 checkAccess 里声明 private，
+          // 这里不能再无脑覆盖成 public —— 否则「仅登录可见」的图片被标成公开可缓存。
+          if (!res.getHeader('Cache-Control')) {
+            res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+          }
           res.setHeader('X-Imgbed-Transformed', '1');
           return res.end(out.data);
         } catch {
@@ -451,8 +455,11 @@ export class LinkController {
     const mime = record.mime || 'application/octet-stream';
     res.setHeader('Content-Type', mime);
     res.setHeader('Accept-Ranges', 'bytes');
-    // 文件名由 key 决定且永不复用 → 可以长缓存
-    res.setHeader('Cache-Control', 'public, max-age=86400');
+    // 文件名由 key 决定且永不复用 → 可以长缓存；
+    // 但管理员预览已在上游声明 private，保持私有（v1.0.4）
+    if (!res.getHeader('Cache-Control')) {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    }
 
     const range = String(req.headers['range'] || '');
     if (range) {
@@ -835,14 +842,31 @@ export class LinkController {
     // 按「当前访问渠道」排序候选：首选渠道在前，另一渠道作为降级候选
     const channelIds = active.map((c) => c.channelId);
     const channels = await prisma.channel.findMany({ where: { id: { in: channelIds } } });
-    const preferList = prefer === 'backup' ? ['backup', 'main'] : ['main', 'backup'];
+    /*
+     * v1.0.4：取源口径统一到 fileCopy.isPrimary。
+     *
+     * 旧逻辑只认渠道级 isMain / isBackup，不认副本的 isPrimary —— 转存把 isPrimary 指到新渠道后，
+     * 数据层换了主，外链却还在读旧渠道，表现为「转存后没生效」。
+     * 新顺序（由「访问渠道」偏好决定先后）：
+     *   默认  ：主副本 → 全局主渠道 → 全局备份渠道 → 未标记副本 → 已禁用兜底
+     *   切备份：全局备份渠道 → 主副本 → 全局主渠道 → 未标记副本 → 已禁用兜底
+     * 「切备份」必须排最前，否则后台的「访问渠道 = 备份」会失效。
+     */
+    const preferList = prefer === 'backup' ? ['backup', 'primary', 'main'] : ['primary', 'main', 'backup'];
     const enabledIds = new Set(channels.filter((c) => c.enabled).map((c) => c.id));
     const ordered: typeof active = [];
+    const roleOf = (channelId: string): string => {
+      const ch = channels.find((x) => x.id === channelId);
+      if (!ch) return '';
+      if (ch.isBackup) return 'backup';
+      if (ch.isMain) return 'main';
+      return '';
+    };
     const byRole = (role: string, enabledOnly = false) => {
-      const ids = channels.filter((c) => (role === 'backup' ? c.isBackup : c.isMain)).map((c) => c.id);
       for (const c of active) {
         if (ordered.includes(c)) continue;
-        if (!ids.includes(c.channelId)) continue;
+        // 'primary' 是副本级标记，其余是渠道级角色
+        if (role === 'primary' ? !c.isPrimary : roleOf(c.channelId) !== role) continue;
         if (enabledOnly && !enabledIds.has(c.channelId)) continue;
         ordered.push(c);
       }
@@ -1709,7 +1733,8 @@ export class ManageController {
     pushGroup(f.fileType, (v) => v === fileTypeOf(r.mime));
 
     const copies: any[] = Array.isArray(r.copies) ? r.copies : [];
-    const primary = copies.find((c) => c?.channel?.isMain) || copies[0];
+    // v1.0.4：统一口径 —— 先认 fileCopy.isPrimary（转存后指向新渠道），再回退渠道 isMain
+    const primary = pickPrimaryCopy(copies);
     const chType = primary?.channel?.type || '';
     const chLabel = chType ? CHANNEL_LABEL[chType] || chType : '';
     const chName = String(primary?.channel?.name || '');
@@ -2448,8 +2473,7 @@ export class ManageController {
       orderBy: { createdAt: 'asc' },
     });
 
-    const primaryOf = (r: (typeof rows)[number]) =>
-      r.copies.find((c) => c.channel?.isMain) || r.copies[0];
+    const primaryOf = (r: (typeof rows)[number]) => pickPrimaryCopy(r.copies);
 
     const totalFiles = rows.length;
     const lastUpdated = totalFiles ? rows[totalFiles - 1].createdAt.getTime() : Date.now();
@@ -5647,7 +5671,7 @@ export class UserConfigController {
           if (!ok) return false;
         }
         if (q.channel || q.channelName) {
-          const primary = r.copies.find((c) => c.channel?.isMain) || r.copies[0];
+          const primary = pickPrimaryCopy(r.copies);
           const typeLabel = primary?.channel ? CHANNEL_LABEL[primary.channel.type] || primary.channel.type : '';
           if (q.channel && typeLabel !== q.channel) return false;
           if (q.channelName && (primary?.channel?.name || '') !== q.channelName) return false;

@@ -17,17 +17,7 @@
  *      一次返回被两套逻辑同时消费。
  */
 
-import { registerLayer, unregisterLayer } from './layerStack'
-
-const MOBILE_MAX_WIDTH = 768
-
-function isMobile() {
-    try {
-        return window.innerWidth <= MOBILE_MAX_WIDTH
-    } catch (e) {
-        return false
-    }
-}
+import { isTouchLayout, registerLayer, unregisterLayer } from './layerStack'
 
 /** body 下所有还显示着的 Element Plus 浮层（弹窗 / 抽屉 / MessageBox） */
 function visibleOverlays() {
@@ -125,8 +115,8 @@ export function setupBackGuard() {
     window.setTimeout(sync, 200)
 
     /*
-     * 视口从桌面拉窄到移动端时补登记一遍哨兵；反之则归还。
-     * 只在移动端布局下才需要，桌面端 layerStack 内部已跳过。
+     * 首屏可能已经有弹窗（例如强制公告）或已经是触屏布局：
+     * 补登记一次，让返回键立刻可用（v1.0.4：判断口径与 layerStack 统一为 isTouchLayout）。
      */
-    if (isMobile()) window.setTimeout(sync, 400)
+    if (isTouchLayout()) window.setTimeout(sync, 400)
 }

@@ -284,7 +284,9 @@ let LinkController = class LinkController {
                     };
                     res.setHeader('Content-Type', types[out.info.format] || 'application/octet-stream');
                     res.setHeader('Content-Length', String(out.data.length));
-                    res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+                    if (!res.getHeader('Cache-Control')) {
+                        res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+                    }
                     res.setHeader('X-Imgbed-Transformed', '1');
                     return res.end(out.data);
                 }
@@ -303,7 +305,9 @@ let LinkController = class LinkController {
         const mime = record.mime || 'application/octet-stream';
         res.setHeader('Content-Type', mime);
         res.setHeader('Accept-Ranges', 'bytes');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
+        if (!res.getHeader('Cache-Control')) {
+            res.setHeader('Cache-Control', 'public, max-age=86400');
+        }
         const range = String(req.headers['range'] || '');
         if (range) {
             const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
@@ -584,15 +588,24 @@ let LinkController = class LinkController {
         }
         const channelIds = active.map((c) => c.channelId);
         const channels = await prisma_1.prisma.channel.findMany({ where: { id: { in: channelIds } } });
-        const preferList = prefer === 'backup' ? ['backup', 'main'] : ['main', 'backup'];
+        const preferList = prefer === 'backup' ? ['backup', 'primary', 'main'] : ['primary', 'main', 'backup'];
         const enabledIds = new Set(channels.filter((c) => c.enabled).map((c) => c.id));
         const ordered = [];
+        const roleOf = (channelId) => {
+            const ch = channels.find((x) => x.id === channelId);
+            if (!ch)
+                return '';
+            if (ch.isBackup)
+                return 'backup';
+            if (ch.isMain)
+                return 'main';
+            return '';
+        };
         const byRole = (role, enabledOnly = false) => {
-            const ids = channels.filter((c) => (role === 'backup' ? c.isBackup : c.isMain)).map((c) => c.id);
             for (const c of active) {
                 if (ordered.includes(c))
                     continue;
-                if (!ids.includes(c.channelId))
+                if (role === 'primary' ? !c.isPrimary : roleOf(c.channelId) !== role)
                     continue;
                 if (enabledOnly && !enabledIds.has(c.channelId))
                     continue;
@@ -1253,7 +1266,7 @@ let ManageController = class ManageController {
         pushGroup(f.label, (v) => v === label);
         pushGroup(f.fileType, (v) => v === (0, file_view_1.fileTypeOf)(r.mime));
         const copies = Array.isArray(r.copies) ? r.copies : [];
-        const primary = copies.find((c) => c?.channel?.isMain) || copies[0];
+        const primary = (0, file_view_1.pickPrimaryCopy)(copies);
         const chType = primary?.channel?.type || '';
         const chLabel = chType ? file_view_1.CHANNEL_LABEL[chType] || chType : '';
         const chName = String(primary?.channel?.name || '');
@@ -1777,7 +1790,7 @@ let ManageController = class ManageController {
             include: { copies: { include: { channel: true } } },
             orderBy: { createdAt: 'asc' },
         });
-        const primaryOf = (r) => r.copies.find((c) => c.channel?.isMain) || r.copies[0];
+        const primaryOf = (r) => (0, file_view_1.pickPrimaryCopy)(r.copies);
         const totalFiles = rows.length;
         const lastUpdated = totalFiles ? rows[totalFiles - 1].createdAt.getTime() : Date.now();
         const offMinStat = Number(q.timezoneOffset || 0) || 0;
@@ -4563,7 +4576,7 @@ let UserConfigController = class UserConfigController {
                         return false;
                 }
                 if (q.channel || q.channelName) {
-                    const primary = r.copies.find((c) => c.channel?.isMain) || r.copies[0];
+                    const primary = (0, file_view_1.pickPrimaryCopy)(r.copies);
                     const typeLabel = primary?.channel ? file_view_1.CHANNEL_LABEL[primary.channel.type] || primary.channel.type : '';
                     if (q.channel && typeLabel !== q.channel)
                         return false;

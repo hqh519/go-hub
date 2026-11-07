@@ -158,15 +158,33 @@
         >
             <!-- 图片 -->
             <div v-if="current.kind === 'image'" class="mv-image-wrap" :class="{ 'is-actual': fitMode === 'actual' }">
+                <!--
+                    v1.0.4：原图占位。
+                    列表里的缩略图（?thumb=320）早已被浏览器缓存，打开灯箱时它 0 请求即可显示；
+                    原图即便存在远程渠道（要跨公网拉几百 KB~几 MB），用户也能立刻看到画面，
+                    原图 onload 后淡入覆盖，不再是「白屏等一会才出现」。
+                -->
+                <img
+                    v-if="current.thumb"
+                    :src="current.thumb"
+                    class="mv-image-ph"
+                    :class="{ 'is-hidden': imageLoaded }"
+                    alt=""
+                    aria-hidden="true"
+                    draggable="false"
+                />
                 <!-- v3.0.0 PC：滚轮缩放（以鼠标为中心）+ 左键拖拽移动；移动端点击行为由舞台触摸逻辑接管 -->
                 <img
                     ref="imageEl"
                     :src="current.url"
                     :alt="current.name"
                     class="mv-image"
-                    :class="{ 'is-dragging': imgDragging }"
+                    :class="{ 'is-dragging': imgDragging, 'is-loaded': imageLoaded }"
                     :style="imgStyle"
                     draggable="false"
+                    fetchpriority="high"
+                    @load="imageLoaded = true"
+                    @error="imageLoaded = true"
                     @click.stop="onImageClick"
                     @mousedown="onImgMouseDown"
                     @wheel.prevent="onImageWheel"
@@ -623,6 +641,8 @@ export default {
             silent: false,
             // 图片
             fitMode: 'fit',            // fit = 适应窗口，actual = 实际大小
+            // v1.0.4：原图是否已解码完成（false 时显示缩略图占位）
+            imageLoaded: false,
             // v3.0.0 PC 图片滚轮缩放 + 拖拽状态
             imgScale: 1,
             imgX: 0,
@@ -870,6 +890,8 @@ export default {
                 this.videoMuted = false
                 this.longPress3x = false
                 this.fitMode = 'fit'
+                // v1.0.4：每次打开都重新走「缩略图占位 → 原图淡入」
+                this.imageLoaded = false
                 this.resetImageZoom()
                 this.resetVideoZoom()
                 this.controlsVisible = true
@@ -918,6 +940,8 @@ export default {
             // v3.0.0（R16）：切走视频 / 关闭横屏状态
             if (this.current.kind !== 'video') this.resetVideoLandscape()
             this.resetImageZoom()
+            // v1.0.4：切集重新走「缩略图占位 → 原图淡入」
+            this.imageLoaded = false
             // v1.0.0：切集时视频画面缩放一并复位，新视频从原始比例开始
             this.resetVideoZoom()
             this.audioIndex = Math.max(0, this.audioItems.findIndex(a => a.key === this.current.key))
@@ -2302,12 +2326,33 @@ export default {
     touch-action: none;
 }
 .mv-image-wrap {
+    position: relative;
     width: 100%;
     height: 100%;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: auto;
+}
+/*
+ * v1.0.4：原图占位层 —— 复用列表里已缓存的缩略图，铺满容器并高斯模糊。
+ * 绝对定位是为了不参与 flex 布局（否则会和原图并排，把画面挤成两半）。
+ */
+.mv-image-ph {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: 4px;
+    filter: blur(12px);
+    transform: scale(1.03);
+    opacity: 1;
+    transition: opacity 0.28s ease;
+    pointer-events: none;
+}
+.mv-image-ph.is-hidden {
+    opacity: 0;
 }
 .mv-image {
     max-width: 100%;
@@ -2316,6 +2361,12 @@ export default {
     border-radius: 4px;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
     cursor: zoom-in;
+    /* v1.0.4：原图解码完成前透明，完成后淡入覆盖占位图 */
+    opacity: 0;
+    transition: opacity 0.28s ease;
+}
+.mv-image.is-loaded {
+    opacity: 1;
 }
 /* v3.0.0 实际大小：水平居中、垂直方向贴顶部（不是左上角），超出可滚动 / 拖动查看 */
 .mv-image-wrap.is-actual {

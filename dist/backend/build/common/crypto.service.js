@@ -3,9 +3,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CryptoService = void 0;
 const crypto_1 = require("crypto");
 class CryptoService {
+    static keyCache = null;
     static key() {
         const secret = process.env.CONFIG_SECRET || 'go-imgbed-dev-secret-change-me';
-        return (0, crypto_1.scryptSync)(secret, 'go-imgbed-kdf', 32);
+        const hit = this.keyCache;
+        if (hit && hit.secret === secret)
+            return hit.key;
+        const key = (0, crypto_1.scryptSync)(secret, 'go-imgbed-kdf', 32);
+        this.keyCache = { secret, key };
+        return key;
     }
     static encrypt(plain) {
         if (!plain)

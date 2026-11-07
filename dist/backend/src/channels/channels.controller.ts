@@ -768,15 +768,20 @@ export class ChannelManageController {
      * v1.0.2：本地存储渠道的「存储地址（容器内路径）」一旦保存就不能随手改 ——
      * 改错（或改成未映射路径）会导致容器重建后文件全部丢失。
      * 这里要求输入当前管理员密码二次确认；路径没变则不需要密码。
+     *
+     * v1.0.4：**只对 local（本地存储 / LOL）生效**。
+     * 「本地文件」（localfiles / File）是只读浏览入口，它的「浏览目录」改错了
+     * 顶多看不到文件，不会丢数据，没必要承担密码校验的打断成本 ——
+     * 之前用 `type in ('local','localfiles')` 把两者绑在一起，连用户自建的
+     * localfiles 渠道（code 与内置渠道不同）也被要求输密码。
      */
-    if (ch.type === 'local' || ch.type === 'localfiles') {
+    if (ch.type === 'local') {
       const rootSig = (cfg: Record<string, string>) => {
         const rp = String(cfg.rootPaths || '').trim();
         const r = String(cfg.rootPath || '').trim();
         return `${rp}\u0000${r}`;
       };
-      // 内置「本地文件」渠道的浏览目录是固定的，不参与校验
-      if (ch.code !== LOCAL_FILES_CHANNEL_CODE && rootSig(old) !== rootSig(merged)) {
+      if (rootSig(old) !== rootSig(merged)) {
         if (!(await this.verifyAdminPassword(req, String(body?.adminPassword || '')))) {
           appLog.warn('channel', `修改本地存储地址被拦截：${ch.name}`, '未提供或提供了错误的管理员密码');
           return { success: false, needAdminPassword: true, message: '修改「存储地址（容器内路径）」需要验证管理员密码' };

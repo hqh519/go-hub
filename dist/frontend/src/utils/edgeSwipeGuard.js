@@ -19,12 +19,17 @@
 const EDGE_PX = 16
 /** 判定方向前的最小位移，避免手指微抖就下结论 */
 const DECIDE_PX = 6
-/** 与路由 / 布局保持一致的移动端阈值 */
-const MOBILE_MAX_WIDTH = 768
 
+/**
+ * v1.0.4：与 layerStack / 页面导航统一「触屏优先」口径。
+ * 旧实现只看 innerWidth <= 768，于是 iPad、横屏手机、折叠屏展开时
+ * 边缘横滑不会被拦，浏览器直接执行返回 —— 灯箱还开着，页面却退了。
+ */
 function isMobile() {
     try {
-        return window.innerWidth <= MOBILE_MAX_WIDTH
+        if (window.matchMedia && window.matchMedia('(hover: none)').matches) return true
+        if (navigator.maxTouchPoints > 0 && window.innerWidth <= 768) return true
+        return window.innerWidth <= 768
     } catch (e) {
         return false
     }

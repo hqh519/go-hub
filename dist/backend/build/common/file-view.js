@@ -13,6 +13,7 @@ exports.formatSize = formatSize;
 exports.safeParse = safeParse;
 exports.buildDirectoryTree = buildDirectoryTree;
 exports.isRecordFile = isRecordFile;
+exports.pickPrimaryCopy = pickPrimaryCopy;
 exports.buildMetadata = buildMetadata;
 exports.serializeFile = serializeFile;
 exports.normalizeDir = normalizeDir;
@@ -178,12 +179,21 @@ function isRecordFile(rec) {
         : rec.metas;
     return !!(metas && metas.Registered === true);
 }
+function pickPrimaryCopy(copies) {
+    const list = Array.isArray(copies) ? copies.filter(Boolean) : [];
+    if (!list.length)
+        return undefined;
+    return (list.find((c) => c.isPrimary === true && (!c.status || c.status === 'active')) ||
+        list.find((c) => c.isPrimary === true) ||
+        list.find((c) => c.channel?.isMain === true) ||
+        list[0]);
+}
 function buildMetadata(rec, copies, opts = {}) {
     const metas = safeParse(rec.metas);
-    const primary = copies.find((c) => c.channel?.isMain) || copies[0];
+    const primary = pickPrimaryCopy(copies);
     const channelLabel = primary?.channel ? exports.CHANNEL_LABEL[primary.channel.type] || primary.channel.type : '';
     const backupChannels = copies
-        .filter((c) => c !== primary && c.status === 'active' && c.channel)
+        .filter((c) => c !== primary && c.status === 'active' && c.channel?.isBackup)
         .map((c) => ({
         id: c.channelId,
         code: c.channel.code || '',
@@ -192,6 +202,14 @@ function buildMetadata(rec, copies, opts = {}) {
         short: channelShort(c.channel.type),
         name: c.channel.name,
         url: (opts.resolveDirectUrl ? opts.resolveDirectUrl(c, rec) : '') || '',
+    }));
+    const otherCopies = copies
+        .filter((c) => c !== primary && c.status === 'active' && c.channel && !c.channel.isBackup)
+        .map((c) => ({
+        id: c.channelId,
+        type: c.channel.type,
+        name: c.channel.name,
+        label: exports.CHANNEL_LABEL[c.channel.type] || c.channel.type,
     }));
     const storageUrl = (primary && opts.resolveDirectUrl ? opts.resolveDirectUrl(primary, rec) : '') || '';
     const loadUrl = (primary && (opts.resolveLoadUrl || opts.resolveDirectUrl)
@@ -237,6 +255,7 @@ function buildMetadata(rec, copies, opts = {}) {
         StorageUrl: storageUrl,
         LoadUrl: loadUrl || storageUrl,
         BackupChannels: backupChannels,
+        OtherCopies: otherCopies,
         FileHash: rec.hash || '',
     };
     if (metas.Width)

@@ -788,8 +788,17 @@ export class UploadService {
    */
   static readonly DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
   static readonly DEFAULT_TAG_START = '#';
-  /** 空白恒为截断符（见 extractByMarkers），这里只列额外的符号 */
-  static readonly DEFAULT_TAG_STOP = '!！,，.。-—_、;；:：?？()（）[]【】{}<>《》|/\\';
+  /**
+   * 空白恒为截断符（见 extractByMarkers），这里只列额外的符号。
+   *
+   * v1.0.4：改成 JSON 数组。旧值是一串符号 `!！,，.。…`，而 parseMarkerList 按
+   * 「逗号 / 顿号 / 分号 / 空白」切分记号 —— 逗号本身就是截断符之一，结果整串被切成
+   * `['!！', '.。…']` 这种**多字符记号**，再拿单个字符去 startsWith 永远不命中：
+   * 默认规则下的 `.`、`!`、`-` 其实一直没生效（`#标签.png` 会得到「标签.png」）。
+   * 数组形式没有分隔符歧义，每个元素就是一个记号。
+   */
+  static readonly DEFAULT_TAG_STOP =
+    '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]';
   static readonly DEFAULT_TAG_MAX_LEN = 14;
 
   /**
@@ -800,8 +809,12 @@ export class UploadService {
    *   `["#","@","&"]`  —— JSON 数组（需求原文的写法）
    *   `#`              —— 单个记号
    * 每个记号是「字面量」，可以是多字符（例如 `tag-` 作为起始符）。
+   *
+   * v1.0.4：起始符支持**空项**（`,@,&` 或 `["","@","&"]`），语义是「文件名开头」——
+   * 让没有 `#` 前缀的文件也能按「第一段」打出标签。截断符不接受空项（否则任何字符
+   * 都成了截断点，等于全部丢弃），因此由 keepEmpty 控制。
    */
-  static parseMarkerList(raw: string): string[] {
+  static parseMarkerList(raw: string, keepEmpty = false): string[] {
     const s = String(raw || '').trim();
     if (!s) return [];
     let items: string[] = [];
@@ -814,7 +827,8 @@ export class UploadService {
       }
     }
     if (!items.length) items = s.split(/[,，;；\s]+/);
-    return Array.from(new Set(items.map((v) => String(v || '').trim()).filter(Boolean)));
+    const cleaned = items.map((v) => String(v ?? '').trim());
+    return Array.from(new Set(keepEmpty ? cleaned : cleaned.filter(Boolean)));
   }
 
   /**
@@ -826,12 +840,21 @@ export class UploadService {
    *   · 一直取到「截断符」或空白（空白恒为截断符）或文件名结尾；
    *   · 取到的内容超过 maxLen（>0 时生效）就整条丢弃，不做截短；
    *   · 一条文件名里可以抽出多个标签，重复的只保留一次。
+   *
+   * v1.0.4 新增：起始符里允许出现**空项**（如 `,@,&`）。
+   * 空的起始符表示「文件名开头」这一个位置 —— 它不是万能通配：
+   * 只在整条文件名的第 0 位生效一次，不会把截断后的每一段都收成标签。
+   * 典型的用法是 `猫咪照片!最终版` 配 起始 `,@`、截断 `!`、限长 8
+   * → 得到「猫咪照片」，而不会额外得到「最终版」。
    */
   static extractByMarkers(originalName: string, startRaw: string, stopRaw: string, maxLen = 0): string[] {
     const name = String(originalName || '');
     if (!name) return [];
-    const starts = UploadService.parseMarkerList(startRaw);
-    if (!starts.length) return [];
+    const rawStarts = UploadService.parseMarkerList(startRaw, true);
+    // 空项 = 行首算一个起始位置；其余空项没有意义，从常规匹配里剔除
+    const hasEmptyStart = rawStarts.includes('');
+    const starts = rawStarts.filter(Boolean);
+    if (!starts.length && !hasEmptyStart) return [];
     const stops = UploadService.parseMarkerList(stopRaw);
     const isStop = (ch: string) => /[\s]/.test(ch) || stops.some((s) => ch.startsWith(s));
     const matchStart = (idx: number): string | null => {
@@ -856,7 +879,12 @@ export class UploadService {
           break;
         }
       }
-      if (hit < 0) break;
+      if (hit < 0) {
+        // 没有显式起始符：只有「空起始符 + 仍在开头」才继续，否则结束
+        if (!hasEmptyStart || pos > 0) break;
+        hit = 0;
+        hitLen = 0;
+      }
       let cur = hit + hitLen;
       // 连续起始符：以最后一个为起始
       for (;;) {
@@ -867,7 +895,15 @@ export class UploadService {
       // 一直取到截断符 / 空白 / 结尾
       let end = cur;
       while (end < name.length && !isStop(name[end])) end += 1;
-      const content = name.slice(cur, end).trim();
+      let content = name.slice(cur, end).trim();
+      /*
+       * v1.0.4：这一段的终点就是文件名的结尾时，把文件扩展名剥掉。
+       * 否则「a@美食-b@风景.png」会得到「风景.png」—— 扩展名不是标签内容，
+       * 用户配的限长也会被这 4 个字符白白吃掉。
+       * 只剥「点 + 1~10 位英文数字」且只在结尾剥一次：
+       *   `#v1.2.png` → `v1.2`（只去 .png）；`#标签.最终版` 不会动（中文不算扩展名）。
+       */
+      if (end >= name.length) content = content.replace(/\.[A-Za-z0-9]{1,10}$/, '');
       if (content && (maxLen <= 0 || content.length <= maxLen) && !out.includes(content)) out.push(content);
       // 从截断处继续找下一个（避免同一个起始符被重复消费）
       pos = end > hit ? end : hit + hitLen;
@@ -3444,42 +3480,82 @@ export class UploadService {
       return { ok: false, message: `写入目标渠道失败：${(err as Error).message}` };
     }
 
-    /* ── ③ 数据更新：新副本设为主副本，其余副本降级 ── */
+    /* ── ③ 数据更新：**原地替换主副本这一条记录**，其余副本（含备份渠道）一律不动 ──
+     *
+     * v1.0.4 修正：旧实现是「updateMany 把所有副本 isPrimary 置 false + upsert 新增目标副本」，
+     * 带来的问题：
+     *   · 一次转存副本数 +1，界面上冒出「2 个备份渠道」；
+     *   · updateMany 无差别扫到备份渠道副本（虽然值本来就是 false，但属于不必要的写）；
+     *   · 主副本记录与新副本并存，取源/展示两侧各有各的判定口径，容易读旧渠道。
+     *
+     * 现在改成「主副本记录搬迁」：把主副本那条记录直接改指向目标渠道，
+     * 副本总数不变，备份渠道副本一个字节都不碰。
+     */
+    const writeData = { ...this.copyWriteData(result, targetCh), status: 'active', isPrimary: true };
     try {
       await prisma.$transaction(async (tx) => {
-        await tx.fileCopy.updateMany({ where: { fileId: rec.id }, data: { isPrimary: false } });
-        await tx.fileCopy.upsert({
-          where: { fileId_channelId: { fileId: rec.id, channelId: targetCh.id } },
-          update: { ...this.copyWriteData(result, targetCh), status: 'active', isPrimary: true },
-          create: {
-            fileId: rec.id,
-            channelId: targetCh.id,
-            ...this.copyWriteData(result, targetCh),
-            status: 'active',
-            isPrimary: true,
-          },
-        });
+        // 目标渠道可能已经有副本记录（最典型：目标就是系统配置的备份渠道）
+        const existingTarget = rec.copies.find((c) => c.channelId === targetCh.id && c.id !== sourceCopy.id);
+        if (existingTarget) {
+          /*
+           * 目标已有记录 → 把它升级为主副本；原主副本记录删除。
+           * 这里「动」的仍然是用户主动选定的目标渠道，不是别的备份渠道；
+           * 其它副本（例如另一个备份渠道）保持原样。
+           */
+          await tx.fileCopy.update({ where: { id: existingTarget.id }, data: writeData });
+          await tx.fileCopy.delete({ where: { id: sourceCopy.id } });
+        } else {
+          // 目标没有记录 → 直接改写主副本记录，不新增、不降级其它副本
+          await tx.fileCopy.update({
+            where: { id: sourceCopy.id },
+            data: { channelId: targetCh.id, ...writeData },
+          });
+        }
       });
     } catch (err) {
       return { ok: false, message: `更新文件渠道数据失败：${(err as Error).message}` };
     }
 
-    /* ── ④ 源件处理：删除（含实体与副本记录）或保留（降级为普通副本） ── */
+    /* ── ④ 源件处理：只决定「实体留不留」——主副本记录在 ③ 已经搬走 ── */
     let deletedSource = false;
     if (deleteSource) {
       try {
         await srcAdapter.delete(toCopyInfo(sourceCopy as never), srcInfo);
       } catch (err) {
-        // 实体删不掉也要把副本记录摘掉，否则外链会指向一个已不可用的渠道
+        // 实体删不掉不影响主副本已切到新渠道这个事实，记日志即可
         appLog.warn(
           'channel',
-          `转存后删除源件失败（记录已摘除）：${sourceCh.name}`,
+          `转存后删除源件失败（主副本已切到新渠道）：${sourceCh.name}`,
           `${(err as Error).message} ｜ 文件=${rec.name}`,
           input.ip,
         );
       }
-      await prisma.fileCopy.deleteMany({ where: { fileId: rec.id, channelId: sourceCh.id } }).catch(() => undefined);
       deletedSource = true;
+    } else {
+      /*
+       * 保留源件 = 实体留在原渠道，并补一条「普通副本」记录（isPrimary = false）。
+       *
+       * 注意这条记录**不是**「备份渠道」：BackupChannels 只认渠道上的 isBackup 标记，
+       * 所以界面不会再多出第二个「备份渠道」，也就不会出现「两个源到底读哪个」的歧义。
+       * 它的作用只有两个：主渠道不可用时作为取源兜底；让保留的实体不至于变成查不到的孤儿。
+       */
+      await prisma.fileCopy
+        .upsert({
+          where: { fileId_channelId: { fileId: rec.id, channelId: sourceCh.id } },
+          update: { status: 'active', isPrimary: false },
+          create: {
+            fileId: rec.id,
+            channelId: sourceCh.id,
+            remoteKey: sourceCopy.remoteKey,
+            remoteUrl: sourceCopy.remoteUrl || '',
+            objectPath: sourceCopy.objectPath || '',
+            urlQuery: sourceCopy.urlQuery || '',
+            metas: sourceCopy.metas || '{}',
+            status: 'active',
+            isPrimary: false,
+          },
+        })
+        .catch(() => undefined);
     }
 
     appLog.info(
