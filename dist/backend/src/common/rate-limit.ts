@@ -97,6 +97,15 @@ export function rateLimiter() {
     const path = req.path || '';
     // 静态资源与生产前端产物豁免（首屏会瞬间产生几十个请求）
     if (STATIC_EXT.test(path) || path.startsWith('/assets/')) return next();
+    /*
+     * v1.0.6：WebDAV 整条链路豁免限流。
+     *
+     * 网盘客户端同步一个目录时，一秒钟能发上百个 PROPFIND / PUT / MKCOL ——
+     * 走任何「每分钟 N 次」的规则都会在中途开始返回 429，
+     * 客户端把 429 当成失败并放弃该文件 → 表现就是「同步完少了一堆文件」。
+     * WebDAV 的安全性由「账户名 + 渠道访问密钥」保证，不靠限流。
+     */
+    if (path === '/dav' || path.startsWith('/dav/')) return next();
 
     const rule = rules.find((r) => r.test(path, req.method));
     if (!rule) return next();

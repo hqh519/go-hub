@@ -156,16 +156,40 @@
                         >
                             {{ $t('upload.pasteSave') }}
                         </el-button>
-                        <el-button
-                            class="paste-card-upload-button paste-card-method-btn"
-                            :class="{ 'is-active': pasteUploadMethod === 'external' }"
-                            type="primary"
-                            plain
-                            :size="pasteCardMethodButtonSize"
-                            @click="handlePasteExternal"
+                        <!--
+                            v1.0.6：「外链」收进「其他」下拉，下拉里依次是「下载」「外链」。
+                            桌面端悬停「其他」即展开（不用先点一下），触屏设备改成点击展开
+                            —— 触屏没有 hover，用 hover 触发会变成「点了没反应」。
+                        -->
+                        <el-dropdown
+                            class="paste-card-other"
+                            :trigger="otherMenuTrigger"
+                            placement="bottom-end"
+                            @command="handleOtherMenuCommand"
                         >
-                            {{ $t('upload.pasteExternal') }}
-                        </el-button>
+                            <el-button
+                                class="paste-card-upload-button paste-card-method-btn"
+                                :class="{ 'is-active': pasteUploadMethod === 'external' }"
+                                type="primary"
+                                plain
+                                :size="pasteCardMethodButtonSize"
+                            >
+                                {{ $t('upload.pasteOther') }}
+                                <font-awesome-icon icon="chevron-down" style="margin-left: 4px; font-size: 10px;"/>
+                            </el-button>
+                            <template #dropdown>
+                                <el-dropdown-menu>
+                                    <el-dropdown-item command="download">
+                                        <font-awesome-icon icon="download" style="width: 14px; margin-right: 6px;"/>
+                                        {{ $t('upload.downloadLinks') }}
+                                    </el-dropdown-item>
+                                    <el-dropdown-item command="external">
+                                        <font-awesome-icon icon="link" style="width: 14px; margin-right: 6px;"/>
+                                        {{ $t('upload.pasteExternal') }}
+                                    </el-dropdown-item>
+                                </el-dropdown-menu>
+                            </template>
+                        </el-dropdown>
                     </div>
                 </div>
             </el-card>
@@ -567,6 +591,12 @@ data() {
         fileListLength: 0,
         localUidCounter: 0,
         pastedUrls: '',
+        /**
+         * v1.0.6：「其他」下拉的触发方式。
+         * 桌面端悬停展开（少点一次），触屏设备必须改成点击 —— 触屏没有 hover，
+         * 用 hover 触发等于「点了没反应」。mounted 里按 (hover: none) 覆盖。
+         */
+        otherMenuTrigger: 'hover',
         pasteUploadMethod: 'save',
         // 失败文件自动重试相关（对齐 CloudFlare-ImgBed 的机制）：
         //   单个文件失败 → 不阻塞，继续上传后面排队的文件；
@@ -799,6 +829,12 @@ created() {
 },
 // v3.0.0：原第二个重复的 watch 块已合并进上方唯一的 watch（见 listSignature 之后的说明）
 mounted() {
+    // v1.0.6：触屏设备（无 hover 能力）把「其他」下拉改成点击展开
+    try {
+        if (window.matchMedia && window.matchMedia('(hover: none)').matches) {
+            this.otherMenuTrigger = 'click'
+        }
+    } catch (e) { /* 老浏览器忽略 */ }
     document.addEventListener('paste', this.handlePaste)
     document.addEventListener('keydown', this.handlePasteShortcut)
     // v2.8.9：后台总开关（autoRetry）与前台开关（localAutoRetry）同时开启才自动重试
@@ -2890,6 +2926,67 @@ methods: {
      * v2.8.2：「外链」独立按钮 —— 一键完成输入框检测 → 有效链接提取 →
      * 逐条生成外链格式（md/html/ubb）加载到列表并立即完成。
      */
+    /** v1.0.6：「其他」下拉的菜单分发（下载 / 外链） */
+    handleOtherMenuCommand(command) {
+        if (command === 'download') {
+            this.downloadPastedLinks();
+            return;
+        }
+        if (command === 'external') {
+            this.handlePasteExternal();
+        }
+    },
+    /**
+     * v1.0.6：「其他 → 下载」——把链接输入框里的链接下载到本地。
+     *
+     * 优先 fetch 成 Blob 再存盘：这样跨域图片也能真的落到本地
+     * （直接给 <a download> 一个跨域地址，浏览器会忽略 download 属性、改成跳转预览）。
+     * fetch 被 CORS 挡住时退回「新标签打开」，至少用户还能手动另存。
+     */
+    async downloadPastedLinks() {
+        const urls = extractUrlsFromText(this.pastedUrls);
+        if (!urls.length) {
+            this.$message({ type: 'info', message: this.$t('upload.noValidLink') });
+            return;
+        }
+        let okCount = 0;
+        for (let i = 0; i < urls.length; i += 1) {
+            const url = urls[i];
+            try {
+                const res = await fetch(url, { credentials: 'omit' });
+                if (!res.ok) throw new Error(String(res.status));
+                const blob = await res.blob();
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = this.guessDownloadName(url, i);
+                a.rel = 'noopener';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+                okCount += 1;
+            } catch {
+                // 跨域 / 需鉴权 / 服务端不允许：退回新标签打开
+                window.open(url, '_blank', 'noopener');
+            }
+            // 多个链接之间留点间隔，避免被浏览器判定为批量下载而拦截
+            if (i < urls.length - 1) await new Promise((r) => window.setTimeout(r, 300));
+        }
+        if (okCount > 0) {
+            this.$message({ type: 'success', message: this.$t('upload.downloadLinksDone', { n: okCount }) });
+        }
+    },
+    /** 从 URL 猜一个像样的文件名（路径最后一段；取不到就用序号） */
+    guessDownloadName(url, index) {
+        try {
+            const u = new URL(url);
+            const seg = decodeURIComponent((u.pathname || '').split('/').filter(Boolean).pop() || '');
+            if (seg) return seg;
+        } catch {
+            /* 非法 URL：走下面的兜底 */
+        }
+        return `download-${index + 1}`;
+    },
     handlePasteExternal() {
         this.pasteUploadMethod = 'external';
         this.handleExtractPasteUrls();

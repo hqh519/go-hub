@@ -317,6 +317,67 @@
         </el-card>
 
         <!--
+          ================= WebDAV 管理（v1.0.6） =================
+          出现条件（两个都要满足）：
+            · 「系统管理 → 安全设置 → 对外 WebDAV」的全局开关是开的；
+            · 管理员在下方「管理员操作」里给该账户开了「启用 WebDAV 功能」。
+          管理员账户永远看不到本模块（后端也禁止管理员使用 WebDAV）。
+        -->
+        <el-card v-if="webdavModuleVisible" id="webdav" shadow="never" class="edit-card">
+          <template #header>
+            <span class="card-title">{{ $t('userEdit.webdavTitle') }}</span>
+            <el-tag size="small" type="info" class="card-tag">
+              {{ $t('userEdit.webdavQuota', { n: webdavChannels.length, max: webdavMax }) }}
+            </el-tag>
+          </template>
+          <div class="instance-actions">
+            <el-button size="small" type="primary" plain :disabled="webdavFull" @click="openCreateWebdav">
+              {{ $t('userEdit.webdavCreate') }}
+            </el-button>
+            <el-button size="small" @click="copyWebdavMount">
+              <font-awesome-icon icon="copy" class="share-btn-icon" />{{ $t('userEdit.webdavMountCopy') }}
+            </el-button>
+          </div>
+          <p class="hint webdav-mount-hint">
+            {{ $t('userEdit.webdavMountHint', { address: webdavMountAddress, user: form.username || '—' }) }}
+          </p>
+          <el-table v-if="webdavChannels.length" :data="webdavChannels" size="small" class="instance-table">
+            <el-table-column :label="$t('userEdit.webdavName')" min-width="130">
+              <template #default="{ row }">
+                <span class="instance-label">{{ row.name }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="$t('userEdit.webdavPath')" min-width="140">
+              <template #default="{ row }"><code class="webdav-path">/{{ row.path }}</code></template>
+            </el-table-column>
+            <el-table-column :label="$t('userEdit.webdavKey')" min-width="175">
+              <template #default="{ row }">
+                <span class="webdav-key-cell">
+                  <code>{{ row.accessKey }}</code>
+                  <el-button link size="small" :title="$t('userEdit.webdavCopy')" @click="copyWebdavKey(row)">
+                    <font-awesome-icon icon="copy" />
+                  </el-button>
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="$t('userEdit.webdavNote')" min-width="110">
+              <template #default="{ row }">
+                <span :title="row.note || ''">{{ row.note || '—' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column :label="$t('userEdit.instanceActions')" width="215">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="openEditWebdav(row)">{{ $t('userEdit.webdavEdit') }}</el-button>
+                <el-button link type="primary" size="small" @click="regenWebdavKey(row)">{{ $t('userEdit.webdavKeyRegen') }}</el-button>
+                <el-button link type="danger" size="small" @click="deleteWebdav(row)">{{ $t('userEdit.instanceDelete') }}</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <p v-else class="hint">{{ $t('userEdit.webdavEmpty') }}</p>
+          <p class="hint">{{ $t('userEdit.webdavHint') }}</p>
+        </el-card>
+
+        <!--
           ================= 对外分享（v3.0.0） =================
           · 普通用户视角：只有该账户 shareEnabled === true 才显示本模块（管理员始终可见，便于开启）；
           · 开关直接调用户保存接口（PUT /api/manage/users/:id，payload 带 shareEnabled）；
@@ -381,6 +442,23 @@
               <p class="hint">{{ $t('userEdit.maxFileSizeHint') }}</p>
             </el-form-item>
           </el-form>
+          <!--
+            v1.0.6：对外 WebDAV 授权（放在「管理备注」上一行）。
+            打开后才在下面展开「允许创建数量」，该账户的「WebDAV 管理」模块才会出现
+            （还要求「系统管理 → 安全设置 → 对外 WebDAV」的全局开关是开的）。
+            管理员账户一律不可用 —— 需求约定 WebDAV 只能通过普通用户启用。
+          -->
+          <div class="webdav-enable-block">
+            <div class="webdav-enable-row">
+              <span class="switch-item">{{ $t('userEdit.webdavEnable') }}<el-switch v-model="form.webdavEnabled" :disabled="!isPlainUserAccount" /></span>
+              <span v-if="!isPlainUserAccount" class="hint inline">{{ $t('userEdit.webdavAdminBlocked') }}</span>
+            </div>
+            <div v-if="form.webdavEnabled && isPlainUserAccount" class="webdav-max-row">
+              <span class="admin-note-label">{{ $t('userEdit.webdavMaxLabel') }}</span>
+              <el-input-number v-model="form.webdavMax" :min="1" :max="50" :step="1" size="small" />
+              <span class="hint inline">{{ $t('userEdit.webdavMaxHint') }}</span>
+            </div>
+          </div>
           <!-- v2.4.0：管理备注输入框换到名称下一行（不再与标签同行） -->
           <div class="admin-note-block">
             <span class="admin-note-label">{{ $t('userManage.adminNote') }}</span>
@@ -439,6 +517,39 @@
       <template #footer>
         <el-button @click="showCreateInstance = false">{{ $t('common.cancel') }}</el-button>
         <el-button type="primary" :loading="instanceBusy" @click="createInstance">{{ $t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- v1.0.6：创建 / 编辑 WebDAV 渠道 -->
+    <el-dialog
+      v-model="showWebdavDialog"
+      :title="webdavEditing ? $t('userEdit.webdavEditTitle') : $t('userEdit.webdavCreate')"
+      :width="dialogWidth"
+      append-to-body
+    >
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item :label="$t('userEdit.webdavName')" required>
+          <el-input v-model="webdavForm.name" maxlength="32" :placeholder="$t('userEdit.webdavNamePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="$t('userEdit.webdavPath')" :required="!webdavEditing">
+          <el-input v-model="webdavForm.path" :disabled="webdavEditing" :placeholder="$t('userEdit.webdavPathPlaceholder')" />
+          <p class="hint">{{ webdavEditing ? $t('userEdit.webdavPathLocked') : $t('userEdit.webdavPathHint') }}</p>
+        </el-form-item>
+        <!-- 访问密钥：新建时自动生成 16 位随机串（可改可重生成）；建好后只能「重新生成」，不再手改 -->
+        <el-form-item :label="$t('userEdit.webdavKey')" :required="!webdavEditing">
+          <div class="webdav-key-row">
+            <el-input v-model="webdavForm.accessKey" :disabled="webdavEditing" maxlength="64" />
+            <el-button v-if="!webdavEditing" size="small" @click="regenWebdavFormKey">{{ $t('userEdit.webdavKeyRegen') }}</el-button>
+          </div>
+          <p class="hint">{{ $t('userEdit.webdavKeyHint') }}</p>
+        </el-form-item>
+        <el-form-item :label="$t('userEdit.webdavNote')">
+          <el-input v-model="webdavForm.note" type="textarea" :rows="2" maxlength="200" :placeholder="$t('userEdit.webdavNotePlaceholder')" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showWebdavDialog = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="webdavBusy" @click="saveWebdav">{{ $t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
@@ -553,6 +664,9 @@ export default {
                 // v3.0.0（R16）：账户自定义背景图（JSON 数组字符串，空串 = 跟随系统设置）
                 uploadBkImg: '',
                 adminBkImg: '',
+                // v1.0.6：对外 WebDAV 授权（管理员操作 → 启用 WebDAV 功能 / 允许创建数量）
+                webdavEnabled: false,
+                webdavMax: 2,
             },
             channelOptions: [],
             // 头像
@@ -592,6 +706,14 @@ export default {
             inviteTarget: null,
             inviteCode: '',
             instanceBusy: false,
+            // v1.0.6：WebDAV 管理（全局开关 + 该账户的渠道列表 + 新建/编辑弹窗）
+            webdavGlobalEnabled: false,
+            webdavChannels: [],
+            webdavBusy: false,
+            showWebdavDialog: false,
+            /** 非空 = 编辑（只改名称 / 备注）；null = 新建 */
+            webdavEditing: null,
+            webdavForm: { name: '', path: '/', accessKey: '', note: '' },
             // v3.0.0：对外分享（开关即时保存 + 锚点滚动高亮）
             shareSaving: false,
             anchorHighlight: false,
@@ -615,6 +737,27 @@ export default {
         },
         isSelf() {
             return this.form.username && this.form.username === this.currentUser;
+        },
+        /** v1.0.6：是否普通用户账户（管理员账户禁止使用 WebDAV） */
+        isPlainUserAccount() {
+            return (this.detail?.role || 'user') === 'user';
+        },
+        /**
+         * v1.0.6：WebDAV 管理模块是否展示 —— 三个条件同时满足：
+         *   · 是普通用户账户；· 安全设置里的「对外 WebDAV」全局开关打开；
+         *   · 管理员在「管理员操作」里给该账户开了「启用 WebDAV 功能」。
+         */
+        webdavModuleVisible() {
+            return this.isPlainUserAccount && this.webdavGlobalEnabled && this.form.webdavEnabled === true;
+        },
+        /** 已建满配额（创建按钮置灰） */
+        webdavFull() {
+            return this.webdavChannels.length >= Math.max(1, Number(this.webdavMax) || 2);
+        },
+        /** 挂载地址：WebDAV 客户端里填这个（协议 http/https 按当前页面来） */
+        webdavMountAddress() {
+            const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            return `${origin}/dav/`;
         },
         avatarInitial() {
             const n = String(this.form.nickname || this.form.username || '?').trim();
@@ -727,6 +870,9 @@ export default {
                     // v3.0.0（R16）：账户自定义背景图
                     uploadBkImg: d.uploadBkImg || '',
                     adminBkImg: d.adminBkImg || '',
+                    // v1.0.6：对外 WebDAV 授权（老库 / 老接口没有这两个字段）
+                    webdavEnabled: d.webdavEnabled === true,
+                    webdavMax: Number(d.webdavMax) || 2,
                 };
                 this.avatarSrc = d.avatarUrl || '';
                 // 邮箱验证状态（已验证 → 输入框锁定，显示「已验证」）
@@ -736,6 +882,9 @@ export default {
                 await Promise.all([this.loadChannels(), this.loadMailReady()]);
                 // v3.0.0：实例列表（表单用户名就绪后再拉）
                 await this.loadInstances();
+                // v1.0.6：WebDAV —— 先取全局开关（决定模块是否出现），再取该账户的渠道
+                await this.loadWebdavGlobal();
+                await this.loadWebdav();
                 // v3.0.0：?anchor=instances / #instances → 滚动到「实例管理」并高亮一下
                 this.scrollToAnchor();
             } catch (e) {
@@ -766,6 +915,170 @@ export default {
             } catch {
                 this.channelOptions = [];
             }
+        },
+        /* ---------------- WebDAV 管理（v1.0.6） ---------------- */
+        /** 16 位随机访问密钥（大小写字母 + 数字），与后端生成规则保持一致 */
+        genAccessKey() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let out = '';
+            const buf = new Uint8Array(16);
+            if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+                window.crypto.getRandomValues(buf);
+                for (let i = 0; i < 16; i += 1) out += chars[buf[i] % chars.length];
+            } else {
+                for (let i = 0; i < 16; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
+            }
+            return out;
+        },
+        /** 全局开关：安全设置里的「对外 WebDAV」是否启用（配置存在 sysConfig 的 others 分区） */
+        async loadWebdavGlobal() {
+            try {
+                const res = await axios.get('/api/manage/sysConfig/others', { withCredentials: true });
+                const cfg = res.data || {};
+                this.webdavGlobalEnabled = cfg?.webdav?.enabled === true;
+            } catch {
+                this.webdavGlobalEnabled = false;
+            }
+        },
+        /** 该账户的 WebDAV 渠道列表（管理员接口，附带配额） */
+        async loadWebdav() {
+            try {
+                const res = await axios.get(`/api/manage/users/${encodeURIComponent(this.userId)}/webdav`, { withCredentials: true });
+                const d = res.data?.success ? (res.data.data || {}) : {};
+                this.webdavChannels = Array.isArray(d.channels) ? d.channels : [];
+                this.webdavMax = Number(d.max) || 2;
+            } catch {
+                this.webdavChannels = [];
+            }
+        },
+        openCreateWebdav() {
+            if (this.webdavFull) {
+                this.$message.warning(this.$t('userEdit.webdavMaxReached', { max: this.webdavMax }));
+                return;
+            }
+            this.webdavEditing = null;
+            this.webdavForm = { name: '', path: '', accessKey: this.genAccessKey(), note: '' };
+            this.showWebdavDialog = true;
+        },
+        /** 编辑：只允许改名称与备注（存储路径与密钥一经保存不再手改） */
+        openEditWebdav(row) {
+            this.webdavEditing = row;
+            this.webdavForm = {
+                name: row.name || '',
+                path: row.path || '',
+                accessKey: row.accessKey || '',
+                note: row.note || '',
+            };
+            this.showWebdavDialog = true;
+        },
+        regenWebdavFormKey() {
+            this.webdavForm.accessKey = this.genAccessKey();
+        },
+        async saveWebdav() {
+            const name = String(this.webdavForm.name || '').trim();
+            if (!name) {
+                this.$message.warning(this.$t('userEdit.webdavNameRequired'));
+                return;
+            }
+            this.webdavBusy = true;
+            try {
+                if (this.webdavEditing) {
+                    const res = await axios.patch(
+                        `/api/manage/webdav/${encodeURIComponent(this.webdavEditing.id)}`,
+                        { name, note: this.webdavForm.note },
+                        { withCredentials: true },
+                    );
+                    if (!res.data?.success) {
+                        this.$message.error(res.data?.message || this.$t('common.failed'));
+                        return;
+                    }
+                    this.$message.success(this.$t('userEdit.webdavSaved'));
+                } else {
+                    const path = String(this.webdavForm.path || '').trim();
+                    if (!path) {
+                        this.$message.warning(this.$t('userEdit.webdavPathRequired'));
+                        return;
+                    }
+                    const res = await axios.post(
+                        `/api/manage/users/${encodeURIComponent(this.userId)}/webdav`,
+                        { name, path, accessKey: String(this.webdavForm.accessKey || '').trim(), note: this.webdavForm.note },
+                        { withCredentials: true },
+                    );
+                    if (!res.data?.success) {
+                        this.$message.error(res.data?.message || this.$t('common.failed'));
+                        return;
+                    }
+                    this.$message.success(this.$t('userEdit.webdavCreated'));
+                }
+                this.showWebdavDialog = false;
+                this.webdavEditing = null;
+                await this.loadWebdav();
+            } catch (e) {
+                this.$message.error(e?.response?.data?.message || this.$t('common.failed'));
+            } finally {
+                this.webdavBusy = false;
+            }
+        },
+        /** 重新生成访问密钥（旧密钥立即失效，已挂载的客户端需要改成新密钥） */
+        async regenWebdavKey(row) {
+            try {
+                await this.$confirm(this.$t('userEdit.webdavKeyRegenConfirm', { name: row.name }), this.$t('userEdit.webdavKeyRegen'), {
+                    type: 'warning',
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                });
+            } catch {
+                return;
+            }
+            try {
+                const res = await axios.post(`/api/manage/webdav/${encodeURIComponent(row.id)}/key`, {}, { withCredentials: true });
+                if (!res.data?.success) {
+                    this.$message.error(res.data?.message || this.$t('common.failed'));
+                    return;
+                }
+                const key = res.data.data?.accessKey || '';
+                this.webdavChannels = this.webdavChannels.map((c) => (c.id === row.id ? { ...c, accessKey: key } : c));
+                const ok = await copyText(key);
+                this.$message.success(ok ? this.$t('userEdit.webdavKeyRegenOkCopied') : this.$t('userEdit.webdavKeyRegenOk'));
+            } catch (e) {
+                this.$message.error(e?.response?.data?.message || this.$t('common.failed'));
+            }
+        },
+        async deleteWebdav(row) {
+            try {
+                await this.$confirm(this.$t('userEdit.webdavDeleteConfirm', { name: row.name }), this.$t('userEdit.instanceDelete'), {
+                    type: 'warning',
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                });
+            } catch {
+                return;
+            }
+            try {
+                const res = await axios.delete(`/api/manage/webdav/${encodeURIComponent(row.id)}`, { withCredentials: true });
+                if (!res.data?.success) {
+                    this.$message.error(res.data?.message || this.$t('common.failed'));
+                    return;
+                }
+                this.$message.success(this.$t('userEdit.webdavDeleted'));
+                await this.loadWebdav();
+            } catch (e) {
+                this.$message.error(e?.response?.data?.message || this.$t('common.failed'));
+            }
+        },
+        async copyWebdavKey(row) {
+            const ok = await copyText(String(row?.accessKey || ''));
+            if (ok) this.$message.success(this.$t('userEdit.webdavCopied'));
+            else this.$message.warning(String(row?.accessKey || ''));
+        },
+        async copyWebdavMount() {
+            const text = this.$t('userEdit.webdavMountText', {
+                address: this.webdavMountAddress,
+                user: this.form.username || '',
+            });
+            const ok = await copyText(text);
+            if (ok) this.$message.success(this.$t('userEdit.webdavCopied'));
+            else this.$message.warning(text);
         },
         /* ---------------- 实例管理（v3.0.0） ---------------- */
         /**
@@ -1263,6 +1576,9 @@ export default {
                         transcodePolicy: this.form.transcodePolicy || 'inherit',
                         maxFileSizeMB: Number(this.form.maxFileSizeMB) || 0,
                         adminNote: this.form.adminNote,
+                        // v1.0.6：对外 WebDAV 授权（后端对管理员账户会强制钳成 false）
+                        webdavEnabled: this.form.webdavEnabled === true,
+                        webdavMax: Math.max(1, Number(this.form.webdavMax) || 2),
                     });
                 }
                 const res = await axios.put(`/api/manage/users/${encodeURIComponent(this.userId)}`, payload, { withCredentials: true });
@@ -1644,6 +1960,31 @@ export default {
 .channel-form { display: flex; gap: 16px; flex-wrap: wrap; }
 .channel-form .el-form-item { flex: 1; min-width: 220px; }
 .full-width { width: 100%; }
+/*
+ * v1.0.6：对外 WebDAV 授权（管理员操作里，「管理备注」上一行）。
+ * 开关关闭时整段只有一行，打开后才在下面展开「允许创建数量」。
+ */
+.webdav-enable-block { margin: 4px 0 14px; display: flex; flex-direction: column; gap: 10px; }
+.webdav-enable-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.webdav-max-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hint.inline { margin: 0; }
+/* v1.0.6：WebDAV 管理模块 */
+.webdav-mount-hint { margin: 0 0 12px; word-break: break-all; }
+.webdav-path {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    background: var(--el-fill-color-light, #f5f7fa);
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+.webdav-key-cell { display: inline-flex; align-items: center; gap: 6px; }
+.webdav-key-cell code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    letter-spacing: 0.4px;
+}
+.webdav-key-row { display: flex; gap: 8px; align-items: center; width: 100%; }
+.webdav-key-row .el-input { flex: 1; }
 /* v2.4.0：管理备注 —— 名称在上、输入框另起一行 */
 .admin-note-block { margin-top: 4px; display: flex; flex-direction: column; gap: 8px; }
 .admin-note-label { font-size: 14px; color: var(--el-text-color-primary); }

@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.videoCodecLabel = videoCodecLabel;
 exports.extOf = extOf;
 exports.resolveMediaTarget = resolveMediaTarget;
 exports.cropImage = cropImage;
@@ -43,11 +44,33 @@ exports.logAbandoned = logAbandoned;
 const node_crypto_1 = require("node:crypto");
 const node_fs_1 = require("node:fs");
 const fs_1 = require("fs");
+const node_path_1 = require("node:path");
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const local_adapter_1 = require("../adapters/local.adapter");
 const compress_1 = require("../common/compress");
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'avif']);
+const VIDEO_CODEC_LABELS = {
+    avc1: 'H.264 (AVC)',
+    avc3: 'H.264 (AVC)',
+    hvc1: 'H.265 (HEVC)',
+    hev1: 'H.265 (HEVC)',
+    dvh1: 'Dolby Vision (HEVC)',
+    dvhe: 'Dolby Vision (HEVC)',
+    av01: 'AV1',
+    vp09: 'VP9',
+    vp08: 'VP8',
+    vvc1: 'H.266 (VVC)',
+    vvi1: 'H.266 (VVC)',
+    mp4v: 'MPEG-4 Part 2',
+    prores: 'Apple ProRes',
+};
+function videoCodecLabel(codec) {
+    const k = String(codec || '').trim().toLowerCase();
+    if (!k)
+        return '';
+    return VIDEO_CODEC_LABELS[k] || k.toUpperCase();
+}
 function extOf(nameOrFile) {
     const m = /\.([A-Za-z0-9]{1,10})$/.exec(String(nameOrFile || ''));
     return m ? m[1].toLowerCase() : '';
@@ -101,6 +124,7 @@ async function resolveMediaTarget(fileKey, uploader) {
             abs,
             metas,
             compressedBefore: !!rec.originalSize && rec.originalSize !== rec.size,
+            remoteKey: primary.remoteKey || '',
         },
     };
 }
@@ -157,6 +181,44 @@ async function commitEdit(target, opts) {
     await prisma_1.prisma.fileRecord.update({ where: { id: target.id }, data });
     app_log_1.appLog.info('file', `原位编辑完成：${target.name}`, `${opts.kind} ｜ ${target.size}B → ${opts.size}B ｜ ${opts.mime || target.mime}`);
     return { md5 };
+}
+async function renameExtToWebp(target) {
+    try {
+        const oldAbs = target.abs;
+        const dir = (0, node_path_1.dirname)(oldAbs);
+        const base = (0, node_path_1.basename)(oldAbs);
+        const stem = base.replace(/\.[A-Za-z0-9]{1,12}$/, '');
+        const newBase = `${stem}.webp`;
+        if (newBase === base)
+            return false;
+        const newAbs = (0, node_path_1.join)(dir, newBase);
+        await fs_1.promises.rename(oldAbs, newAbs);
+        const newKey = target.remoteKey
+            ? target.remoteKey.replace(/[^/]+$/, newBase)
+            : newBase;
+        if (target.remoteKey) {
+            await prisma_1.prisma.fileCopy.updateMany({
+                where: { fileId: target.id, remoteKey: target.remoteKey },
+                data: { remoteKey: newKey },
+            });
+        }
+        const newOriginal = /\.([A-Za-z0-9]{1,12})$/.test(target.originalName || '')
+            ? target.originalName.replace(/\.[A-Za-z0-9]{1,12}$/, '.webp')
+            : `${target.originalName || stem}.webp`;
+        await prisma_1.prisma.fileRecord.update({
+            where: { id: target.id },
+            data: { originalName: newOriginal },
+        });
+        target.abs = newAbs;
+        target.remoteKey = newKey;
+        target.originalName = newOriginal;
+        target.ext = 'webp';
+        return true;
+    }
+    catch (err) {
+        app_log_1.appLog.warn('file', `转 WebP 后改扩展名失败：${target.name}`, err.message);
+        return false;
+    }
 }
 async function cropImage(target, buffer) {
     const started = Date.now();
@@ -326,6 +388,7 @@ async function toWebp(target, lossless) {
         if (!buf.length)
             return { ok: false, message: 'WebP 转换结果为空' };
         await writeInPlace(target.abs, buf);
+        await renameExtToWebp(target);
         const { md5 } = await commitEdit(target, {
             size: buf.length,
             mime: 'image/webp',
@@ -333,7 +396,16 @@ async function toWebp(target, lossless) {
             height: meta.height,
             kind: lossless ? '转WebP(无损)' : '转WebP(有损)',
         });
-        return { ok: true, size: buf.length, width: meta.width, height: meta.height, md5, mime: 'image/webp', elapsedMs: Date.now() - started };
+        return {
+            ok: true,
+            size: buf.length,
+            width: meta.width,
+            height: meta.height,
+            md5,
+            mime: 'image/webp',
+            originalName: target.originalName,
+            elapsedMs: Date.now() - started,
+        };
     }
     catch (err) {
         return { ok: false, message: `转 WebP 失败：${err.message}`, elapsedMs: Date.now() - started };

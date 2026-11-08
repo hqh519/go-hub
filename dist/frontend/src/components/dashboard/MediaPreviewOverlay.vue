@@ -132,11 +132,12 @@
                 >
                     <font-awesome-icon icon="info-circle"/>
                 </button>
-                <span class="mv-tools-sep"></span>
                 <!--
                     v1.0.5：关闭按钮左侧的「上传」入口（仅父组件开启 upload 时出现）。
                     典型场景：在「本地文件」页预览时想把当前这张图传到图床 ——
                     点这里选出渠道 / 实例 / 目录即可后台上传，灯箱**不关闭**。
+                    v1.0.6：位置调到分隔线**左侧**（与「查看详情」同组），
+                            分隔线右侧只剩关闭按钮，视觉上「操作区 | 关闭」两段更清楚。
                 -->
                 <button
                     v-if="upload"
@@ -150,6 +151,7 @@
                 >
                     <font-awesome-icon :icon="uploadBusy ? 'spinner' : 'cloud-upload-alt'" :spin="uploadBusy"/>
                 </button>
+                <span class="mv-tools-sep"></span>
                 <button
                     type="button"
                     class="mv-btn mv-close"

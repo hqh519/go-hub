@@ -41,9 +41,11 @@
                 </button>
             </div>
             <div class="lf-topbar-right">
-                <el-button size="small" type="primary" :disabled="!selected.length" @click="openUpload">
-                    <font-awesome-icon icon="cloud-upload-alt" style="margin-right: 4px;" />{{ $t('localFiles.uploadToBed') }}
-                </el-button>
+                <!--
+                    v1.0.6：顶栏的「上传到图床」按钮移除 ——
+                    选中文件后底部批量操作条里本来就有「上传」，两个入口做同一件事，
+                    顶栏这个还常驻占位（未选中时是灰的），反而让人以为顶栏才是主入口。
+                -->
                 <!-- v3.0.0（R8）：移动端搜索改为按钮（点击在下方展开搜索框，同「文件管理」页效果） -->
                 <button
                     type="button"
@@ -248,6 +250,25 @@
                                 <font-awesome-icon icon="folder" />
                             </div>
                             <div class="lf-name" :title="d">{{ d }}</div>
+                            <!-- v1.0.6：WebDAV 渠道才允许重命名 / 删除 -->
+                            <el-dropdown
+                                v-if="isWebdavChannel"
+                                class="lf-item-menu"
+                                trigger="click"
+                                placement="bottom-end"
+                                @command="(cmd) => onItemCommand(cmd, dirEntry(d))"
+                                @click.stop
+                            >
+                                <button type="button" class="lf-item-menu-btn" :title="$t('localFiles.moreActions')" @click.stop>
+                                    <font-awesome-icon icon="ellipsis-h" />
+                                </button>
+                                <template #dropdown>
+                                    <el-dropdown-menu>
+                                        <el-dropdown-item command="rename">{{ $t('localFiles.rename') }}</el-dropdown-item>
+                                        <el-dropdown-item command="delete" divided>{{ $t('localFiles.delete') }}</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                </template>
+                            </el-dropdown>
                         </div>
                         <!-- 文件
                              v3.0.0（R12）：
@@ -295,11 +316,30 @@
                                 <span v-if="f.inLibrary" class="lf-meta-inlib">{{ $t('localFiles.uploadedMark') }}</span>
                                 <span v-else>{{ formatTime(f.mtime) }}</span>
                             </div>
+                            <!-- v1.0.6：WebDAV 渠道才允许重命名 / 删除 -->
+                            <el-dropdown
+                                v-if="isWebdavChannel"
+                                class="lf-item-menu"
+                                trigger="click"
+                                placement="bottom-end"
+                                @command="(cmd) => onItemCommand(cmd, f)"
+                                @click.stop
+                            >
+                                <button type="button" class="lf-item-menu-btn" :title="$t('localFiles.moreActions')" @click.stop>
+                                    <font-awesome-icon icon="ellipsis-h" />
+                                </button>
+                                <template #dropdown>
+                                    <el-dropdown-menu>
+                                        <el-dropdown-item command="rename">{{ $t('localFiles.rename') }}</el-dropdown-item>
+                                        <el-dropdown-item command="delete" divided>{{ $t('localFiles.delete') }}</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                </template>
+                            </el-dropdown>
                         </div>
                     </div>
 
                     <!-- 列表视图：列 = 选择 / 缩略图 / 名称 / 类型 / 大小 / 修改时间 / 状态 -->
-                    <div v-else class="lf-list" :class="{ 'has-selection': selected.length > 0 }">
+                    <div v-else class="lf-list" :class="{ 'has-selection': selected.length > 0, 'has-item-menu': isWebdavChannel }">
                         <div class="lf-list-head">
                             <span class="lf-col-check"></span>
                             <span class="lf-col-thumb"></span>
@@ -322,6 +362,24 @@
                             <span class="lf-col-size">—</span>
                             <span class="lf-col-time">—</span>
                             <span class="lf-col-state">—</span>
+                            <el-dropdown
+                                v-if="isWebdavChannel"
+                                class="lf-item-menu"
+                                trigger="click"
+                                placement="bottom-end"
+                                @command="(cmd) => onItemCommand(cmd, dirEntry(d))"
+                                @click.stop
+                            >
+                                <button type="button" class="lf-item-menu-btn" :title="$t('localFiles.moreActions')" @click.stop>
+                                    <font-awesome-icon icon="ellipsis-h" />
+                                </button>
+                                <template #dropdown>
+                                    <el-dropdown-menu>
+                                        <el-dropdown-item command="rename">{{ $t('localFiles.rename') }}</el-dropdown-item>
+                                        <el-dropdown-item command="delete" divided>{{ $t('localFiles.delete') }}</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                </template>
+                            </el-dropdown>
                         </div>
                         <div
                             v-for="f in entries"
@@ -353,6 +411,24 @@
                                 <span v-if="f.inLibrary" class="lf-meta-inlib">{{ $t('localFiles.uploadedMark') }}</span>
                                 <span v-else class="lf-state-none">—</span>
                             </span>
+                            <el-dropdown
+                                v-if="isWebdavChannel"
+                                class="lf-item-menu"
+                                trigger="click"
+                                placement="bottom-end"
+                                @command="(cmd) => onItemCommand(cmd, f)"
+                                @click.stop
+                            >
+                                <button type="button" class="lf-item-menu-btn" :title="$t('localFiles.moreActions')" @click.stop>
+                                    <font-awesome-icon icon="ellipsis-h" />
+                                </button>
+                                <template #dropdown>
+                                    <el-dropdown-menu>
+                                        <el-dropdown-item command="rename">{{ $t('localFiles.rename') }}</el-dropdown-item>
+                                        <el-dropdown-item command="delete" divided>{{ $t('localFiles.delete') }}</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                </template>
+                            </el-dropdown>
                         </div>
                     </div>
                 </div>
@@ -379,13 +455,22 @@
             </section>
         </div>
 
-        <!-- 底部批量操作条 -->
+        <!--
+            底部批量操作条。
+            v1.0.6：文案精简（「已选 x 个文件」→「x 个」、「取消选择」→「取消」、「上传到图床」→「上传」），
+            并新增「下载」；移动端改为横向滑动、不换行（参考图床文件管理页的批量条）。
+        -->
         <div v-if="selected.length" class="lf-batchbar">
-            <span class="lf-batch-text">{{ $t('localFiles.selectedCount', { n: selected.length }) }}</span>
-            <el-button size="small" @click="clearSelection">{{ $t('localFiles.clearSelection') }}</el-button>
-            <el-button size="small" type="primary" @click="openUpload">
-                <font-awesome-icon icon="cloud-upload-alt" style="margin-right: 4px;" />{{ $t('localFiles.uploadToBed') }}
-            </el-button>
+            <div class="lf-batchbar-inner">
+                <span class="lf-batch-text">{{ $t('localFiles.selectedCountShort', { n: selected.length }) }}</span>
+                <el-button size="small" @click="clearSelection">{{ $t('localFiles.cancelShort') }}</el-button>
+                <el-button size="small" type="primary" @click="openUpload">
+                    <font-awesome-icon icon="cloud-upload-alt" style="margin-right: 4px;" />{{ $t('localFiles.uploadShort') }}
+                </el-button>
+                <el-button size="small" @click="downloadSelected">
+                    <font-awesome-icon icon="download" style="margin-right: 4px;" />{{ $t('localFiles.downloadShort') }}
+                </el-button>
+            </div>
         </div>
 
         <!-- v3.0.0（R8）：移动端目录树抽屉 —— 顶栏「目录切换」按钮调出，与左侧目录树同构 -->
@@ -438,6 +523,16 @@
             </div>
         </el-drawer>
 
+        <!-- v1.0.6：WebDAV 文件重命名 -->
+        <el-dialog v-model="showRename" :title="$t('localFiles.rename')" width="420px" append-to-body>
+            <p class="lf-rename-hint">{{ $t('localFiles.renameHint') }}</p>
+            <el-input v-model="renameName" maxlength="255" @keyup.enter="doRename" />
+            <template #footer>
+                <el-button @click="showRename = false">{{ $t('common.cancel') }}</el-button>
+                <el-button type="primary" :loading="renameBusy" @click="doRename">{{ $t('common.confirm') }}</el-button>
+            </template>
+        </el-dialog>
+
         <!-- 设置弹窗 -->
         <el-dialog v-model="showSettings" :title="$t('localFiles.settings')" width="420px" append-to-body>
             <el-form label-position="top">
@@ -467,12 +562,12 @@
         >
             <el-form label-position="top">
                 <el-form-item :label="$t('localFiles.targetChannel')">
-                    <el-select v-model="uploadForm.channelId" :placeholder="$t('localFiles.targetChannelDefault')" clearable style="width: 100%;">
+                    <el-select v-model="uploadForm.channelId" :placeholder="$t('localFiles.targetChannelDefault')" clearable style="width: 100%;" popper-class="lf-upload-select-popper">
                         <el-option v-for="c in bedChannels" :key="c.id" :label="channelLabel(c)" :value="c.id" />
                     </el-select>
                 </el-form-item>
                 <el-form-item :label="$t('localFiles.instance')">
-                    <el-select v-model="uploadForm.instanceId" clearable style="width: 100%;">
+                    <el-select v-model="uploadForm.instanceId" clearable style="width: 100%;" popper-class="lf-upload-select-popper">
                         <el-option :label="$t('localFiles.instanceDefault')" value="" />
                         <el-option v-for="ins in instances" :key="ins.id" :label="instanceLabel(ins)" :value="ins.id" />
                     </el-select>
@@ -583,6 +678,7 @@ import { copyText } from '@/utils/clipboard';
 import { fetchStorageChannels, channelLabel } from '@/utils/storageChannels';
 import { splitFileName } from '@/utils/fileName';
 import { buildFileDetail } from '@/utils/fileDetail';
+import { ElMessageBox } from 'element-plus';
 import MediaPreviewOverlay from '@/components/dashboard/MediaPreviewOverlay.vue';
 import DashboardTabs from '@/components/DashboardTabs.vue';
 import AdminToggleDark from '@/components/dashboard/AdminToggleDark.vue';
@@ -645,6 +741,12 @@ export default {
             showSettings: false,
             settingsSaving: false,
             selected: [],
+            // v1.0.6：WebDAV 文件重命名 / 删除
+            showRename: false,
+            renameBusy: false,
+            renameName: '',
+            renameTarget: null,
+            itemBusy: false,
             /** v1.0.5：移动端返回键接管开关（触屏设备才为 true） */
             isTouchNav: false,
         /* v3.0.0（R16）：Shift 区间选择的锚点路径 */
@@ -673,6 +775,13 @@ export default {
         };
     },
     computed: {
+        /**
+         * v1.0.6：当前是否在浏览「WebDAV 文件」这条虚拟渠道。
+         * 只有这条渠道允许重命名 / 删除 —— 其它本地文件渠道指向的是用户机器上的原始目录，只读。
+         */
+        isWebdavChannel() {
+            return this.channelId === '__webdav__';
+        },
         dirSegments() {
             return this.dir ? this.dir.split('/') : [];
         },
@@ -1064,6 +1173,99 @@ export default {
         enterDirJoin(name) {
             this.enterDir(this.dir ? `${this.dir}/${name}` : name);
         },
+        /* ---------------- v1.0.6：WebDAV 重命名 / 删除 ---------------- */
+        /** 当前目录下的子项 → 完整虚拟路径（首段是渠道根名） */
+        joinPath(name) {
+            return this.dir ? `${this.dir}/${name}` : name;
+        },
+        /** 目录卡片 / 目录行 → 与文件同构的条目对象（模板里统一走 onItemCommand） */
+        dirEntry(name) {
+            return { path: this.joinPath(name), name, kind: 'dir' };
+        },
+        onItemCommand(cmd, item) {
+            if (cmd === 'rename') this.openRenameDialog(item);
+            else if (cmd === 'delete') this.confirmDelete(item);
+        },
+        openRenameDialog(item) {
+            this.renameTarget = item;
+            this.renameName = item?.name || '';
+            this.showRename = true;
+        },
+        /** 重命名：只改同目录下的名字（后端已校验非法字符 / 重名 / 越界） */
+        async doRename() {
+            const name = String(this.renameName || '').trim();
+            if (!name) {
+                this.$message.warning(this.$t('localFiles.renameRequired'));
+                return;
+            }
+            if (!this.renameTarget) return;
+            if (name === this.renameTarget.name) {
+                this.showRename = false;
+                return;
+            }
+            this.renameBusy = true;
+            try {
+                const res = await fetchWithAuth('/api/localfiles/rename', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channelId: this.channelId, path: this.renameTarget.path, name }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!data.success) {
+                    this.$message.error(data.message || this.$t('common.failed'));
+                    return;
+                }
+                // 选中态里的旧路径同步成新路径，否则重命名后勾选条会残留不存在的项
+                const oldPath = this.renameTarget.path;
+                const newPath = data.data?.path || oldPath;
+                this.selected = this.selected.map((s) => (s === oldPath ? newPath : s));
+                this.showRename = false;
+                this.$message.success(this.$t('localFiles.renamed'));
+                await this.refreshAll();
+            } catch (e) {
+                this.$message.error(e?.response?.data?.message || this.$t('common.failed'));
+            } finally {
+                this.renameBusy = false;
+            }
+        },
+        /** 删除：真删、不进回收站 —— 必须二次确认 */
+        async confirmDelete(item) {
+            if (!item?.path) return;
+            try {
+                await ElMessageBox.confirm(
+                    this.$t('localFiles.deleteConfirm', { name: item.name }),
+                    this.$t('localFiles.delete'),
+                    {
+                        type: 'warning',
+                        confirmButtonText: this.$t('localFiles.delete'),
+                        cancelButtonText: this.$t('common.cancel'),
+                        confirmButtonClass: 'el-button--danger',
+                    },
+                );
+            } catch {
+                return;
+            }
+            this.itemBusy = true;
+            try {
+                const res = await fetchWithAuth('/api/localfiles/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ channelId: this.channelId, paths: [item.path] }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!data.success) {
+                    this.$message.error(data.message || this.$t('common.failed'));
+                    return;
+                }
+                this.selected = this.selected.filter((s) => s !== item.path && !s.startsWith(`${item.path}/`));
+                this.$message.success(this.$t('localFiles.deleted'));
+                await this.refreshAll();
+            } catch (e) {
+                this.$message.error(e?.response?.data?.message || this.$t('common.failed'));
+            } finally {
+                this.itemBusy = false;
+            }
+        },
         /** 移动端抽屉里进目录：进目录后顺手收起抽屉 */
         drawerEnterDir(d) {
             this.enterDir(d);
@@ -1264,6 +1466,32 @@ export default {
         clearSelection() {
             this.selected = [];
             this.anchorPath = '';
+        },
+        /**
+         * v1.0.6：把选中的文件下载到本地。
+         *
+         * 走 `/api/localfiles/preview?download=1`，由后端带上 Content-Disposition，
+         * 浏览器才会存成文件而不是在标签页里打开（图片 / PDF 直接 open 只会预览）。
+         *
+         * 多个文件不能同时点 —— 浏览器会把连续的下载判定为「批量下载」并弹拦截提示，
+         * 所以按 260ms 的间隔依次触发。选中的项若已不在当前页（翻页后），直接跳过。
+         */
+        downloadSelected() {
+            const items = this.selected
+                .map((p) => this.entries.find((f) => f.path === p))
+                .filter(Boolean);
+            if (!items.length) return;
+            items.forEach((f, i) => {
+                window.setTimeout(() => {
+                    const a = document.createElement('a');
+                    a.href = `${this.previewUrl(f)}&download=1`;
+                    a.download = f.name || '';
+                    a.rel = 'noopener';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                }, i * 260);
+            });
         },
         openPreview(f) {
             const idx = this.previewItems.findIndex((it) => it.key === f.path);
@@ -2087,6 +2315,59 @@ export default {
  * v3.0.0（R8）：选中按钮 → 右上角小圆圈（旧 .lf-check 在左上角，已整体替换）。
  * v3.0.0（R12）：左上角「已入库」打勾角标已移除（.lf-badge 整块删除）。
  */
+/*
+ * v1.0.6：WebDAV 文件的「更多操作」按钮（重命名 / 删除）。
+ * 卡片右上角（选中圆圈左侧）与列表行右侧各一个；默认透明，悬停才浮现。
+ */
+.lf-item-menu {
+    position: absolute;
+    top: 4px;
+    right: 28px;
+    z-index: 4;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+.lf-card:hover .lf-item-menu,
+.lf-list-row:hover .lf-item-menu {
+    opacity: 1;
+}
+@media (hover: none) {
+    .lf-item-menu { opacity: 1; }
+}
+.lf-item-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--bg-color, #fff);
+    color: var(--el-text-color-secondary, #909399);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--el-border-color-lighter, #ebeef5);
+}
+.lf-item-menu-btn:hover {
+    color: var(--el-color-primary);
+}
+/* 列表行里的「更多」按钮：行本身是 grid，按钮绝对定位到右侧留白处 */
+.lf-list.has-item-menu .lf-list-row {
+    position: relative;
+    padding-right: 36px;
+}
+.lf-list.has-item-menu .lf-list-row .lf-item-menu {
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
+}
+.lf-rename-hint {
+    margin: 0 0 10px;
+    font-size: 13px;
+    color: var(--el-text-color-secondary, #909399);
+}
 /* 右上角选中圆圈：默认隐藏，卡片悬停 / 列表已有选中时出现；选中后填充主题色并显示勾 */
 .lf-select {
     position: absolute;
@@ -2162,17 +2443,39 @@ export default {
     left: 50%;
     bottom: 16px;
     transform: translateX(-50%);
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    max-width: calc(100vw - 24px);
     padding: 8px 14px;
     border-radius: 12px;
     background: var(--glass-bg);
     border: 1px solid var(--glass-border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
     z-index: 30;
+    box-sizing: border-box;
+}
+/*
+ * v1.0.6：批量条内容改为可横向滑动、禁止换行（对齐「图床文件管理」页的批量条）。
+ * 窄屏上按钮一多就会挤成两行、把页面内容顶上去，滑动比换行更好用。
+ */
+.lf-batchbar-inner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.lf-batchbar-inner::-webkit-scrollbar {
+    display: none;
+}
+/* 按钮禁止被压缩成小方块，保证滑动时每个按钮宽度正常 */
+.lf-batchbar-inner :deep(.el-button) {
+    flex: 0 0 auto;
 }
 .lf-batch-text {
+    flex: 0 0 auto;
     font-size: 13px;
 }
 .lf-hint {
@@ -2411,5 +2714,18 @@ export default {
         max-width: 94vw;
         flex-wrap: wrap;
     }
+}
+</style>
+
+<!--
+  非 scoped 样式：下拉面板是 teleport 到 body 的，带 data-v 的 scoped 规则选不中它。
+  灯箱本身 z-index 3200，从灯箱里打开的上传弹窗被抬到 3400，
+  但 Element Plus 的 select popper 走的是自己的 zIndexContext（2000 出头递增），
+  于是「目标渠道 / 归属实例」的下拉明明展开了，却被弹窗遮罩整块盖住 ——
+  表现就是用户说的「点了没反应、展示不出来」。这里把这两个面板抬到 3500。
+-->
+<style>
+.lf-upload-select-popper {
+    z-index: 3500 !important;
 }
 </style>

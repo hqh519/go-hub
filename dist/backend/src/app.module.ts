@@ -8,6 +8,7 @@ import { LinkController, ManageController, UserConfigController } from './files/
 import { AvatarController, UsersController } from './users/users.controller';
 import { TokenApiController } from './tokens/token-api.controller';
 import { WebDavController } from './webdav/webdav.controller';
+import { WebDavAdminController } from './webdav/webdav-admin.controller';
 import { SettingsService } from './settings/settings.service';
 import { SysConfigService } from './settings/sysconfig.service';
 import { StorageChannelService } from './storage/storage-channel.service';
@@ -40,6 +41,7 @@ import { LocalFilesController } from './localfiles/localfiles.controller';
     AvatarController,
     TokenApiController,
     WebDavController,
+    WebDavAdminController,
     PublicCompatController,
     ManageCompatController,
     AccessController,

@@ -207,23 +207,42 @@ async function bootstrap() {
    *     Windows 资源管理器 / RaiDrive / Cyberduck 据此判定「对方不是 WebDAV 服务」
    *     → 外部配置测试失败。这里显式应答 OPTIONS（不带鉴权，客户端探测时还没有凭据）。
    *
-   *  2) PROPFIND 的 XML body 与 PUT 的二进制 body 不能被 JSON / text 解析器提前吃掉
-   *     （PUT 一个 .json / .txt 文件时会命中 express.json / express.text，
-   *      流被消费后 readBody() 会永久等不到数据 → 请求挂死）。
-   *     统一在 /dav 上用 raw 收进 Buffer，body-parser 的 _body 标记会让后续解析器跳过。
+   *  2) PROPFIND 的 XML body 不能被 JSON / text 解析器提前吃掉
+   *     （body 被消费后 readBody() 会永久等不到数据 → 请求挂死）。
+   *     /dav 上的非 PUT 请求统一收进 Buffer，body-parser 的 _body 标记让后续解析器跳过。
    */
+  /*
+   * v1.0.6：PUT 走流式（见下），这里只留一个给 PROPFIND / PROPPATCH 用的 raw 解析器。
+   * 限额收到 4mb —— WebDAV 的控制类请求（XML）不可能这么大，留太高只是白占内存。
+   */
+  const expressRawForDav = express.raw({ type: '*/*', limit: '4mb' });
   server.use('/dav', (req, res, next) => {
     const method = String(req.method || '').toUpperCase();
     if (method === 'OPTIONS') {
       res.setHeader('DAV', '1,2');
       res.setHeader('MS-Author-Via', 'DAV');
-      res.setHeader('Allow', 'OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, MKCOL');
+      res.setHeader('Allow', 'OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, MOVE, COPY');
       res.setHeader('Content-Length', '0');
       return res.status(200).end();
     }
     next();
   });
-  server.use('/dav', express.raw({ type: '*/*', limit: '200mb' }));
+  /*
+   * v1.0.6：PUT 改为**流式落盘**，不再预先把请求体读进内存。
+   *
+   * 旧实现用 express.raw 把整个 body 收成 Buffer，网盘客户端推几 GB 的文件时
+   * 直接把进程顶爆；顺带还有 200mb 的硬上限。
+   * 现在把 PUT 从 raw 解析器里摘出来，并打上 `req._body = true`，
+   * 让后面所有 body-parser（json / text / urlencoded）都跳过它 ——
+   * 否则上传一个 .json 文件时，body 会被 express.json 提前吃掉，落盘就是空文件。
+   */
+  server.use('/dav', (req, res, next) => {
+    if (String(req.method || '').toUpperCase() === 'PUT') {
+      (req as unknown as { _body?: boolean })._body = true;
+      return next();
+    }
+    return expressRawForDav(req, res, next);
+  });
 
   // 限制请求体大小（上传走 multer 例外）
   server.use(express.json({ limit: '2mb' }));
@@ -406,6 +425,13 @@ async function bootstrap() {
         const isFile = req.path.startsWith('/file/');
         const isWrite = req.method !== 'GET' && req.method !== 'HEAD';
         if (isFile && status < 400) return; // 直链访问量极大，正常请求不记
+        /*
+         * v1.0.6：WebDAV 的成功请求不记访问日志。
+         * 同步一个目录可能产生上千条 PUT / PROPFIND，逐条写库既拖慢传输，
+         * 又会把「系统日志」页刷得没法看。失败（4xx/5xx）仍然照常记录，
+         * 排查客户端配置问题时还是要看得到。
+         */
+        if ((req.path === '/dav' || req.path.startsWith('/dav/')) && status < 400) return;
         if (!isWrite && status < 400 && ms < 3000) return; // 正常 GET 不记（防轮询刷屏）
         const line = `${req.method} ${req.originalUrl} → ${status} (${ms}ms)`;
         const ip = clientIp(req);
@@ -558,6 +584,17 @@ async function bootstrap() {
   httpServer.requestTimeout = Number.isFinite(uploadTimeout) && uploadTimeout >= 0 ? uploadTimeout : 0;
   httpServer.headersTimeout = 120_000;
   httpServer.keepAliveTimeout = 65_000;
+  /*
+   * v1.0.6：socket 空闲超时同样关掉。
+   *
+   * 这是「大文件传到一半被掐断」的另一个常见来源：客户端与服务端之间只要
+   * 有那么一段时间没有数据在动（弱网、磁盘写得慢、客户端在算哈希），
+   * socket 就会被判定空闲并销毁，客户端看到的是 ECONNRESET，
+   * 于是重传或直接放弃 —— 表现就是「文件掉了」。
+   * 真正防止连接泄漏靠 keepAliveTimeout + 客户端自身的超时；网盘上传
+   * 的持续时间本来就不可预估，不适合用一个固定秒数去卡它。
+   */
+  httpServer.setTimeout(0);
   console.log(`GoHub 已启动: http://localhost:${port}`);
 }
 

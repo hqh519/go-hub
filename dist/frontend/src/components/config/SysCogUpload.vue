@@ -378,6 +378,23 @@
                 <template v-if="authChannel?.type === 'local'">内置本地存储渠道自 v2.7.0 起与其它渠道规则完全一致：名单为空时普通用户不可见（管理员不受限），勾选后仅名单内账户可用。</template>
                 <template v-else-if="authChannel?.type === 'localfiles'">本地文件渠道：名单为空时普通用户在左栏看不到「本地文件」入口；勾选后，名单内账户可浏览该渠道下的目录，并在「本地文件」页把文件上传到图床。</template>
             </div>
+            <!--
+                v1.0.6：「自动授权所有用户」开关。
+                打开后该渠道对全体账户开放，**包括以后新建的账户**（不用再回来勾一遍）。
+                内置本地存储渠道（999999）恒为打开且锁定 —— 每个用户的默认本地目录都挂在它下面。
+            -->
+            <div class="auth-all-row">
+                <el-switch v-model="authAll" :disabled="authAllLocked || authLoading"/>
+                <div class="auth-all-text">
+                    <div class="auth-all-title">自动授权所有用户</div>
+                    <div class="auth-all-desc">
+                        打开后对所有账户开放（含以后新建的账户）；关闭时只对下方勾选的账户开放。
+                        <template v-if="authAllLocked">
+                            <br><b>内置本地存储渠道必须对所有账户开放，此开关不可关闭。</b>
+                        </template>
+                    </div>
+                </div>
+            </div>
             <div v-loading="authLoading" class="auth-body">
                 <el-checkbox-group v-model="authSelected" v-if="authUsers.length">
                     <el-checkbox
@@ -634,6 +651,9 @@ export default {
             authChannel: null,
             authUsers: [],
             authSelected: [],
+            /** v1.0.6：自动授权所有用户（内置本地存储渠道恒 true 且禁止关闭） */
+            authAll: false,
+            authAllLocked: false,
             authLoading: false,
             authSaving: false,
 
@@ -692,7 +712,9 @@ export default {
             if (type === 'local') {
                 if (this.showAddDialog) return LOCAL_CUSTOM_FIELDS();
                 const channel = this.showEditDialog ? this.editChannel : this.currentChannel;
-                return (channel?.code === LOCAL_CHANNEL_CODE) ? LOCAL_BUILTIN_FIELDS() : LOCAL_CUSTOM_FIELDS();
+                return (channel?.code === LOCAL_CHANNEL_CODE)
+                    ? this.lockDefaultLocalFields(LOCAL_BUILTIN_FIELDS())
+                    : LOCAL_CUSTOM_FIELDS();
             }
             /*
              * v3.0.0（R11）：内置「本地文件」渠道（999990）的浏览目录由系统生成、
@@ -719,6 +741,26 @@ export default {
         }
     },
     methods: {
+        /**
+         * v1.0.6：内置本地存储渠道（999999）的「自定义存储前缀 / 自定义文件命名」置灰。
+         *
+         * 这条渠道承载的是每个用户的默认本地目录 uploads/{用户名}/999999：
+         * 前缀或命名模板一旦被改，全站新上传文件的落盘路径会整体偏移，
+         * 已有文件再也按原路径找不到，「本地文件」页里的默认加载项也会指向空目录。
+         * 后端 PUT 里同样强制沿用原值，这里置灰只是让用户提前知道改不了。
+         */
+        lockDefaultLocalFields(fields) {
+            const locked = ['objectPrefix', 'nameTemplate'];
+            return (fields || []).map((f) =>
+                locked.includes(f.key)
+                    ? {
+                          ...f,
+                          fixed: true,
+                          tip: `内置默认渠道固定使用默认配置，不可修改。${f.tip || ''}`,
+                      }
+                    : f,
+            );
+        },
         /**
          * v3.0.0（R8）：本地存储 / 本地文件 两类渠道的「专属通道」标签改显「本地通道」
          */
@@ -1059,6 +1101,8 @@ export default {
             this.authChannel = channel;
             this.authUsers = [];
             this.authSelected = [];
+            this.authAll = false;
+            this.authAllLocked = false;
             this.showAuthDialog = true;
             this.authLoading = true;
             try {
@@ -1067,6 +1111,8 @@ export default {
                 if (data.success) {
                     this.authUsers = data.data?.users || [];
                     this.authSelected = data.data?.authorizedUsers || [];
+                    this.authAll = data.data?.authAll === true;
+                    this.authAllLocked = data.data?.authAllLocked === true;
                 } else {
                     this.$message.error(data.message || '加载授权名单失败');
                 }
@@ -1083,7 +1129,7 @@ export default {
                 const resp = await fetchWithAuth(`/api/manage/channels/${this.authChannel.id}/authorize`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ usernames: this.authSelected })
+                    body: JSON.stringify({ usernames: this.authSelected, authAll: this.authAll })
                 });
                 const data = await resp.json();
                 if (data.success) {
@@ -1586,6 +1632,34 @@ export default {
     border-radius: 6px;
     padding: 10px 12px;
     margin-bottom: 12px;
+}
+
+/* v1.0.6：「自动授权所有用户」开关行 —— 与下面的账户勾选列表视觉上分开 */
+.auth-all-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+}
+
+.auth-all-text {
+    flex: 1;
+    min-width: 0;
+    line-height: 1.6;
+}
+
+.auth-all-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+}
+
+.auth-all-desc {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
 }
 
 .auth-body {

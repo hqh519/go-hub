@@ -112,10 +112,9 @@ function hasFileExt(id) {
     return /\.[A-Za-z0-9]{1,12}$/.test(String(id || ''));
 }
 function extSuffixFor(id, originalName) {
-    if (hasFileExt(id))
-        return '';
-    const m = /\.([A-Za-z0-9]{1,12})$/.exec(String(originalName || ''));
-    return m ? `.${m[1].toLowerCase()}` : '';
+    void id;
+    void originalName;
+    return '';
 }
 function formatSize(bytes) {
     if (!bytes || bytes <= 0)

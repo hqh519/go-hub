@@ -8,6 +8,11 @@ import { TAG_TYPE_FILE, findOrCreateTag } from '../common/tags';
 import { CryptoService } from '../common/crypto.service';
 import { SettingsService } from '../settings/settings.service';
 import { SysConfigService } from '../settings/sysconfig.service';
+import {
+  DEFAULT_TAG_START as TAG_START_DEFAULT,
+  DEFAULT_TAG_STOP as TAG_STOP_DEFAULT,
+  DEFAULT_TAG_MAX_LEN as TAG_MAX_LEN_DEFAULT,
+} from '../common/tag-defaults';
 import { ChannelsService } from '../channels/channels.controller';
 import { StorageChannelService, StorageChannelInfo } from '../storage/storage-channel.service';
 import { createAdapter, toCopyInfo } from '../adapters/adapter.factory';
@@ -725,9 +730,10 @@ export class UploadService {
           // v1.0.5：这条规则可以单独关掉（界面上的「启用功能」勾选框），不影响上面两条
           markerEnabled:
             at.markerEnabled === undefined ? true : !(at.markerEnabled === false || String(at.markerEnabled) === 'false'),
+          // v1.0.6：留空即视为「用默认值」，避免清空输入框后规则静默失效
           startChars:
-            at.startChars === undefined ? UploadService.DEFAULT_TAG_START : String(at.startChars ?? ''),
-          stopChars: at.stopChars === undefined ? UploadService.DEFAULT_TAG_STOP : String(at.stopChars ?? ''),
+            String(at.startChars ?? '').trim() || UploadService.DEFAULT_TAG_START,
+          stopChars: String(at.stopChars ?? '').trim() || UploadService.DEFAULT_TAG_STOP,
           maxLen: at.maxLen === undefined ? UploadService.DEFAULT_TAG_MAX_LEN : Math.max(0, Number(at.maxLen) || 0),
         };
       } catch (err) {
@@ -825,27 +831,35 @@ export class UploadService {
    * 截断符里重复列出起始符是刻意的：`#美食#风景` 需要在前一个 `#` 处截断，
    * 否则会连成一条「美食#风景」。空格不进配置，由 extractByMarkers 写死。
    */
-  static readonly DEFAULT_TAG_START = '["#","@","&"]';
+  static readonly DEFAULT_TAG_START = TAG_START_DEFAULT;
   /**
    * 空白恒为截断符（见 extractByMarkers），这里只列额外的符号。
    *
-   * v1.0.4：改成 JSON 数组。旧值是一串符号 `!！,，.。…`，而 parseMarkerList 按
-   * 「逗号 / 顿号 / 分号 / 空白」切分记号 —— 逗号本身就是截断符之一，结果整串被切成
-   * `['!！', '.。…']` 这种**多字符记号**，再拿单个字符去 startsWith 永远不命中：
-   * 默认规则下的 `.`、`!`、`-` 其实一直没生效（`#标签.png` 会得到「标签.png」）。
-   * 数组形式没有分隔符歧义，每个元素就是一个记号。
+   * v1.0.6：改为**纯符号串**存储 —— 每个字符就是一个记号。
+   * 起因是 v1.0.5 的 JSON 数组写法对用户太不友好（要在输入框里敲 `["#","@","&"]`），
+   * 界面上改成直接敲 `#@&` 之后，存储也统一成同一形态，设置里看到的就是它生效的样子。
+   *
+   * 历史坑（保留说明，防止有人改回分隔符切分）：
+   * v1.0.4 之前按「逗号 / 顿号 / 分号 / 空白」切分记号，而逗号本身就是截断符之一，
+   * 整串会被切成 `['!！', '.。…']` 这种**多字符记号**，再拿单个字符去 startsWith
+   * 永远不命中 —— 默认规则下的 `.`、`!`、`-` 其实一直没生效。
    */
-  static readonly DEFAULT_TAG_STOP = '["#","@","&","!","-","_"]';
-  static readonly DEFAULT_TAG_MAX_LEN = 10;
+  static readonly DEFAULT_TAG_STOP = TAG_STOP_DEFAULT;
+  static readonly DEFAULT_TAG_MAX_LEN = TAG_MAX_LEN_DEFAULT;
 
   /**
    * v1.0.2：解析「起始符 / 截断符」配置。
    *
-   * 支持三种写法，避免用户被格式卡住：
-   *   `#,@,&`          —— 逗号 / 顿号 / 分号 / 空格分隔（推荐）
-   *   `["#","@","&"]`  —— JSON 数组（需求原文的写法）
-   *   `#`              —— 单个记号
-   * 每个记号是「字面量」，可以是多字符（例如 `tag-` 作为起始符）。
+   * v1.0.6 定为两种写法：
+   *   `#@&`            —— 纯符号串，**逐字符即逐记号**（当前界面与默认值的写法）
+   *   `["#","@","&"]`  —— JSON 数组（旧版本存下来的配置，继续兼容读取）
+   *
+   * 为什么不能再用「逗号 / 分号 / 空白」切分：默认截断符里本身就含逗号、顿号、
+   * 分号和一堆标点，按分隔符切会把 `!！,，.。` 变成单个多字符记号，逐字符匹配
+   * 永远不命中（v1.0.4 的实际故障）。逐字符拆没有歧义。
+   *
+   * JSON 数组判定必须**首尾都是方括号且能解析成数组**：默认截断符里含 `[` `]`，
+   * 只看首字符会把当前格式误判成 JSON。
    *
    * v1.0.4：起始符支持**空项**（`,@,&` 或 `["","@","&"]`），语义是「文件名开头」——
    * 让没有 `#` 前缀的文件也能按「第一段」打出标签。截断符不接受空项（否则任何字符
@@ -855,7 +869,7 @@ export class UploadService {
     const s = String(raw || '').trim();
     if (!s) return [];
     let items: string[] = [];
-    if (s.startsWith('[')) {
+    if (s.startsWith('[') && s.endsWith(']')) {
       try {
         const j = JSON.parse(s);
         if (Array.isArray(j)) items = j.map((v) => String(v ?? ''));
@@ -863,7 +877,8 @@ export class UploadService {
         items = [];
       }
     }
-    if (!items.length) items = s.split(/[,，;；\s]+/);
+    // 逐字符（按码点）拆分：`#@&` → ['#','@','&']，对中文 / emoji 也安全
+    if (!items.length) items = Array.from(s);
     const cleaned = items.map((v) => String(v ?? '').trim());
     return Array.from(new Set(keepEmpty ? cleaned : cleaned.filter(Boolean)));
   }

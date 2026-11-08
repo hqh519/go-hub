@@ -54,11 +54,19 @@ const app_log_1 = require("../common/app-log");
 const auth_guard_1 = require("../auth/auth.guard");
 const channel_access_1 = require("../common/channel-access");
 const settings_service_1 = require("../settings/settings.service");
+const sysconfig_service_1 = require("../settings/sysconfig.service");
 const upload_service_1 = require("../upload/upload.service");
+const local_adapter_1 = require("../adapters/local.adapter");
+const webdav_storage_1 = require("../webdav/webdav.storage");
 const localfiles_util_1 = require("./localfiles.util");
 const K_PAGE_SIZE = 'localFilesPageSize';
 const K_MAX_PER_DIR = 'localFilesMaxPerDir';
 const K_PREVIEW_MB = 'localFilesPreviewMB';
+const DEFAULT_LOCAL_CHANNEL_CODE = '999999';
+const DEFAULT_LOCAL_VIRTUAL_ID = '__default_local__';
+const DEFAULT_LOCAL_ROOT_NAME = '默认本地文件';
+const WEBDAV_VIRTUAL_ID = '__webdav__';
+const WEBDAV_ROOT_NAME = 'WebDAV 文件';
 const MIME_MAP = {
     jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', png: 'image/png', gif: 'image/gif',
     webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', avif: 'image/avif', ico: 'image/x-icon',
@@ -92,9 +100,21 @@ const INLINE_TYPES = new Set(['image', 'video', 'audio', 'pdf']);
 let LocalFilesController = class LocalFilesController {
     settings;
     uploads;
-    constructor(settings, uploads) {
+    sysConfig;
+    constructor(settings, uploads, sysConfig) {
         this.settings = settings;
         this.uploads = uploads;
+        this.sysConfig = sysConfig;
+    }
+    async webdavOn() {
+        try {
+            const cfg = await this.sysConfig.get('others');
+            const w = cfg?.webdav || {};
+            return w.enabled === true || String(w.enabled) === 'true';
+        }
+        catch {
+            return false;
+        }
     }
     session(req) {
         return (0, auth_guard_1.currentSession)(req);
@@ -121,6 +141,82 @@ let LocalFilesController = class LocalFilesController {
         const id = String(channelId || '').trim();
         if (!id)
             return { error: '请选择本地文件渠道' };
+        if (id === WEBDAV_VIRTUAL_ID) {
+            const me = this.userName(req);
+            if (!me)
+                return { error: '请先登录' };
+            if (!(await this.webdavOn()))
+                return { error: '对外 WebDAV 已停用（系统管理 → 安全设置）' };
+            const base = path.join((0, webdav_storage_1.webdavRoot)(), me);
+            await fs_1.promises.mkdir(base, { recursive: true }).catch(() => undefined);
+            let real = base;
+            try {
+                real = await fs_1.promises.realpath(base);
+            }
+            catch {
+            }
+            try {
+                const st = await fs_1.promises.stat(real);
+                if (!st.isDirectory())
+                    throw new Error('not a directory');
+                const pseudo = {
+                    id: WEBDAV_VIRTUAL_ID,
+                    code: 'WEBDAV',
+                    name: WEBDAV_ROOT_NAME,
+                    type: 'webdav',
+                    enabled: true,
+                    config: '{}',
+                    authorizedUsers: '[]',
+                };
+                return {
+                    channel: pseudo,
+                    root: real,
+                    roots: [{ name: WEBDAV_ROOT_NAME, display: base, real, mtime: st.mtimeMs }],
+                    broken: [],
+                };
+            }
+            catch (err) {
+                (0, localfiles_util_1.logLocalFileError)('读取 WebDAV 目录', `账户=${me} 路径=${base}`, err);
+                return { error: 'WebDAV 目录不存在或不可访问' };
+            }
+        }
+        if (id === DEFAULT_LOCAL_VIRTUAL_ID) {
+            const me = this.userName(req);
+            if (!me)
+                return { error: '请先登录' };
+            const dir = path.join(local_adapter_1.LocalAdapter.root(), me, DEFAULT_LOCAL_CHANNEL_CODE);
+            await fs_1.promises.mkdir(dir, { recursive: true }).catch(() => undefined);
+            let real = dir;
+            try {
+                real = await fs_1.promises.realpath(dir);
+            }
+            catch {
+            }
+            try {
+                const st = await fs_1.promises.stat(real);
+                if (!st.isDirectory())
+                    throw new Error('not a directory');
+                const pseudo = {
+                    id: DEFAULT_LOCAL_VIRTUAL_ID,
+                    code: DEFAULT_LOCAL_CHANNEL_CODE,
+                    name: DEFAULT_LOCAL_ROOT_NAME,
+                    type: 'local',
+                    enabled: true,
+                    config: '{}',
+                    authorizedUsers: '[]',
+                };
+                return {
+                    channel: pseudo,
+                    root: real,
+                    roots: [{ name: DEFAULT_LOCAL_ROOT_NAME, display: dir, real, mtime: st.mtimeMs }],
+                    broken: [],
+                };
+            }
+            catch (err) {
+                (0, localfiles_util_1.logLocalFileError)('读取默认本地目录', `账户=${me} 路径=${dir}`, err);
+                return { error: '默认本地目录不存在或不可访问' };
+            }
+        }
         const ch = await prisma_1.prisma.channel.findFirst({
             where: { type: { in: ['localfiles', 'local'] }, OR: [{ id }, { code: id }] },
         });
@@ -201,7 +297,7 @@ let LocalFilesController = class LocalFilesController {
             where: { type: { in: ['localfiles', 'local'] } },
             orderBy: [{ typeCode: 'asc' }, { name: 'asc' }],
         });
-        const list = rows
+        const configured = rows
             .map((ch) => {
             let cfg = {};
             try {
@@ -225,7 +321,28 @@ let LocalFilesController = class LocalFilesController {
             };
         })
             .filter(Boolean);
-        return { success: true, data: list };
+        const mine = {
+            id: DEFAULT_LOCAL_VIRTUAL_ID,
+            code: DEFAULT_LOCAL_CHANNEL_CODE,
+            name: DEFAULT_LOCAL_ROOT_NAME,
+            rootPath: path.join(local_adapter_1.LocalAdapter.root(), me, DEFAULT_LOCAL_CHANNEL_CODE),
+            enabled: true,
+            source: 'default',
+        };
+        const webdavCount = (await this.webdavOn())
+            ? await prisma_1.prisma.webDavChannel.count({ where: { username: me } })
+            : 0;
+        const webdavItem = webdavCount > 0
+            ? {
+                id: WEBDAV_VIRTUAL_ID,
+                code: 'WEBDAV',
+                name: WEBDAV_ROOT_NAME,
+                rootPath: path.join((0, webdav_storage_1.webdavRoot)(), me),
+                enabled: true,
+                source: 'webdav',
+            }
+            : null;
+        return { success: true, data: [mine, ...(webdavItem ? [webdavItem] : []), ...configured] };
     }
     async getSettings(req) {
         if (!this.session(req))
@@ -414,6 +531,100 @@ let LocalFilesController = class LocalFilesController {
         }
         return out;
     }
+    async resolveWritable(req, channelId, rel) {
+        const r = await this.resolveChannel(req, channelId);
+        if (r.error)
+            return { error: r.error };
+        if (String(r.channel?.id || '') !== WEBDAV_VIRTUAL_ID) {
+            return { error: '该渠道不支持重命名或删除（仅 WebDAV 文件可写）' };
+        }
+        const clean = (0, localfiles_util_1.sanitizeRelativeDir)(rel);
+        if (clean === null || !clean)
+            return { error: '文件路径不合法' };
+        const hit = this.resolveInsideRoot(r.roots, clean);
+        if (!hit)
+            return { error: '文件路径越界' };
+        if (!hit.inside)
+            return { error: '不能对渠道根目录执行该操作' };
+        const abs = (0, localfiles_util_1.safeJoin)(hit.root.real, hit.inside);
+        if (!abs)
+            return { error: '文件路径越界' };
+        return { abs, rel: clean, channel: r.channel };
+    }
+    async rename(body, req) {
+        if (!this.session(req))
+            return { success: false, message: '请先登录' };
+        const target = await this.resolveWritable(req, String(body?.channelId || ''), String(body?.path || ''));
+        if (target.error)
+            return { success: false, message: target.error };
+        const raw = String(body?.name || '');
+        const name = raw.trim();
+        if (!name)
+            return { success: false, message: '请输入新名称' };
+        if (name.length > 255)
+            return { success: false, message: '名称过长（最多 255 个字符）' };
+        if (/[\\/\u0000-\u001f]/.test(name))
+            return { success: false, message: '名称不能包含 / \\ 等非法字符' };
+        if (name === '.' || name === '..')
+            return { success: false, message: '名称不合法' };
+        if ((0, localfiles_util_1.isHiddenName)(name))
+            return { success: false, message: '名称不能以「.」开头' };
+        const abs = target.abs;
+        const parent = path.dirname(abs);
+        const next = path.join(parent, name);
+        if (next === abs)
+            return { success: true, data: { path: target.rel, name } };
+        const exists = await fs_1.promises.stat(next).then(() => true).catch(() => false);
+        if (exists)
+            return { success: false, message: '同目录下已存在同名文件或文件夹' };
+        try {
+            await fs_1.promises.rename(abs, next);
+        }
+        catch (err) {
+            (0, localfiles_util_1.logLocalFileError)('重命名本地文件', `文件=${target.rel} 新名=${name}`, err);
+            return { success: false, message: `重命名失败：${err.message || '未知错误'}` };
+        }
+        const oldRel = target.rel;
+        const segs = oldRel.split('/');
+        segs[segs.length - 1] = name;
+        const newPath = segs.join('/');
+        app_log_1.appLog.info('localfiles', 'WebDAV 文件重命名', `${oldRel} → ${newPath}（账户=${this.userName(req)}）`);
+        return { success: true, data: { path: newPath, oldPath: oldRel, name } };
+    }
+    async remove(body, req) {
+        if (!this.session(req))
+            return { success: false, message: '请先登录' };
+        const list = Array.isArray(body?.paths) ? body.paths.map((p) => String(p || '')) : [];
+        if (!list.length)
+            return { success: false, message: '请选择要删除的文件' };
+        if (list.length > 200)
+            return { success: false, message: '一次最多删除 200 个文件' };
+        const channelId = String(body?.channelId || '');
+        const removed = [];
+        const failed = [];
+        for (const rel of list) {
+            const target = await this.resolveWritable(req, channelId, rel);
+            if (target.error) {
+                failed.push({ path: rel, message: target.error });
+                continue;
+            }
+            try {
+                await fs_1.promises.rm(target.abs, { recursive: true, force: true });
+                removed.push(target.rel);
+            }
+            catch (err) {
+                (0, localfiles_util_1.logLocalFileError)('删除本地文件', `文件=${rel}`, err);
+                failed.push({ path: rel, message: err.message || '删除失败' });
+            }
+        }
+        if (removed.length) {
+            app_log_1.appLog.info('localfiles', 'WebDAV 文件删除', `共 ${removed.length} 项（账户=${this.userName(req)}）：${removed.slice(0, 10).join(', ')}`);
+        }
+        if (!removed.length) {
+            return { success: false, message: failed[0]?.message || '删除失败' };
+        }
+        return { success: true, data: { removed, failed } };
+    }
     async preview(req, res, q) {
         if (!this.session(req)) {
             res.status(401).json({ success: false, message: '请先登录' });
@@ -587,6 +798,22 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], LocalFilesController.prototype, "list", null);
 __decorate([
+    (0, common_1.Post)('rename'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "rename", null);
+__decorate([
+    (0, common_1.Post)('delete'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], LocalFilesController.prototype, "remove", null);
+__decorate([
     (0, common_1.Get)('preview'),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Res)()),
@@ -606,5 +833,6 @@ __decorate([
 exports.LocalFilesController = LocalFilesController = __decorate([
     (0, common_1.Controller)('api/localfiles'),
     __metadata("design:paramtypes", [settings_service_1.SettingsService,
-        upload_service_1.UploadService])
+        upload_service_1.UploadService,
+        sysconfig_service_1.SysConfigService])
 ], LocalFilesController);

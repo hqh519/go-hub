@@ -158,10 +158,14 @@
                 </el-table>
             </div>
 
-            <!-- 对外 WebDAV 服务（原「其他设置」页迁移至此，紧随 API Token 管理之下）：
-                 把图床挂成网盘，用任意 WebDAV 客户端浏览/上传。
-                 上传渠道不再单独配置 —— 统一走用户管理里为该账户指定的渠道，
-                 账户未指定时回退「上传设置」里的全局主/备渠道。 -->
+            <!--
+                对外 WebDAV 服务（原「其他设置」页迁移至此，紧随 API Token 管理之下）。
+                v1.0.6 重构后：纯网盘，不再走图床上传链路 ——
+                  · 账号 = 普通用户的账户名；密码 = 该账户在「WebDAV 管理」里创建的渠道访问密钥；
+                  · 文件原样落到 webdav/{账户名}/{存储路径}，不改名/不压缩/不转码/不转 WebP；
+                  · 不限文件类型与单文件大小，也不进「图床文件」和「历史记录」；
+                  · 管理员账户禁止使用；关闭本开关 = 全局停用。
+            -->
             <h4 class="second-title">{{ $t('sysOthers.webdav') }}
                 <el-tooltip placement="top" raw-content>
                     <template #content>
@@ -174,16 +178,11 @@
                 <el-form-item :label="$t('sysOthers.enable')">
                     <el-switch v-model="webdavSettings.enabled"></el-switch>
                 </el-form-item>
-                <el-form-item :label="$t('sysOthers.webdavRootPath')">
-                    <el-input
-                        v-model="webdavSettings.rootPath"
-                        :disabled="!webdavSettings.enabled"
-                        placeholder="dav-root"
-                    ></el-input>
-                </el-form-item>
-                <el-form-item :label="$t('sysOthers.webdavReadonly')">
-                    <el-switch v-model="webdavSettings.readonly" :disabled="!webdavSettings.enabled"></el-switch>
-                </el-form-item>
+                <!--
+                    v1.0.6：删掉「根目录前缀」与「只读模式」两项 ——
+                    重构后挂载点固定为 /dav/，每个账户的每个渠道各占一个子目录；
+                    网盘按标准协议必然可写，再加只读开关只会让人误以为上传失败是 bug。
+                -->
                 <el-form-item :label="$t('sysOthers.webdavAddress')">
                     <el-input :model-value="webdavAddress" readonly>
                         <template #append>
@@ -885,11 +884,14 @@ computed: {
     dialogWidth() {
         return window.innerWidth > 768 ? '50%' : '90%';
     },
-    /** WebDAV 挂载地址（按当前浏览器地址推导；反代时以其对外域名为准） */
+    /**
+     * WebDAV 挂载地址（按当前浏览器地址推导；反代时以其对外域名为准）。
+     * v1.0.6：挂载点固定 /dav/ —— 客户端在这里填「账户名 + 渠道访问密钥」，
+     * 后端按密钥反查出这个密钥属于哪个渠道，于是同一个人可以挂多个盘。
+     */
     webdavAddress() {
         const origin = typeof window !== 'undefined' ? window.location.origin : '';
-        const root = String(this.webdavSettings?.rootPath || '').replace(/^\/+|\/+$/g, '');
-        return `${origin}/dav/${root ? `${root}/` : ''}`;
+        return `${origin}/dav/`;
     },
     /**
      * 访问域名 —— 与「API 接入信息」取同一个来源（utils/accessDomain）：

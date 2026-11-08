@@ -9,8 +9,11 @@
  *   GET  list       目录列表（分页 / 筛选 / 排序 / 搜索 + 已入库标记）
  *   GET  preview    预览（支持 Range，仅登录会话，不计访问统计；download=1 时下载）
  *   POST upload     勾选文件批量上传到图床（复用主上传链路）
+ *   POST rename     重命名（v1.0.6，仅 WebDAV 文件虚拟渠道可用）
+ *   POST delete     删除（v1.0.6，仅 WebDAV 文件虚拟渠道可用，可批量）
  *
  * 权限：管理员全部可用；普通用户仅能访问「授权名单包含自己」的本地文件渠道。
+ * 写操作（rename / delete）只对 WebDAV 虚拟渠道开放，其余渠道一律只读。
  */
 
 import { Body, Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
@@ -22,7 +25,10 @@ import { appLog } from '../common/app-log';
 import { currentSession } from '../auth/auth.guard';
 import { channelVisibleTo } from '../common/channel-access';
 import { SettingsService } from '../settings/settings.service';
+import { SysConfigService } from '../settings/sysconfig.service';
 import { UploadService } from '../upload/upload.service';
+import { LocalAdapter } from '../adapters/local.adapter';
+import { webdavRoot } from '../webdav/webdav.storage';
 import {
   DEFAULT_MAX_PER_DIR,
   DEFAULT_PAGE_SIZE,
@@ -45,6 +51,34 @@ import {
 const K_PAGE_SIZE = 'localFilesPageSize';
 const K_MAX_PER_DIR = 'localFilesMaxPerDir';
 const K_PREVIEW_MB = 'localFilesPreviewMB';
+
+/**
+ * v1.0.6：「默认本地文件」虚拟渠道。
+ *
+ * 每个账户的上传到内置本地存储渠道（code=999999）的文件，物理落在
+ * `uploads/{用户名}/999999/...`。这条目录不在任何「本地文件」渠道的配置里，
+ * 用户此前只能通过图床文件管理看这些文件，看不到磁盘上的真实目录。
+ *
+ * 这里把它作为一条**不落库的虚拟渠道**塞进渠道列表：
+ *   · 列表里 id 固定为 DEFAULT_LOCAL_VIRTUAL_ID；
+ *   · resolveChannel 见到这个 id 就地合成渠道对象，不查库；
+ *   · 目录不存在时按需创建（新账户第一次进来就是空的，而不是报错）。
+ */
+const DEFAULT_LOCAL_CHANNEL_CODE = '999999';
+const DEFAULT_LOCAL_VIRTUAL_ID = '__default_local__';
+const DEFAULT_LOCAL_ROOT_NAME = '默认本地文件';
+
+/**
+ * v1.0.6：「WebDAV 文件」虚拟渠道。
+ *
+ * 对应用户在「用户管理 → WebDAV 管理」里建的那些渠道的**公共上级目录**
+ * `webdav/{用户名}`。挂在「本地文件」页里，用户可以直接看到网盘里存了什么。
+ *
+ * 与其他本地文件渠道的区别：这一条**允许重命名和删除**
+ * （网盘本来就是可写的；其它渠道指向的是用户机器上的原始目录，只读更安全）。
+ */
+const WEBDAV_VIRTUAL_ID = '__webdav__';
+const WEBDAV_ROOT_NAME = 'WebDAV 文件';
 
 /** 扩展名 → MIME（够用即可，上传链路只依赖它做类型归类） */
 const MIME_MAP: Record<string, string> = {
@@ -91,7 +125,25 @@ export class LocalFilesController {
   constructor(
     private settings: SettingsService,
     private uploads: UploadService,
+    private sysConfig: SysConfigService,
   ) {}
+
+  /**
+   * v1.0.6：对外 WebDAV 的全局开关（系统管理 → 安全设置 → 对外 WebDAV）。
+   * 配置存在 sysConfig 的 **others** 分区（`{ webdav: { enabled } }`）。
+   *
+   * 需求：「开关关闭时全局 WebDAV 停用，所有 WebDAV 文件不可传输和访问」——
+   * 所以这里不只拦 /dav，连「本地文件」里的 WebDAV 加载项也一并下线。
+   */
+  private async webdavOn(): Promise<boolean> {
+    try {
+      const cfg: any = await this.sysConfig.get('others');
+      const w = cfg?.webdav || {};
+      return w.enabled === true || String(w.enabled) === 'true';
+    } catch {
+      return false;
+    }
+  }
 
   private session(req: Request) {
     return currentSession(req);
@@ -125,6 +177,86 @@ export class LocalFilesController {
   private async resolveChannel(req: Request, channelId: string) {
     const id = String(channelId || '').trim();
     if (!id) return { error: '请选择本地文件渠道' as string };
+    /*
+     * v1.0.6：虚拟渠道「WebDAV 文件」——webdav/{当前账户}。
+     *
+     * 这是用户所有 WebDAV 渠道的公共上级目录（每个渠道自己的存储路径是它的子目录）。
+     * 允许重命名 / 删除（见 renameEntry / deleteEntry），因为网盘天然可写。
+     */
+    if (id === WEBDAV_VIRTUAL_ID) {
+      const me = this.userName(req);
+      if (!me) return { error: '请先登录' };
+      if (!(await this.webdavOn())) return { error: '对外 WebDAV 已停用（系统管理 → 安全设置）' };
+      const base = path.join(webdavRoot(), me);
+      await fsp.mkdir(base, { recursive: true }).catch(() => undefined);
+      let real = base;
+      try {
+        real = await fsp.realpath(base);
+      } catch {
+        /* 同上：交给 stat 报错 */
+      }
+      try {
+        const st = await fsp.stat(real);
+        if (!st.isDirectory()) throw new Error('not a directory');
+        const pseudo = {
+          id: WEBDAV_VIRTUAL_ID,
+          code: 'WEBDAV',
+          name: WEBDAV_ROOT_NAME,
+          type: 'webdav',
+          enabled: true,
+          config: '{}',
+          authorizedUsers: '[]',
+        };
+        return {
+          channel: pseudo,
+          root: real,
+          roots: [{ name: WEBDAV_ROOT_NAME, display: base, real, mtime: st.mtimeMs }],
+          broken: [] as string[],
+        };
+      } catch (err) {
+        logLocalFileError('读取 WebDAV 目录', `账户=${me} 路径=${base}`, err);
+        return { error: 'WebDAV 目录不存在或不可访问' };
+      }
+    }
+    /*
+     * v1.0.6：虚拟渠道「默认本地文件」——uploads/{当前账户}/999999。
+     * 不查库，就地合成渠道对象；目录不存在则创建空目录（新账户第一次进来应当看到空列表，
+     * 而不是「浏览目录不存在」的报错）。
+     */
+    if (id === DEFAULT_LOCAL_VIRTUAL_ID) {
+      const me = this.userName(req);
+      if (!me) return { error: '请先登录' };
+      const dir = path.join(LocalAdapter.root(), me, DEFAULT_LOCAL_CHANNEL_CODE);
+      await fsp.mkdir(dir, { recursive: true }).catch(() => undefined);
+      let real = dir;
+      try {
+        real = await fsp.realpath(dir);
+      } catch {
+        /* 目录不可达时沿用字面路径，下面的 stat 会给出准确报错 */
+      }
+      try {
+        const st = await fsp.stat(real);
+        if (!st.isDirectory()) throw new Error('not a directory');
+        const pseudo = {
+          id: DEFAULT_LOCAL_VIRTUAL_ID,
+          code: DEFAULT_LOCAL_CHANNEL_CODE,
+          name: DEFAULT_LOCAL_ROOT_NAME,
+          type: 'local',
+          enabled: true,
+          config: '{}',
+          authorizedUsers: '[]',
+        };
+        return {
+          channel: pseudo,
+          root: real,
+          roots: [{ name: DEFAULT_LOCAL_ROOT_NAME, display: dir, real, mtime: st.mtimeMs }],
+          broken: [] as string[],
+        };
+      } catch (err) {
+        logLocalFileError('读取默认本地目录', `账户=${me} 路径=${dir}`, err);
+        return { error: '默认本地目录不存在或不可访问' };
+      }
+    }
     /*
      * v1.0.1：除了专门的「本地文件」渠道，自定义本地存储渠道只要打开了
      * 「同步到本地文件管理」开关（cfg.syncToLocalFiles），也在这里可用 ——
@@ -217,7 +349,7 @@ export class LocalFilesController {
       where: { type: { in: ['localfiles', 'local'] } },
       orderBy: [{ typeCode: 'asc' }, { name: 'asc' }],
     });
-    const list = rows
+    const configured = rows
       .map((ch) => {
         let cfg: Record<string, any> = {};
         try {
@@ -241,7 +373,41 @@ export class LocalFilesController {
         };
       })
       .filter(Boolean);
-    return { success: true, data: list };
+    /*
+     * v1.0.6：每个账户都先放一条「默认本地文件」——
+     * 目录固定为 uploads/{当前账户}/999999，也就是走内置本地存储渠道上传时文件真正落盘的位置。
+     * 它不在渠道表里（上面那条 findMany 查不到），所以单独拼在最前面；
+     * 前端拿 id 就能浏览，不需要用户先在后台配一条本地文件渠道。
+     */
+    const mine = {
+      id: DEFAULT_LOCAL_VIRTUAL_ID,
+      code: DEFAULT_LOCAL_CHANNEL_CODE,
+      name: DEFAULT_LOCAL_ROOT_NAME,
+      rootPath: path.join(LocalAdapter.root(), me, DEFAULT_LOCAL_CHANNEL_CODE),
+      enabled: true,
+      source: 'default',
+    };
+    /*
+     * v1.0.6：WebDAV 目录也作为一条加载项。
+     * 只有当这个账户确实建过 WebDAV 渠道时才出现 —— 没建过的人看到一条空目录只会困惑。
+     * 管理员的 webdav 目录同样不加（管理员禁止使用 WebDAV）。
+     */
+    // v1.0.6：全局开关关闭时整条 WebDAV 加载项也隐藏（需求：关闭后不可访问）
+    const webdavCount = (await this.webdavOn())
+      ? await prisma.webDavChannel.count({ where: { username: me } })
+      : 0;
+    const webdavItem =
+      webdavCount > 0
+        ? {
+            id: WEBDAV_VIRTUAL_ID,
+            code: 'WEBDAV',
+            name: WEBDAV_ROOT_NAME,
+            rootPath: path.join(webdavRoot(), me),
+            enabled: true,
+            source: 'webdav',
+          }
+        : null;
+    return { success: true, data: [mine, ...(webdavItem ? [webdavItem] : []), ...configured] };
   }
 
   @Get('settings')
@@ -473,6 +639,110 @@ export class LocalFilesController {
       }
     }
     return out;
+  }
+
+  /**
+   * v1.0.6：把「虚拟路径」解析成一个真实绝对路径，并额外返回可写性。
+   *
+   * 只有 WebDAV 虚拟渠道允许写（重命名 / 删除）：
+   *   · 其它本地文件渠道指向的是用户机器上的**原始目录**，从网页上删文件风险太大，一律只读；
+   *   · WebDAV 目录本来就是网盘，可写是它的属性。
+   *
+   * 同时禁掉「对渠道根目录本身动手」—— hit.inside 为空说明操作对象是根，直接拒绝。
+   */
+  private async resolveWritable(
+    req: Request,
+    channelId: string,
+    rel: string,
+  ): Promise<{ error?: string; abs?: string; rel?: string; channel?: any }> {
+    const r = await this.resolveChannel(req, channelId);
+    if (r.error) return { error: r.error as string };
+    if (String(r.channel?.id || '') !== WEBDAV_VIRTUAL_ID) {
+      return { error: '该渠道不支持重命名或删除（仅 WebDAV 文件可写）' };
+    }
+    const clean = sanitizeRelativeDir(rel);
+    if (clean === null || !clean) return { error: '文件路径不合法' };
+    const hit = this.resolveInsideRoot(r.roots!, clean);
+    if (!hit) return { error: '文件路径越界' };
+    if (!hit.inside) return { error: '不能对渠道根目录执行该操作' };
+    const abs = safeJoin(hit.root.real, hit.inside);
+    if (!abs) return { error: '文件路径越界' };
+    return { abs, rel: clean, channel: r.channel! };
+  }
+
+  /** v1.0.6：WebDAV 目录内的文件 / 文件夹重命名（同目录内改名，不支持移动） */
+  @Post('rename')
+  async rename(
+    @Body() body: { channelId?: string; path?: string; name?: string },
+    @Req() req: Request,
+  ) {
+    if (!this.session(req)) return { success: false, message: '请先登录' };
+    const target = await this.resolveWritable(req, String(body?.channelId || ''), String(body?.path || ''));
+    if (target.error) return { success: false, message: target.error };
+    const raw = String(body?.name || '');
+    const name = raw.trim();
+    if (!name) return { success: false, message: '请输入新名称' };
+    if (name.length > 255) return { success: false, message: '名称过长（最多 255 个字符）' };
+    if (/[\\/\u0000-\u001f]/.test(name)) return { success: false, message: '名称不能包含 / \\ 等非法字符' };
+    if (name === '.' || name === '..') return { success: false, message: '名称不合法' };
+    if (isHiddenName(name)) return { success: false, message: '名称不能以「.」开头' };
+    const abs = target.abs!;
+    const parent = path.dirname(abs);
+    const next = path.join(parent, name);
+    if (next === abs) return { success: true, data: { path: target.rel, name } };
+    // 目标已存在 → 拒绝（避免 rename 覆盖别的文件）
+    const exists = await fsp.stat(next).then(() => true).catch(() => false);
+    if (exists) return { success: false, message: '同目录下已存在同名文件或文件夹' };
+    try {
+      await fsp.rename(abs, next);
+    } catch (err) {
+      logLocalFileError('重命名本地文件', `文件=${target.rel} 新名=${name}`, err);
+      return { success: false, message: `重命名失败：${(err as Error).message || '未知错误'}` };
+    }
+    const oldRel = target.rel!;
+    const segs = oldRel.split('/');
+    segs[segs.length - 1] = name;
+    const newPath = segs.join('/');
+    appLog.info('localfiles', 'WebDAV 文件重命名', `${oldRel} → ${newPath}（账户=${this.userName(req)}）`);
+    return { success: true, data: { path: newPath, oldPath: oldRel, name } };
+  }
+
+  /**
+   * v1.0.6：WebDAV 目录内的文件 / 文件夹删除（可批量）。
+   *
+   * 注意：这是真实删除、不进回收站；前端必须二次确认。
+   * 只允许 WebDAV 虚拟渠道，且逐条校验仍在账户根目录内。
+   */
+  @Post('delete')
+  async remove(@Body() body: { channelId?: string; paths?: string[] }, @Req() req: Request) {
+    if (!this.session(req)) return { success: false, message: '请先登录' };
+    const list = Array.isArray(body?.paths) ? body!.paths!.map((p) => String(p || '')) : [];
+    if (!list.length) return { success: false, message: '请选择要删除的文件' };
+    if (list.length > 200) return { success: false, message: '一次最多删除 200 个文件' };
+    const channelId = String(body?.channelId || '');
+    const removed: string[] = [];
+    const failed: { path: string; message: string }[] = [];
+    for (const rel of list) {
+      const target = await this.resolveWritable(req, channelId, rel);
+      if (target.error) {
+        failed.push({ path: rel, message: target.error });
+        continue;
+      }
+      try {
+        await fsp.rm(target.abs!, { recursive: true, force: true });
+        removed.push(target.rel!);
+      } catch (err) {
+        logLocalFileError('删除本地文件', `文件=${rel}`, err);
+        failed.push({ path: rel, message: (err as Error).message || '删除失败' });
+      }
+    }
+    if (removed.length) {
+      appLog.info('localfiles', 'WebDAV 文件删除', `共 ${removed.length} 项（账户=${this.userName(req)}）：${removed.slice(0, 10).join(', ')}`);
+    }
+    if (!removed.length) {
+      return { success: false, message: failed[0]?.message || '删除失败' };
+    }
+    return { success: true, data: { removed, failed } };
   }
 
   /** 预览 / 下载：支持 Range，仅登录会话，不计访问统计 */

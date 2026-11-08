@@ -208,10 +208,21 @@ export class ChannelsService {
 
     const existing = await prisma.channel.findUnique({ where: { code: LOCAL_CHANNEL_CODE } });
     if (existing) {
-      const patch: { type?: string; enabled?: boolean; isMain?: boolean; typeCode?: number } = {};
+      const patch: { type?: string; enabled?: boolean; isMain?: boolean; typeCode?: number; authorizedUsers?: string } = {};
       if (existing.type !== 'local') patch.type = 'local';
       if (!existing.enabled) patch.enabled = true;
       if (existing.typeCode !== channelTypeCode('local')) patch.typeCode = channelTypeCode('local');
+      /*
+       * v1.0.6：内置本地存储渠道恒为「自动授权所有用户」。
+       *
+       * 每个账户的默认本地目录都挂在这条渠道下（uploads/{用户名}/999999），
+       * 它必须对所有人开放 —— 包括以后新建的账户，否则新用户进来「本地文件」页是空的、
+       * 上传也会报「没有可用的主渠道」。存量库里没有哨兵 `*` 的，这里补一次。
+       */
+      if (!channelAuthAll(existing.authorizedUsers)) {
+        const keep = parseAuthorizedUsers(existing.authorizedUsers).filter((u) => u !== AUTH_ALL);
+        patch.authorizedUsers = JSON.stringify([AUTH_ALL, ...keep]);
+      }
       // 没有任何主渠道 → 用本地存储兜底，避免上传时报「未配置可用的主渠道」
       if (!existing.isMain && !existing.isBackup) {
         const hasMain = await prisma.channel.count({
@@ -303,7 +314,7 @@ export class ChannelsService {
 }
 
 /** 渠道授权判定（实现在 common/channel-access，这里转出供其它模块复用） */
-import { channelVisibleTo, parseAuthorizedUsers } from '../common/channel-access';
+import { AUTH_ALL, channelAuthAll, channelVisibleTo, parseAuthorizedUsers } from '../common/channel-access';
 export { channelVisibleTo, parseAuthorizedUsers };
 
 @Controller('api/channels')
@@ -477,7 +488,9 @@ export class ChannelManageController {
         isBackup: c.isBackup,
         // 备用库（可多条）与用户授权名单 —— 后台渠道卡片的「更多」菜单与授权弹窗据此渲染
         backupPool: c.backupPool,
-        authorizedUsers: parseAuthorizedUsers(c.authorizedUsers),
+        authorizedUsers: parseAuthorizedUsers(c.authorizedUsers).filter((u) => u !== AUTH_ALL),
+        /** v1.0.6：自动授权所有用户（渠道卡片上打标用） */
+        authAll: channelAuthAll(c.authorizedUsers) || c.code === LOCAL_CHANNEL_CODE,
         sortOrder: c.sortOrder,
         config,
         quota: {
@@ -741,6 +754,19 @@ export class ChannelManageController {
       delete merged.rootPath;
     }
     /*
+     * v1.0.6：内置「本地存储」渠道（999999）的「自定义存储前缀」「自定义文件命名」一律锁定。
+     *
+     * 这条渠道承载的是**每个用户的默认本地目录** uploads/{用户名}/999999 ——
+     * 前缀和命名一旦被改，全站新上传文件的落盘路径会整体偏移，老文件读不出来，
+     * 「本地文件」页里那个默认加载项也会指向空目录。
+     * 前端把两个输入框置灰，后端在这里再挡一层：直接沿用库里的原值，
+     * 无论请求体传什么都覆盖不掉（防止绕过界面直接调接口）。
+     */
+    if (ch.code === LOCAL_CHANNEL_CODE) {
+      merged.objectPrefix = String(old.objectPrefix ?? '');
+      merged.nameTemplate = String(old.nameTemplate ?? '');
+    }
+    /*
      * v3.0.0（R10）：公开访问域名在 UI 上已改为必填。
      * 后端做一次「软收敛」：为空时用 Endpoint 的站点源补上，避免存量渠道保存时被打回，
      * 也让「文件加载域名」永远有值可用（本地 / 本地文件渠道不参与）。
@@ -898,10 +924,20 @@ export class ChannelManageController {
       orderBy: { createdAt: 'asc' },
       select: { username: true, nickname: true, role: true, avatar: true },
     });
+    const list = parseAuthorizedUsers(ch.authorizedUsers);
+    /*
+     * v1.0.6：分别回「自动授权所有用户」开关与「单独勾选的名单」。
+     * 哨兵 `*` 不当作真实用户名返回，否则前端账户列表里会冒出一个叫 * 的人。
+     */
+    const authAll = list.includes(AUTH_ALL) || ch.code === LOCAL_CHANNEL_CODE;
     return {
       success: true,
       data: {
-        authorizedUsers: parseAuthorizedUsers(ch.authorizedUsers),
+        authorizedUsers: list.filter((u) => u !== AUTH_ALL),
+        /** 自动授权所有用户（默认本地存储渠道恒为 true，且前端禁止关闭） */
+        authAll,
+        /** 是否锁定开关（默认本地存储渠道必须对所有人开放，否则新用户没有落脚点） */
+        authAllLocked: ch.code === LOCAL_CHANNEL_CODE,
         users: users.map((u) => ({
           username: u.username,
           nickname: u.nickname || u.username,
@@ -914,13 +950,17 @@ export class ChannelManageController {
 
   /** 保存授权用户名单（传空数组 = 取消所有人的授权） */
   @Post(':id/authorize')
-  async setAuthorize(@Param('id') id: string, @Body() body: { usernames?: string[] }) {
+  async setAuthorize(@Param('id') id: string, @Body() body: { usernames?: string[]; authAll?: boolean }) {
     const ch = await prisma.channel.findUnique({ where: { id } });
     if (!ch) return { success: false, message: '渠道不存在' };
     /*
      * v1.0.5：本地文件渠道加入授权体系 ——
      * 名单为空 = 仅管理员可用（普通用户看不到「本地文件」入口）；
      * 勾选账户后，名单内的普通用户即可在「本地文件」页浏览该渠道。
+     *
+     * v1.0.6：「自动授权所有用户」开关。
+     * 打开后写哨兵 `*`，channelVisibleTo 会对任何账户（含以后新建的）返回可见。
+     * 名单里的具体用户照旧保留 —— 关掉开关时不必重新勾选一遍。
      */
     const wanted = Array.isArray(body.usernames) ? body.usernames.map((x) => String(x || '').trim()).filter(Boolean) : [];
     // 只保留真实存在的账户，防止脏名字写进配置
@@ -928,9 +968,17 @@ export class ChannelManageController {
       where: { username: { in: wanted } },
       select: { username: true },
     });
-    const valid = exists.map((u) => u.username);
-    await prisma.channel.update({ where: { id }, data: { authorizedUsers: JSON.stringify(valid) } });
-    return { success: true, data: { authorizedUsers: valid } };
+    const valid = exists.map((u) => u.username).filter((u) => u !== AUTH_ALL);
+    /*
+     * 默认本地存储渠道（code=999999）：必须对全体账户开放，且不允许被关掉。
+     * 每个用户的默认本地目录都落在这条渠道下（uploads/{用户名}/999999），
+     * 一旦关掉，新用户就没有任何可用的本地落脚点，「本地文件」页也会空着。
+     */
+    const forceAll = ch.code === LOCAL_CHANNEL_CODE;
+    const authAll = forceAll ? true : body.authAll === true;
+    const next = authAll ? [AUTH_ALL, ...valid] : valid;
+    await prisma.channel.update({ where: { id }, data: { authorizedUsers: JSON.stringify(next) } });
+    return { success: true, data: { authorizedUsers: valid, authAll, authAllLocked: forceAll } };
   }
 
   /*

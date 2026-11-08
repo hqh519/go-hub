@@ -15,6 +15,7 @@ const settings_service_1 = require("./settings.service");
 const page_config_1 = require("./page-config");
 const secret_1 = require("../common/secret");
 const crypto_service_1 = require("../common/crypto.service");
+const tag_defaults_1 = require("../common/tag-defaults");
 function deepMerge(base, patch) {
     if (patch === undefined || patch === null)
         return base;
@@ -143,12 +144,19 @@ let SysConfigService = class SysConfigService {
         if (!at)
             return cfg;
         const LEGACY_STOP = '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]';
-        if (at.startChars === '#' && at.stopChars === LEGACY_STOP && Number(at.maxLen) === 14 && at.markerEnabled === undefined) {
-            at.markerEnabled = true;
-            at.startChars = '["#","@","&"]';
-            at.stopChars = '["#","@","&","!","-","_"]';
-            at.maxLen = 10;
+        const START_DEFAULTS = ['#', '["#","@","&"]', tag_defaults_1.DEFAULT_TAG_START];
+        const STOP_DEFAULTS = [LEGACY_STOP, '["#","@","&","!","-","_"]', tag_defaults_1.DEFAULT_TAG_STOP];
+        const isStartDefault = START_DEFAULTS.includes(String(at.startChars ?? '').trim());
+        const isStopDefault = STOP_DEFAULTS.includes(String(at.stopChars ?? '').trim());
+        if (isStartDefault)
+            at.startChars = tag_defaults_1.DEFAULT_TAG_START;
+        if (isStopDefault)
+            at.stopChars = tag_defaults_1.DEFAULT_TAG_STOP;
+        if (isStartDefault && isStopDefault && [14, 10].includes(Number(at.maxLen))) {
+            at.maxLen = tag_defaults_1.DEFAULT_TAG_MAX_LEN;
         }
+        if (at.markerEnabled === undefined)
+            at.markerEnabled = true;
         return cfg;
     }
     async save(section, body) {

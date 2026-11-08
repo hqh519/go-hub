@@ -202,7 +202,7 @@
                     plain
                     class="preview-toolbar-source"
                     :title="storageSourceUrl"
-                    @click="copyStorageSource"
+                    @click="openSourceDialog"
                 >
                     <font-awesome-icon icon="link" class="preview-toolbar-icon" />{{ $t('fileDetail.sourceUrl') }}
                 </el-button>
@@ -218,8 +218,26 @@
                     <font-awesome-icon icon="download" class="preview-toolbar-icon" />{{ $t('fileDetail.download') }}
                 </el-button>
                 <!--
+                    v3.0.0（R14）：声音开关。
+                    v1.0.6：位置从「整排按钮最后」移到「下载」正后方 ——
+                    它是播放相关的控件，跟下载挨着比跟「转存 / 裁剪 / 转码」挨着更符合直觉。
+                    同一份全局状态（store.globalVideoMuted），统一控制预览浮层视频、详情页视频与音频。
+                -->
+                <el-button
+                    v-if="!isEditing && !trashMode && (isVideo || isAudio)"
+                    class="preview-toolbar-mute"
+                    :class="{ 'is-active': !videoMuted }"
+                    size="small"
+                    plain
+                    :title="videoMuted ? $t('dashboard.videoMutedOn') : $t('dashboard.videoMutedOff')"
+                    :aria-label="videoMuted ? $t('dashboard.videoMutedOn') : $t('dashboard.videoMutedOff')"
+                    @click="toggleMediaSound"
+                >
+                    <font-awesome-icon :icon="videoMuted ? 'volume-mute' : 'volume-up'" class="preview-toolbar-icon" />
+                </el-button>
+                <!--
                     v1.0.3：转存按钮（紧跟「下载」之后）——
-                    当前在本地存储渠道时显示「转异地」，否则显示「转本地」。
+                    当前在本地存储渠道时显示「存异地」，否则显示「转本地」。
                     只换渠道与跟随变化的数据，文件名 / 类型 / 分类 / 标签 / 外链全部不变。
                 -->
                 <el-button
@@ -281,23 +299,6 @@
                         <font-awesome-icon v-if="!transcodeBusy" icon="film" class="preview-toolbar-icon" />{{ $t('fileDetail.mediaTranscode') }}
                     </el-button>
                 </template>
-                <!--
-                    v3.0.0（R14）：声音开关从「图床文件管理页右上角」迁到这里（下载按钮后面）——
-                    同一份全局状态（store.globalVideoMuted），统一控制预览浮层视频 / 详情页视频
-                    以及详情页音频的播放声音。
-                -->
-                <el-button
-                    v-if="!isEditing && !trashMode && (isVideo || isAudio)"
-                    class="preview-toolbar-mute"
-                    :class="{ 'is-active': !videoMuted }"
-                    size="small"
-                    plain
-                    :title="videoMuted ? $t('dashboard.videoMutedOn') : $t('dashboard.videoMutedOff')"
-                    :aria-label="videoMuted ? $t('dashboard.videoMutedOn') : $t('dashboard.videoMutedOff')"
-                    @click="toggleMediaSound"
-                >
-                    <font-awesome-icon :icon="videoMuted ? 'volume-mute' : 'volume-up'" class="preview-toolbar-icon" />
-                </el-button>
             </div>
             <div class="preview-content" :class="{ 'is-qr': showQr }">
                 <!-- v2.4.0：二维码改为真实 <img> 渲染（见 QRCodeBox），
@@ -316,7 +317,6 @@
                         v-else-if="isImage"
                         :src="fileLink"
                         fit="contain"
-                        lazy
                         class="image-preview"
                         title="在新标签页打开"
                         @click="openImageLink"
@@ -791,17 +791,26 @@
                     <el-slider v-model="compressPercent" :min="10" :max="95" :step="5" show-stops style="flex: 1" />
                     <span class="media-percent-value">{{ compressPercent }}%</span>
                 </div>
+                <!-- v1.0.6：先摆事实（当前多大），再给预期（压完约多大），顺序上更好理解 -->
+                <p class="media-dialog-hint">
+                    {{ $t('fileDetail.compressCurrentSize', { size: formatBytes(mediaInfo && mediaInfo.size) }) }}
+                </p>
                 <p class="media-dialog-hint">
                     {{ $t('fileDetail.compressEstimate', { size: estimatedCompressSize }) }}
                 </p>
-                <p v-if="mediaInfo && mediaInfo.compressedBefore" class="media-dialog-hint is-warn">
+                <p v-if="mediaInfo && mediaInfo.compressedBefore" class="media-dialog-hint is-warn is-loud">
                     {{ $t('fileDetail.compressAgainWarn') }}
                 </p>
                 <p class="media-dialog-hint">{{ $t('fileDetail.compressKeepName') }}</p>
             </div>
             <template #footer>
-                <el-button @click="showCompressDialog = false">{{ $t('common.cancel') }}</el-button>
-                <el-button type="primary" :loading="mediaBusy" @click="doCompress(false)">{{ $t('fileDetail.compressConfirm') }}</el-button>
+                <el-button :disabled="compressState === 'running'" @click="showCompressDialog = false">{{ $t('common.cancel') }}</el-button>
+                <el-button
+                    type="primary"
+                    :loading="compressState === 'running'"
+                    :disabled="compressState !== 'idle'"
+                    @click="doCompress(false)"
+                >{{ compressButtonText }}</el-button>
             </template>
         </el-dialog>
 
@@ -823,6 +832,34 @@
             <template #footer>
                 <el-button @click="showWebpDialog = false">{{ $t('common.cancel') }}</el-button>
                 <el-button type="primary" :loading="mediaBusy" @click="doWebp()">{{ $t('fileDetail.webpConfirm') }}</el-button>
+            </template>
+        </el-dialog>
+
+        <!--
+            v1.0.6：「源」地址弹窗。
+            原来点一下就直接复制，用户既看不到复制了什么、也无法只复制其中一段（比如只取文件名）。
+            改成先展示完整地址、由用户自己决定复制，地址本身放在只读文本框里，可以随意选中。
+        -->
+        <el-dialog
+            v-model="showSourceDialog"
+            :title="$t('fileDetail.sourceUrl')"
+            width="560px"
+            append-to-body
+            class="gohub-media-dialog"
+        >
+            <div class="media-dialog-body">
+                <p class="media-dialog-hint">{{ $t('fileDetail.sourceDialogHint') }}</p>
+                <el-input
+                    :model-value="storageSourceUrl"
+                    type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 6 }"
+                    readonly
+                    class="source-url-textarea"
+                />
+            </div>
+            <template #footer>
+                <el-button @click="showSourceDialog = false">{{ $t('common.close') }}</el-button>
+                <el-button type="primary" @click="copyStorageSource">{{ $t('common.copy') }}</el-button>
             </template>
         </el-dialog>
         </div>
@@ -876,6 +913,15 @@ export default {
         },
         visible(val) {
             if (val) {
+                /*
+                 * v1.0.6：先把图片本身拉起来，再发那两个「探测类」请求。
+                 * 详情页比灯箱慢的根本原因不在 URL（两边用的是同一个 getFileLink），
+                 * 而在加载时序：弹窗一打开就并发 loadConvertOptions + loadMediaInfo，
+                 * 同域并发被浏览器排队，真正要看的图反而排在后面。
+                 * 这里先踢一脚图片（Image() 会命中浏览器缓存，随后 <el-image> 直接复用），
+                 * 并让两个探测请求挪到图片之后，看图不再被接口挤占带宽。
+                 */
+                this.prefetchPreview();
                 // v1.0.3：打开详情即确认「转本地 / 转异地」按钮该显示哪个（一次轻量查询）
                 this.loadConvertOptions();
                 // v1.0.5：探测能否原位编辑（裁剪 / 压缩 / 转WebP / 转码）
@@ -932,12 +978,22 @@ export default {
             cropLoading: false,
             // 压缩
             showCompressDialog: false,
-            compressPercent: 60,
+            // v1.0.6：默认比例改到 75%（原来 60%，大多数场景 75% 是画质与体积的平衡点）
+            compressPercent: 75,
+            /**
+             * 压缩按钮三态（v1.0.6）：
+             *   idle    → 显示「开始压缩」，可点
+             *   running → 显示「正在压缩」，禁用
+             *   done    → 显示「已完成」，禁用（弹窗稍后自动关闭，用户能看到结果）
+             */
+            compressState: 'idle',
             // 转 WebP
             showWebpDialog: false,
             webpMode: 'lossy',
             // 转码
             transcodeBusy: false,
+            /** v1.0.6：「源」地址弹窗（展示 + 复制，替代原来的一点即复制） */
+            showSourceDialog: false,
             // v3.0.0：文件级加密（状态来自详情接口的 metas.AccessPasswordHash）
             fileEncrypted: false,
             showPasswordDialog: false,
@@ -1029,6 +1085,12 @@ export default {
             if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
             return `${bytes} B`;
         },
+        /** v1.0.6：压缩按钮三态文案（开始压缩 / 正在压缩 / 已完成） */
+        compressButtonText() {
+            if (this.compressState === 'running') return this.$t('fileDetail.compressRunning');
+            if (this.compressState === 'done') return this.$t('fileDetail.compressDone');
+            return this.$t('fileDetail.compressConfirm');
+        },
         /** v1.0.3：转存按钮文案 —— 当前在本地渠道就「转异地」，否则「转本地」 */
         convertDirectionLabel() {
             return this.convertDirection === 'to-local'
@@ -1048,7 +1110,8 @@ export default {
             set(val) { this.$emit('update:modelValue', val); }
         },
         dialogWidth() {
-            return window.innerWidth < 768 ? '95%' : '900px';
+            // v1.0.6：移动端由 95% 调到 96% —— 左右留白再收窄一点，内容区更宽（需求指定）
+            return window.innerWidth < 768 ? '96%' : '900px';
         },
         /** 二维码渲染尺寸：v2.8.2 起固定 200x200 */
         qrSize() {
@@ -1666,8 +1729,10 @@ export default {
             this.showCropDialog = false;
             this.cropFile = null;
             this.showCompressDialog = false;
+            this.compressState = 'idle';
             this.showWebpDialog = false;
             this.transcodeBusy = false;
+            this.showSourceDialog = false;
             // v3.0.0（R8）：评分 / 等级回到当前文件的库值
             this.ratingValue = Number(this.file?.metadata?.Rating) || 0;
             this.levelValue = Number(this.file?.metadata?.Level) || 0;
@@ -1846,6 +1911,31 @@ export default {
          * 这里只需要刷新一次详情，把新的体积 / 宽高 / MD5 显示出来。
          * ================================================================== */
 
+        /**
+         * v1.0.6：打开详情时立刻预取预览资源。
+         *
+         * 灯箱之所以「一滑就有」，是因为列表页早就把同一地址的图缓存住了；
+         * 详情页每次都是冷启动，还要和两个探测接口抢同一批连接。
+         * 这里在弹窗动画期间就用 Image() 起一次请求，等 <el-image> 渲染时直接读缓存。
+         * 视频同理 —— 只预取元数据，别把整段视频拉下来。
+         */
+        prefetchPreview() {
+            const url = String(this.fileLink || '');
+            if (!url) return;
+            try {
+                if (this.isImage) {
+                    const img = new Image();
+                    img.decoding = 'async';
+                    img.src = url;
+                } else if (this.isVideo) {
+                    const v = document.createElement('video');
+                    v.preload = 'metadata';
+                    v.src = url;
+                }
+            } catch (e) {
+                /* 预取失败无所谓，正常渲染路径照旧 */
+            }
+        },
         async loadMediaInfo() {
             this.mediaInfo = null;
             const key = String(this.file?.name || '');
@@ -1908,18 +1998,24 @@ export default {
         },
 
         openCompressDialog() {
-            this.compressPercent = 60;
+            this.compressPercent = 75;
+            this.compressState = 'idle';
             this.showCompressDialog = true;
         },
 
         /**
          * 压缩。已压缩过的文件后端会回 needConfirm，这里弹二次确认后带 confirm=1 重试。
          * 视频 / 音频可能跑很久，因此处理期间整组按钮禁用（mediaBusy）。
+         *
+         * v1.0.6：按钮改成三态（idle → running → done）。
+         * 完成后不立刻关弹窗，先让按钮停在「已完成」，用户能看清这次操作确实结束了；
+         * 900ms 后再关闭并刷新详情 —— 直接关掉会让人怀疑「到底压没压」。
          */
         async doCompress(confirmed) {
             const key = String(this.file?.name || '');
             if (!key || this.mediaBusy) return;
             this.mediaBusy = true;
+            this.compressState = 'running';
             try {
                 const res = await fetchWithAuth('/api/manage/media/compress', {
                     method: 'POST',
@@ -1929,6 +2025,7 @@ export default {
                 const json = await res.json().catch(() => ({}));
                 if (json?.needConfirm) {
                     this.mediaBusy = false;
+                    this.compressState = 'idle';
                     try {
                         await ElMessageBox.confirm(json.message, this.$t('fileDetail.compressAgainTitle'), {
                             confirmButtonText: this.$t('common.confirm'),
@@ -1941,10 +2038,15 @@ export default {
                     return this.doCompress(true);
                 }
                 if (!res.ok || json?.success === false) throw new Error(json?.message || this.$t('fileDetail.mediaCompressFailed'));
-                this.showCompressDialog = false;
+                this.compressState = 'done';
                 ElMessage.success(this.$t('fileDetail.mediaCompressDone'));
                 await this.reloadDetail(true);
+                setTimeout(() => {
+                    this.showCompressDialog = false;
+                    this.compressState = 'idle';
+                }, 900);
             } catch (e) {
+                this.compressState = 'idle';
                 ElMessage.error(e?.message || this.$t('fileDetail.mediaCompressFailed'));
             } finally {
                 this.mediaBusy = false;
@@ -1982,12 +2084,26 @@ export default {
         async doTranscode() {
             const key = String(this.file?.name || '');
             if (!key || this.transcodeBusy) return;
+            /*
+             * v1.0.6：把当前视频的编码直接写进确认框。
+             * 之前只有一句「会重编码为 H.264」，用户看不到源编码 —— H.265 / ProRes 该转，
+             * H.264 转了纯属白折腾，得让他先看见再决定。
+             */
+            const codecLabel = String(this.mediaInfo?.videoCodecLabel || this.mediaInfo?.videoCodec || '');
+            const hasCodec = !!codecLabel;
             try {
-                await ElMessageBox.confirm(this.$t('fileDetail.transcodeConfirmText'), this.$t('fileDetail.transcodeConfirmTitle'), {
-                    confirmButtonText: this.$t('common.confirm'),
-                    cancelButtonText: this.$t('common.cancel'),
-                    type: 'warning',
-                });
+                await ElMessageBox.confirm(
+                    hasCodec
+                        ? this.$t('fileDetail.transcodeConfirmTextCodec', { codec: codecLabel })
+                        : this.$t('fileDetail.transcodeConfirmText'),
+                    this.$t('fileDetail.transcodeConfirmTitle'),
+                    {
+                        confirmButtonText: this.$t('common.confirm'),
+                        cancelButtonText: this.$t('common.cancel'),
+                        type: 'warning',
+                        dangerouslyUseHTMLString: hasCodec,
+                    },
+                );
             } catch {
                 return;
             }
@@ -2182,15 +2298,23 @@ export default {
         },
         handleTabClick() {},
         /**
-         * v3.0.0：「源」按钮 —— 复制签发链接背后的源地址（存储渠道内的真实直链）。
-         * 没有源地址时按钮不渲染（见模板 v-if）。
+         * v1.0.6：「源」按钮 —— 打开弹窗展示签发链接背后的源地址（存储渠道内的真实直链），
+         * 由用户自己确认后再复制。没有源地址时按钮不渲染（见模板 v-if）。
          */
+        openSourceDialog() {
+            if (!this.storageSourceUrl) return;
+            this.showSourceDialog = true;
+        },
         async copyStorageSource() {
             const url = this.storageSourceUrl;
             if (!url) return;
             const ok = await copyText(url);
-            if (ok) ElMessage.success(this.$t('fileDetail.sourceUrlCopied'));
-            else ElMessage.warning(this.$t('fileDetail.copyFailed'));
+            if (ok) {
+                ElMessage.success(this.$t('fileDetail.sourceUrlCopied'));
+                this.showSourceDialog = false;
+            } else {
+                ElMessage.warning(this.$t('fileDetail.copyFailed'));
+            }
         },
         async handleUrlClick(e) {
             const input = e.target;
@@ -2561,6 +2685,18 @@ export default {
 
 .media-dialog-hint.is-warn {
     color: var(--el-color-warning);
+}
+/* v1.0.6：二次压缩的警告要更醒目 —— 比普通提示大 2 号（12px → 14px） */
+.media-dialog-hint.is-loud {
+    font-size: 14px;
+    font-weight: 600;
+}
+/* v1.0.6：「源」地址用等宽字体，长路径里的斜杠和文件名更容易核对 */
+.source-url-textarea :deep(.el-textarea__inner) {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    word-break: break-all;
 }
 
 .media-percent-row {

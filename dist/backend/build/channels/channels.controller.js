@@ -183,6 +183,10 @@ let ChannelsService = class ChannelsService {
                 patch.enabled = true;
             if (existing.typeCode !== channelTypeCode('local'))
                 patch.typeCode = channelTypeCode('local');
+            if (!(0, channel_access_1.channelAuthAll)(existing.authorizedUsers)) {
+                const keep = (0, channel_access_1.parseAuthorizedUsers)(existing.authorizedUsers).filter((u) => u !== channel_access_1.AUTH_ALL);
+                patch.authorizedUsers = JSON.stringify([channel_access_1.AUTH_ALL, ...keep]);
+            }
             if (!existing.isMain && !existing.isBackup) {
                 const hasMain = await prisma_1.prisma.channel.count({
                     where: { isMain: true, enabled: true, NOT: { id: existing.id } },
@@ -435,7 +439,8 @@ let ChannelManageController = class ChannelManageController {
                 isMain: c.isMain,
                 isBackup: c.isBackup,
                 backupPool: c.backupPool,
-                authorizedUsers: (0, channel_access_1.parseAuthorizedUsers)(c.authorizedUsers),
+                authorizedUsers: (0, channel_access_1.parseAuthorizedUsers)(c.authorizedUsers).filter((u) => u !== channel_access_1.AUTH_ALL),
+                authAll: (0, channel_access_1.channelAuthAll)(c.authorizedUsers) || c.code === exports.LOCAL_CHANNEL_CODE,
                 sortOrder: c.sortOrder,
                 config,
                 quota: {
@@ -635,6 +640,10 @@ let ChannelManageController = class ChannelManageController {
             merged.rootPaths = JSON.stringify([local_adapter_1.LocalAdapter.root()]);
             delete merged.rootPath;
         }
+        if (ch.code === exports.LOCAL_CHANNEL_CODE) {
+            merged.objectPrefix = String(old.objectPrefix ?? '');
+            merged.nameTemplate = String(old.nameTemplate ?? '');
+        }
         if (!['local', 'localfiles'].includes(ch.type)) {
             const pd = String(merged.publicDomain || '').trim();
             if (!pd) {
@@ -751,10 +760,14 @@ let ChannelManageController = class ChannelManageController {
             orderBy: { createdAt: 'asc' },
             select: { username: true, nickname: true, role: true, avatar: true },
         });
+        const list = (0, channel_access_1.parseAuthorizedUsers)(ch.authorizedUsers);
+        const authAll = list.includes(channel_access_1.AUTH_ALL) || ch.code === exports.LOCAL_CHANNEL_CODE;
         return {
             success: true,
             data: {
-                authorizedUsers: (0, channel_access_1.parseAuthorizedUsers)(ch.authorizedUsers),
+                authorizedUsers: list.filter((u) => u !== channel_access_1.AUTH_ALL),
+                authAll,
+                authAllLocked: ch.code === exports.LOCAL_CHANNEL_CODE,
                 users: users.map((u) => ({
                     username: u.username,
                     nickname: u.nickname || u.username,
@@ -773,9 +786,12 @@ let ChannelManageController = class ChannelManageController {
             where: { username: { in: wanted } },
             select: { username: true },
         });
-        const valid = exists.map((u) => u.username);
-        await prisma_1.prisma.channel.update({ where: { id }, data: { authorizedUsers: JSON.stringify(valid) } });
-        return { success: true, data: { authorizedUsers: valid } };
+        const valid = exists.map((u) => u.username).filter((u) => u !== channel_access_1.AUTH_ALL);
+        const forceAll = ch.code === exports.LOCAL_CHANNEL_CODE;
+        const authAll = forceAll ? true : body.authAll === true;
+        const next = authAll ? [channel_access_1.AUTH_ALL, ...valid] : valid;
+        await prisma_1.prisma.channel.update({ where: { id }, data: { authorizedUsers: JSON.stringify(next) } });
+        return { success: true, data: { authorizedUsers: valid, authAll, authAllLocked: forceAll } };
     }
     async remove(id) {
         const target = await prisma_1.prisma.channel.findUnique({ where: { id } });

@@ -99,17 +99,17 @@
                         <!--
                             v1.0.0：输入过程不再逐字符保存 —— 编辑时只写本地草稿 folderDraft，
                             失焦（@blur）/回车才算一次保存，避免「每敲一个字就存一次 + 弹一次提示」。
+                            v1.0.6：改用带建议的输入框（与首页上传目录同一个组件）——
+                            光标进入即列出「最近用过的目录」，不用每次从头手打路径；
+                            输入时同时给出目录树里的同名候选项。
                         -->
-                        <el-input
-                            :model-value="folderDraft"
-                            @update:model-value="folderDraft = $event"
-                            @focus="folderEditing = true"
-                            @blur="commitFolder"
+                        <DirectorySuggestionInput
+                            v-model="folderDraft"
                             :placeholder="$t('uploadSettings.uploadDirectoryPlaceholder')"
-                            name="gohub-upload-folder"
-                            autocomplete="on"
+                            history-key="gohub:recent:uploadFolder"
                             class="setting-input"
-                        ></el-input>
+                            @blur="commitFolder"
+                        />
                     </div>
                 </div>
                 <!--
@@ -281,6 +281,7 @@
 <script>
 import ChannelSelect from '@/components/config/ChannelSelect.vue';
 import DirectoryTreePicker from '@/components/DirectoryTreePicker.vue';
+import DirectorySuggestionInput from '@/components/DirectorySuggestionInput.vue';
 import { resolveChannelLabel, invalidateStorageChannels } from '@/utils/storageChannels';
 import { COMPRESSIBLE_EXTENSIONS } from '@/utils/upload/compressExtensions';
 
@@ -288,7 +289,8 @@ export default {
     name: 'UploadSettingsDialog',
     components: {
         ChannelSelect,
-        DirectoryTreePicker
+        DirectoryTreePicker,
+        DirectorySuggestionInput
     },
     props: {
         modelValue: { type: Boolean, default: false },

@@ -144,15 +144,17 @@
                         v1.0.5：从文件名提取标签 —— 改成「一句话」排版。
                         三段配置直接嵌在句子中间，读起来就是规则本身，不需要额外的字段名：
                           从 [__] 为起始，以 [__] 为截断，获取不超过 [__] 位数的内容为标签名自动添加到文件标签。 ☑ 启用功能
+                        v1.0.6：整块前面加标题「按表达式提取文件名内容」+ 问号提示；
+                                起止符改成纯符号串输入（逐字符即逐记号），留空回落默认值。
                         规则引擎见后端 UploadService.extractByMarkers（空格恒为截断符）。
                     -->
-                    <el-form-item>
-                        <template #label>
-                            {{ $t('sysOthers.tagMarkerRule') }}
-                            <el-tooltip :content="$t('sysOthers.tagRegexTooltip')" placement="top" raw-content>
-                                <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
-                            </el-tooltip>
-                        </template>
+                    <div class="tag-rule-title">
+                        {{ $t('sysOthers.tagMarkerTitle') }}
+                        <el-tooltip :content="$t('sysOthers.tagRegexTooltip')" placement="top" raw-content>
+                            <font-awesome-icon icon="question-circle" class="tag-rule-title-icon"/>
+                        </el-tooltip>
+                    </div>
+                    <el-form-item label-width="0">
                         <div class="tag-rule-line">
                             <span class="tag-rule-word">{{ $t('sysOthers.tagRuleWordFrom') }}</span>
                             <el-input
@@ -163,7 +165,7 @@
                             <span class="tag-rule-word">{{ $t('sysOthers.tagRuleWordStartEnd') }}</span>
                             <el-input
                                 v-model="autoTag.stopChars"
-                                class="tag-rule-input tag-rule-input-chars"
+                                class="tag-rule-input tag-rule-input-symbols"
                                 :placeholder="TAG_RULE_STOP_EXAMPLE"
                             />
                             <span class="tag-rule-word">{{ $t('sysOthers.tagRuleWordStopEnd') }}</span>
@@ -278,15 +280,16 @@ data() {
             enabled: true,
             placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
             extract: '',
-            // v1.0.5：从文件名提取标签（一句话排版）——与后端 DEFAULT_TAG_* 完全一致
+            // v1.0.6：从文件名提取标签（一句话排版）——与后端 DEFAULT_TAG_* 完全一致
+            // 起止符是**纯符号串**，输入框里看到的就是实际参与匹配的字符
             markerEnabled: true,
-            startChars: '["#","@","&"]',
-            stopChars: '["#","@","&","!","-","_"]',
+            startChars: '#@&',
+            stopChars: '#@&!！,，.。-—_、;；:：?？~$()（）[]【】{}<>《》|/\\',
             maxLen: 10
         },
-        // 输入框占位示例（用户清空后仍能一眼看出该填什么）
-        TAG_RULE_START_EXAMPLE: '["#","@","&"]',
-        TAG_RULE_STOP_EXAMPLE: '["#","@","&","!","-","_"]',
+        // 输入框占位示例（用户清空后仍能一眼看出该填什么，清空即回落这两个默认值）
+        TAG_RULE_START_EXAMPLE: '#@&',
+        TAG_RULE_STOP_EXAMPLE: '#@&!！,，.。-—_、;；:：?？~$()（）[]【】{}<>《》|/\\',
         // 占位符快插按钮（点击追加到「设置占位符」输入框末尾）
         TAG_PLACEHOLDER_CHIPS: [
             { label: '文件类型', token: '{mime}' },
@@ -418,6 +421,26 @@ methods: {
         this.autoTag.placeholders = next;
     },
     /**
+     * v1.0.6：把库里可能的 JSON 数组旧值（`["#","@","&"]`）还原成输入框该显示的纯符号串。
+     *
+     * 后端 get() 里已有 upgradeLegacyTagRule 做迁移，这里再兜一层是为了两侧都成立：
+     * 前端拿旧格式字符串去写回时不会把 `["#","@","&"]` 原样存回去，
+     * 也就不会出现「界面看着是数组、实际按逐字符匹配」的错位。
+     */
+    markerToText(raw, fallback) {
+        const s = String(raw ?? '').trim();
+        if (!s) return fallback;
+        if (s.startsWith('[') && s.endsWith(']')) {
+            try {
+                const arr = JSON.parse(s);
+                if (Array.isArray(arr)) return arr.map((v) => String(v ?? '')).join('');
+            } catch {
+                /* 不是合法 JSON，按纯串处理 */
+            }
+        }
+        return s;
+    },
+    /**
      * 从配置数组里读一个布尔项（同时兼容真布尔与 'true'/'false' 字符串 ——
      * 配置项存库后可能被序列化成字符串）。
      */
@@ -458,8 +481,9 @@ methods: {
                 extract: String(this.autoTag.extract || ''),
                 // v1.0.5：从文件名提取标签可单独开关
                 markerEnabled: this.autoTag.markerEnabled !== false,
-                startChars: String(this.autoTag.startChars || ''),
-                stopChars: String(this.autoTag.stopChars || ''),
+                // v1.0.6：留空即回落默认值，保证库里存的始终是生效的那串字符
+                startChars: String(this.autoTag.startChars || '').trim() || this.TAG_RULE_START_EXAMPLE,
+                stopChars: String(this.autoTag.stopChars || '').trim() || this.TAG_RULE_STOP_EXAMPLE,
                 maxLen: Math.max(0, Number(this.autoTag.maxLen) || 0)
             };
 
@@ -539,8 +563,8 @@ mounted() {
             extract: at.extract === undefined ? '' : String(at.extract ?? ''),
             markerEnabled:
                 at.markerEnabled === undefined ? true : !(at.markerEnabled === false || String(at.markerEnabled) === 'false'),
-            startChars: at.startChars === undefined ? this.autoTag.startChars : String(at.startChars ?? ''),
-            stopChars: at.stopChars === undefined ? this.autoTag.stopChars : String(at.stopChars ?? ''),
+            startChars: this.markerToText(at.startChars === undefined ? this.autoTag.startChars : at.startChars, this.TAG_RULE_START_EXAMPLE),
+            stopChars: this.markerToText(at.stopChars === undefined ? this.autoTag.stopChars : at.stopChars, this.TAG_RULE_STOP_EXAMPLE),
             maxLen: at.maxLen === undefined ? this.autoTag.maxLen : Math.max(0, Number(at.maxLen) || 0)
         };
 
@@ -636,6 +660,31 @@ mounted() {
     flex: 1 1 220px;
     min-width: 160px;
     max-width: 320px;
+}
+/*
+ * v1.0.6：截断符默认有 40 多个符号，输入框要比起始符宽一档，
+ * 但仍限制最大宽度，避免把整句挤成两行。
+ */
+.tag-rule-input-symbols {
+    flex: 2 1 320px;
+    min-width: 220px;
+    max-width: 460px;
+}
+/* 区块标题（「按表达式提取文件名内容」）：比表单项标签更醒目一点 */
+.tag-rule-title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 4px 0 10px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+}
+.tag-rule-title-icon {
+    margin-left: 2px;
+    font-size: 13px;
+    color: var(--el-text-color-secondary);
+    cursor: pointer;
 }
 .tag-rule-input-num {
     flex: 0 0 88px;

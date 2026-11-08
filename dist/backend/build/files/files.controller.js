@@ -36,6 +36,7 @@ const sysconfig_service_1 = require("../settings/sysconfig.service");
 const auth_guard_1 = require("../auth/auth.guard");
 const file_view_1 = require("../common/file-view");
 const media_edit_1 = require("./media-edit");
+const compress_1 = require("../common/compress");
 const app_log_1 = require("../common/app-log");
 const project_paths_1 = require("../common/project-paths");
 const qqwry_1 = require("../common/qqwry");
@@ -3886,6 +3887,17 @@ let ManageController = ManageController_1 = class ManageController {
             return { success: false, message: reason || '文件不可编辑' };
         const kind = ManageController_1.mediaKindOf(target.mime, target.ext);
         const isWebp = target.ext === 'webp' || String(target.mime || '').toLowerCase() === 'image/webp';
+        let videoCodec = '';
+        let videoCodecLabelText = '';
+        if (kind === 'video') {
+            try {
+                videoCodec = await (0, compress_1.probeVideoCodecFile)(target.abs);
+                videoCodecLabelText = (0, media_edit_1.videoCodecLabel)(videoCodec);
+            }
+            catch {
+                videoCodec = '';
+            }
+        }
         return {
             success: true,
             data: {
@@ -3896,6 +3908,8 @@ let ManageController = ManageController_1 = class ManageController {
                 size: target.size,
                 originalSize: target.originalSize,
                 kind,
+                videoCodec,
+                videoCodecLabel: videoCodecLabelText,
                 compressedBefore: target.compressedBefore,
                 localPath: target.abs,
                 canCrop: kind === 'image',

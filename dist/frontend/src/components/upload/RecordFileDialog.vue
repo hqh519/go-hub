@@ -124,6 +124,7 @@
                         <DirectorySuggestionInput
                             v-model="form.folder"
                             :placeholder="$t('recordFile.folderPlaceholder')"
+                            history-key="gohub:recent:recordFolder"
                             class="record-folder-input"
                             @update:model-value="rememberFolder"
                         />

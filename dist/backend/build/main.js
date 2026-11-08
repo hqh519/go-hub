@@ -141,18 +141,25 @@ async function bootstrap() {
     });
     server.use((0, cookie_parser_1.default)());
     server.use('/s3', express_1.default.raw({ type: '*/*', limit: '200mb' }));
+    const expressRawForDav = express_1.default.raw({ type: '*/*', limit: '4mb' });
     server.use('/dav', (req, res, next) => {
         const method = String(req.method || '').toUpperCase();
         if (method === 'OPTIONS') {
             res.setHeader('DAV', '1,2');
             res.setHeader('MS-Author-Via', 'DAV');
-            res.setHeader('Allow', 'OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, MKCOL');
+            res.setHeader('Allow', 'OPTIONS, GET, HEAD, PUT, DELETE, PROPFIND, PROPPATCH, MKCOL, MOVE, COPY');
             res.setHeader('Content-Length', '0');
             return res.status(200).end();
         }
         next();
     });
-    server.use('/dav', express_1.default.raw({ type: '*/*', limit: '200mb' }));
+    server.use('/dav', (req, res, next) => {
+        if (String(req.method || '').toUpperCase() === 'PUT') {
+            req._body = true;
+            return next();
+        }
+        return expressRawForDav(req, res, next);
+    });
     server.use(express_1.default.json({ limit: '2mb' }));
     server.use(express_1.default.text({ type: ['text/plain'], limit: '1mb' }));
     server.use((req, res, next) => {
@@ -294,6 +301,8 @@ async function bootstrap() {
                 const isWrite = req.method !== 'GET' && req.method !== 'HEAD';
                 if (isFile && status < 400)
                     return;
+                if ((req.path === '/dav' || req.path.startsWith('/dav/')) && status < 400)
+                    return;
                 if (!isWrite && status < 400 && ms < 3000)
                     return;
                 const line = `${req.method} ${req.originalUrl} → ${status} (${ms}ms)`;
@@ -398,6 +407,7 @@ async function bootstrap() {
     httpServer.requestTimeout = Number.isFinite(uploadTimeout) && uploadTimeout >= 0 ? uploadTimeout : 0;
     httpServer.headersTimeout = 120_000;
     httpServer.keepAliveTimeout = 65_000;
+    httpServer.setTimeout(0);
     console.log(`GoHub 已启动: http://localhost:${port}`);
 }
 bootstrap();

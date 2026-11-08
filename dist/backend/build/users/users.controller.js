@@ -374,6 +374,8 @@ let UsersController = class UsersController {
                 backSessionDays: u.backSessionDays ?? DEFAULT_SESSION_DAYS,
                 uploadBkImg: u.uploadBkImg || '',
                 adminBkImg: u.adminBkImg || '',
+                webdavEnabled: !!u.webdavEnabled,
+                webdavMax: Number(u.webdavMax) || 2,
                 adminNote: admin ? u.adminNote || '' : '',
                 createdAt: u.createdAt,
                 self: u.username === this.me(req),
@@ -525,6 +527,13 @@ let UsersController = class UsersController {
                 data.maxFileSizeMB = clampMaxFileSizeMB(body.maxFileSizeMB);
             if (body.adminNote !== undefined)
                 data.adminNote = String(body.adminNote).slice(0, 4000);
+            if (body.webdavEnabled !== undefined) {
+                data.webdavEnabled = u.role === 'user' ? !!body.webdavEnabled : false;
+            }
+            if (body.webdavMax !== undefined) {
+                const n = Math.floor(Number(body.webdavMax));
+                data.webdavMax = Number.isFinite(n) ? Math.min(50, Math.max(1, n)) : 2;
+            }
         }
         if (body.mainChannelId !== undefined || body.backupChannelId !== undefined) {
             const allowed = await this.authorizedChannelIds(u.username);

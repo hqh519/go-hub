@@ -120,6 +120,7 @@ import { faTrashAlt } from '@fortawesome/free-solid-svg-icons/faTrashAlt';
 // v3.0.0（R9）：回收站「恢复」按钮图标（此前 undo 未注册 → 按钮没有图标）
 import { faUndo } from '@fortawesome/free-solid-svg-icons/faUndo';
 import { faUpload } from '@fortawesome/free-solid-svg-icons/faUpload';
+import { faUser } from '@fortawesome/free-solid-svg-icons/faUser';
 import { faUserCog } from '@fortawesome/free-solid-svg-icons/faUserCog';
 import { faStar } from '@fortawesome/free-solid-svg-icons/faStar';
 import { faPlug } from '@fortawesome/free-solid-svg-icons/faPlug';
@@ -242,6 +243,7 @@ export default [
     faTrashAlt,
     faUndo,
     faUpload,
+    faUser,
     faUserCog,
     faStar,
     faPlug,

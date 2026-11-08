@@ -406,6 +406,9 @@ export class UsersController {
         // v3.0.0（R16）：账户自定义背景图（JSON 数组字符串，空串 = 跟随系统设置）
         uploadBkImg: u.uploadBkImg || '',
         adminBkImg: u.adminBkImg || '',
+        // v1.0.6：对外 WebDAV 授权（管理员操作 → 启用 WebDAV 功能 / 允许创建数量）
+        webdavEnabled: !!u.webdavEnabled,
+        webdavMax: Number(u.webdavMax) || 2,
         // 管理备注只回给管理员
         adminNote: admin ? u.adminNote || '' : '',
         createdAt: u.createdAt,
@@ -514,6 +517,9 @@ export class UsersController {
       /** v3.0.0（R16）：账户自定义背景图（JSON 数组字符串） */
       uploadBkImg?: string;
       adminBkImg?: string;
+      /** v1.0.6：对外 WebDAV 授权（仅管理员可改，在「管理员操作」里） */
+      webdavEnabled?: boolean;
+      webdavMax?: number;
     },
   ) {
     // ---- 老库的虚拟管理员行（users 表无 admin 时）----
@@ -616,6 +622,18 @@ export class UsersController {
       if (body.transcodePolicy !== undefined) data.transcodePolicy = normalizeTranscodePolicy(body.transcodePolicy);
       if (body.maxFileSizeMB !== undefined) data.maxFileSizeMB = clampMaxFileSizeMB(body.maxFileSizeMB);
       if (body.adminNote !== undefined) data.adminNote = String(body.adminNote).slice(0, 4000);
+      /*
+       * v1.0.6：对外 WebDAV 授权。
+       * 只给普通用户开 —— 管理员账户一律禁止使用 WebDAV（需求约定），
+       * 这里顺手把开关钳成 false，避免界面上误开却永远用不了。
+       */
+      if (body.webdavEnabled !== undefined) {
+        data.webdavEnabled = u.role === 'user' ? !!body.webdavEnabled : false;
+      }
+      if (body.webdavMax !== undefined) {
+        const n = Math.floor(Number(body.webdavMax));
+        data.webdavMax = Number.isFinite(n) ? Math.min(50, Math.max(1, n)) : 2;
+      }
     }
     // ---- 主/备渠道：本人也能改（v2.3.0）----
     // 但只能从「该账户已获授权」的渠道里选；空 = 跟随全局，'none' = 明确不备份。

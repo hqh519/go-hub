@@ -1,15 +1,22 @@
 /**
- * 文件详情页的「原位媒体编辑」（v1.0.5）。
+ * 文件详情页的「原位媒体编辑」（v1.0.5，v1.0.6 起支持改扩展名）。
  *
  * 与上传链路的区别：
  *   · 上传链路是「拿到一件新东西，存进渠道」；
  *   · 这里是「已经签发过外链的文件，改它的字节，但不许动外链」。
  *
  * 由此成立的硬约束：
- *   1. **磁盘路径不变** —— 直接覆盖原文件，remoteKey 不动，副本记录不动；
- *   2. **文件名与扩展名不变** —— 外链是 /file/<name>.<ext>，扩展名一变就等于换了个链接；
+ *   1. **对外标识（FileRecord.name）不变** —— 外链是 /file/<name>，它是链接的唯一锚点；
+ *   2. 磁盘物理文件走「临时文件 + rename」原子替换，中途被读到不会拿到半份字节；
  *   3. 只处理**主副本落在本地存储渠道**的文件 —— 第三方渠道没有「直接改字节」的接口，
  *      硬做只能整份重新上传，那已经不是「编辑」而是「转存」了。
+ *
+ * v1.0.6 的变化：转 WebP 时会同时把**扩展名**改成 .webp
+ * （磁盘物理文件名 + FileCopy.remoteKey + FileRecord.originalName）。
+ * 之所以敢动扩展名，是因为同一版里把签发外链改成**默认不带扩展名**，
+ * 链接与文件格式解耦：转码前后外链一模一样，用户引用过的地址不会因为格式变化而 404。
+ * 注意仍然不动 FileRecord.name —— 少数历史文件（WebDAV / S3 上传）的 name 自带扩展名，
+ * 改它会真的换掉链接。
  *
  * 每次编辑完成后同步刷新：size / md5 / mime / metas.Width / metas.Height / metas.EditedAt，
  * 并把压缩前的原始大小留在 originalSize（只在第一次压缩时写入）。
@@ -17,6 +24,7 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { promises as fsp } from 'fs';
+import { basename, dirname, join } from 'node:path';
 import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
 import { localAbsPathOf } from '../adapters/local.adapter';
@@ -41,6 +49,8 @@ export interface MediaTarget {
   metas: Record<string, unknown>;
   /** 之前是否已经被压缩过（实际大小 ≠ 原始大小） */
   compressedBefore: boolean;
+  /** 主副本在渠道里的相对键（= 磁盘上的物理文件名），转 WebP 改扩展名时要用 */
+  remoteKey: string;
 }
 
 export interface MediaEditResult {
@@ -51,10 +61,41 @@ export interface MediaEditResult {
   height?: number;
   md5?: string;
   mime?: string;
+  /** 转 WebP 会改扩展名，前端据此刷新详情页显示的文件名 */
+  originalName?: string;
   elapsedMs?: number;
 }
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'avif']);
+
+/**
+ * 视频编码 fourcc → 大家看得懂的名字（v1.0.6）。
+ *
+ * 转码确认页要把「当前视频的编码格式」直接摆出来，用户才有判断依据 ——
+ * 只丢一个 `hvc1` 出去没人知道那是 HEVC，也就不知道到底该不该转。
+ */
+const VIDEO_CODEC_LABELS: Record<string, string> = {
+  avc1: 'H.264 (AVC)',
+  avc3: 'H.264 (AVC)',
+  hvc1: 'H.265 (HEVC)',
+  hev1: 'H.265 (HEVC)',
+  dvh1: 'Dolby Vision (HEVC)',
+  dvhe: 'Dolby Vision (HEVC)',
+  av01: 'AV1',
+  vp09: 'VP9',
+  vp08: 'VP8',
+  vvc1: 'H.266 (VVC)',
+  vvi1: 'H.266 (VVC)',
+  mp4v: 'MPEG-4 Part 2',
+  prores: 'Apple ProRes',
+};
+
+/** 把 fourcc 转成可读编码名；未知的直接大写原样返回，至少比空着强 */
+export function videoCodecLabel(codec: string): string {
+  const k = String(codec || '').trim().toLowerCase();
+  if (!k) return '';
+  return VIDEO_CODEC_LABELS[k] || k.toUpperCase();
+}
 
 /** 从对外标识（File_ID / 内部 id）取扩展名，小写、不含点 */
 export function extOf(nameOrFile: string): string {
@@ -117,6 +158,7 @@ export async function resolveMediaTarget(
       abs,
       metas,
       compressedBefore: !!rec.originalSize && rec.originalSize !== rec.size,
+      remoteKey: primary.remoteKey || '',
     },
   };
 }
@@ -191,11 +233,62 @@ async function commitEdit(
   return { md5 };
 }
 
+/**
+ * 把文件扩展名改成 .webp：磁盘物理名 + 副本 remoteKey + 原始文件名，三处一起改。
+ *
+ * 为什么只改这三处、**不改 FileRecord.name**：name 是 `/file/<name>` 的唯一锚点。
+ * 大多是 48 位随机串（不含扩展名），改不改都一样；但 WebDAV / S3 上传的文件
+ * 会带着上传时的路径当 name，动它等于把已签发的外链换掉。
+ *
+ * 物理文件用 rename 而不是「复制 + 删除」：同目录同一分区，rename 是原子的，
+ * 也不会因为磁盘空间不足而失败。
+ *
+ * 返回是否发生了改名；改名成功后会就地更新 target，让随后的 commitEdit 在新路径上算 md5。
+ */
+async function renameExtToWebp(target: MediaTarget): Promise<boolean> {
+  try {
+    const oldAbs = target.abs;
+    const dir = dirname(oldAbs);
+    const base = basename(oldAbs);
+    const stem = base.replace(/\.[A-Za-z0-9]{1,12}$/, '');
+    const newBase = `${stem}.webp`;
+    if (newBase === base) return false;
+    const newAbs = join(dir, newBase);
+    await fsp.rename(oldAbs, newAbs);
+
+    // remoteKey 可能带目录层级（2026/08/xxx.png），只替换最后一段
+    const newKey = target.remoteKey
+      ? target.remoteKey.replace(/[^/]+$/, newBase)
+      : newBase;
+    if (target.remoteKey) {
+      await prisma.fileCopy.updateMany({
+        where: { fileId: target.id, remoteKey: target.remoteKey },
+        data: { remoteKey: newKey },
+      });
+    }
+    const newOriginal = /\.([A-Za-z0-9]{1,12})$/.test(target.originalName || '')
+      ? target.originalName.replace(/\.[A-Za-z0-9]{1,12}$/, '.webp')
+      : `${target.originalName || stem}.webp`;
+    await prisma.fileRecord.update({
+      where: { id: target.id },
+      data: { originalName: newOriginal },
+    });
+
+    target.abs = newAbs;
+    target.remoteKey = newKey;
+    target.originalName = newOriginal;
+    target.ext = 'webp';
+    return true;
+  } catch (err) {
+    // 改名失败不影响字节已经转好——只是文件名还留着旧扩展名，记录一笔便于排查
+    appLog.warn('file', `转 WebP 后改扩展名失败：${target.name}`, (err as Error).message);
+    return false;
+  }
+}
+
 /* ==========================================================================
  * 一、裁剪（前端已经裁好并转成 PNG/JPEG 传上来，这里只负责按原格式重新编码）
- * ========================================================================== */
-
-export async function cropImage(
+ * ========================================================================== */export async function cropImage(
   target: MediaTarget,
   buffer: Buffer,
 ): Promise<MediaEditResult> {
@@ -394,10 +487,13 @@ export async function toWebp(
       : await pipeline.webp({ quality: 82, effort: 4 }).toBuffer();
     if (!buf.length) return { ok: false, message: 'WebP 转换结果为空' };
     /*
-     * 文件名与扩展名保持不变（外链不能变），只把 record.mime 改成 image/webp。
-     * 浏览器按 Content-Type 决定解码器，所以 .jpg 的地址返回 WebP 字节依然能正常显示。
+     * v1.0.6：字节写完顺手把扩展名改成 .webp（磁盘名 / remoteKey / originalName）。
+     * 外链不受影响 —— 同一版起签发外链默认不带扩展名，链接与格式彻底解耦。
+     * 顺序很重要：先落字节，再改名；改名会把 target.abs 指向新路径，
+     * 后面的 commitEdit 于是在新文件上算 md5，不会算到旧路径上。
      */
     await writeInPlace(target.abs, buf);
+    await renameExtToWebp(target);
     const { md5 } = await commitEdit(target, {
       size: buf.length,
       mime: 'image/webp',
@@ -405,7 +501,17 @@ export async function toWebp(
       height: meta.height,
       kind: lossless ? '转WebP(无损)' : '转WebP(有损)',
     });
-    return { ok: true, size: buf.length, width: meta.width, height: meta.height, md5, mime: 'image/webp', elapsedMs: Date.now() - started };
+    return {
+      ok: true,
+      size: buf.length,
+      width: meta.width,
+      height: meta.height,
+      md5,
+      mime: 'image/webp',
+      // 让前端知道名字变了（详情页要显示新的 .webp 文件名）
+      originalName: target.originalName,
+      elapsedMs: Date.now() - started,
+    };
   } catch (err) {
     return { ok: false, message: `转 WebP 失败：${(err as Error).message}`, elapsedMs: Date.now() - started };
   }

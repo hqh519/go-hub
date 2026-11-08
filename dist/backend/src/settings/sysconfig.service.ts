@@ -3,6 +3,7 @@ import { SettingsService } from './settings.service';
 import { PAGE_CONFIG_DEFAULTS } from './page-config';
 import { hashSecret, isHashedSecret } from '../common/secret';
 import { CryptoService } from '../common/crypto.service';
+import { DEFAULT_TAG_START, DEFAULT_TAG_STOP, DEFAULT_TAG_MAX_LEN } from '../common/tag-defaults';
 
 /** 深合并（数组直接替换，对象递归合并） */
 function deepMerge<T>(base: T, patch: any): T {
@@ -162,24 +163,33 @@ export class SysConfigService {
   }
 
   /**
-   * v1.0.5：把「从未动过标签规则」的老安装一次性抬到新默认值。
+   * v1.0.5 / v1.0.6：把「从未动过标签规则」的老安装一次性抬到新默认值。
    *
    * 为什么需要：`get()` 是「默认值 + 已保存值」深合并，老用户的库里有完整的一份
-   * `startChars='#' / stopChars=<长列表> / maxLen=14`，默认值改了也盖不掉。
-   * 这里只在**三项同时等于旧默认值**时才升级（说明用户真的没改过），
-   * 任何一项被改过就原样保留，不做静默覆盖。
+   * `startChars` / `stopChars` / `maxLen`，默认值改了也盖不掉。
+   *
+   * 判定原则：只搬「历史默认值」这一种已知形态，用户自己改过任何一项都原样保留。
+   * v1.0.6 起起始符/截断符改为纯符号串存储，所以 v1.0.5 存的 JSON 数组也要一并改写；
+   * 若只改默认常量而不同步库里的值，升级后设置页会显示 `["#","@","&"]` 而实际
+   * 生效的却是别的东西 —— 这正是「设置里看着对、实际没提取成功」的来源。
    */
   private upgradeLegacyTagRule(cfg: any) {
     const at = cfg && cfg.autoTag;
     if (!at) return cfg;
     const LEGACY_STOP =
       '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]';
-    if (at.startChars === '#' && at.stopChars === LEGACY_STOP && Number(at.maxLen) === 14 && at.markerEnabled === undefined) {
-      at.markerEnabled = true;
-      at.startChars = '["#","@","&"]';
-      at.stopChars = '["#","@","&","!","-","_"]';
-      at.maxLen = 10;
+    const START_DEFAULTS = ['#', '["#","@","&"]', DEFAULT_TAG_START];
+    const STOP_DEFAULTS = [LEGACY_STOP, '["#","@","&","!","-","_"]', DEFAULT_TAG_STOP];
+    const isStartDefault = START_DEFAULTS.includes(String(at.startChars ?? '').trim());
+    const isStopDefault = STOP_DEFAULTS.includes(String(at.stopChars ?? '').trim());
+    if (isStartDefault) at.startChars = DEFAULT_TAG_START;
+    if (isStopDefault) at.stopChars = DEFAULT_TAG_STOP;
+    // 限长只在「起止符都没动过」时才跟着升级，避免覆盖用户的自定义位数
+    if (isStartDefault && isStopDefault && [14, 10].includes(Number(at.maxLen))) {
+      at.maxLen = DEFAULT_TAG_MAX_LEN;
     }
+    // v1.0.5 新增的独立开关：老库没有这个字段，补成「启用」
+    if (at.markerEnabled === undefined) at.markerEnabled = true;
     return cfg;
   }
 

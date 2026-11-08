@@ -51,6 +51,8 @@ function rateLimiter() {
         const path = req.path || '';
         if (STATIC_EXT.test(path) || path.startsWith('/assets/'))
             return next();
+        if (path === '/dav' || path.startsWith('/dav/'))
+            return next();
         const rule = rules.find((r) => r.test(path, req.method));
         if (!rule)
             return next();

@@ -177,14 +177,21 @@ export function hasFileExt(id: string): boolean {
 /**
  * 生成对外链接末尾【应当追加】的扩展名后缀（含点；不需要追加时返回空串）。
  *
- * 规则：链接里已经有扩展名 → 一律不再追加（避免出现 `abc.png.jpg` 这种重复标识）；
- *       没有扩展名 → 追加原文件的扩展名，仅作「直观展示文件类型」用。
- * 后端按「去掉最后一段扩展名」查库，所以带不带扩展名都能正常访问。
+ * v1.0.6 起**恒返回空串** —— 所有签发外链默认不带扩展名。
+ *
+ * 为什么改：详情页支持把本地图片「转 WebP」，而转码后扩展名会从 .png 变成 .webp。
+ * 只要外链还带着扩展名，同一个文件的链接就会因为一次转码而失效（用户收藏/引用过的
+ * 地址全部 404）。扩展名在 `/file/<标识>` 里本来就只是装饰 ——
+ * 服务端按下标剥掉最后一段扩展名查库，带与不带都能访问（见 files.controller.ts
+ * 的 nameCandidates）。干脆默认不生成，链接从此与文件格式解耦，转多少次都不变。
+ *
+ * 保留函数与参数，是为了不改动所有调用点：调用处仍可写成
+ * `${prefix}${encodePath(id)}${extSuffixFor(id, name)}`，只是拼出来是空串。
  */
 export function extSuffixFor(id: string, originalName: string): string {
-  if (hasFileExt(id)) return '';
-  const m = /\.([A-Za-z0-9]{1,12})$/.exec(String(originalName || ''));
-  return m ? `.${m[1].toLowerCase()}` : '';
+  void id;
+  void originalName;
+  return '';
 }
 
 export function formatSize(bytes: number): string {

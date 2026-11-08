@@ -21,6 +21,7 @@ const tags_1 = require("../common/tags");
 const crypto_service_1 = require("../common/crypto.service");
 const settings_service_1 = require("../settings/settings.service");
 const sysconfig_service_1 = require("../settings/sysconfig.service");
+const tag_defaults_1 = require("../common/tag-defaults");
 const channels_controller_1 = require("../channels/channels.controller");
 const storage_channel_service_1 = require("../storage/storage-channel.service");
 const adapter_factory_1 = require("../adapters/adapter.factory");
@@ -430,8 +431,8 @@ let UploadService = class UploadService {
                     placeholders: at.placeholders === undefined ? UploadService_1.DEFAULT_TAG_PLACEHOLDERS : String(at.placeholders ?? ''),
                     extract: at.extract === undefined ? '' : String(at.extract ?? ''),
                     markerEnabled: at.markerEnabled === undefined ? true : !(at.markerEnabled === false || String(at.markerEnabled) === 'false'),
-                    startChars: at.startChars === undefined ? UploadService_1.DEFAULT_TAG_START : String(at.startChars ?? ''),
-                    stopChars: at.stopChars === undefined ? UploadService_1.DEFAULT_TAG_STOP : String(at.stopChars ?? ''),
+                    startChars: String(at.startChars ?? '').trim() || UploadService_1.DEFAULT_TAG_START,
+                    stopChars: String(at.stopChars ?? '').trim() || UploadService_1.DEFAULT_TAG_STOP,
                     maxLen: at.maxLen === undefined ? UploadService_1.DEFAULT_TAG_MAX_LEN : Math.max(0, Number(at.maxLen) || 0),
                 };
             }
@@ -506,15 +507,15 @@ let UploadService = class UploadService {
         }
     }
     static DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
-    static DEFAULT_TAG_START = '["#","@","&"]';
-    static DEFAULT_TAG_STOP = '["#","@","&","!","-","_"]';
-    static DEFAULT_TAG_MAX_LEN = 10;
+    static DEFAULT_TAG_START = tag_defaults_1.DEFAULT_TAG_START;
+    static DEFAULT_TAG_STOP = tag_defaults_1.DEFAULT_TAG_STOP;
+    static DEFAULT_TAG_MAX_LEN = tag_defaults_1.DEFAULT_TAG_MAX_LEN;
     static parseMarkerList(raw, keepEmpty = false) {
         const s = String(raw || '').trim();
         if (!s)
             return [];
         let items = [];
-        if (s.startsWith('[')) {
+        if (s.startsWith('[') && s.endsWith(']')) {
             try {
                 const j = JSON.parse(s);
                 if (Array.isArray(j))
@@ -525,7 +526,7 @@ let UploadService = class UploadService {
             }
         }
         if (!items.length)
-            items = s.split(/[,，;；\s]+/);
+            items = Array.from(s);
         const cleaned = items.map((v) => String(v ?? '').trim());
         return Array.from(new Set(keepEmpty ? cleaned : cleaned.filter(Boolean)));
     }

@@ -106,9 +106,38 @@ model User {
   // 每次刷新在数组里随机取一张（前端 backgroundManager 统一处理）。
   uploadBkImg     String   @default("")
   adminBkImg      String   @default("")
+  // ---- 对外 WebDAV 授权（v1.0.6）----
+  // webdavEnabled：管理员在「用户管理 → 编辑账户 → 管理员操作」里开启后，
+  //   该账户才能创建 WebDAV 渠道；总开关在「系统管理 → 安全设置 → 对外 WebDAV」。
+  //   管理员账户一律禁止使用 WebDAV（需求约定：只能通过普通用户启用）。
+  // webdavMax：最多可创建的 WebDAV 渠道数（默认 2）。
+  webdavEnabled   Boolean  @default(false)
+  webdavMax       Int      @default(2)
   createdAt       DateTime @default(now())
 
   @@map("users")
+}
+
+// 用户自建的 WebDAV 渠道（v1.0.6）。
+//
+// 与 Channel 完全无关：它只描述「某个账户对外暴露的一块网盘目录」。
+//   · 登录名 = username，密码 = accessKey（16 位随机串），不再支持用账户密码登录；
+//   · 文件落盘位置固定为 webdav/{username}/{path}，原样存、不做任何处理；
+//   · path 一经保存不可修改（改路径等于把已有文件全部弃养），同一账户下不可重复；
+//   · name 可改，同一账户下不可重复。
+model WebDavChannel {
+  id        String   @id @default(cuid())
+  username  String
+  name      String
+  path      String // 多级路径，如「文件/工作」，去掉首尾斜杠存储
+  accessKey String   @unique
+  note      String   @default("")
+  createdAt DateTime @default(now())
+
+  @@unique([username, name])
+  @@unique([username, path])
+  @@index([username])
+  @@map("webdav_channels")
 }
 
 // 系统设置（键值对；安全设置/页面设置/上传设置等各 section 各占一行）

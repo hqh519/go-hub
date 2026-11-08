@@ -45,7 +45,9 @@ import {
   resolveMediaTarget,
   toWebp,
   transcodeInPlace,
+  videoCodecLabel,
 } from './media-edit';
+import { probeVideoCodecFile } from '../common/compress';
 import { appLog } from '../common/app-log';
 import { frontendAppDir } from '../common/project-paths';
 import { qqwryStatus, saveQqwry } from '../common/qqwry';
@@ -5269,6 +5271,22 @@ export class ManageController {
     if (!target) return { success: false, message: reason || '文件不可编辑' };
     const kind = ManageController.mediaKindOf(target.mime, target.ext);
     const isWebp = target.ext === 'webp' || String(target.mime || '').toLowerCase() === 'image/webp';
+    /*
+     * v1.0.6：视频直接把当前编码格式探出来给前端。
+     * 转码确认页原先只有一句「要转成 H.264 吗」，用户看不到源编码就得盲选；
+     * 这里顺手把 fourcc 翻成 H.264 / H.265 这类可读名字。
+     * ffprobe 不可用时返回空串（前端会隐藏这一行），不影响其它能力。
+     */
+    let videoCodec = '';
+    let videoCodecLabelText = '';
+    if (kind === 'video') {
+      try {
+        videoCodec = await probeVideoCodecFile(target.abs);
+        videoCodecLabelText = videoCodecLabel(videoCodec);
+      } catch {
+        videoCodec = '';
+      }
+    }
     return {
       success: true,
       data: {
@@ -5279,6 +5297,9 @@ export class ManageController {
         size: target.size,
         originalSize: target.originalSize,
         kind,
+        /** fourcc 原值（avc1 / hvc1 …）与可读名，供转码确认页展示 */
+        videoCodec,
+        videoCodecLabel: videoCodecLabelText,
         /** 之前是否压缩过 —— 前端据此弹「二次确认」 */
         compressedBefore: target.compressedBefore,
         /** 固化存储地址（详情页「源」一栏与后端的本地磁盘地址保持一致） */
