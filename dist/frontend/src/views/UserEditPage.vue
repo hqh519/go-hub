@@ -323,15 +323,27 @@
             · 管理员在下方「管理员操作」里给该账户开了「启用 WebDAV 功能」。
           管理员账户永远看不到本模块（后端也禁止管理员使用 WebDAV）。
         -->
-        <el-card v-if="webdavModuleVisible" id="webdav" shadow="never" class="edit-card">
+        <el-card v-if="isPlainUserAccount" id="webdav" shadow="never" class="edit-card">
           <template #header>
             <span class="card-title">{{ $t('userEdit.webdavTitle') }}</span>
             <el-tag size="small" type="info" class="card-tag">
               {{ $t('userEdit.webdavQuota', { n: webdavChannels.length, max: webdavMax }) }}
             </el-tag>
           </template>
+          <!--
+              v1.0.7：把「为什么模块/功能用不了」直接写在卡片里。
+              之前卡片靠三层条件（普通用户 + 全局开关 + 本账户授权）同时为真才渲染，
+              任何一层不满足都整卡消失，管理员只能猜。
+              现在卡片恒显示，缺哪一层就提示哪一层。
+          -->
+          <p v-if="!webdavGlobalEnabled" class="hint webdav-blocked-hint">
+            <font-awesome-icon icon="exclamation-circle" /> {{ $t('userEdit.webdavGlobalOff') }}
+          </p>
+          <p v-else-if="!form.webdavEnabled" class="hint webdav-blocked-hint">
+            <font-awesome-icon icon="exclamation-circle" /> {{ $t('userEdit.webdavAccountOff') }}
+          </p>
           <div class="instance-actions">
-            <el-button size="small" type="primary" plain :disabled="webdavFull" @click="openCreateWebdav">
+            <el-button size="small" type="primary" plain :disabled="webdavFull || !webdavModuleVisible" @click="openCreateWebdav">
               {{ $t('userEdit.webdavCreate') }}
             </el-button>
             <el-button size="small" @click="copyWebdavMount">
@@ -935,7 +947,9 @@ export default {
             try {
                 const res = await axios.get('/api/manage/sysConfig/others', { withCredentials: true });
                 const cfg = res.data || {};
-                this.webdavGlobalEnabled = cfg?.webdav?.enabled === true;
+                // v1.0.7：布尔与字符串两种存法都认（老库 / 手改配置里出现 'true' 时不再误判为关闭）
+                const flag = cfg?.webdav?.enabled;
+                this.webdavGlobalEnabled = flag === true || String(flag) === 'true';
             } catch {
                 this.webdavGlobalEnabled = false;
             }
@@ -1970,6 +1984,16 @@ export default {
 .hint.inline { margin: 0; }
 /* v1.0.6：WebDAV 管理模块 */
 .webdav-mount-hint { margin: 0 0 12px; word-break: break-all; }
+/* v1.0.7：卡片内的「为什么用不了」提示（全局开关未开 / 账户未授权） */
+.webdav-blocked-hint {
+    margin: 0 0 12px;
+    padding: 6px 10px;
+    border-left: 3px solid var(--el-color-warning);
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning);
+    border-radius: 2px;
+    line-height: 1.6;
+}
 .webdav-path {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;

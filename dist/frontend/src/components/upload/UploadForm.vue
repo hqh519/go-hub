@@ -2941,7 +2941,8 @@ methods: {
      *
      * 优先 fetch 成 Blob 再存盘：这样跨域图片也能真的落到本地
      * （直接给 <a download> 一个跨域地址，浏览器会忽略 download 属性、改成跳转预览）。
-     * fetch 被 CORS 挡住时退回「新标签打开」，至少用户还能手动另存。
+     * v1.0.7：fetch 被 CORS 挡住时不再 `window.open`（那正是「点了下载反而跳到文件页面」的原因），
+     * 改为交给本站 `/api/manage/download` 中转 —— 同源请求 + attachment 头，必然落到本地。
      */
     async downloadPastedLinks() {
         const urls = extractUrlsFromText(this.pastedUrls);
@@ -2952,13 +2953,14 @@ methods: {
         let okCount = 0;
         for (let i = 0; i < urls.length; i += 1) {
             const url = urls[i];
+            const name = this.guessDownloadName(url, i);
             try {
                 const res = await fetch(url, { credentials: 'omit' });
                 if (!res.ok) throw new Error(String(res.status));
                 const blob = await res.blob();
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
-                a.download = this.guessDownloadName(url, i);
+                a.download = name;
                 a.rel = 'noopener';
                 document.body.appendChild(a);
                 a.click();
@@ -2966,8 +2968,14 @@ methods: {
                 window.setTimeout(() => URL.revokeObjectURL(a.href), 5000);
                 okCount += 1;
             } catch {
-                // 跨域 / 需鉴权 / 服务端不允许：退回新标签打开
-                window.open(url, '_blank', 'noopener');
+                // 跨域 / 需鉴权 / 服务端不允许：走本站中转（同源 + attachment，浏览器直接存盘）
+                const a = document.createElement('a');
+                a.href = `/api/manage/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`;
+                a.rel = 'noopener';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                okCount += 1;
             }
             // 多个链接之间留点间隔，避免被浏览器判定为批量下载而拦截
             if (i < urls.length - 1) await new Promise((r) => window.setTimeout(r, 300));

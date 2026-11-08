@@ -313,6 +313,11 @@
                          不会再被后台缓冲的 canplay 触发复活），重新打开时重建元素并主动起播 -->
                     <video v-if="isVideo && mediaMounted" ref="detailVideo" :src="fileLink" muted loop class="video-preview" @click="openImageLink" @canplay="startDetailVideo"></video>
                     <audio v-else-if="isAudio && mediaMounted" ref="detailAudio" :src="fileLink" controls class="audio-preview" :muted="videoMuted" @canplay="startDetailAudio"></audio>
+                    <!--
+                        v1.0.7：图片预览加「缩略图占位」—— 先用 ?thumb=640 的小图秒出一张，
+                        原图到了再无缝替换。外网带宽紧张时，原来是一整块空白转圈，
+                        现在至少立刻能看到画面，观感差别很大。
+                    -->
                     <el-image
                         v-else-if="isImage"
                         :src="fileLink"
@@ -320,7 +325,14 @@
                         class="image-preview"
                         title="在新标签页打开"
                         @click="openImageLink"
-                    ></el-image>
+                    >
+                        <template #placeholder>
+                            <img v-if="thumbLink" :src="thumbLink" alt="" class="image-preview-thumb"/>
+                        </template>
+                        <template #error>
+                            <img v-if="thumbLink" :src="thumbLink" alt="" class="image-preview-thumb"/>
+                        </template>
+                    </el-image>
                     <font-awesome-icon v-else icon="file" class="file-icon-detail"></font-awesome-icon>
                 </template>
             </div>
@@ -1104,6 +1116,17 @@ export default {
         /** 二维码内容：优先用签发外链（原始链接），没有则退回当前文件链接 */
         qrValue() {
             return String(this.urls?.originUrl || this.fileLink || '').trim();
+        },
+        /**
+         * v1.0.7：详情页图片预览的「占位小图」地址 —— 在预览地址后面补一个 thumb=640。
+         * 走的是后台内部缩略图通道（服务端 sharp 出图、强缓存），体积通常只有原图的几十分之一，
+         * 外网打开详情页时先用它出画面，原图在后台继续加载。
+         */
+        thumbLink() {
+            const url = String(this.fileLink || '').trim();
+            if (!url) return '';
+            if (/[?&]thumb=/.test(url)) return url;
+            return `${url}${url.includes('?') ? '&' : '?'}thumb=640`;
         },
         visible: {
             get() { return this.modelValue; },
@@ -2938,6 +2961,16 @@ export default {
     max-width: 100%;
     max-height: 300px;
     object-fit: contain;
+}
+/* v1.0.7：占位小图 —— 与预览区同尺寸、轻微模糊，原图一到就被盖住 */
+.image-preview-thumb {
+    display: block;
+    max-width: 100%;
+    max-height: 300px;
+    object-fit: contain;
+    border-radius: 8px;
+    filter: blur(1px);
+    opacity: 0.9;
 }
 .file-icon-detail {
     font-size: 64px;

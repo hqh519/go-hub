@@ -343,6 +343,21 @@ let LinkController = class LinkController {
                 return;
             }
         }
+        const etag = `W/"${total.toString(16)}-${Math.round(stat.mtimeMs).toString(16)}"`;
+        const lastModified = new Date(stat.mtimeMs).toUTCString();
+        res.setHeader('ETag', etag);
+        res.setHeader('Last-Modified', lastModified);
+        if (!range) {
+            const inm = String(req.headers['if-none-match'] || '').trim();
+            const ims = String(req.headers['if-modified-since'] || '').trim();
+            const etagHit = inm && inm.split(',').some((v) => v.trim() === etag || v.trim() === '*');
+            const timeHit = !inm && ims && Date.parse(ims) >= Math.floor(stat.mtimeMs / 1000) * 1000;
+            if (etagHit || timeHit) {
+                res.status(304);
+                res.removeHeader('Content-Length');
+                return res.end();
+            }
+        }
         res.setHeader('Content-Length', String(total));
         (0, node_fs_1.createReadStream)(abs).on('error', () => res.end()).pipe(res);
     }
@@ -360,7 +375,24 @@ let LinkController = class LinkController {
                 const headers = { 'User-Agent': 'GoHub-proxy', ...(extraHeaders || {}) };
                 if (range)
                     headers['Range'] = String(range);
+                const inmReq = String(req.headers['if-none-match'] || '').trim();
+                const imsReq = String(req.headers['if-modified-since'] || '').trim();
+                if (inmReq)
+                    headers['If-None-Match'] = inmReq;
+                else if (imsReq)
+                    headers['If-Modified-Since'] = imsReq;
                 const upstream = await fetch(cand.url, { headers, signal: ctrl.signal, redirect: 'follow' });
+                if (upstream.status === 304) {
+                    for (const h of ['etag', 'last-modified', 'cache-control']) {
+                        const v = upstream.headers.get(h);
+                        if (v)
+                            res.setHeader(h, v);
+                    }
+                    clearTimeout(timer);
+                    req.off('close', onClose);
+                    res.status(304).end();
+                    return;
+                }
                 if (!upstream.ok && upstream.status !== 206) {
                     lastErr = `${cand.label} → HTTP ${upstream.status}`;
                     clearTimeout(timer);
@@ -3537,6 +3569,55 @@ let ManageController = ManageController_1 = class ManageController {
         }
         return changed;
     }
+    async proxyDownload(req, res, url, name) {
+        const raw = String(url || '').trim();
+        if (!/^https?:\/\//i.test(raw)) {
+            throw new common_1.BadRequestException('只支持 http / https 链接');
+        }
+        let target;
+        try {
+            target = new URL(raw);
+        }
+        catch {
+            throw new common_1.BadRequestException('链接格式不正确');
+        }
+        const guess = decodeURIComponent((target.pathname || '').split('/').filter(Boolean).pop() || '') || 'download';
+        const fileName = String(name || guess).replace(/[\\/:*?"<>|\r\n]/g, '_').slice(0, 120) || 'download';
+        let upstream;
+        try {
+            upstream = await fetch(target.toString(), {
+                redirect: 'follow',
+                headers: { 'User-Agent': 'GoHub/1.0.7 (+link-download)' },
+                signal: AbortSignal.timeout(60000),
+            });
+        }
+        catch (err) {
+            throw new common_1.BadRequestException(`远端文件获取失败：${err.message}`);
+        }
+        if (!upstream.ok || !upstream.body) {
+            throw new common_1.BadRequestException(`远端返回 ${upstream.status}`);
+        }
+        const len = Number(upstream.headers.get('content-length') || 0);
+        if (len > 2 * 1024 * 1024 * 1024)
+            throw new common_1.BadRequestException('文件超过 2GB，请直接打开原链接下载');
+        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+        if (len > 0)
+            res.setHeader('Content-Length', String(len));
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+        res.setHeader('Cache-Control', 'no-store');
+        app_log_1.appLog.info('file', '链接下载中转', `${target.origin}${target.pathname}`.slice(0, 200), this.clientIpOf(req));
+        const body = node_stream_1.Readable.fromWeb(upstream.body);
+        body.on('error', () => {
+            if (!res.headersSent)
+                res.status(502);
+            res.end();
+        });
+        body.pipe(res);
+    }
+    clientIpOf(req) {
+        const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+        return (fwd || req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+    }
     async convertOptions(req, id) {
         const me = (0, auth_guard_1.currentSession)(req)?.user || '';
         const rec = await prisma_1.prisma.fileRecord.findFirst({
@@ -4216,6 +4297,16 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object, Object]),
     __metadata("design:returntype", Promise)
 ], ManageController.prototype, "createFolder", null);
+__decorate([
+    (0, common_1.Get)('download'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Res)()),
+    __param(2, (0, common_1.Query)('url')),
+    __param(3, (0, common_1.Query)('name')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, String, String]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "proxyDownload", null);
 __decorate([
     (0, common_1.Get)('convert/options/:id'),
     __param(0, (0, common_1.Req)()),

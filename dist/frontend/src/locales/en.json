@@ -1628,6 +1628,7 @@
         "tagAddSettings": "File tag rules",
         "tagAddSettingsTooltip": "Tags added automatically after a successful upload, according to the rules below. All three rule types can be combined and results are de-duplicated (20 chars per tag, 30 tags at most). Leave everything empty to keep only the tags the caller passes explicitly (e.g. \"local upload\" / \"video snapshot\").",
         "tagEnabled": "Enable automatic tags",
+        "tagRuleOffHint": "Automatic tagging is off: the rules below are still saved, but no tags are added after upload until you turn the switch above on.",
         "tagPlaceholders": "Placeholders",
         "tagPlaceholdersTooltip": "Compose the tag names to add from placeholders. Separate with commas or newlines — each segment becomes one tag.<br>Supported: {mime} file type (image / video / audio), {ext} extension without the dot, {channelName} channel type short name, {uploadSource} upload source, {y} year (4 digits), {m} month (2 digits), {d} day (2 digits), {width} width, {height} height.<br>Placeholders with no value (e.g. {width} for a non-image) are skipped, so no empty or half-built tags are produced.",
         "tagPlaceholdersPlaceholder": "{mime},{ext},{channelName},{uploadSource},{y}",
@@ -1846,7 +1847,9 @@
         "webdavEnable": "Enable WebDAV",
         "webdavMaxLabel": "Channel limit",
         "webdavMaxHint": "How many WebDAV channels this account may create (default 2).",
-        "webdavAdminBlocked": "Admin accounts cannot use WebDAV; enable it on a normal account"
+            "webdavGlobalOff": "The global WebDAV switch in System management -> Security is still off. Turn it on to create channels here",
+    "webdavAccountOff": "WebDAV is not enabled for this account yet: switch on Enable WebDAV under Admin actions below and save",
+"webdavAdminBlocked": "Admin accounts cannot use WebDAV; enable it on a normal account"
     },
     "userManage": {
         "noticeTitle": "User announcement",
@@ -2179,6 +2182,7 @@
         "snapshotUploadTitle": "Upload snapshot",
         "snapshotUploadAsk": "Snapshot saved as \"{name}\". Upload it to the image bed?",
         "snapshotUploadYes": "Upload",
+        "snapshotTargetHint": "The snapshot goes to the channel / instance / folder picked here; leave a field empty to use the global default.",
         "snapshotUploadDone": "Snapshot uploaded to the image bed",
         "snapshotUploadFailed": "Failed to upload the snapshot, please try again later",
         "copyText": "Copy full text",

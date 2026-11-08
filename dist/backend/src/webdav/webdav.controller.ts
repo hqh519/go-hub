@@ -33,6 +33,7 @@ import {
   channelRoot,
   cleanRelPath,
   ensureDir,
+  invalidateDavCache,
   listDir,
   mimeOf,
   resolveInside,
@@ -217,6 +218,16 @@ export class WebDavController {
     }
   }
 
+  /** v1.0.7：字符串 → 32 位 FNV-1a 十六进制（给 PROPFIND 生成 ETag 用） */
+  private bodyTag(text: string): string {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < text.length; i += 1) {
+      h ^= text.charCodeAt(i);
+      h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+    }
+    return h.toString(16).padStart(8, '0');
+  }
+
   /* ------------------------------------------------------------------ */
   /* PROPFIND                                                            */
   /* ------------------------------------------------------------------ */
@@ -256,11 +267,25 @@ export class WebDavController {
       }
     }
 
+    const body = `<?xml version="1.0" encoding="utf-8"?>\n<D:multistatus xmlns:D="DAV:">\n${entries.join('\n')}\n</D:multistatus>`;
+    /*
+     * v1.0.7：给目录清单加 ETag + 条件请求。
+     *
+     * 目录内容一变（mtime / 条目数 / 各条目大小与时间任一变化）ETag 必变，
+     * 所以这里直接对响应体做一次轻量哈希（FNV-1a），不额外 stat、也不占内存。
+     * 客户端（同步工具、Finder 预取）带 If-None-Match 回来时，命中就回 304，
+     * 连 XML 都不用再序列化一遍。
+     */
+    const etag = `"dav-${this.bodyTag(body)}"`;
     res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('ETag', etag);
+    const inm = String(req.headers['if-none-match'] || '').trim();
+    if (inm && inm.split(',').some((v) => v.trim() === etag)) {
+      res.status(304).end();
+      return;
+    }
     res.status(207);
-    return res.send(
-      `<?xml version="1.0" encoding="utf-8"?>\n<D:multistatus xmlns:D="DAV:">\n${entries.join('\n')}\n</D:multistatus>`,
-    );
+    return res.send(body);
   }
 
   /* ------------------------------------------------------------------ */
@@ -420,6 +445,8 @@ export class WebDavController {
       return res.status(code === 'ENOSPC' ? 507 : 500).send(msg);
     }
     // 201 = 新建，204 = 覆盖（标准 WebDAV 语义）
+    // v1.0.7：写入成功 → 目录列举缓存立即失效（否则同秒内的 PROPFIND 会看到旧列表）
+    invalidateDavCache();
     return res.status(exists ? 204 : 201).send('');
   }
 
@@ -441,6 +468,7 @@ export class WebDavController {
       .catch(() => false);
     if (exists) return res.status(405).send('已存在');
     await ensureDir(abs);
+    invalidateDavCache();
     return res.status(201).send('');
   }
 
@@ -453,6 +481,7 @@ export class WebDavController {
       .catch(() => false);
     if (!exists) return res.status(404).send('Not Found');
     await fsp.rm(abs, { recursive: true, force: true });
+    invalidateDavCache();
     return res.status(204).send('');
   }
 
@@ -522,6 +551,8 @@ export class WebDavController {
         throw err;
       }
     }
+    // v1.0.7：MOVE / COPY 同样要让目录缓存失效（目标目录多了一项）
+    invalidateDavCache();
     return res.status(destExists ? 204 : 201).send('');
   }
 }

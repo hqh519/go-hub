@@ -99,7 +99,17 @@
                 <el-form-item :label="$t('sysOthers.tagEnabled')">
                     <el-switch v-model="autoTag.enabled"/>
                 </el-form-item>
-                <template v-if="autoTag.enabled">
+                <!--
+                    v1.0.7：三个规则块改为**恒定渲染**，不再用 v-if 跟着开关一起消失。
+                    旧写法 `v-if="autoTag.enabled"` 在开关为关闭时会把「设置占位符 / 提取指定内容 /
+                    按表达式提取文件名内容」整块从 DOM 里摘掉，页面上只剩标题和一行开关，
+                    看起来就像「配置项全丢了」，也无从查看/预填规则。
+                    现在开关只决定「保存后是否生效」，规则始终可见、可编辑、可保存。
+                -->
+                <div class="tag-rule-groups" :class="{ 'is-off': !autoTag.enabled }">
+                    <p v-if="!autoTag.enabled" class="tag-rule-off-hint">
+                        {{ $t('sysOthers.tagRuleOffHint') }}
+                    </p>
                     <!-- 设置占位符 -->
                     <el-form-item>
                         <template #label>
@@ -183,7 +193,7 @@
                             </el-checkbox>
                         </div>
                     </el-form-item>
-                </template>
+                </div>
             </el-form>
 
             <!-- 上传相关配置（原「网页设置 → 客户端设置」迁移至此，统一归到这一块） -->
@@ -592,6 +602,20 @@ mounted() {
 </script>
 
 <style scoped>
+/* v1.0.7：规则块恒显；开关关闭时只做一条轻提示，不隐藏、不置灰禁用 */
+.tag-rule-groups {
+    width: 100%;
+}
+.tag-rule-off-hint {
+    margin: 0 0 8px;
+    padding: 6px 10px;
+    border-left: 3px solid var(--el-color-warning);
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning);
+    font-size: 12px;
+    line-height: 1.6;
+    border-radius: 2px;
+}
 /* v1.0.1：文件标签添加设置 —— 占位符输入框 + 快插按钮 */
 .tag-rule-field {
     width: 100%;

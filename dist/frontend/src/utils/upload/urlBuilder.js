@@ -18,22 +18,21 @@ export function fileExt(metadata) {
 }
 
 /**
- * 给外链末尾补上扩展名（仅用于「直观展示文件类型」）。
- * 后端 /file/:name 会剥掉最后一段扩展名再查库，因此带不带扩展名都能访问，
- * 也不会影响代理 / 302 重定向 / 访问源切换。
+ * v1.0.7：**不再**给外链末尾补扩展名 —— 签发外链默认不带扩展名。
+ *
+ * 扩展名在 /file/<标识> 里从来只是装饰（服务端剥掉最后一段再查库，带不带都能访问），
+ * 但带上它会在「转 WebP / 转码」后被换掉，导致用户收藏或引用过的地址失效。
+ * 现在统一不生成，链接与文件格式彻底解耦；手动加上扩展名的旧链接仍然照常可用。
+ *
+ * 保留函数签名（调用点很多，且外部渠道的原始外链也可能经过这里），
+ * 只是原样返回。metadata 参数保留以便将来需要时再启用。
  * @param {string} url 形如 https://host/file/<File_ID>
  * @param {object} metadata
  * @returns {string}
  */
 export function withExt(url, metadata) {
-    if (!url) return url
-    const ext = fileExt(metadata)
-    if (!ext) return url
-    const [base, hash = ''] = String(url).split('#')
-    const [path, query = ''] = base.split('?')
-    if (/\.(jpg|jpeg|png|gif|webp|bmp|mp4|webm|mov|m4v|mp3|m4a|aac|ogg)$/i.test(path)) return url
-    const next = `${path}.${ext}${query ? `?${query}` : ''}${hash ? `#${hash}` : ''}`
-    return next
+    void metadata
+    return url
 }
 
 /**

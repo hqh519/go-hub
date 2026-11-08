@@ -504,6 +504,30 @@ export class LinkController {
         return;
       }
     }
+    /*
+     * v1.0.7：ETag / Last-Modified + 条件请求（304）。
+     *
+     * 为什么加：灯箱来回切、详情页重复打开、同一张图在卡片/详情/预览里各出现一次时，
+     * 浏览器手里其实已经有这份字节了。之前不返回 ETag / Last-Modified，
+     * 浏览器只能按 heuristic 猜，外网带宽一紧就表现为「每开一次都重新转圈」。
+     * 这里用「文件大小 + 修改时间」做弱 ETag（无需读内容，零 IO 成本），
+     * 命中 If-None-Match / If-Modified-Since 直接回 304，流量归零。
+     */
+    const etag = `W/"${total.toString(16)}-${Math.round(stat.mtimeMs).toString(16)}"`;
+    const lastModified = new Date(stat.mtimeMs).toUTCString();
+    res.setHeader('ETag', etag);
+    res.setHeader('Last-Modified', lastModified);
+    if (!range) {
+      const inm = String(req.headers['if-none-match'] || '').trim();
+      const ims = String(req.headers['if-modified-since'] || '').trim();
+      const etagHit = inm && inm.split(',').some((v) => v.trim() === etag || v.trim() === '*');
+      const timeHit = !inm && ims && Date.parse(ims) >= Math.floor(stat.mtimeMs / 1000) * 1000;
+      if (etagHit || timeHit) {
+        res.status(304);
+        res.removeHeader('Content-Length');
+        return res.end();
+      }
+    }
     res.setHeader('Content-Length', String(total));
     createReadStream(abs).on('error', () => res.end()).pipe(res);
   }
@@ -529,7 +553,28 @@ export class LinkController {
       try {
         const headers: Record<string, string> = { 'User-Agent': 'GoHub-proxy', ...(extraHeaders || {}) };
         if (range) headers['Range'] = String(range);
+        /*
+         * v1.0.7：把浏览器的条件请求头透传给上游。
+         * 灯箱来回切 / 详情页重复打开时，浏览器会带 If-None-Match / If-Modified-Since，
+         * 上游回 304 就说明字节没变 —— 直接回 304，整条链路一个字节都不传。
+         */
+        const inmReq = String(req.headers['if-none-match'] || '').trim();
+        const imsReq = String(req.headers['if-modified-since'] || '').trim();
+        if (inmReq) headers['If-None-Match'] = inmReq;
+        else if (imsReq) headers['If-Modified-Since'] = imsReq;
         const upstream = await fetch(cand.url, { headers, signal: ctrl.signal, redirect: 'follow' });
+
+        // 304：上游确认没变化 —— 透传缓存校验头后直接结束
+        if (upstream.status === 304) {
+          for (const h of ['etag', 'last-modified', 'cache-control']) {
+            const v = upstream.headers.get(h);
+            if (v) res.setHeader(h, v);
+          }
+          clearTimeout(timer);
+          req.off('close', onClose);
+          res.status(304).end();
+          return;
+        }
 
         if (!upstream.ok && upstream.status !== 206) {
           lastErr = `${cand.label} → HTTP ${upstream.status}`;
@@ -4754,6 +4799,79 @@ export class ManageController {
    * （与 /api/manage/list 的可见范围保持一致，避免泄露他人目录路径）。
    * 返回 { success: true, data: ['2026', '2026/10', '登记文件', ...] }（已按路径排序）。
    */
+  /**
+   * v1.0.7：链接下载中转（首页「链接」模式 →「其他」→「下载」）。
+   *
+   * 为什么需要服务端中转：
+   *   前端把远程链接 fetch 成 Blob 再存盘是最干净的做法，但一旦目标站点没有开 CORS，
+   *   浏览器读不到响应体，只能退化成 `window.open(url)` —— 用户看到的就是
+   *   「点了下载却跳到文件的页面」。这里由服务端（同源、无 CORS 限制）把远端文件
+   *   流式取回，带 `Content-Disposition: attachment` 直接吐给浏览器，必然触发下载。
+   *
+   * 与「上传」的分工：本接口只负责把字节交给浏览器，不落盘、不入库、不打标签。
+   * 限制：仅 http/https；60s 连接超时；流式转发不占内存（背压交给 Node 管道）。
+   */
+  @Get('download')
+  async proxyDownload(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('url') url?: string,
+    @Query('name') name?: string,
+  ) {
+    const raw = String(url || '').trim();
+    if (!/^https?:\/\//i.test(raw)) {
+      throw new BadRequestException('只支持 http / https 链接');
+    }
+    let target: URL;
+    try {
+      target = new URL(raw);
+    } catch {
+      throw new BadRequestException('链接格式不正确');
+    }
+    // 文件名：优先调用方给的（前端已从路径里猜好），否则取路径最后一段
+    const guess = decodeURIComponent((target.pathname || '').split('/').filter(Boolean).pop() || '') || 'download';
+    const fileName = String(name || guess).replace(/[\\/:*?"<>|\r\n]/g, '_').slice(0, 120) || 'download';
+
+    let upstream: globalThis.Response;
+    try {
+      upstream = await fetch(target.toString(), {
+        redirect: 'follow',
+        headers: { 'User-Agent': 'GoHub/1.0.7 (+link-download)' },
+        signal: AbortSignal.timeout(60000),
+      });
+    } catch (err) {
+      throw new BadRequestException(`远端文件获取失败：${(err as Error).message}`);
+    }
+    if (!upstream.ok || !upstream.body) {
+      throw new BadRequestException(`远端返回 ${upstream.status}`);
+    }
+    // 大小上限：中转只为「下载到本地」，超过 2GB 的链接不属于这个场景
+    const len = Number(upstream.headers.get('content-length') || 0);
+    if (len > 2 * 1024 * 1024 * 1024) throw new BadRequestException('文件超过 2GB，请直接打开原链接下载');
+
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+    if (len > 0) res.setHeader('Content-Length', String(len));
+    // filename* 用 UTF-8 编码，中文名不会乱码；filename 作为老浏览器的兜底
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(fileName)}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+    appLog.info('file', '链接下载中转', `${target.origin}${target.pathname}`.slice(0, 200), this.clientIpOf(req));
+    const body = Readable.fromWeb(upstream.body as unknown as Parameters<typeof Readable.fromWeb>[0]);
+    body.on('error', () => {
+      if (!res.headersSent) res.status(502);
+      res.end();
+    });
+    body.pipe(res);
+  }
+
+  /** v1.0.7：取客户端 IP（日志用，代理后面优先 X-Forwarded-For） */
+  private clientIpOf(req: Request): string {
+    const fwd = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return (fwd || req.socket?.remoteAddress || '').replace(/^::ffff:/, '');
+  }
+
   /**
    * v1.0.3：文件转存（本地 ↔ 第三方）—— 候选目标渠道与当前状态。
    *

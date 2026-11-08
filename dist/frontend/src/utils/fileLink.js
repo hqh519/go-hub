@@ -46,11 +46,12 @@ export function getLinkPrefix() {
  *    不再追加 ext —— 否则会拼出 `photo.png.png`。
  */
 export function fileLink(name, ext = '') {
-  const raw = String(name ?? '');
-  const suffix = ext && !String(ext).startsWith('.') ? `.${ext}` : String(ext || '');
-  // name 已含扩展名（自带后缀或与目标后缀相同）→ 原样返回
-  if (!suffix || /\.[A-Za-z0-9]{1,12}$/.test(raw)) {
-    return `${getLinkPrefix()}${encodeURI(raw)}`;
-  }
-  return `${getLinkPrefix()}${encodeURI(raw)}${suffix}`;
+  /*
+   * v1.0.7：**第二个参数不再参与拼接** —— 签发外链默认不带扩展名。
+   * 旧的 `fileLink(id, '.jpg')` 调用点保持原样即可，拼出来就是 /file/<标识>。
+   * 扩展名在 /file/<标识> 里只是装饰（服务端剥掉最后一段再查库），
+   * 去掉之后链接不会再因为「转 WebP / 转码」换后缀而失效；手动带扩展名的旧链接照常可用。
+   */
+  void ext;
+  return `${getLinkPrefix()}${encodeURI(String(name ?? ''))}`;
 }

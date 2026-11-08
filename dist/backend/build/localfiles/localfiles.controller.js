@@ -329,19 +329,22 @@ let LocalFilesController = class LocalFilesController {
             enabled: true,
             source: 'default',
         };
-        const webdavCount = (await this.webdavOn())
-            ? await prisma_1.prisma.webDavChannel.count({ where: { username: me } })
-            : 0;
-        const webdavItem = webdavCount > 0
-            ? {
-                id: WEBDAV_VIRTUAL_ID,
-                code: 'WEBDAV',
-                name: WEBDAV_ROOT_NAME,
-                rootPath: path.join((0, webdav_storage_1.webdavRoot)(), me),
-                enabled: true,
-                source: 'webdav',
+        const webdavOn = await this.webdavOn();
+        let webdavItem = null;
+        if (webdavOn && me) {
+            const account = await prisma_1.prisma.user.findUnique({ where: { username: me }, select: { role: true, webdavEnabled: true } });
+            const allowed = account?.role === 'user' && account.webdavEnabled === true;
+            if (allowed) {
+                webdavItem = {
+                    id: WEBDAV_VIRTUAL_ID,
+                    code: 'WEBDAV',
+                    name: WEBDAV_ROOT_NAME,
+                    rootPath: path.join((0, webdav_storage_1.webdavRoot)(), me),
+                    enabled: true,
+                    source: 'webdav',
+                };
             }
-            : null;
+        }
         return { success: true, data: [mine, ...(webdavItem ? [webdavItem] : []), ...configured] };
     }
     async getSettings(req) {

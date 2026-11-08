@@ -181,7 +181,13 @@ export default {
             this.objectUrl = this.rawUrl;
             this.rotation = 0;
             this.natural = { w: 0, h: 0 };
-            this.sel = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+            /*
+             * v1.0.7：默认选区 = 整张图（不是原来的 80% 居中框）。
+             * 大多数人是进来「只转个方向」的，原来的 0.1/0.1/0.8/0.8 会让一次
+             * 旋转-保存变成「顺手裁掉四周 10%」，属于典型的误操作。
+             * 现在不主动框选就不会裁到任何像素；要裁剪自己拖四角。
+             */
+            this.sel = { x: 0, y: 0, w: 1, h: 1 };
         },
         /**
          * 旋转 90°（dir = -1 逆时针 / 1 顺时针）。
@@ -263,7 +269,13 @@ export default {
             this.disp = { left: (sw - w) / 2, top: (sh - h) / 2, w, h };
         },
         resetSelection() {
-            this.sel = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+            // v1.0.7：重置 = 回到整图选区（与打开时的默认一致）
+            this.sel = { x: 0, y: 0, w: 1, h: 1 };
+        },
+        /** v1.0.7：当前选区是否等于整张图（此时「保存」等于不裁剪） */
+        isFullSelection() {
+            const s = this.sel;
+            return s.x <= 0.002 && s.y <= 0.002 && s.w >= 0.996 && s.h >= 0.996;
         },
         /** 指针坐标 → 图片归一化坐标（Pointer Events 自带 clientX/Y，鼠标触控统一） */
         toNorm(evt) {
@@ -330,6 +342,24 @@ export default {
             window.removeEventListener('pointerup', this.onPointerUp);
             window.removeEventListener('pointercancel', this.onPointerUp);
         },
+        /**
+         * v1.0.7：把「已旋转的 blob URL」变回 File —— 只转方向时直接上传它，不重绘。
+         * 文件名沿用原名的基名 + blob 实际类型对应的扩展名。
+         */
+        async rotatedFile() {
+            if (!this.objectUrl || this.objectUrl === this.rawUrl) return null;
+            try {
+                const r = await fetch(this.objectUrl);
+                const blob = await r.blob();
+                const mime = blob.type || this.file?.type || 'image/jpeg';
+                const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
+                const raw = String(this.file?.name || this.fileName || 'image');
+                const base = raw.replace(/\.[^.]+$/, '') || 'image';
+                return new File([blob], `${base}.${ext}`, { type: mime, lastModified: Date.now() });
+            } catch {
+                return null;
+            }
+        },
         /** 按选区在原图上裁切，生成新的 File */
         async confirm() {
             const img = this.$refs.img;
@@ -337,6 +367,21 @@ export default {
             if (!img || !size) return;
             this.exporting = true;
             try {
+                /*
+                 * v1.0.7：选区就是整图时不走 canvas —— 直接交出「原文件」或「已旋转的那份」。
+                 * 原因：canvas 重绘对 jpg 是有损的（哪怕质量 0.94），只转个方向却掉画质
+                 * 完全没必要；png/webp 也会被重新编码一遍、体积变大。
+                 */
+                if (this.isFullSelection()) {
+                    const src = this.rotation === 0 ? this.file : await this.rotatedFile();
+                    if (src) {
+                        this.$emit('done', src);
+                        this.$emit('update:modelValue', false);
+                        return;
+                    }
+                    // 拿不到（极少见，blob 被回收）→ 落回 canvas 路径，至少能保存
+                }
+
                 const canvas = document.createElement('canvas');
                 canvas.width = size.w;
                 canvas.height = size.h;

@@ -23,17 +23,16 @@ export function fileExtOf(fileOrMetadata) {
 }
 
 /**
- * 在链接末尾补上扩展名 —— 仅用于直观展示文件类型。
- * 已有扩展名（或已是已知文件后缀）时原样返回；带 query / hash 时只改路径部分。
+ * v1.0.7：**不再**在链接末尾补扩展名 —— 签发外链默认不带扩展名。
+ *
+ * 之前这里会给 /file/<标识> 补一次后缀（外部渠道的原始外链也会被补），
+ * 结果是「转 WebP / 转码之后后缀变了、老链接失效」；对外部地址来说补后缀更是凭空改写。
+ * 现在统一原样返回，链接与文件格式解耦。手动带扩展名的旧链接仍然可用
+ * （服务端按 nameCandidates 逐段剥后缀查库）。
  */
 export function withExt(url, ext) {
-  if (!url || !ext) return url;
-  const [base, hash = ''] = String(url).split('#');
-  const [path, query = ''] = base.split('?');
-  const lower = path.toLowerCase();
-  if (new RegExp(`\\.${String(ext).toLowerCase()}$`).test(lower)) return url;
-  if (/\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|heic|mp4|webm|mov|m4v|mp3|m4a|aac|ogg|wav|flac|zip|pdf)$/i.test(path)) return url;
-  return `${path}.${ext}${query ? `?${query}` : ''}${hash ? `#${hash}` : ''}`;
+  void ext;
+  return url;
 }
 
 /**

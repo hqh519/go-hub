@@ -40,6 +40,7 @@ exports.resolveInside = resolveInside;
 exports.userRoot = userRoot;
 exports.channelRoot = channelRoot;
 exports.ensureDir = ensureDir;
+exports.invalidateDavCache = invalidateDavCache;
 exports.listDir = listDir;
 exports.mimeOf = mimeOf;
 const fs_1 = require("fs");
@@ -76,12 +77,44 @@ function channelRoot(username, channelPath) {
 async function ensureDir(abs) {
     await fs_1.promises.mkdir(abs, { recursive: true });
 }
+const dirCache = new Map();
+const DIR_CACHE_TTL = 3000;
+const DIR_CACHE_MAX = 2000;
+let writeEpoch = 0;
+function invalidateDavCache() {
+    writeEpoch += 1;
+    dirCache.clear();
+}
+async function mapLimit(items, limit, fn) {
+    const out = new Array(items.length);
+    let cursor = 0;
+    const workers = new Array(Math.min(limit, items.length || 1)).fill(0).map(async () => {
+        for (;;) {
+            const i = cursor;
+            cursor += 1;
+            if (i >= items.length)
+                return;
+            out[i] = await fn(items[i]);
+        }
+    });
+    await Promise.all(workers);
+    return out;
+}
 async function listDir(abs, relBase) {
+    let dirMtimeMs = 0;
+    try {
+        const st = await fs_1.promises.stat(abs);
+        dirMtimeMs = st.mtimeMs;
+    }
+    catch {
+    }
+    const hit = dirCache.get(abs);
+    if (hit && hit.epoch === writeEpoch && hit.dirMtimeMs === dirMtimeMs && Date.now() - hit.at < DIR_CACHE_TTL) {
+        return hit.entries;
+    }
     const items = await fs_1.promises.readdir(abs, { withFileTypes: true });
-    const out = [];
-    for (const it of items) {
-        if (it.name.startsWith('.'))
-            continue;
+    const visible = items.filter((it) => !it.name.startsWith('.'));
+    const out = await mapLimit(visible, 32, async (it) => {
         const childAbs = path.join(abs, it.name);
         const rel = relBase ? `${relBase}/${it.name}` : it.name;
         let size = 0;
@@ -93,9 +126,12 @@ async function listDir(abs, relBase) {
         }
         catch {
         }
-        out.push({ name: it.name, rel, dir: it.isDirectory(), size, mtime });
-    }
+        return { name: it.name, rel, dir: it.isDirectory(), size, mtime };
+    });
     out.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+    if (dirCache.size >= DIR_CACHE_MAX)
+        dirCache.clear();
+    dirCache.set(abs, { at: Date.now(), epoch: writeEpoch, dirMtimeMs, entries: out });
     return out;
 }
 function mimeOf(name) {

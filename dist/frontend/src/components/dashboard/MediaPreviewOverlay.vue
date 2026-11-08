@@ -313,7 +313,7 @@
                             type="button"
                             class="mv-chip is-active"
                             :disabled="snapshotUploading"
-                            @click="uploadSnapshot"
+                            @click="openSnapshotTarget"
                         >
                             {{ snapshotUploading ? $t('mediaViewer.snapshotUploading') : $t('mediaViewer.snapshotUploadYes') }}
                         </button>
@@ -605,12 +605,28 @@
                 </button>
             </div>
         </div>
+
+        <!--
+            v1.0.7：抓拍图上传前先选「目标渠道 / 归属实例 / 上传目录」。
+            组件与「本地文件」页上传弹窗完全同一套（UploadTargetDialog），
+            z-index 抬到 3400 才不会被 3200 的灯箱盖住。
+        -->
+        <UploadTargetDialog
+            v-model="snapshotTarget"
+            :busy="snapshotUploading"
+            :z-index="3400"
+            :prefill="snapshotTargetForm"
+            :hint="$t('mediaViewer.snapshotTargetHint')"
+            @confirm="doUploadSnapshot"
+        />
     </div>
 </template>
 
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
 import { registerLayer, unregisterLayer } from '@/utils/layerStack';
+// v1.0.7：抓拍图上传前选「目标渠道 / 归属实例 / 上传目录」，与本地文件页共用同一组件
+import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 
 /**
  * 媒体预览浮层（v3.0.0）
@@ -632,6 +648,7 @@ const LONG_PRESS_CANCEL_PX = 16
 
 export default {
     name: 'MediaPreviewOverlay',
+    components: { UploadTargetDialog },
     props: {
         modelValue: { type: Boolean, default: false },
         items: { type: Array, default: () => [] },
@@ -712,6 +729,9 @@ export default {
             snapshotUploading: false,
             // v3.0.0（R16）：抓拍询问面板（{ url, name } | null）—— 不再用 EP $confirm
             snapshotPrompt: null,
+            // v1.0.7：抓拍图上传前的目标配置弹窗（渠道 / 实例 / 目录）
+            snapshotTarget: false,
+            snapshotTargetForm: { channelId: '', instanceId: '', uploadFolder: '' },
             /*
              * v3.0.0（R17）：抓拍图上传结果（{ id, name, src } | null）与失败原因。
              * 上传完成后不再弹全局提示（移动端那条 message 会盖住灯箱、并把灯箱顶掉），
@@ -1990,7 +2010,25 @@ export default {
             this.snapshotPrompt = null
         },
         /* v3.0.0（R9-F）：把抓拍 PNG 一键上传到图床（走默认渠道与命名规则），全程留在灯箱内 */
-        async uploadSnapshot() {
+        /**
+         * v1.0.7：点「上传到图床」时先弹目标配置页（渠道 / 实例 / 目录），
+         * 由 doUploadSnapshot 拿到选择后再真正上传。
+         * 之前是直接传到后端默认值（全局主渠道 + 默认实例 + 默认目录），抓拍图没处放。
+         */
+        openSnapshotTarget() {
+            if (!this.snapshotPrompt || this.snapshotUploading) return
+            this.snapshotTarget = true
+        },
+        doUploadSnapshot(target) {
+            this.snapshotTarget = false
+            this.snapshotTargetForm = {
+                channelId: target?.channelId || '',
+                instanceId: target?.instanceId || '',
+                uploadFolder: target?.uploadFolder || ''
+            }
+            this.uploadSnapshot(target)
+        },
+        async uploadSnapshot(target) {
             const prompt = this.snapshotPrompt
             if (!prompt) return
             const { url: dataUrl, name } = prompt
@@ -2011,7 +2049,16 @@ export default {
                  * v3.0.0（R17）：完成/失败都不再弹 $message（移动端那条提示会把灯箱顶掉），
                  * 结果直接写进面板：成功显示「已上传」+「查看」，失败显示原因并可重试。
                  */
-                const resp = await fetch('/upload?extraTags=' + encodeURIComponent('视频抓拍'), {
+                /*
+                 * v1.0.7：把用户在配置弹窗里选的「目标渠道 / 归属实例 / 上传目录」带上去。
+                 * 三者都为空时行为与旧版完全一致（走后端默认值）。
+                 */
+                const qs = new URLSearchParams({ extraTags: '视频抓拍' })
+                const picked = target || {}
+                if (picked.channelId) qs.set('channelId', String(picked.channelId))
+                if (picked.instanceId) qs.set('instanceId', String(picked.instanceId))
+                if (picked.uploadFolder) qs.set('uploadFolder', String(picked.uploadFolder))
+                const resp = await fetch('/upload?' + qs.toString(), {
                     method: 'POST',
                     credentials: 'include',
                     body: fd,

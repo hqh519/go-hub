@@ -183,6 +183,14 @@ let WebDavController = class WebDavController {
             return res.status(500).send(err.message);
         }
     }
+    bodyTag(text) {
+        let h = 0x811c9dc5;
+        for (let i = 0; i < text.length; i += 1) {
+            h ^= text.charCodeAt(i);
+            h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+        }
+        return h.toString(16).padStart(8, '0');
+    }
     async propfind(req, res, root, rel, abs) {
         const origin = `${req.protocol}://${req.headers.host || req.headers['x-forwarded-host'] || 'localhost'}`;
         const depth = String(req.headers.depth ?? '1').trim().toLowerCase();
@@ -214,9 +222,17 @@ let WebDavController = class WebDavController {
                 app_log_1.appLog.warn('webdav', `列目录失败：${rel}`, err.message);
             }
         }
+        const body = `<?xml version="1.0" encoding="utf-8"?>\n<D:multistatus xmlns:D="DAV:">\n${entries.join('\n')}\n</D:multistatus>`;
+        const etag = `"dav-${this.bodyTag(body)}"`;
         res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.setHeader('ETag', etag);
+        const inm = String(req.headers['if-none-match'] || '').trim();
+        if (inm && inm.split(',').some((v) => v.trim() === etag)) {
+            res.status(304).end();
+            return;
+        }
         res.status(207);
-        return res.send(`<?xml version="1.0" encoding="utf-8"?>\n<D:multistatus xmlns:D="DAV:">\n${entries.join('\n')}\n</D:multistatus>`);
+        return res.send(body);
     }
     async getFile(req, res, abs, headOnly) {
         let st;
@@ -314,6 +330,7 @@ let WebDavController = class WebDavController {
             app_log_1.appLog.error('webdav', `PUT 失败 ${path.basename(abs)}`, err, this.clientIp(req));
             return res.status(code === 'ENOSPC' ? 507 : 500).send(msg);
         }
+        (0, webdav_storage_1.invalidateDavCache)();
         return res.status(exists ? 204 : 201).send('');
     }
     clientIp(req) {
@@ -329,6 +346,7 @@ let WebDavController = class WebDavController {
         if (exists)
             return res.status(405).send('已存在');
         await (0, webdav_storage_1.ensureDir)(abs);
+        (0, webdav_storage_1.invalidateDavCache)();
         return res.status(201).send('');
     }
     async remove(res, abs, root) {
@@ -341,6 +359,7 @@ let WebDavController = class WebDavController {
         if (!exists)
             return res.status(404).send('Not Found');
         await fs_1.promises.rm(abs, { recursive: true, force: true });
+        (0, webdav_storage_1.invalidateDavCache)();
         return res.status(204).send('');
     }
     async moveOrCopy(req, res, root, abs, move) {
@@ -400,6 +419,7 @@ let WebDavController = class WebDavController {
                 throw err;
             }
         }
+        (0, webdav_storage_1.invalidateDavCache)();
         return res.status(destExists ? 204 : 201).send('');
     }
 };

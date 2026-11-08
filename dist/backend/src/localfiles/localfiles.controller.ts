@@ -392,21 +392,33 @@ export class LocalFilesController {
      * 只有当这个账户确实建过 WebDAV 渠道时才出现 —— 没建过的人看到一条空目录只会困惑。
      * 管理员的 webdav 目录同样不加（管理员禁止使用 WebDAV）。
      */
-    // v1.0.6：全局开关关闭时整条 WebDAV 加载项也隐藏（需求：关闭后不可访问）
-    const webdavCount = (await this.webdavOn())
-      ? await prisma.webDavChannel.count({ where: { username: me } })
-      : 0;
-    const webdavItem =
-      webdavCount > 0
-        ? {
-            id: WEBDAV_VIRTUAL_ID,
-            code: 'WEBDAV',
-            name: WEBDAV_ROOT_NAME,
-            rootPath: path.join(webdavRoot(), me),
-            enabled: true,
-            source: 'webdav',
-          }
-        : null;
+    /*
+     * v1.0.6：全局开关关闭时整条 WebDAV 加载项也隐藏（需求：关闭后不可访问）。
+     *
+     * v1.0.7：判断口径放宽 —— 只要「全局开关打开 + 该账户被授权 WebDAV」就出现，
+     * 不再要求「已经建过至少一个 WebDAV 渠道」。
+     * 原口径下有个死结：管理员给账户打开了 WebDAV 授权，但用户还没建渠道，
+     * 于是「本地文件」里看不到 webdav/{账户名} 这一项，用户以为功能没生效；
+     * 而建渠道的入口又在别处，绕一圈才明白。现在授权即出现（目录为空也没关系，
+     * WebDAV 客户端往里传文件后自然就有内容）。
+     * 管理员账户仍然没有这一项（管理员禁止使用 WebDAV）。
+     */
+    const webdavOn = await this.webdavOn();
+    let webdavItem: Record<string, unknown> | null = null;
+    if (webdavOn && me) {
+      const account = await prisma.user.findUnique({ where: { username: me }, select: { role: true, webdavEnabled: true } });
+      const allowed = account?.role === 'user' && account.webdavEnabled === true;
+      if (allowed) {
+        webdavItem = {
+          id: WEBDAV_VIRTUAL_ID,
+          code: 'WEBDAV',
+          name: WEBDAV_ROOT_NAME,
+          rootPath: path.join(webdavRoot(), me),
+          enabled: true,
+          source: 'webdav',
+        };
+      }
+    }
     return { success: true, data: [mine, ...(webdavItem ? [webdavItem] : []), ...configured] };
   }
 

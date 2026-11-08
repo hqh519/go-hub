@@ -82,13 +82,83 @@ export interface DavEntry {
   mtime: Date;
 }
 
-/** 列目录（不递归，按名字排序，目录在前） */
+/* ------------------------------------------------------------------ */
+/* v1.0.7：目录列举缓存 + 并发 stat                                     */
+/*                                                                      */
+/* 为什么要做：                                                          */
+/*   旧实现是「readdir 之后对每个条目串行 await fsp.stat()」。           */
+/*   一个 2000 个文件的目录 = 2000 次串行系统调用，Windows 上单次        */
+/*   stat 的往返就要几十微秒到毫秒级，叠加起来 Finder / 资源管理器       */
+/*   打开目录会明显卡顿（客户端超时后还会重发 PROPFIND，越拖越糟）。      */
+/*   现在两点改进：                                                      */
+/*     1) stat 用有上限的并发池（默认 32），不再一条一条排队；            */
+/*     2) 结果按「绝对路径 + 目录 mtime + 写入代数」缓存 3 秒 ——        */
+/*        同步工具常见的「同秒内连续 PROPFIND 多层目录」直接命中，        */
+/*        任何写操作（PUT / DELETE / MKCOL / MOVE / COPY）都会把代数 +1， */
+/*        缓存立刻整体失效，不会读到过期列表。                           */
+/* ------------------------------------------------------------------ */
+
+/** 条目缓存：key = 绝对路径（内含账户名，天然按账户隔离） */
+interface DirCacheEntry {
+  at: number;
+  epoch: number;
+  dirMtimeMs: number;
+  entries: DavEntry[];
+}
+const dirCache = new Map<string, DirCacheEntry>();
+const DIR_CACHE_TTL = 3000;
+/** 缓存条目上限（超过就整体清空，避免长期运行堆积内存） */
+const DIR_CACHE_MAX = 2000;
+/** 写入代数：任何写操作 +1，并清空缓存 */
+let writeEpoch = 0;
+
+/**
+ * 写操作之后调用 —— 让所有目录列表缓存立即失效。
+ * 因为缓存里存的是「目录 mtime + 代数」，代数一变就全部作废，
+ * 不需要按前缀精确失效（省一次路径匹配，也不会漏）。
+ */
+export function invalidateDavCache(): void {
+  writeEpoch += 1;
+  dirCache.clear();
+}
+
+/** 有并发上限的 map：把逐条 await 的串行 stat 变成若干条并行 */
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = new Array(Math.min(limit, items.length || 1)).fill(0).map(async () => {
+    for (;;) {
+      const i = cursor;
+      cursor += 1;
+      if (i >= items.length) return;
+      out[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * 列目录（不递归，按名字排序，目录在前）。
+ * v1.0.7：并发 stat + 3 秒缓存（见上方说明）。
+ */
 export async function listDir(abs: string, relBase: string): Promise<DavEntry[]> {
+  let dirMtimeMs = 0;
+  try {
+    const st = await fsp.stat(abs);
+    dirMtimeMs = st.mtimeMs;
+  } catch {
+    /* 目录都读不到：直接走 readdir 让调用方拿到真实错误 */
+  }
+  const hit = dirCache.get(abs);
+  if (hit && hit.epoch === writeEpoch && hit.dirMtimeMs === dirMtimeMs && Date.now() - hit.at < DIR_CACHE_TTL) {
+    return hit.entries;
+  }
+
   const items = await fsp.readdir(abs, { withFileTypes: true });
-  const out: DavEntry[] = [];
-  for (const it of items) {
-    // 跳过隐藏文件（.DS_Store / thumbs.db / 同步工具的临时文件），避免污染列表
-    if (it.name.startsWith('.')) continue;
+  // 跳过隐藏文件（.DS_Store / thumbs.db / 同步工具的临时文件），避免污染列表
+  const visible = items.filter((it) => !it.name.startsWith('.'));
+  const out = await mapLimit(visible, 32, async (it) => {
     const childAbs = path.join(abs, it.name);
     const rel = relBase ? `${relBase}/${it.name}` : it.name;
     let size = 0;
@@ -100,9 +170,12 @@ export async function listDir(abs: string, relBase: string): Promise<DavEntry[]>
     } catch {
       /* 读不到就按 0 处理，不让单个坏项拖垮整次列目录 */
     }
-    out.push({ name: it.name, rel, dir: it.isDirectory(), size, mtime });
-  }
+    return { name: it.name, rel, dir: it.isDirectory(), size, mtime };
+  });
   out.sort((a, b) => (a.dir === b.dir ? a.name.localeCompare(b.name) : a.dir ? -1 : 1));
+
+  if (dirCache.size >= DIR_CACHE_MAX) dirCache.clear();
+  dirCache.set(abs, { at: Date.now(), epoch: writeEpoch, dirMtimeMs, entries: out });
   return out;
 }
 

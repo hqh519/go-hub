@@ -538,8 +538,8 @@
         "switchTitle": "切换页面"
     },
     "fileDetail": {
-        "convertToLocal": "转本地",
-        "convertToRemote": "存异地",
+        "convertToLocal": "存入本地",
+        "convertToRemote": "转到异地",
         "convertCurrent": "当前渠道",
         "convertTarget": "目标渠道",
         "convertTargetPlaceholder": "选择要转存到的渠道",
@@ -547,7 +547,7 @@
         "convertKeepSource": "保留源件",
         "convertDeleteSource": "删除源件",
         "convertDeleteForbidden": "该文件为「登记文件」，源文件不在本系统管理范围内，禁止删除源件。",
-        "convertRemoteHint": "存异地会把实体文件原样上传到所选第三方渠道（按该渠道配置的存储路径与命名规则存放），成功后删除本地实体文件；文件名、类型、分类、标签与签发外链均不变。",
+        "convertRemoteHint": "转到异地会把实体文件原样上传到所选第三方渠道（按该渠道配置的存储路径与命名规则存放），成功后删除本地实体文件；文件名、类型、分类、标签与签发外链均不变。",
         "convertKeepHint": "两种选择都会把主渠道切到新渠道。「保留源件」额外在原渠道留一份普通副本（不算备份渠道，仅作主渠道不可用时的兜底）；「删除源件」会把原渠道那份一并删掉（不可恢复）。",
         "convertConfirm": "开始转存",
         "convertSuccess": "已转存到「{channel}」，外链保持不变",
@@ -1622,10 +1622,11 @@
         "copySuccess": "已复制到剪贴板",
         "settingsSaved": "设置已保存",
         "webdavAccessDomain": "访问域名",
-        "webdavAccountNote": "使用方式：先在「用户管理 → 编辑账户 → 管理员操作」里给普通用户打开「启用 WebDAV 功能」并设置「允许创建数量」（默认 2 个），再在该用户页的「WebDAV 管理」里创建渠道（名称 / 存储路径 / 访问密钥 / 备注）。文件一律按标准 WebDAV 协议原样存储到服务器的 webdav 目录（/app/backend/webdav/{账户名}/{存储路径}），不改名、不压缩、不转码、不转 WebP，也不限制文件类型与单个文件大小；通过 WebDAV 传输的文件不会出现在「图床文件」与「历史记录」中，也不能在文件详情页做压缩 / 转码 / 转 WebP / 存异地等二次处理。管理员账户不可使用 WebDAV。",
+        "webdavAccountNote": "使用方式：先在「用户管理 → 编辑账户 → 管理员操作」里给普通用户打开「启用 WebDAV 功能」并设置「允许创建数量」（默认 2 个），再在该用户页的「WebDAV 管理」里创建渠道（名称 / 存储路径 / 访问密钥 / 备注）。文件一律按标准 WebDAV 协议原样存储到服务器的 webdav 目录（/app/backend/webdav/{账户名}/{存储路径}），不改名、不压缩、不转码、不转 WebP，也不限制文件类型与单个文件大小；通过 WebDAV 传输的文件不会出现在「图床文件」与「历史记录」中，也不能在文件详情页做压缩 / 转码 / 转 WebP / 转到异地等二次处理。管理员账户不可使用 WebDAV。",
         "tagAddSettings": "文件标签添加设置",
         "tagAddSettingsTooltip": "上传成功后按这里的规则自动打标签。三项规则可同时使用，结果自动去重（单标签最多 20 字，单次最多 30 个）。全部留空则只保留调用方显式传入的标签（如「本地上传 / 视频抓拍」）。",
         "tagEnabled": "启用自动添加标签",
+        "tagRuleOffHint": "当前未启用自动添加标签：下面的规则仍会正常保存，但上传后不会自动打标签；打开上面的开关后立即生效。",
         "tagPlaceholders": "设置占位符",
         "tagPlaceholdersTooltip": "用占位符拼出「要自动添加的标签名」，多个用英文逗号或换行分隔，每段生成一个标签。<br>支持：{mime} 文件类型（image / video / audio）、{ext} 扩展名（不含点）、{channelName} 渠道类型简称、{uploadSource} 上传方式、{y} 年份（4 位）、{m} 月份（2 位）、{d} 日期（2 位）、{width} 文件宽度、{height} 文件高度。<br>取不到值的占位符（如非图片的 {width}）会自动跳过，不会产生空标签或半截标签。",
         "tagPlaceholdersPlaceholder": "{mime},{ext},{channelName},{uploadSource},{y}",
@@ -1844,7 +1845,9 @@
         "webdavEnable": "启用 WebDAV 功能",
         "webdavMaxLabel": "允许创建数量",
         "webdavMaxHint": "该账户最多可创建几个 WebDAV 渠道，默认 2 个。",
-        "webdavAdminBlocked": "管理员账户不可使用 WebDAV，请用普通账户开启"
+            "webdavGlobalOff": "系统管理 → 安全设置里的「对外 WebDAV」总开关还没打开，打开后这里才能创建渠道",
+    "webdavAccountOff": "该账户尚未开启 WebDAV 权限：在下方「管理员操作」里打开「启用 WebDAV 功能」并保存后，这里即可创建渠道",
+"webdavAdminBlocked": "管理员账户不可使用 WebDAV，请用普通账户开启"
     },
     "userManage": {
         "noticeTitle": "用户公告",
@@ -2177,6 +2180,7 @@
         "snapshotUploadTitle": "上传抓拍图",
         "snapshotUploadAsk": "抓拍已保存为「{name}」，是否上传到图床？",
         "snapshotUploadYes": "上传到图床",
+        "snapshotTargetHint": "抓拍图按这里选的「目标渠道 / 归属实例 / 上传目录」上传；留空则跟随全局默认。",
         "snapshotUploadDone": "抓拍图已上传到图床",
         "snapshotUploadFailed": "抓拍图上传失败，请稍后重试",
         "copyText": "复制全文",

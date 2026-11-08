@@ -552,36 +552,19 @@
             </template>
         </el-dialog>
 
-        <!-- 上传弹窗（v1.0.5：从灯箱发起时抬高层级，否则会被 z-index 3200 的灯箱盖住） -->
-        <el-dialog
+        <!--
+            上传弹窗：v1.0.7 起改用统一组件 UploadTargetDialog
+            （同一套「目标渠道 / 归属实例 / 上传目录」也供视频灯箱的抓拍图上传复用）。
+            从灯箱发起时 z-index 传 3400，否则会被 3200 的灯箱盖住。
+        -->
+        <UploadTargetDialog
             v-model="showUpload"
-            :title="$t('localFiles.uploadToBed')"
-            width="560px"
-            append-to-body
+            :busy="uploading"
+            :hint="$t('localFiles.uploadHint', { n: selected.length })"
             :z-index="uploadFromLightbox ? 3400 : undefined"
-        >
-            <el-form label-position="top">
-                <el-form-item :label="$t('localFiles.targetChannel')">
-                    <el-select v-model="uploadForm.channelId" :placeholder="$t('localFiles.targetChannelDefault')" clearable style="width: 100%;" popper-class="lf-upload-select-popper">
-                        <el-option v-for="c in bedChannels" :key="c.id" :label="channelLabel(c)" :value="c.id" />
-                    </el-select>
-                </el-form-item>
-                <el-form-item :label="$t('localFiles.instance')">
-                    <el-select v-model="uploadForm.instanceId" clearable style="width: 100%;" popper-class="lf-upload-select-popper">
-                        <el-option :label="$t('localFiles.instanceDefault')" value="" />
-                        <el-option v-for="ins in instances" :key="ins.id" :label="instanceLabel(ins)" :value="ins.id" />
-                    </el-select>
-                </el-form-item>
-                <el-form-item :label="$t('localFiles.uploadFolder')">
-                    <el-input v-model="uploadForm.uploadFolder" :placeholder="$t('localFiles.uploadFolderPlaceholder')" />
-                </el-form-item>
-            </el-form>
-            <p class="lf-hint">{{ $t('localFiles.uploadHint', { n: selected.length }) }}</p>
-            <template #footer>
-                <el-button :disabled="uploading" @click="showUpload = false">{{ $t('common.cancel') }}</el-button>
-                <el-button type="primary" :loading="uploading" @click="doUpload">{{ $t('localFiles.startUpload') }}</el-button>
-            </template>
-        </el-dialog>
+            :prefill="uploadForm"
+            @confirm="confirmUploadTarget"
+        />
 
         <!-- 上传结果 -->
         <el-dialog v-model="showResult" :title="$t('localFiles.uploadResult')" width="620px" append-to-body>
@@ -678,6 +661,7 @@ import { copyText } from '@/utils/clipboard';
 import { fetchStorageChannels, channelLabel } from '@/utils/storageChannels';
 import { splitFileName } from '@/utils/fileName';
 import { buildFileDetail } from '@/utils/fileDetail';
+import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import { ElMessageBox } from 'element-plus';
 import MediaPreviewOverlay from '@/components/dashboard/MediaPreviewOverlay.vue';
 import DashboardTabs from '@/components/DashboardTabs.vue';
@@ -696,7 +680,7 @@ const DIR_STORE_PREFIX = 'gohub_localfiles_dir:';
 
 export default {
     name: 'LocalFilesPage',
-    components: { MediaPreviewOverlay, DashboardTabs, AdminToggleDark, FileDetailDialog },
+    components: { MediaPreviewOverlay, DashboardTabs, AdminToggleDark, FileDetailDialog, UploadTargetDialog },
     data() {
         return {
             channels: [],
@@ -1588,13 +1572,30 @@ export default {
                 this.instances = [];
             }
         },
-        /** 灯箱结果条 → 「查看详情」：关掉灯箱再打开文件详情（详情弹窗层级低于灯箱） */
+        /**
+         * 灯箱结果条 → 「查看详情」。
+         * v1.0.7：**不再关灯箱** —— 详情弹窗直接叠在灯箱之上（EP 全局 zIndex 基准 3210，
+         * 灯箱固定 3200），关掉详情后仍回到原来那张图，浏览位置不丢。
+         * 旧实现先 `showPreview = false` 再开详情，视觉上就是「灯箱被踢掉又弹出详情」。
+         */
         async viewUploadedFromLightbox() {
             const r = this.lightboxUploadResult;
             this.lightboxUploadResult = null;
             if (!r?.id) return;
-            this.showPreview = false;
             await this.openResultDetail(r);
+        },
+        /**
+         * v1.0.7：统一上传弹窗（UploadTargetDialog）确认后回填表单并开始上传。
+         * 旧实现把「开始上传」按钮直接绑在 doUpload 上，现在多了一层组件事件。
+         */
+        confirmUploadTarget(payload) {
+            this.uploadForm = {
+                channelId: payload?.channelId || '',
+                instanceId: payload?.instanceId || '',
+                uploadFolder: payload?.uploadFolder || ''
+            };
+            this.showUpload = false;
+            this.doUpload();
         },
         async doUpload() {
             const fromLightbox = this.uploadFromLightbox;

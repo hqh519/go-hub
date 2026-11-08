@@ -589,6 +589,23 @@ const ZH = {
         { t: '详情页处理链路的手感修正', d: '压缩弹窗默认落在 75%，并加了一行「当前文件实际大小为 xxx」，压过再压的提示字号加大两号；点「开始压缩」后按钮变「正在压缩」且不可再点，完成后变「已完成」再自动关闭。视频转码确认页直接显示当前视频的编码格式，不用再猜。原来的「源」按钮改成弹窗展示地址并带复制按钮。「存异地」取代了原来的「转异地」，音量按钮挪到「下载」后面。移动端详情内容区宽度从 95% 调到背景层的 96%，左右留白更小。' },
         { t: '首页「其他」菜单与本地文件批量栏', d: '首页链接模式下的「外链」收进新的「其他」按钮：桌面端悬停展开、移动端点击展开，下拉里「外链」上方新增「下载」——直接把输入框里的链接取回本地（能直连就用 Blob 下载，跨域被拦时退回新窗口打开）。本地文件页的批量栏文案精简为「x 个 / 取消 / 上传」，并新增「下载」；移动端改成横向滑动不换行，同时移除了顶栏那个重复的「上传到图床」按钮。' },
       ]
+    },
+    {
+      title: '二十四、v1.0.7 更新要点',
+      intro: 'v1.0.7 没有数据库变更，主线是「把点了没按预期反应的地方逐个掰正」：首页链接模式的下载按钮不再跳页、文件标签设置不再整块消失、外链彻底去掉扩展名、灯箱里查看详情不再顶掉灯箱、抓拍图上传可以选渠道与目录、WebDAV 的模块与目录项不再被条件静默隐藏。同时把预览与网盘两处性能做了实打实的优化：文件取流加了 ETag 与 304，WebDAV 列目录从串行读文件信息改成并发加短时缓存。图片裁剪的默认框也改成了整张图，转动方向后保存不会再误裁。',
+      items: [
+        { t: '首页链接模式：下载不再跳页', d: '在「链接」上传方式下粘贴一个外部图片地址，点「其他 → 下载」，以前浏览器会直接打开那张图——因为目标站点没开 CORS，前端拿不到文件内容，只能退回「打开链接」。现在改成由本机服务端中转下载：服务端把远端文件取回后带 attachment 头下发，同源请求必然触发「保存文件」，页面也不会跳走。中转只接受 http/https，超过 2GB 的链接会提示改用原链接。' },
+        { t: '「文件标签添加设置」配置项不再消失', d: '以前关掉「启用自动添加标签」之后，下面的「设置占位符 / 提取指定内容 / 按表达式提取文件名内容」三组规则会整块从页面上消失，看起来像配置被清空了，也改不了。现在三组规则始终显示、始终可编辑，关闭状态只在顶部多一行提示说明「规则会保存但不生效」，方便先把规则配好再一键打开开关。' },
+        { t: '生成的外链默认不带扩展名', d: '新复制的外链形如 https://你的域名/file/xxxx，不再拖一个 .jpg 尾巴。扩展名在这个地址里本来就只是装饰（服务端带不带都能查到文件），去掉之后的好处是：图片转 WebP、视频转码后文件后缀变化，链接也不会失效。已经发出去的带后缀链接照旧可以打开，不需要改库、不需要换地址。' },
+        { t: '图片预览更快：先出小图，再换原图', d: '文件详情页的图片预览现在会先用一张 640 宽的缩略图占位，原图在后台继续加载，到了再无缝替换。外网带宽紧张时不再是整块空白转圈。灯箱本来就是这个机制（列表缩略图先显示，原图随后覆盖）。' },
+        { t: '同一张图第二次打开几乎不再耗流量', d: '文件取流接口加了 ETag / Last-Modified 与条件请求：浏览器第二次打开同一张图时会先问「文件变了吗」，没变就直接用本地缓存，服务器一个字节都不发。代理模式下这条判断还会透传给源站，上游说没变同样回 304。' },
+        { t: '本地文件灯箱里查看详情，不再把灯箱顶掉', d: '在「本地文件」的灯箱里发起上传，完成后点「查看详情」，详情页会直接盖在灯箱之上；关掉详情还停在原来那张图上，浏览位置不丢。以前是先关灯箱再开详情，看起来像灯箱被踢了出去。' },
+        { t: '视频抓拍图上传，可以选渠道、实例和目录了', d: '以前抓拍图只能传到默认渠道的默认目录。现在点「上传到图床」会先弹出选择页：目标渠道 / 归属实例 / 上传目录——和「本地文件」页的上传是同一个界面（同一套组件），选过的值会被记住。抓拍图依旧自动带「视频抓拍」标签。' },
+        { t: 'WebDAV：模块和目录项都能看见了', d: '「用户管理 → 编辑账户」里的 WebDAV 卡片以前要三个条件同时满足才出现，缺一个就整块消失且不说原因；现在普通用户账户一律显示，缺哪一项就在卡片里写明（全局开关没开 / 该账户没授权），创建按钮相应置灰。另外「本地文件」里的 WebDAV 加载项改为「授权即出现」——以前必须先建过一个渠道才看得到，等于把入口藏起来了。' },
+        { t: 'WebDAV 大目录打开更快', d: '以前列一个目录要对每个文件逐个读一次文件信息（串行），上千个文件时 Finder / 资源管理器会明显卡顿。现在改成并发读取并做 3 秒短时缓存，任何写入（上传、删除、新建目录、移动、复制）都会立刻让缓存失效，不会读到旧列表。目录清单还带了 ETag，客户端重复请求可直接拿到 304。' },
+        { t: '裁剪图片：默认框就是整张图', d: '裁剪页打开时选择框默认覆盖整张图。只想转个方向的话直接保存不会裁掉任何像素；而且这种「没裁」的情况不会重新编码——JPG 不掉画质，PNG 不会莫名变大。需要裁剪时自己拖四角即可。' },
+        { t: '详情页按钮改名', d: '「转本地」改为「存入本地」，「存异地」改为「转到异地」，与按钮实际含义对齐：前者是把第三方渠道的文件取回本地，后者是把本地文件送到异地渠道。' }
+      ]
     }
   ]
 };
@@ -1115,6 +1132,23 @@ const EN = {
         { t: 'No more blank page after the browser has been idle', d: 'Closing the browser or leaving it idle and then switching back to GoHub used to leave a blank page that needed a manual refresh. The revive logic treated "framework mounted but rendering an empty shell" as "already rendered" and therefore never rescued the page. It now checks whether anything was actually painted, adds two more triggers (page visible again, dynamic import failure) and shortens the first-paint guard from 12 seconds to 9.' },
         { t: 'Detail panel polish', d: 'The compress dialog defaults to 75%, gains a line showing the current actual file size, and the "already compressed" warning is two steps larger; pressing Start compression switches the button to Compressing and disables it, then to Done, and the dialog closes. The video transcode confirmation shows the current codec immediately. Source is now a dialog with a copy button. Move to remote is renamed, and the volume button moved after Download. On mobile the detail panel width goes from 95% to 96% of the backdrop layer for tighter side margins.' },
         { t: 'The Other menu on the home page and the Local Files batch bar', d: 'In link mode, External is folded into a new Other button — hover on desktop, tap on mobile — and a Download item sits above External to fetch the pasted link straight to disk (a Blob download when allowed, a new window when CORS blocks it). In Local Files the batch bar is shortened to count / Cancel / Upload and gains Download; on mobile it scrolls horizontally without wrapping, and the duplicate Upload button in the top bar is gone.' },
+      ]
+    },
+    {
+      title: '24. What is new in v1.0.7',
+      intro: 'v1.0.7 ships no database changes. It is mainly about correcting UI paths that did not do what they promised: Download in link mode no longer jumps to the image, tag settings no longer vanish, issued links drop the extension completely, viewing details from the lightbox keeps the lightbox, snapshots can choose channel and folder, and the WebDAV module and folder entry are no longer hidden by silent conditions. Two real performance improvements ride along: file streaming now sends ETag and answers 304, and WebDAV directory listing moved from sequential stat calls to bounded concurrency plus a short cache. The crop dialog also starts at the full image so rotating and saving cannot trim pixels.',
+      items: [
+        { t: 'Link mode: Download no longer jumps away', d: 'Pasting an external image URL and clicking Other - Download used to just open the image in a new tab, because a site without CORS headers leaves the front end with no bytes to save. The server now fetches the file and returns it with an attachment header, so the same-origin request always triggers a real save and the page stays put. Only http/https is accepted, and links over 2 GB are refused with a hint to open the source directly.' },
+        { t: 'Tag settings no longer disappear', d: 'Turning off Enable automatic tags used to hide the three rule groups entirely, which looked like the configuration had been wiped and left no way to edit it. The rules are now always visible and editable; when the switch is off a single hint line explains that the rules are saved but inactive, so you can prepare them first and enable the switch later.' },
+        { t: 'Issued links carry no extension by default', d: 'Newly copied links look like https://your-domain/file/xxxx with no .jpg tail. The extension was only ever decoration there - the server resolves a file with or without it - and dropping it means converting to WebP or transcoding a video no longer breaks links that were already handed out. Old links with an extension keep working.' },
+        { t: 'Faster previews: small image first, original second', d: 'The image preview in the file detail panel now paints a 640 px thumbnail first and swaps in the original once it arrives, so a slow external connection no longer shows a blank spinner. The lightbox already worked this way: the list thumbnail shows first and the full image covers it later.' },
+        { t: 'Second visit to the same image costs almost nothing', d: 'File streaming now sends ETag and Last-Modified and honours conditional requests: the browser asks whether the file changed, and when it has not, the server sends nothing at all. In proxy mode the check is forwarded upstream, so a 304 from the source becomes a 304 to the browser.' },
+        { t: 'Viewing details from the Local Files lightbox keeps the lightbox', d: 'After an upload started inside the lightbox, View details now stacks the detail panel above the lightbox. Closing the panel leaves you on the same image with the browsing position intact, instead of the lightbox being torn down first.' },
+        { t: 'Video snapshots can pick channel, instance and folder', d: 'Snapshot uploads used to go to the default channel and default folder with no choice. Upload now opens the same target picker used by the Local Files page - target channel, owning instance, upload folder - and remembers the values for next time. Snapshots still carry the Video snapshot tag automatically.' },
+        { t: 'WebDAV: the module and the folder entry are visible', d: 'The WebDAV card in user editing used to require three conditions at once and vanished silently if any was missing. It is now always shown for regular accounts, with a hint naming the missing piece (global switch off, or the account is not authorized) and a disabled create button. The WebDAV entry in Local Files now appears as soon as the account is authorized instead of requiring an existing channel first.' },
+        { t: 'WebDAV: large folders open faster', d: 'Listing a folder used to stat every entry sequentially, which stalls Finder or Explorer on directories with thousands of files. Entries are now read with a bounded concurrency pool and cached for three seconds; any write (upload, delete, create, move, copy) invalidates the cache immediately, so a stale listing is never served. The listing also carries an ETag, so repeated requests can be answered with 304.' },
+        { t: 'Crop dialog starts at the full image', d: 'The crop selection now covers the whole image when the dialog opens. Rotating and saving therefore never trims pixels by accident, and that no-crop case skips re-encoding entirely: JPEG keeps its quality and PNG does not grow. Drag the corners when you do want to crop.' },
+        { t: 'Detail panel button names', d: 'Move to local is now Store to local, and Move to remote is now Send to remote, matching what the buttons actually do: the first pulls a file from a third-party channel back to local storage, the second pushes a local file out to a remote channel.' }
       ]
     }
   ]
