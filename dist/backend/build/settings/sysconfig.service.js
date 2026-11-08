@@ -111,9 +111,10 @@ let SysConfigService = class SysConfigService {
                         enabled: true,
                         placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
                         extract: '',
-                        startChars: '#',
-                        stopChars: '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]',
-                        maxLen: 14,
+                        markerEnabled: true,
+                        startChars: '["#","@","&"]',
+                        stopChars: '["#","@","&","!","-","_"]',
+                        maxLen: 10,
                     },
                 };
             case 'ai':
@@ -132,7 +133,23 @@ let SysConfigService = class SysConfigService {
             return this.mergePage(stored);
         if (section === 'security')
             return this.mergeSecurity(stored);
-        return deepMerge(this.defaults(section), stored);
+        const merged = deepMerge(this.defaults(section), stored);
+        if (section === 'others')
+            return this.upgradeLegacyTagRule(merged);
+        return merged;
+    }
+    upgradeLegacyTagRule(cfg) {
+        const at = cfg && cfg.autoTag;
+        if (!at)
+            return cfg;
+        const LEGACY_STOP = '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]';
+        if (at.startChars === '#' && at.stopChars === LEGACY_STOP && Number(at.maxLen) === 14 && at.markerEnabled === undefined) {
+            at.markerEnabled = true;
+            at.startChars = '["#","@","&"]';
+            at.stopChars = '["#","@","&","!","-","_"]';
+            at.maxLen = 10;
+        }
+        return cfg;
     }
     async save(section, body) {
         if (section === 'page') {

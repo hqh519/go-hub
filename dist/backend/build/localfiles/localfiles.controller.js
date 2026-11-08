@@ -52,6 +52,7 @@ const path = __importStar(require("path"));
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const auth_guard_1 = require("../auth/auth.guard");
+const channel_access_1 = require("../common/channel-access");
 const settings_service_1 = require("../settings/settings.service");
 const upload_service_1 = require("../upload/upload.service");
 const localfiles_util_1 = require("./localfiles.util");
@@ -128,7 +129,10 @@ let LocalFilesController = class LocalFilesController {
         if (!ch.enabled)
             return { error: '该渠道已停用' };
         if (!(0, localfiles_util_1.localFilesAdminOnly)(this.role(req))) {
-            return { error: '本地文件渠道仅管理员可用' };
+            const me = this.userName(req);
+            if (!me || !(0, channel_access_1.channelVisibleTo)(ch.authorizedUsers, ch.type, me, false)) {
+                return { error: '该本地文件渠道未授权给当前账户' };
+            }
         }
         let cfg = {};
         try {
@@ -189,7 +193,9 @@ let LocalFilesController = class LocalFilesController {
     async channels(req) {
         if (!this.session(req))
             return { success: false, message: '请先登录' };
-        if (!(0, localfiles_util_1.localFilesAdminOnly)(this.role(req)))
+        const admin = (0, localfiles_util_1.localFilesAdminOnly)(this.role(req));
+        const me = this.userName(req);
+        if (!admin && !me)
             return { success: true, data: [] };
         const rows = await prisma_1.prisma.channel.findMany({
             where: { type: { in: ['localfiles', 'local'] } },
@@ -206,6 +212,8 @@ let LocalFilesController = class LocalFilesController {
             }
             const synced = ch.type === 'local' && (cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true');
             if (ch.type === 'local' && (!synced || !String(cfg.rootPath || '').trim()))
+                return null;
+            if (!admin && !(0, channel_access_1.channelVisibleTo)(ch.authorizedUsers, ch.type, me, false))
                 return null;
             return {
                 id: ch.id,

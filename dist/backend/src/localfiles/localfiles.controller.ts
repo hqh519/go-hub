@@ -20,6 +20,7 @@ import * as path from 'path';
 import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
 import { currentSession } from '../auth/auth.guard';
+import { channelVisibleTo } from '../common/channel-access';
 import { SettingsService } from '../settings/settings.service';
 import { UploadService } from '../upload/upload.service';
 import {
@@ -134,8 +135,15 @@ export class LocalFilesController {
     });
     if (!ch) return { error: '渠道不存在或不是「本地文件」渠道' };
     if (!ch.enabled) return { error: '该渠道已停用' };
+    /*
+     * v1.0.5：渠道授权 —— 管理员直通；普通用户必须在授权名单里，
+     * 且只对「本地文件」类渠道生效（本地存储渠道的授权沿用它自己的名单）。
+     */
     if (!localFilesAdminOnly(this.role(req))) {
-      return { error: '本地文件渠道仅管理员可用' };
+      const me = this.userName(req);
+      if (!me || !channelVisibleTo(ch.authorizedUsers, ch.type, me, false)) {
+        return { error: '该本地文件渠道未授权给当前账户' };
+      }
     }
     let cfg: Record<string, any> = {};
     try {
@@ -192,8 +200,15 @@ export class LocalFilesController {
   @Get('channels')
   async channels(@Req() req: Request) {
     if (!this.session(req)) return { success: false, message: '请先登录' };
-    // v3.0.0（R5）：本地文件渠道仅管理员可见可用（不做渠道授权）
-    if (!localFilesAdminOnly(this.role(req))) return { success: true, data: [] };
+    const admin = localFilesAdminOnly(this.role(req));
+    const me = this.userName(req);
+    /*
+     * v1.0.5：本地文件渠道开放「授权」——
+     *   · 管理员恒可见全部；
+     *   · 普通用户只看到**授权名单包含自己**的渠道，一个都没有就是空列表
+     *     （前端 DashboardTabs 据此决定是否显示「本地文件」入口）。
+     */
+    if (!admin && !me) return { success: true, data: [] };
     /*
      * v1.0.1：列表里同时带上「开启了同步开关的自定义本地存储渠道」——
      * 这类渠道的浏览目录就是它的存储地址（rootPath），无需再单独建一条本地文件渠道。
@@ -213,6 +228,8 @@ export class LocalFilesController {
         const synced = ch.type === 'local' && (cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true');
         // 自定义本地存储渠道：没开同步开关 / 没配存储地址 → 不出现在本地文件渠道选择里
         if (ch.type === 'local' && (!synced || !String(cfg.rootPath || '').trim())) return null;
+        // v1.0.5：普通用户按授权名单过滤（管理员直通）
+        if (!admin && !channelVisibleTo(ch.authorizedUsers, ch.type, me, false)) return null;
         return {
           id: ch.id,
           code: ch.code,

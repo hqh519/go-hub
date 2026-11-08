@@ -66,9 +66,18 @@ let UploadService = class UploadService {
     }
     backgroundChain = Promise.resolve();
     enqueueBackground(task) {
-        const run = this.backgroundChain.then(task);
+        const run = this.backgroundChain.then(() => new Promise((r) => setImmediate(r))).then(task);
         this.backgroundChain = run.catch((err) => {
             console.warn('[bg] 后台任务异常:', err?.message || err);
+            return undefined;
+        });
+        return run;
+    }
+    tagChain = Promise.resolve();
+    enqueueTagTask(task) {
+        const run = this.tagChain.then(() => new Promise((r) => setImmediate(r))).then(task);
+        this.tagChain = run.catch((err) => {
+            console.warn('[tag] 自动标签任务异常:', err?.message || err);
             return undefined;
         });
         return run;
@@ -408,6 +417,7 @@ let UploadService = class UploadService {
                 enabled: true,
                 placeholders: UploadService_1.DEFAULT_TAG_PLACEHOLDERS,
                 extract: '',
+                markerEnabled: true,
                 startChars: UploadService_1.DEFAULT_TAG_START,
                 stopChars: UploadService_1.DEFAULT_TAG_STOP,
                 maxLen: UploadService_1.DEFAULT_TAG_MAX_LEN,
@@ -419,6 +429,7 @@ let UploadService = class UploadService {
                     enabled: at.enabled === undefined ? true : !(at.enabled === false || String(at.enabled) === 'false'),
                     placeholders: at.placeholders === undefined ? UploadService_1.DEFAULT_TAG_PLACEHOLDERS : String(at.placeholders ?? ''),
                     extract: at.extract === undefined ? '' : String(at.extract ?? ''),
+                    markerEnabled: at.markerEnabled === undefined ? true : !(at.markerEnabled === false || String(at.markerEnabled) === 'false'),
                     startChars: at.startChars === undefined ? UploadService_1.DEFAULT_TAG_START : String(at.startChars ?? ''),
                     stopChars: at.stopChars === undefined ? UploadService_1.DEFAULT_TAG_STOP : String(at.stopChars ?? ''),
                     maxLen: at.maxLen === undefined ? UploadService_1.DEFAULT_TAG_MAX_LEN : Math.max(0, Number(at.maxLen) || 0),
@@ -471,8 +482,10 @@ let UploadService = class UploadService {
                     if (String(info.originalName || '').includes(rule.find))
                         autoNames.push(rule.tag);
                 }
-                for (const hit of UploadService_1.extractByMarkers(String(info.originalName || ''), rules.startChars, rules.stopChars, rules.maxLen)) {
-                    autoNames.push(hit);
+                if (rules.markerEnabled) {
+                    for (const hit of UploadService_1.extractByMarkers(String(info.originalName || ''), rules.startChars, rules.stopChars, rules.maxLen)) {
+                        autoNames.push(hit);
+                    }
                 }
             }
             const names = Array.from(new Set([...autoNames, ...extraTags]
@@ -493,9 +506,9 @@ let UploadService = class UploadService {
         }
     }
     static DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
-    static DEFAULT_TAG_START = '#';
-    static DEFAULT_TAG_STOP = '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]';
-    static DEFAULT_TAG_MAX_LEN = 14;
+    static DEFAULT_TAG_START = '["#","@","&"]';
+    static DEFAULT_TAG_STOP = '["#","@","&","!","-","_"]';
+    static DEFAULT_TAG_MAX_LEN = 10;
     static parseMarkerList(raw, keepEmpty = false) {
         const s = String(raw || '').trim();
         if (!s)
@@ -1539,7 +1552,7 @@ let UploadService = class UploadService {
                 await this.touchIp(uploadIp, addr);
             });
         }
-        this.enqueueBackground(() => this.autoTag(record.id, {
+        this.enqueueTagTask(() => this.autoTag(record.id, {
             originalName,
             mime,
             channelType: opts.backup === false ? usedChannel.type : main.type,
@@ -1812,7 +1825,7 @@ let UploadService = class UploadService {
                 },
             },
         });
-        this.enqueueBackground(() => this.autoTag(record.id, {
+        this.enqueueTagTask(() => this.autoTag(record.id, {
             originalName,
             mime,
             channelType: ch.type,
@@ -2334,6 +2347,9 @@ let UploadService = class UploadService {
             return { ok: false, message: '目标渠道不存在' };
         if (!targetCh.enabled)
             return { ok: false, message: `目标渠道「${targetCh.name}」已停用` };
+        if (targetCh.isBackup) {
+            return { ok: false, message: '「备份渠道」只做本份镜像，不能作为转存目标' };
+        }
         if (targetCh.id === sourceCh.id)
             return { ok: false, message: '目标渠道与当前渠道相同，无需转存' };
         const isLocalType = (t) => t === 'local' || t === 'localfiles';

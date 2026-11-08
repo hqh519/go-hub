@@ -41,6 +41,21 @@
 
         <div class="crop-tools">
             <span class="crop-size" v-if="outputSize">{{ $t('uploadCrop.outputSize', { w: outputSize.w, h: outputSize.h }) }}</span>
+            <!--
+                v1.0.5：旋转方向 —— 手机上拍的竖图经常带着 EXIF 方向，进到裁剪页是歪的。
+                每次都从**原始文件**重新渲染（而不是在上一次结果上叠 90°），
+                这样连点四次回到 0° 不会有任何画质损失。
+            -->
+            <div class="crop-rotate">
+                <el-button size="small" :disabled="rotating" :title="$t('uploadCrop.rotateLeft')" @click="rotate(-1)">
+                    <font-awesome-icon icon="undo" style="margin-right: 3px;"></font-awesome-icon>{{ $t('uploadCrop.rotateLeft') }}
+                </el-button>
+                <el-button size="small" :disabled="rotating" :title="$t('uploadCrop.rotateRight')" @click="rotate(1)">
+                    <font-awesome-icon icon="redo" style="margin-right: 3px;"></font-awesome-icon>{{ $t('uploadCrop.rotateRight') }}
+                </el-button>
+                <span class="crop-angle">{{ rotation }}°</span>
+                <el-button size="small" text :disabled="rotating || rotation === 0" @click="resetRotation">{{ $t('uploadCrop.rotateReset') }}</el-button>
+            </div>
             <el-button size="small" text @click="resetSelection">{{ $t('uploadCrop.reset') }}</el-button>
         </div>
         <p class="crop-hint">{{ $t('uploadCrop.hint') }}</p>
@@ -82,6 +97,14 @@ export default {
     data() {
         return {
             objectUrl: '',
+            /**
+             * v1.0.5：原始文件的对象 URL。
+             * 旋转时永远从它重新渲染，保证「转四次回到原位」不会累积重新编码的画质损失。
+             */
+            rawUrl: '',
+            /** 当前旋转角度（0 / 90 / 180 / 270，顺时针） */
+            rotation: 0,
+            rotating: false,
             natural: { w: 0, h: 0 },
             /** 图片在舞台内的实际绘制区域（px） */
             disp: { left: 0, top: 0, w: 0, h: 0 },
@@ -144,15 +167,77 @@ export default {
             this.measure();
         },
         cleanupUrl() {
-            if (this.objectUrl && this.objectUrl.startsWith('blob:')) URL.revokeObjectURL(this.objectUrl);
+            if (this.objectUrl && this.objectUrl.startsWith('blob:') && this.objectUrl !== this.rawUrl) {
+                URL.revokeObjectURL(this.objectUrl);
+            }
+            if (this.rawUrl && this.rawUrl.startsWith('blob:')) URL.revokeObjectURL(this.rawUrl);
             this.objectUrl = '';
+            this.rawUrl = '';
         },
         loadImage() {
             this.cleanupUrl();
             if (!this.file) return;
-            this.objectUrl = URL.createObjectURL(this.file);
+            this.rawUrl = URL.createObjectURL(this.file);
+            this.objectUrl = this.rawUrl;
+            this.rotation = 0;
             this.natural = { w: 0, h: 0 };
             this.sel = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
+        },
+        /**
+         * 旋转 90°（dir = -1 逆时针 / 1 顺时针）。
+         * 渲染源始终是 rawUrl，rotation 是「绝对角度」而非增量 —— 连点不会糊。
+         */
+        async rotate(dir) {
+            if (!this.rawUrl || this.rotating) return;
+            this.rotation = (this.rotation + (dir > 0 ? 90 : 270)) % 360;
+            if (this.rotation === 0) {
+                // 回到原位：直接用原图，重新编码这一步都省掉
+                if (this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
+                this.objectUrl = this.rawUrl;
+                return;
+            }
+            this.rotating = true;
+            try {
+                const url = await this.renderRotated(this.rotation);
+                if (!url) return;
+                if (this.objectUrl && this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
+                this.objectUrl = url;
+            } finally {
+                this.rotating = false;
+            }
+        },
+        /** 把原图按 angle 旋转后画到 canvas，返回新的 blob URL */
+        renderRotated(angle) {
+            return new Promise((resolve) => {
+                const base = new Image();
+                base.onload = () => {
+                    const w = base.naturalWidth;
+                    const h = base.naturalHeight;
+                    const swap = angle === 90 || angle === 270;
+                    const canvas = document.createElement('canvas');
+                    canvas.width = swap ? h : w;
+                    canvas.height = swap ? w : h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.translate(canvas.width / 2, canvas.height / 2);
+                    ctx.rotate((angle * Math.PI) / 180);
+                    ctx.drawImage(base, -w / 2, -h / 2, w, h);
+                    // png / webp 保透明；其余走 jpeg 高质量
+                    const keepAlpha = /png|webp|gif/i.test(this.file?.type || '');
+                    canvas.toBlob(
+                        (blob) => resolve(blob ? URL.createObjectURL(blob) : ''),
+                        keepAlpha ? 'image/png' : 'image/jpeg',
+                        0.96,
+                    );
+                };
+                base.onerror = () => resolve('');
+                base.src = this.rawUrl;
+            });
+        },
+        resetRotation() {
+            if (this.rotation === 0) return;
+            this.rotation = 0;
+            if (this.objectUrl && this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
+            this.objectUrl = this.rawUrl;
         },
         onOpened() {
             this.onImgLoad();
@@ -345,8 +430,29 @@ export default {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 10px;
     margin-top: 10px;
+}
+
+/* v1.0.5：旋转方向一组按钮（左转 / 右转 / 当前角度 / 复位） */
+.crop-rotate {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.crop-rotate .el-button + .el-button {
+    margin-left: 0;
+}
+
+.crop-angle {
+    min-width: 38px;
+    text-align: center;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--el-text-color-secondary);
 }
 
 .crop-size {

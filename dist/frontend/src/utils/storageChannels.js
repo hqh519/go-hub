@@ -101,6 +101,14 @@ export async function fetchStorageChannels(force = false) {
                         type: c.type || type,
                         // 渠道类型编号（后端下发；缺失时按类型名兜底）
                         typeCode: Number(c.typeCode) || (CHANNEL_TYPE_CODE[c.type || type] || 998),
+                        /*
+                         * v1.0.5：主 / 备标记随列表一起下发 ——
+                         * 上传「目标渠道」下拉要排除备份渠道（备份渠道只做本份镜像，
+                         * 后端也会拒绝把它当转存 / 上传目标）。
+                         */
+                        isMain: c.isMain === true,
+                        isBackup: c.isBackup === true,
+                        backupPool: c.backupPool === true,
                     });
                 }
             }

@@ -14,10 +14,13 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
+var ManageController_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UserConfigController = exports.ManageController = exports.LinkController = void 0;
 const request_origin_1 = require("../common/request-origin");
 const common_1 = require("@nestjs/common");
+const platform_express_1 = require("@nestjs/platform-express");
+const common_2 = require("@nestjs/common");
 const node_stream_1 = require("node:stream");
 const node_fs_1 = require("node:fs");
 const node_path_1 = require("node:path");
@@ -32,6 +35,7 @@ const settings_service_1 = require("../settings/settings.service");
 const sysconfig_service_1 = require("../settings/sysconfig.service");
 const auth_guard_1 = require("../auth/auth.guard");
 const file_view_1 = require("../common/file-view");
+const media_edit_1 = require("./media-edit");
 const app_log_1 = require("../common/app-log");
 const project_paths_1 = require("../common/project-paths");
 const qqwry_1 = require("../common/qqwry");
@@ -1132,7 +1136,7 @@ exports.LinkController = LinkController = __decorate([
         channels_controller_1.ChannelsService,
         sysconfig_service_1.SysConfigService])
 ], LinkController);
-let ManageController = class ManageController {
+let ManageController = ManageController_1 = class ManageController {
     settings;
     sysConfig;
     channelsSvc;
@@ -3546,7 +3550,7 @@ let ManageController = class ManageController {
         const isLocalType = (t) => t === 'local' || t === 'localfiles';
         const srcLocal = !!ch && isLocalType(ch.type);
         const all = await prisma_1.prisma.channel.findMany({
-            where: { enabled: true },
+            where: { enabled: true, isBackup: false },
             orderBy: [{ typeCode: 'asc' }, { name: 'asc' }],
             select: { id: true, name: true, type: true },
         });
@@ -3841,6 +3845,146 @@ let ManageController = class ManageController {
             res.clearCookie(auth_guard_1.SESSION_COOKIE, { path: '/' });
         }
         return out;
+    }
+    async mediaLimitSeconds(id, fallback = 600) {
+        try {
+            const page = await this.sysConfig.get('page');
+            const hit = (page?.config || []).find((x) => x.id === id);
+            const raw = hit && hit.value !== undefined && hit.value !== null ? String(hit.value).trim() : '';
+            if (raw === '')
+                return fallback;
+            const n = Number(raw);
+            if (!Number.isFinite(n) || n < 0)
+                return fallback;
+            return Math.floor(n);
+        }
+        catch {
+            return fallback;
+        }
+    }
+    static mediaKindOf(mime, ext) {
+        const m = String(mime || '').toLowerCase();
+        if (m.startsWith('image/'))
+            return 'image';
+        if (m.startsWith('video/'))
+            return 'video';
+        if (m.startsWith('audio/'))
+            return 'audio';
+        const e = String(ext || '').toLowerCase();
+        if (['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif'].includes(e))
+            return 'image';
+        if (['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'].includes(e))
+            return 'video';
+        if (['mp3', 'wav', 'aac', 'flac', 'm4a', 'ogg'].includes(e))
+            return 'audio';
+        return '';
+    }
+    async mediaInfo(id, req) {
+        const owner = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const { target, reason } = await (0, media_edit_1.resolveMediaTarget)(id, owner);
+        if (!target)
+            return { success: false, message: reason || '文件不可编辑' };
+        const kind = ManageController_1.mediaKindOf(target.mime, target.ext);
+        const isWebp = target.ext === 'webp' || String(target.mime || '').toLowerCase() === 'image/webp';
+        return {
+            success: true,
+            data: {
+                id: target.id,
+                name: target.name,
+                ext: target.ext,
+                mime: target.mime,
+                size: target.size,
+                originalSize: target.originalSize,
+                kind,
+                compressedBefore: target.compressedBefore,
+                localPath: target.abs,
+                canCrop: kind === 'image',
+                canCompress: kind === 'image' || kind === 'video' || kind === 'audio',
+                canWebp: kind === 'image' && !isWebp,
+                canTranscode: kind === 'video',
+            },
+        };
+    }
+    async mediaCrop(body, file, req) {
+        const owner = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const id = String(body?.id ?? body?.fileId ?? '').trim();
+        if (!id)
+            return { success: false, message: '缺少文件标识' };
+        if (!file?.buffer?.length)
+            return { success: false, message: '没有收到裁剪后的图片数据' };
+        const { target, reason } = await (0, media_edit_1.resolveMediaTarget)(id, owner);
+        if (!target)
+            return { success: false, message: reason || '文件不可编辑' };
+        const r = await (0, media_edit_1.cropImage)(target, file.buffer);
+        if (!r.ok) {
+            app_log_1.appLog.warn('file', `原位裁剪失败：${target.name}`, r.message || '');
+            return { success: false, message: r.message || '裁剪失败' };
+        }
+        app_log_1.appLog.info('file', `原位裁剪完成：${target.name}`, `${target.size} → ${r.size}`);
+        return { success: true, data: r };
+    }
+    async mediaCompress(body, req) {
+        const owner = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const id = String(body?.id ?? body?.fileId ?? '').trim();
+        const percent = Number(body?.percent ?? 0);
+        if (!id)
+            return { success: false, message: '缺少文件标识' };
+        if (!Number.isFinite(percent) || percent < 10 || percent > 99) {
+            return { success: false, message: '压缩比例需在 10~99 之间（目标体积占原体积的百分比）' };
+        }
+        const { target, reason } = await (0, media_edit_1.resolveMediaTarget)(id, owner);
+        if (!target)
+            return { success: false, message: reason || '文件不可编辑' };
+        if (target.compressedBefore && String(body?.confirm ?? '') !== '1') {
+            return {
+                success: false,
+                needConfirm: true,
+                message: `「${target.name}」已经压缩过一次，再压会继续损失画质，确认继续吗？`,
+            };
+        }
+        const maxSeconds = await this.mediaLimitSeconds('compressMaxSeconds', 600);
+        const r = await (0, media_edit_1.compressInPlace)(target, percent, maxSeconds);
+        if (!r.ok) {
+            if (/上限时长/.test(r.message || ''))
+                (0, media_edit_1.logAbandoned)(target.name, '压缩', r.message || '');
+            return { success: false, message: r.message || '压缩失败' };
+        }
+        app_log_1.appLog.info('file', `原位压缩完成：${target.name}`, `${target.size} → ${r.size}（目标 ${percent}%）`);
+        return { success: true, data: r };
+    }
+    async mediaWebp(body, req) {
+        const owner = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const id = String(body?.id ?? body?.fileId ?? '').trim();
+        if (!id)
+            return { success: false, message: '缺少文件标识' };
+        const raw = String(body?.mode ?? body?.lossless ?? 'lossy').toLowerCase();
+        const lossless = raw === 'lossless' || raw === 'true' || raw === '1';
+        const { target, reason } = await (0, media_edit_1.resolveMediaTarget)(id, owner);
+        if (!target)
+            return { success: false, message: reason || '文件不可编辑' };
+        const r = await (0, media_edit_1.toWebp)(target, lossless);
+        if (!r.ok)
+            return { success: false, message: r.message || '转 WebP 失败' };
+        app_log_1.appLog.info('file', `原位转 WebP（${lossless ? '无损' : '有损'}）：${target.name}`, `${target.size} → ${r.size}`);
+        return { success: true, data: r };
+    }
+    async mediaTranscode(body, req) {
+        const owner = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const id = String(body?.id ?? body?.fileId ?? '').trim();
+        if (!id)
+            return { success: false, message: '缺少文件标识' };
+        const { target, reason } = await (0, media_edit_1.resolveMediaTarget)(id, owner);
+        if (!target)
+            return { success: false, message: reason || '文件不可编辑' };
+        const maxSeconds = await this.mediaLimitSeconds('videoTranscodeMaxSeconds', 600);
+        const r = await (0, media_edit_1.transcodeInPlace)(target, maxSeconds);
+        if (!r.ok) {
+            if (/上限时长/.test(r.message || ''))
+                (0, media_edit_1.logAbandoned)(target.name, '转码', r.message || '');
+            return { success: false, message: r.message || '转码失败' };
+        }
+        app_log_1.appLog.info('file', `原位转码完成：${target.name}`, `${target.size} → ${r.size}`);
+        return { success: true, data: r };
     }
 };
 exports.ManageController = ManageController;
@@ -4246,7 +4390,49 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, Object]),
     __metadata("design:returntype", Promise)
 ], ManageController.prototype, "putSysConfig", null);
-exports.ManageController = ManageController = __decorate([
+__decorate([
+    (0, common_1.Get)('media/info/:id'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "mediaInfo", null);
+__decorate([
+    (0, common_1.Post)('media/crop'),
+    (0, common_2.UseInterceptors)((0, platform_express_1.FileInterceptor)('file', { limits: { fileSize: 64 * 1024 * 1024 } })),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_2.UploadedFile)()),
+    __param(2, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "mediaCrop", null);
+__decorate([
+    (0, common_1.Post)('media/compress'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "mediaCompress", null);
+__decorate([
+    (0, common_1.Post)('media/webp'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "mediaWebp", null);
+__decorate([
+    (0, common_1.Post)('media/transcode'),
+    __param(0, (0, common_1.Body)()),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "mediaTranscode", null);
+exports.ManageController = ManageController = ManageController_1 = __decorate([
     (0, common_1.Controller)('api/manage'),
     (0, common_1.UseGuards)(auth_guard_1.ManageAuthGuard),
     __metadata("design:paramtypes", [settings_service_1.SettingsService,

@@ -768,8 +768,6 @@ let ChannelManageController = class ChannelManageController {
         const ch = await prisma_1.prisma.channel.findUnique({ where: { id } });
         if (!ch)
             return { success: false, message: '渠道不存在' };
-        if (ch.type === 'localfiles')
-            return { success: false, message: '本地文件渠道不支持授权（仅管理员可用）' };
         const wanted = Array.isArray(body.usernames) ? body.usernames.map((x) => String(x || '').trim()).filter(Boolean) : [];
         const exists = await prisma_1.prisma.user.findMany({
             where: { username: { in: wanted } },

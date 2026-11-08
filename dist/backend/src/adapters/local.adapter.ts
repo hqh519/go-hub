@@ -510,6 +510,39 @@ function probeRoot(root: string, rel: string): string {
 }
 
 /**
+ * v1.0.5：**同步**算出本地文件的绝对路径（不做 existsSync 探测）。
+ *
+ * 与 localFileAbsOf 的分工：
+ *   · localFileAbsOf —— 「要读这个文件」，需要探测哪个根目录真的存在；
+ *   · localAbsPathOf —— 「这个文件按配置应该落在哪」，给详情页展示物理地址用，
+ *     必须同步（buildMetadata 是同步序列化），而且不该因为文件暂时不存在就返回空。
+ *
+ * 根目录口径与 localFileAbsOf 一致：渠道配了 rootPath 就用它，否则是内置 uploads。
+ */
+export function localAbsPathOf(
+  channel: { type?: string; config?: string | null } | null | undefined,
+  remoteKey: string,
+): string {
+  if (!channel || channel.type !== 'local') return '';
+  const rel = String(remoteKey || '').replace(/^\/+/, '').trim();
+  if (!rel) return '';
+  let root = '';
+  try {
+    const cfg = LocalAdapter.readChannelCfg({
+      id: '', name: '', type: 'local',
+      config: channel.config || '{}',
+      // readChannelCfg 只读 config，其余字段给空值即可
+      metas: {},
+    } as unknown as ChannelInfo);
+    root = cfg.rootPath;
+  } catch {
+    root = '';
+  }
+  if (!root) root = LocalAdapter.root();
+  return normalize(join(root, rel));
+}
+
+/**
  * 本地文件的绝对路径（供 /file 控制器直接读流）；不存在返回空串。
  * v3.0.0：先按内置 uploads 根定位；未命中再探测各自定义本地渠道的 rootPath
  * （自定义渠道的 remoteKey 是相对其 rootPath 的路径）。

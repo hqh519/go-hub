@@ -237,9 +237,35 @@ export class UploadService {
    */
   private backgroundChain: Promise<unknown> = Promise.resolve();
   private enqueueBackground<T>(task: () => Promise<T>): Promise<T> {
-    const run = this.backgroundChain.then(task);
+    /*
+     * v1.0.5：先让出一个事件循环再跑。
+     * 上传响应是在本方法返回之后才写出去的，直接用 `backgroundChain.then(task)` 有可能
+     * 在同一个 tick 里就把任务跑起来，与响应序列化抢同一个 tick —— 大文件上传时体感明显。
+     * setImmediate 保证「响应先出去，收尾工作随后」。
+     */
+    const run = this.backgroundChain.then(() => new Promise<void>((r) => setImmediate(r))).then(task);
     this.backgroundChain = run.catch((err) => {
       console.warn('[bg] 后台任务异常:', (err as Error)?.message || err);
+      return undefined;
+    });
+    return run;
+  }
+
+  /**
+   * 自动打标签专用队列（v1.0.5）。
+   *
+   * 以前打标签和「IP 归属地补写」共用 backgroundChain —— 而归属地那条要**请求外部 API**
+   * （冷启动 / 超时能挂好几秒）。标签任务排在它后面，就得等它跑完才轮到，
+   * 表现为「上传完过一会儿标签才出现」，批量上传时更明显。
+   *
+   * 现在标签走自己的串行链：既不拖上传响应，也不会被网络请求饿住。
+   * 仍然保持串行（不并发），避免同一批文件争抢 DB 连接、也不让标签创建互相打架。
+   */
+  private tagChain: Promise<unknown> = Promise.resolve();
+  private enqueueTagTask<T>(task: () => Promise<T>): Promise<T> {
+    const run = this.tagChain.then(() => new Promise<void>((r) => setImmediate(r))).then(task);
+    this.tagChain = run.catch((err) => {
+      console.warn('[tag] 自动标签任务异常:', (err as Error)?.message || err);
       return undefined;
     });
     return run;
@@ -679,10 +705,11 @@ export class UploadService {
        * 原来写死的「文件类型 / 扩展名 / 渠道简称 / 上传方式 / 年份」已移除，
        * 统一由 autoTag.placeholders / extract / regex 三项决定。
        */
-      let rules: { enabled: boolean; placeholders: string; extract: string; startChars: string; stopChars: string; maxLen: number } = {
+      let rules: { enabled: boolean; placeholders: string; extract: string; markerEnabled: boolean; startChars: string; stopChars: string; maxLen: number } = {
         enabled: true,
         placeholders: UploadService.DEFAULT_TAG_PLACEHOLDERS,
         extract: '',
+        markerEnabled: true,
         startChars: UploadService.DEFAULT_TAG_START,
         stopChars: UploadService.DEFAULT_TAG_STOP,
         maxLen: UploadService.DEFAULT_TAG_MAX_LEN,
@@ -695,6 +722,9 @@ export class UploadService {
           placeholders:
             at.placeholders === undefined ? UploadService.DEFAULT_TAG_PLACEHOLDERS : String(at.placeholders ?? ''),
           extract: at.extract === undefined ? '' : String(at.extract ?? ''),
+          // v1.0.5：这条规则可以单独关掉（界面上的「启用功能」勾选框），不影响上面两条
+          markerEnabled:
+            at.markerEnabled === undefined ? true : !(at.markerEnabled === false || String(at.markerEnabled) === 'false'),
           startChars:
             at.startChars === undefined ? UploadService.DEFAULT_TAG_START : String(at.startChars ?? ''),
           stopChars: at.stopChars === undefined ? UploadService.DEFAULT_TAG_STOP : String(at.stopChars ?? ''),
@@ -746,14 +776,16 @@ export class UploadService {
         for (const rule of UploadService.parseTagExtractRules(rules.extract)) {
           if (String(info.originalName || '').includes(rule.find)) autoNames.push(rule.tag);
         }
-        // ③ 自定义规则（v1.0.2）：起始符集合 + 截断符集合 + 最大长度
-        for (const hit of UploadService.extractByMarkers(
-          String(info.originalName || ''),
-          rules.startChars,
-          rules.stopChars,
-          rules.maxLen,
-        )) {
-          autoNames.push(hit);
+        // ③ 从文件名提取（v1.0.5）：起始符集合 + 截断符集合 + 最大长度，可单独开关
+        if (rules.markerEnabled) {
+          for (const hit of UploadService.extractByMarkers(
+            String(info.originalName || ''),
+            rules.startChars,
+            rules.stopChars,
+            rules.maxLen,
+          )) {
+            autoNames.push(hit);
+          }
         }
       }
       const names = Array.from(
@@ -787,7 +819,13 @@ export class UploadService {
    * v1.0.2 换成「起始符 + 截断符 + 最大长度」三段式，默认值与旧的 `#` 规则基本等价。
    */
   static readonly DEFAULT_TAG_PLACEHOLDERS = '{mime},{ext},{channelName},{uploadSource},{y}';
-  static readonly DEFAULT_TAG_START = '#';
+  /**
+   * v1.0.5：默认改为需求给定的一组值 —— 起始「# @ &」、截断「# @ & ! - _」、最多 10 字。
+   *
+   * 截断符里重复列出起始符是刻意的：`#美食#风景` 需要在前一个 `#` 处截断，
+   * 否则会连成一条「美食#风景」。空格不进配置，由 extractByMarkers 写死。
+   */
+  static readonly DEFAULT_TAG_START = '["#","@","&"]';
   /**
    * 空白恒为截断符（见 extractByMarkers），这里只列额外的符号。
    *
@@ -797,9 +835,8 @@ export class UploadService {
    * 默认规则下的 `.`、`!`、`-` 其实一直没生效（`#标签.png` 会得到「标签.png」）。
    * 数组形式没有分隔符歧义，每个元素就是一个记号。
    */
-  static readonly DEFAULT_TAG_STOP =
-    '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]';
-  static readonly DEFAULT_TAG_MAX_LEN = 14;
+  static readonly DEFAULT_TAG_STOP = '["#","@","&","!","-","_"]';
+  static readonly DEFAULT_TAG_MAX_LEN = 10;
 
   /**
    * v1.0.2：解析「起始符 / 截断符」配置。
@@ -2321,7 +2358,7 @@ export class UploadService {
         await this.touchIp(uploadIp, addr);
       });
     }
-    this.enqueueBackground(() =>
+    this.enqueueTagTask(() =>
       this.autoTag(record.id, {
         originalName,
         mime,
@@ -2705,7 +2742,7 @@ export class UploadService {
         },
       },
     });
-    this.enqueueBackground(() =>
+    this.enqueueTagTask(() =>
       this.autoTag(record.id, {
         originalName,
         mime,
@@ -3399,6 +3436,17 @@ export class UploadService {
     const targetCh = await prisma.channel.findUnique({ where: { id: input.targetChannelId } });
     if (!targetCh) return { ok: false, message: '目标渠道不存在' };
     if (!targetCh.enabled) return { ok: false, message: `目标渠道「${targetCh.name}」已停用` };
+    /*
+     * v1.0.4：备份渠道不能作为转存目标。
+     *
+     * 备份渠道在 v1.0.0 里的职责只有一条：上传成功后把同一份实体再写一份过去，
+     * 主渠道出问题时兜底。它不是「可以选择的存储位置」。
+     * 一旦允许转存进来，下面 ③ 的 existingTarget 分支会把那条 isPrimary=false 的
+     * 备份副本改成 isPrimary=true，备份渠道就变成了业务渠道，语义被永久改变。
+     */
+    if (targetCh.isBackup) {
+      return { ok: false, message: '「备份渠道」只做本份镜像，不能作为转存目标' };
+    }
     if (targetCh.id === sourceCh.id) return { ok: false, message: '目标渠道与当前渠道相同，无需转存' };
 
     const isLocalType = (t: string) => t === 'local' || t === 'localfiles';

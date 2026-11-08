@@ -917,8 +917,11 @@ export class ChannelManageController {
   async setAuthorize(@Param('id') id: string, @Body() body: { usernames?: string[] }) {
     const ch = await prisma.channel.findUnique({ where: { id } });
     if (!ch) return { success: false, message: '渠道不存在' };
-    // v3.0.0（R5）：本地文件渠道仅管理员可用，不接受授权名单
-    if (ch.type === 'localfiles') return { success: false, message: '本地文件渠道不支持授权（仅管理员可用）' };
+    /*
+     * v1.0.5：本地文件渠道加入授权体系 ——
+     * 名单为空 = 仅管理员可用（普通用户看不到「本地文件」入口）；
+     * 勾选账户后，名单内的普通用户即可在「本地文件」页浏览该渠道。
+     */
     const wanted = Array.isArray(body.usernames) ? body.usernames.map((x) => String(x || '').trim()).filter(Boolean) : [];
     // 只保留真实存在的账户，防止脏名字写进配置
     const exists = await prisma.user.findMany({

@@ -127,10 +127,15 @@ export class SysConfigService {
             enabled: true,
             placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
             extract: '',
-            // v1.0.2：裸正则改为「起始符 + 截断符 + 最大长度」三段式
-            startChars: '#',
-            stopChars: '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]',
-            maxLen: 14,
+            /*
+             * v1.0.5：裸正则 → 「起始符 + 截断符 + 最大长度」三段式，界面改写成一句话。
+             * 默认值对齐需求给定的一组：起始 # @ &、截断 # @ & ! - _、最多 10 字。
+             * 截断符里重复列出起始符是为了让 `#美食#风景` 能在第二个 # 处断开。
+             */
+            markerEnabled: true,
+            startChars: '["#","@","&"]',
+            stopChars: '["#","@","&","!","-","_"]',
+            maxLen: 10,
           },
         };
       case 'ai':
@@ -151,7 +156,31 @@ export class SysConfigService {
 
     if (section === 'page') return this.mergePage(stored);
     if (section === 'security') return this.mergeSecurity(stored);
-    return deepMerge(this.defaults(section), stored);
+    const merged = deepMerge(this.defaults(section), stored);
+    if (section === 'others') return this.upgradeLegacyTagRule(merged);
+    return merged;
+  }
+
+  /**
+   * v1.0.5：把「从未动过标签规则」的老安装一次性抬到新默认值。
+   *
+   * 为什么需要：`get()` 是「默认值 + 已保存值」深合并，老用户的库里有完整的一份
+   * `startChars='#' / stopChars=<长列表> / maxLen=14`，默认值改了也盖不掉。
+   * 这里只在**三项同时等于旧默认值**时才升级（说明用户真的没改过），
+   * 任何一项被改过就原样保留，不做静默覆盖。
+   */
+  private upgradeLegacyTagRule(cfg: any) {
+    const at = cfg && cfg.autoTag;
+    if (!at) return cfg;
+    const LEGACY_STOP =
+      '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]';
+    if (at.startChars === '#' && at.stopChars === LEGACY_STOP && Number(at.maxLen) === 14 && at.markerEnabled === undefined) {
+      at.markerEnabled = true;
+      at.startChars = '["#","@","&"]';
+      at.stopChars = '["#","@","&","!","-","_"]';
+      at.maxLen = 10;
+    }
+    return cfg;
   }
 
   /** 保存分区配置 */

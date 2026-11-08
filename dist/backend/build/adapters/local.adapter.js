@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LocalAdapter = void 0;
+exports.localAbsPathOf = localAbsPathOf;
 exports.localFileAbsOf = localFileAbsOf;
 exports.localFileAbs = localFileAbs;
 exports.writeLocalStream = writeLocalStream;
@@ -364,6 +365,28 @@ function probeRoot(root, rel) {
     if (legacy.startsWith(rootWithSep) && (0, fs_1.existsSync)(legacy))
         return legacy;
     return '';
+}
+function localAbsPathOf(channel, remoteKey) {
+    if (!channel || channel.type !== 'local')
+        return '';
+    const rel = String(remoteKey || '').replace(/^\/+/, '').trim();
+    if (!rel)
+        return '';
+    let root = '';
+    try {
+        const cfg = LocalAdapter.readChannelCfg({
+            id: '', name: '', type: 'local',
+            config: channel.config || '{}',
+            metas: {},
+        });
+        root = cfg.rootPath;
+    }
+    catch {
+        root = '';
+    }
+    if (!root)
+        root = LocalAdapter.root();
+    return (0, path_1.normalize)((0, path_1.join)(root, rel));
 }
 async function localFileAbsOf(remoteKey) {
     const rel = String(remoteKey || '').replace(/^\/+/, '');

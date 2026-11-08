@@ -133,6 +133,23 @@
                     <font-awesome-icon icon="info-circle"/>
                 </button>
                 <span class="mv-tools-sep"></span>
+                <!--
+                    v1.0.5：关闭按钮左侧的「上传」入口（仅父组件开启 upload 时出现）。
+                    典型场景：在「本地文件」页预览时想把当前这张图传到图床 ——
+                    点这里选出渠道 / 实例 / 目录即可后台上传，灯箱**不关闭**。
+                -->
+                <button
+                    v-if="upload"
+                    type="button"
+                    class="mv-btn mv-upload"
+                    :class="{ 'is-busy': uploadBusy }"
+                    :title="$t('localFiles.uploadToBed')"
+                    :aria-label="$t('localFiles.uploadToBed')"
+                    :disabled="uploadBusy"
+                    @click.stop="$emit('upload', current)"
+                >
+                    <font-awesome-icon :icon="uploadBusy ? 'spinner' : 'cloud-upload-alt'" :spin="uploadBusy"/>
+                </button>
                 <button
                     type="button"
                     class="mv-btn mv-close"
@@ -628,9 +645,13 @@ export default {
          * 移动端「滑动屏幕返回」时先关详情、再关灯箱（需求），
          * 灯箱靠这个标记判断第一下返回该交给谁处理。
          */
-        detailOpen: { type: Boolean, default: false }
+        detailOpen: { type: Boolean, default: false },
+        /** v1.0.5：关闭按钮左侧是否显示「上传」按钮（本地文件页用） */
+        upload: { type: Boolean, default: false },
+        /** v1.0.5：上传进行中（按钮转圈并禁用） */
+        uploadBusy: { type: Boolean, default: false }
     },
-    emits: ['update:modelValue', 'detail', 'close-detail', 'view-uploaded'],
+    emits: ['update:modelValue', 'detail', 'close-detail', 'view-uploaded', 'upload'],
     data() {
         return {
             index: 0,

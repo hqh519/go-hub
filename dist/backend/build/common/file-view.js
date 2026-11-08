@@ -17,6 +17,7 @@ exports.pickPrimaryCopy = pickPrimaryCopy;
 exports.buildMetadata = buildMetadata;
 exports.serializeFile = serializeFile;
 exports.normalizeDir = normalizeDir;
+const local_adapter_1 = require("../adapters/local.adapter");
 exports.UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record'];
 exports.CLIENT_UPLOAD_SOURCES = ['Upload', 'Fetch'];
 function normalizeUploadSource(raw) {
@@ -254,6 +255,7 @@ function buildMetadata(rec, copies, opts = {}) {
         ChannelName: primary?.channel?.name || '',
         StorageUrl: storageUrl,
         LoadUrl: loadUrl || storageUrl,
+        LocalPath: primary ? (0, local_adapter_1.localAbsPathOf)(primary.channel, primary.remoteKey || '') : '',
         BackupChannels: backupChannels,
         OtherCopies: otherCopies,
         FileHash: rec.hash || '',

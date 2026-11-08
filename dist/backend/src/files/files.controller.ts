@@ -17,6 +17,8 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { UseInterceptors, UploadedFile } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { Readable } from 'node:stream';
 import { createReadStream, existsSync, statSync } from 'node:fs';
@@ -34,6 +36,16 @@ import { SettingsService } from '../settings/settings.service';
 import { SysConfigService } from '../settings/sysconfig.service';
 import { AdminGuard, ManageAuthGuard, SESSION_COOKIE, currentSession, isAdminRole, parseSession } from '../auth/auth.guard';
 import { buildDirectoryTree, CHANNEL_LABEL, CopyWithChannel, fileExtOf, fileTypeOf, formatSize, isRecordFile, normalizeDir, normalizeUploadSource, pickPrimaryCopy, safeParse, serializeFile } from '../common/file-view';
+
+// v1.0.5：详情页「原位媒体编辑」（裁剪 / 压缩 / 转 WebP / 视频转码）
+import {
+  compressInPlace,
+  cropImage,
+  logAbandoned,
+  resolveMediaTarget,
+  toWebp,
+  transcodeInPlace,
+} from './media-edit';
 import { appLog } from '../common/app-log';
 import { frontendAppDir } from '../common/project-paths';
 import { qqwryStatus, saveQqwry } from '../common/qqwry';
@@ -4768,7 +4780,15 @@ export class ManageController {
     const srcLocal = !!ch && isLocalType(ch.type);
 
     const all = await prisma.channel.findMany({
-      where: { enabled: true },
+      /*
+       * v1.0.4：排除备份渠道（isBackup）。
+       *
+       * v1.0.0 的语义是「主渠道负责存取，备份渠道只做上传时的一比一镜像」——
+       * 备份渠道不参与取源排序、不承担业务流量。如果允许把它选成转存目标，
+       * 转存的 existingTarget 分支会把那条备份副本升级成主副本，
+       * 备份渠道从此变成工作渠道，与 v1.0.0 的行为不一致。
+       */
+      where: { enabled: true, isBackup: false },
       orderBy: [{ typeCode: 'asc' }, { name: 'asc' }],
       select: { id: true, name: true, type: true },
     });
@@ -5200,6 +5220,179 @@ export class ManageController {
     }
     return out;
   }
+
+  /* ======================================================================
+   * v1.0.5：原位媒体编辑（裁剪 / 压缩 / 转WebP / 转码）
+   *
+   * 硬约束（需求原话）：
+   *   1. 只对「本地存储」渠道上的主副本生效 —— 远端对象存储无法原地改写；
+   *   2. 原位替换：磁盘路径、文件名、扩展名全部不变，因此已经发出去的外链继续有效；
+   *   3. 处理完同步刷新 size / width / height / md5，详情页立即显示新值。
+   * ====================================================================== */
+
+  /** 读取「系统设置→上传相关配置」里的时长上限（秒）；空/非法 → 默认值，0 → 不限制 */
+  private async mediaLimitSeconds(id: string, fallback = 600): Promise<number> {
+    try {
+      const page: any = await this.sysConfig.get('page');
+      const hit = (page?.config || []).find((x: any) => x.id === id);
+      const raw = hit && hit.value !== undefined && hit.value !== null ? String(hit.value).trim() : '';
+      if (raw === '') return fallback;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) return fallback;
+      return Math.floor(n);
+    } catch {
+      return fallback;
+    }
+  }
+
+  /** 媒体类型判定：只用 mime 前缀，扩展名兜底 */
+  private static mediaKindOf(mime: string, ext: string): 'image' | 'video' | 'audio' | '' {
+    const m = String(mime || '').toLowerCase();
+    if (m.startsWith('image/')) return 'image';
+    if (m.startsWith('video/')) return 'video';
+    if (m.startsWith('audio/')) return 'audio';
+    const e = String(ext || '').toLowerCase();
+    if (['jpg', 'jpeg', 'png', 'webp', 'avif', 'gif'].includes(e)) return 'image';
+    if (['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'].includes(e)) return 'video';
+    if (['mp3', 'wav', 'aac', 'flac', 'm4a', 'ogg'].includes(e)) return 'audio';
+    return '';
+  }
+
+  /**
+   * 探测「这个文件能不能原位编辑、能做哪几件事」。
+   * 前端拿到结果后决定显示哪几个按钮，不自己猜扩展名。
+   */
+  @Get('media/info/:id')
+  async mediaInfo(@Param('id') id: string, @Req() req: Request) {
+    const owner = currentSession(req)?.user || '';
+    const { target, reason } = await resolveMediaTarget(id, owner);
+    if (!target) return { success: false, message: reason || '文件不可编辑' };
+    const kind = ManageController.mediaKindOf(target.mime, target.ext);
+    const isWebp = target.ext === 'webp' || String(target.mime || '').toLowerCase() === 'image/webp';
+    return {
+      success: true,
+      data: {
+        id: target.id,
+        name: target.name,
+        ext: target.ext,
+        mime: target.mime,
+        size: target.size,
+        originalSize: target.originalSize,
+        kind,
+        /** 之前是否压缩过 —— 前端据此弹「二次确认」 */
+        compressedBefore: target.compressedBefore,
+        /** 固化存储地址（详情页「源」一栏与后端的本地磁盘地址保持一致） */
+        localPath: target.abs,
+        canCrop: kind === 'image',
+        canCompress: kind === 'image' || kind === 'video' || kind === 'audio',
+        /** 已经是 WebP 的不再提供「转WebP」（需求：已是 WebP 直接阻止） */
+        canWebp: kind === 'image' && !isWebp,
+        canTranscode: kind === 'video',
+      },
+    };
+  }
+
+  /**
+   * 裁剪：前端用 canvas 裁好再以 multipart 传回结果图（不传坐标，避免服务端与前端
+   * 对「旋转变换后的坐标系」理解不一致）。服务端只负责按原扩展名重新编码并原位落盘。
+   */
+  @Post('media/crop')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 64 * 1024 * 1024 } }))
+  async mediaCrop(
+    @Body() body: Record<string, unknown>,
+    @UploadedFile() file: any,
+    @Req() req: Request,
+  ) {
+    const owner = currentSession(req)?.user || '';
+    const id = String(body?.id ?? body?.fileId ?? '').trim();
+    if (!id) return { success: false, message: '缺少文件标识' };
+    if (!file?.buffer?.length) return { success: false, message: '没有收到裁剪后的图片数据' };
+
+    const { target, reason } = await resolveMediaTarget(id, owner);
+    if (!target) return { success: false, message: reason || '文件不可编辑' };
+
+    const r = await cropImage(target, file.buffer);
+    if (!r.ok) {
+      appLog.warn('file', `原位裁剪失败：${target.name}`, r.message || '');
+      return { success: false, message: r.message || '裁剪失败' };
+    }
+    appLog.info('file', `原位裁剪完成：${target.name}`, `${target.size} → ${r.size}`);
+    return { success: true, data: r };
+  }
+
+  /**
+   * 压缩：percent = 目标体积占原体积的百分比（20~95）。
+   * 已经压缩过的文件必须带 confirm=1 才执行（前端弹二次确认）。
+   */
+  @Post('media/compress')
+  async mediaCompress(@Body() body: Record<string, unknown>, @Req() req: Request) {
+    const owner = currentSession(req)?.user || '';
+    const id = String(body?.id ?? body?.fileId ?? '').trim();
+    const percent = Number(body?.percent ?? 0);
+    if (!id) return { success: false, message: '缺少文件标识' };
+    if (!Number.isFinite(percent) || percent < 10 || percent > 99) {
+      return { success: false, message: '压缩比例需在 10~99 之间（目标体积占原体积的百分比）' };
+    }
+
+    const { target, reason } = await resolveMediaTarget(id, owner);
+    if (!target) return { success: false, message: reason || '文件不可编辑' };
+
+    if (target.compressedBefore && String(body?.confirm ?? '') !== '1') {
+      return {
+        success: false,
+        needConfirm: true,
+        message: `「${target.name}」已经压缩过一次，再压会继续损失画质，确认继续吗？`,
+      };
+    }
+
+    const maxSeconds = await this.mediaLimitSeconds('compressMaxSeconds', 600);
+    const r = await compressInPlace(target, percent, maxSeconds);
+    if (!r.ok) {
+      if (/上限时长/.test(r.message || '')) logAbandoned(target.name, '压缩', r.message || '');
+      return { success: false, message: r.message || '压缩失败' };
+    }
+    appLog.info('file', `原位压缩完成：${target.name}`, `${target.size} → ${r.size}（目标 ${percent}%）`);
+    return { success: true, data: r };
+  }
+
+  /** 转 WebP：mode = lossy（有损，默认）| lossless（无损）；文件名与扩展名保持不变 */
+  @Post('media/webp')
+  async mediaWebp(@Body() body: Record<string, unknown>, @Req() req: Request) {
+    const owner = currentSession(req)?.user || '';
+    const id = String(body?.id ?? body?.fileId ?? '').trim();
+    if (!id) return { success: false, message: '缺少文件标识' };
+    const raw = String(body?.mode ?? body?.lossless ?? 'lossy').toLowerCase();
+    const lossless = raw === 'lossless' || raw === 'true' || raw === '1';
+
+    const { target, reason } = await resolveMediaTarget(id, owner);
+    if (!target) return { success: false, message: reason || '文件不可编辑' };
+
+    const r = await toWebp(target, lossless);
+    if (!r.ok) return { success: false, message: r.message || '转 WebP 失败' };
+    appLog.info('file', `原位转 WebP（${lossless ? '无损' : '有损'}）：${target.name}`, `${target.size} → ${r.size}`);
+    return { success: true, data: r };
+  }
+
+  /** 视频转码：先探测编码，已是浏览器可播的 H.264 就直接拒绝；超时长上限则放弃并记录原因 */
+  @Post('media/transcode')
+  async mediaTranscode(@Body() body: Record<string, unknown>, @Req() req: Request) {
+    const owner = currentSession(req)?.user || '';
+    const id = String(body?.id ?? body?.fileId ?? '').trim();
+    if (!id) return { success: false, message: '缺少文件标识' };
+
+    const { target, reason } = await resolveMediaTarget(id, owner);
+    if (!target) return { success: false, message: reason || '文件不可编辑' };
+
+    const maxSeconds = await this.mediaLimitSeconds('videoTranscodeMaxSeconds', 600);
+    const r = await transcodeInPlace(target, maxSeconds);
+    if (!r.ok) {
+      if (/上限时长/.test(r.message || '')) logAbandoned(target.name, '转码', r.message || '');
+      return { success: false, message: r.message || '转码失败' };
+    }
+    appLog.info('file', `原位转码完成：${target.name}`, `${target.size} → ${r.size}`);
+    return { success: true, data: r };
+  }
+
 }
 
 /** 用户侧配置（上传页 / 登录页 / 全局背景图使用） */

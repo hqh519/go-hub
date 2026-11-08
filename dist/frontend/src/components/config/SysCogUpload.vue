@@ -313,10 +313,12 @@
                         <el-button text type="primary" size="small" @click="openEditDialog(channelType.value, channel)">
                             <font-awesome-icon icon="edit" style="margin-right: 3px;"/>编辑
                         </el-button>
-                        <!-- v2.6.0：本地存储渠道也开放「授权」设置（名单为空 = 全员可用兜底，非空 = 仅勾选账户）
-                             v3.0.0（R5）：本地文件渠道只给管理员使用，不做授权 -->
+                        <!--
+                            v2.6.0：本地存储渠道也开放「授权」设置（名单为空 = 全员可用兜底，非空 = 仅勾选账户）
+                            v1.0.5：本地文件渠道同样纳入授权体系 ——
+                            名单为空时普通用户看不到「本地文件」入口，勾选后仅名单内账户可见。
+                        -->
                         <el-button
-                            v-if="channel.type !== 'localfiles'"
                             text
                             type="primary"
                             size="small"
@@ -374,6 +376,7 @@
                 <font-awesome-icon icon="info-circle" style="margin-right: 6px;"/>
                 仅被勾选的账户能在自己的上传设置里看到并使用该渠道；管理员不受限制，始终可用。
                 <template v-if="authChannel?.type === 'local'">内置本地存储渠道自 v2.7.0 起与其它渠道规则完全一致：名单为空时普通用户不可见（管理员不受限），勾选后仅名单内账户可用。</template>
+                <template v-else-if="authChannel?.type === 'localfiles'">本地文件渠道：名单为空时普通用户在左栏看不到「本地文件」入口；勾选后，名单内账户可浏览该渠道下的目录，并在「本地文件」页把文件上传到图床。</template>
             </div>
             <div v-loading="authLoading" class="auth-body">
                 <el-checkbox-group v-model="authSelected" v-if="authUsers.length">

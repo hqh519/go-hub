@@ -21,6 +21,15 @@
                             <font-awesome-icon icon="globe" class="admin-more-menu-ico" />
                             <span>{{ langText }}</span>
                         </button>
+                        <!-- v1.0.5：语言切换后面依次是「我的账户」「系统管理」（仅管理员） -->
+                        <button type="button" class="el-dropdown-menu__item" @click="handleMoreCommand('account')">
+                            <font-awesome-icon icon="user" class="admin-more-menu-ico" />
+                            <span>{{ $t('dashboard.myAccount') }}</span>
+                        </button>
+                        <button v-if="isAdmin" type="button" class="el-dropdown-menu__item" @click="handleMoreCommand('system')">
+                            <font-awesome-icon icon="cogs" class="admin-more-menu-ico" />
+                            <span>{{ $t('dashboard.systemManage') }}</span>
+                        </button>
                         <button v-if="showLinkFormat" type="button" class="el-dropdown-menu__item" @click="handleMoreCommand('link')">
                             <font-awesome-icon icon="link" class="admin-more-menu-ico" />
                             <span>{{ $t('dashboard.linkFormat') }}</span>
@@ -55,6 +64,12 @@
                         <button type="button" class="el-dropdown-menu__item admin-more-menu-text" @click="handleMoreCommand('lang')">
                             <span>{{ langText }}</span>
                         </button>
+                        <button type="button" class="el-dropdown-menu__item admin-more-menu-text" @click="handleMoreCommand('account')">
+                            <span>{{ $t('dashboard.myAccount') }}</span>
+                        </button>
+                        <button v-if="isAdmin" type="button" class="el-dropdown-menu__item admin-more-menu-text" @click="handleMoreCommand('system')">
+                            <span>{{ $t('dashboard.systemManage') }}</span>
+                        </button>
                         <div class="admin-more-menu-sep"></div>
                         <button type="button" class="el-dropdown-menu__item is-logout admin-more-menu-text" @click="handleMoreCommand('logout')">
                             <span>{{ $t('dashboard.logout') }}</span>
@@ -85,6 +100,10 @@ export default {
     // v3.0.0：移动端更多菜单里的「标签管理」转发给文件管理页
     emits: ['link-format', 'logout', 'tag-management'],
     computed: {
+        /** v1.0.5：「系统管理」菜单项仅管理员可见 */
+        isAdmin() {
+            return this.$store.getters.isAdminRole === true;
+        },
         /** 主题三态：auto（跟随系统）/ light / dark */
         themeMode() {
             if (!this.$store.getters.cusDarkMode) return 'auto';
@@ -126,6 +145,18 @@ export default {
             }
             if (cmd === 'lang') {
                 setLocale(this.$i18n.locale === 'zh-CN' ? 'en' : 'zh-CN');
+                return;
+            }
+            if (cmd === 'account') {
+                // v1.0.5：「我的账户」→ 新标签页打开个性化设置，不打断当前管理页
+                const url = this.$router.resolve({ name: 'customerConfig' }).href;
+                window.open(url, '_blank', 'noopener');
+                return;
+            }
+            if (cmd === 'system') {
+                // v1.0.5：「系统管理」→ 新标签页直接落在「系统状态」分区
+                const url = this.$router.resolve({ name: 'systemConfig', hash: '#status' }).href;
+                window.open(url, '_blank', 'noopener');
                 return;
             }
             if (cmd === 'tagManage') {

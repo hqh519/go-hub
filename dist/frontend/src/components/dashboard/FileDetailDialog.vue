@@ -8,6 +8,26 @@
         data-gohub-layer="file-detail"
         @closed="stopAllMedia"
     >
+        <!--
+            v1.0.5：标题栏加「刷新」图标 —— 不关弹窗重新拉一次这个文件的元数据。
+            典型场景：在别处改了标签 / 渠道 / 备注，回到这个弹窗不想关掉重开。
+        -->
+        <template #header>
+            <div class="detail-header">
+                <span class="detail-header-title">{{ $t('fileDetail.title') }}</span>
+                <button
+                    type="button"
+                    class="detail-header-refresh"
+                    :class="{ 'is-spinning': refreshing }"
+                    :title="$t('fileDetail.refresh')"
+                    :aria-label="$t('fileDetail.refresh')"
+                    :disabled="refreshing"
+                    @click="reloadDetail"
+                >
+                    <font-awesome-icon icon="sync"/>
+                </button>
+            </div>
+        </template>
         <!-- 详情内容统一包一层：任一加载值超过 80 字符时整体字号降一号 -->
         <div class="detail-body" :class="{ 'detail-compact': hasLongValue }">
         <!-- v3.0.0：下载按钮移到下方「二维码 / 分享」同一行的最后面（见 preview-toolbar） -->
@@ -212,6 +232,55 @@
                 >
                     <font-awesome-icon icon="right-left" class="preview-toolbar-icon" />{{ convertDirectionLabel }}
                 </el-button>
+                <!--
+                    v1.0.5：原位媒体编辑（仅本地存储渠道的主副本可用，后端 media/info 探测后才显示）。
+                    原位 = 磁盘路径、文件名、扩展名都不变，因此已经发出去的外链全部继续有效。
+                    图片 → 裁剪 / 压缩 / 转WebP；视频 → 转码 / 压缩；音频 → 压缩。
+                -->
+                <template v-if="mediaReady && !isEditing && canEditAction && !trashMode">
+                    <el-button
+                        v-if="mediaInfo.canCrop"
+                        class="preview-toolbar-media"
+                        size="small"
+                        plain
+                        :loading="cropLoading"
+                        :disabled="mediaBusy"
+                        @click="openMediaCrop()"
+                    >
+                        <font-awesome-icon v-if="!cropLoading" icon="crop" class="preview-toolbar-icon" />{{ $t('fileDetail.mediaCrop') }}
+                    </el-button>
+                    <el-button
+                        v-if="mediaInfo.canCompress"
+                        class="preview-toolbar-media"
+                        size="small"
+                        plain
+                        :disabled="mediaBusy"
+                        @click="openCompressDialog()"
+                    >
+                        <font-awesome-icon icon="compress-alt" class="preview-toolbar-icon" />{{ $t('fileDetail.mediaCompress') }}
+                    </el-button>
+                    <el-button
+                        v-if="mediaInfo.canWebp"
+                        class="preview-toolbar-media"
+                        size="small"
+                        plain
+                        :disabled="mediaBusy"
+                        @click="openWebpDialog()"
+                    >
+                        <font-awesome-icon icon="file-image" class="preview-toolbar-icon" />{{ $t('fileDetail.mediaWebp') }}
+                    </el-button>
+                    <el-button
+                        v-if="mediaInfo.canTranscode"
+                        class="preview-toolbar-media"
+                        size="small"
+                        plain
+                        :loading="transcodeBusy"
+                        :disabled="mediaBusy"
+                        @click="doTranscode()"
+                    >
+                        <font-awesome-icon v-if="!transcodeBusy" icon="film" class="preview-toolbar-icon" />{{ $t('fileDetail.mediaTranscode') }}
+                    </el-button>
+                </template>
                 <!--
                     v3.0.0（R14）：声音开关从「图床文件管理页右上角」迁到这里（下载按钮后面）——
                     同一份全局状态（store.globalVideoMuted），统一控制预览浮层视频 / 详情页视频
@@ -696,22 +765,83 @@
                 >{{ $t('fileDetail.convertConfirm') }}</el-button>
             </template>
         </el-dialog>
+
+        <!-- ============================================================
+             v1.0.5：原位媒体编辑的三个弹窗（裁剪 / 压缩 / 转WebP）
+             ============================================================ -->
+
+        <!-- 裁剪：复用上传页的裁剪组件（含旋转方向），裁好后回传结果图 -->
+        <ImageCropDialog
+            v-model="showCropDialog"
+            :file="cropFile"
+            :file-name="cropFileName"
+            @done="onMediaCropped"
+        />
+
+        <el-dialog
+            v-model="showCompressDialog"
+            :title="$t('fileDetail.compressTitle')"
+            width="440px"
+            append-to-body
+            class="gohub-media-dialog"
+        >
+            <div class="media-dialog-body">
+                <p class="media-dialog-text">{{ $t('fileDetail.compressIntro') }}</p>
+                <div class="media-percent-row">
+                    <el-slider v-model="compressPercent" :min="10" :max="95" :step="5" show-stops style="flex: 1" />
+                    <span class="media-percent-value">{{ compressPercent }}%</span>
+                </div>
+                <p class="media-dialog-hint">
+                    {{ $t('fileDetail.compressEstimate', { size: estimatedCompressSize }) }}
+                </p>
+                <p v-if="mediaInfo && mediaInfo.compressedBefore" class="media-dialog-hint is-warn">
+                    {{ $t('fileDetail.compressAgainWarn') }}
+                </p>
+                <p class="media-dialog-hint">{{ $t('fileDetail.compressKeepName') }}</p>
+            </div>
+            <template #footer>
+                <el-button @click="showCompressDialog = false">{{ $t('common.cancel') }}</el-button>
+                <el-button type="primary" :loading="mediaBusy" @click="doCompress(false)">{{ $t('fileDetail.compressConfirm') }}</el-button>
+            </template>
+        </el-dialog>
+
+        <el-dialog
+            v-model="showWebpDialog"
+            :title="$t('fileDetail.webpTitle')"
+            width="440px"
+            append-to-body
+            class="gohub-media-dialog"
+        >
+            <div class="media-dialog-body">
+                <p class="media-dialog-text">{{ $t('fileDetail.webpIntro') }}</p>
+                <el-radio-group v-model="webpMode" class="media-radio">
+                    <el-radio label="lossy">{{ $t('fileDetail.webpLossy') }}</el-radio>
+                    <el-radio label="lossless">{{ $t('fileDetail.webpLossless') }}</el-radio>
+                </el-radio-group>
+                <p class="media-dialog-hint">{{ $t('fileDetail.webpKeepName') }}</p>
+            </div>
+            <template #footer>
+                <el-button @click="showWebpDialog = false">{{ $t('common.cancel') }}</el-button>
+                <el-button type="primary" :loading="mediaBusy" @click="doWebp()">{{ $t('fileDetail.webpConfirm') }}</el-button>
+            </template>
+        </el-dialog>
         </div>
     </el-dialog>
 </template>
 
 <script>
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import fetchWithAuth from '@/utils/fetchWithAuth';
 import { validateFileId } from '@/utils/fileIdValidator';
 import { copyText } from '@/utils/clipboard';
 import { fileLink } from '@/utils/fileLink';
 import QRCodeBox from '@/components/common/QRCodeBox.vue';
 import ShareDialog from '@/components/dashboard/ShareDialog.vue';
+import ImageCropDialog from '@/components/upload/ImageCropDialog.vue';
 
 export default {
     name: 'FileDetailDialog',
-    components: { QRCodeBox, ShareDialog },
+    components: { QRCodeBox, ShareDialog, ImageCropDialog },
     props: {
         modelValue: { type: Boolean, default: false },
         file: { type: Object, default: null },
@@ -748,6 +878,8 @@ export default {
             if (val) {
                 // v1.0.3：打开详情即确认「转本地 / 转异地」按钮该显示哪个（一次轻量查询）
                 this.loadConvertOptions();
+                // v1.0.5：探测能否原位编辑（裁剪 / 压缩 / 转WebP / 转码）
+                this.loadMediaInfo();
             }
             if (!val) {
                 // v3.0.0：关闭弹窗时退出编辑状态
@@ -784,6 +916,28 @@ export default {
     },
     data() {
         return {
+            // v1.0.5：标题栏「刷新」是否进行中（按钮转圈 + 防重复点击）
+            refreshing: false,
+            /*
+             * v1.0.5：原位媒体编辑。
+             * mediaInfo 由后端 media/info 探测得出（是否本地主副本 / 图片还是视频 / 是否已是 WebP），
+             * 前端不自己按扩展名猜 —— 猜错就会出现「点了按钮后端拒绝」的体验。
+             */
+            mediaInfo: null,
+            mediaBusy: false,
+            // 裁剪
+            showCropDialog: false,
+            cropFile: null,
+            cropFileName: '',
+            cropLoading: false,
+            // 压缩
+            showCompressDialog: false,
+            compressPercent: 60,
+            // 转 WebP
+            showWebpDialog: false,
+            webpMode: 'lossy',
+            // 转码
+            transcodeBusy: false,
             // v3.0.0：文件级加密（状态来自详情接口的 metas.AccessPasswordHash）
             fileEncrypted: false,
             showPasswordDialog: false,
@@ -862,6 +1016,19 @@ export default {
         }
     },
     computed: {
+        /** v1.0.5：媒体编辑按钮的显示总闸 —— 只有后端确认「可原位编辑」才整组出现 */
+        mediaReady() {
+            return !!(this.mediaInfo && (this.mediaInfo.canCrop || this.mediaInfo.canCompress || this.mediaInfo.canWebp || this.mediaInfo.canTranscode));
+        },
+        /** v1.0.5：按百分比估算压缩后体积（只做展示，实际以处理结果为准） */
+        estimatedCompressSize() {
+            const size = Number(this.mediaInfo?.size) || 0;
+            if (!size) return '—';
+            const bytes = Math.round((size * this.compressPercent) / 100);
+            if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+            if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+            return `${bytes} B`;
+        },
         /** v1.0.3：转存按钮文案 —— 当前在本地渠道就「转异地」，否则「转本地」 */
         convertDirectionLabel() {
             return this.convertDirection === 'to-local'
@@ -1315,11 +1482,22 @@ export default {
         storageSourceUrl() {
             const meta = this.file?.metadata || {};
             /*
+             * v1.0.5：主副本在本地存储渠道时，「源」直接给磁盘上的物理地址
+             * （绝对路径 + 真实落盘文件名），而不是本站签发的外链 ——
+             * 排查「文件到底存在哪儿」时这才是有效信息。
+             * 非本地渠道没有 LocalPath，继续沿用加载地址 / 存储直链。
+             */
+            if (meta.LocalPath) return String(meta.LocalPath);
+            /*
              * 本地存储渠道没有「渠道直链」（后端 buildDirectUrl 返回 null），
              * 它的「源」就是本站签发地址本身（外链访问域名 + /file/...），
              * 因此最后回退 fileLink，保证本地文件的「源」按钮同样可用。
              */
             return String(meta.LoadUrl || meta.StorageUrl || this.fileLink || '');
+        },
+        /** v1.0.5：当前「源」是不是本地磁盘路径（决定按钮文案与图标） */
+        sourceIsLocalPath() {
+            return !!(this.file?.metadata || {}).LocalPath;
         },
         imageDimensions() {
             const width = this.file?.metadata?.Width;
@@ -1482,6 +1660,14 @@ export default {
             this.showQr = false;
             this.activeTab = 'originUrl';
             this.showShareDialog = false;
+            // v1.0.5：媒体编辑的弹窗与探测结果一并回到初始（换了文件就不该沿用上一个文件的能力）
+            this.mediaInfo = null;
+            this.mediaBusy = false;
+            this.showCropDialog = false;
+            this.cropFile = null;
+            this.showCompressDialog = false;
+            this.showWebpDialog = false;
+            this.transcodeBusy = false;
             // v3.0.0（R8）：评分 / 等级回到当前文件的库值
             this.ratingValue = Number(this.file?.metadata?.Rating) || 0;
             this.levelValue = Number(this.file?.metadata?.Level) || 0;
@@ -1611,6 +1797,218 @@ export default {
          * 补拉详情接口：拿到「限时截止时间」与「作者备注」。
          * 列表接口为了性能与隐私不下发这两项，所以每次打开弹窗按需取一次。
          */
+        /**
+         * v1.0.5：标题栏「刷新」—— 不关闭弹窗，重新拉当前文件的元数据。
+         *
+         * 只做三件事：
+         *   1) 重新取 /api/manage/metadata/:name，把整份 metadata 回抛给父级
+         *      （父级 handleMetadataUpdated 会同时更新列表行与本弹窗的 file prop）；
+         *   2) 重新拉备注 / 限时 / 加密状态与「转存」候选；
+         *   3) 媒体元素重新起播（和切换文件时同一套逻辑，避免旧的 src 缓存）。
+         * 编辑态不打断：正在编辑时不刷新，防止把未保存的输入冲掉。
+         */
+        async reloadDetail(silent = false) {
+            if (this.refreshing) return;
+            const name = this.file?.name;
+            if (!name) return;
+            this.refreshing = true;
+            try {
+                const res = await fetchWithAuth(`/api/manage/metadata/${encodeURIComponent(name)}`);
+                const json = await res.json().catch(() => ({}));
+                const data = json?.data || {};
+                const metadata = data?.metadata || {};
+                if (metadata && Object.keys(metadata).length) {
+                    this.$emit('metadataUpdated', name, metadata);
+                }
+                await this.loadExtraMeta();
+                await this.loadConvertOptions();
+                // v1.0.5：媒体能力可能变了（例如刚转成 WebP 就不能再转 WebP）
+                await this.loadMediaInfo();
+                this.mediaAutoStarted = false;
+                this.$nextTick(() => {
+                    this.startDetailVideo();
+                    this.startDetailAudio();
+                });
+                // silent：调用方自己已经弹过「处理完成」，不再重复提示「已刷新」
+                if (!silent) ElMessage.success(this.$t('fileDetail.refreshed'));
+            } catch {
+                if (!silent) ElMessage.warning(this.$t('fileDetail.refreshFailed'));
+            } finally {
+                this.refreshing = false;
+            }
+        },
+
+        /* ==================================================================
+         * v1.0.5：原位媒体编辑（裁剪 / 压缩 / 转WebP / 转码）
+         *
+         * 共同前提：后端 media/info 判定「主副本在本地存储渠道」。
+         * 处理成功后文件路径 / 文件名 / 扩展名都不变，因此外链全部继续有效；
+         * 这里只需要刷新一次详情，把新的体积 / 宽高 / MD5 显示出来。
+         * ================================================================== */
+
+        async loadMediaInfo() {
+            this.mediaInfo = null;
+            const key = String(this.file?.name || '');
+            if (!key || this.trashMode || this.readonlyShared) return;
+            try {
+                const res = await fetchWithAuth(`/api/manage/media/info/${encodeURIComponent(key)}`);
+                const json = await res.json().catch(() => ({}));
+                this.mediaInfo = json?.success ? json.data : null;
+            } catch {
+                this.mediaInfo = null;
+            }
+        },
+
+        /** 裁剪：先把当前图片取回本地，交给裁剪组件（组件内含旋转方向与自由框选） */
+        async openMediaCrop() {
+            const key = String(this.file?.name || '');
+            if (!key || this.cropLoading) return;
+            this.cropLoading = true;
+            try {
+                const url = this.urls?.originUrl || this.fileLink;
+                if (!url) throw new Error('no-url');
+                // 注意：这里不能走 fetchWithAuth —— 它会补 /api 前缀，把图片地址改坏
+                const res = await fetch(url, { credentials: 'include' });
+                if (!res.ok) throw new Error(`http-${res.status}`);
+                const blob = await res.blob();
+                const ext = String(this.mediaInfo?.ext || 'png').toLowerCase();
+                const mime = blob.type || (ext === 'jpg' ? 'image/jpeg' : `image/${ext}`);
+                this.cropFileName = `${key}.${ext}`;
+                this.cropFile = new File([blob], this.cropFileName, { type: mime, lastModified: Date.now() });
+                this.showCropDialog = true;
+            } catch {
+                ElMessage.error(this.$t('fileDetail.mediaCropLoadFailed'));
+            } finally {
+                this.cropLoading = false;
+            }
+        },
+
+        /** 裁剪组件回调：把结果图以 multipart 传回，服务端按原扩展名重新编码并原位落盘 */
+        async onMediaCropped(file) {
+            this.showCropDialog = false;
+            this.cropFile = null;
+            const key = String(this.file?.name || '');
+            if (!key || !file) return;
+            this.mediaBusy = true;
+            ElMessage.info(this.$t('fileDetail.mediaProcessing'));
+            try {
+                const fd = new FormData();
+                fd.append('id', key);
+                fd.append('file', file, file.name);
+                const res = await fetchWithAuth('/api/manage/media/crop', { method: 'POST', body: fd, headers: {} });
+                const json = await res.json().catch(() => ({}));
+                if (!res.ok || json?.success === false) throw new Error(json?.message || this.$t('fileDetail.mediaCropFailed'));
+                ElMessage.success(this.$t('fileDetail.mediaCropDone'));
+                await this.reloadDetail(true);
+            } catch (e) {
+                ElMessage.error(e?.message || this.$t('fileDetail.mediaCropFailed'));
+            } finally {
+                this.mediaBusy = false;
+            }
+        },
+
+        openCompressDialog() {
+            this.compressPercent = 60;
+            this.showCompressDialog = true;
+        },
+
+        /**
+         * 压缩。已压缩过的文件后端会回 needConfirm，这里弹二次确认后带 confirm=1 重试。
+         * 视频 / 音频可能跑很久，因此处理期间整组按钮禁用（mediaBusy）。
+         */
+        async doCompress(confirmed) {
+            const key = String(this.file?.name || '');
+            if (!key || this.mediaBusy) return;
+            this.mediaBusy = true;
+            try {
+                const res = await fetchWithAuth('/api/manage/media/compress', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: key, percent: this.compressPercent, confirm: confirmed ? 1 : 0 }),
+                });
+                const json = await res.json().catch(() => ({}));
+                if (json?.needConfirm) {
+                    this.mediaBusy = false;
+                    try {
+                        await ElMessageBox.confirm(json.message, this.$t('fileDetail.compressAgainTitle'), {
+                            confirmButtonText: this.$t('common.confirm'),
+                            cancelButtonText: this.$t('common.cancel'),
+                            type: 'warning',
+                        });
+                    } catch {
+                        return; // 用户取消
+                    }
+                    return this.doCompress(true);
+                }
+                if (!res.ok || json?.success === false) throw new Error(json?.message || this.$t('fileDetail.mediaCompressFailed'));
+                this.showCompressDialog = false;
+                ElMessage.success(this.$t('fileDetail.mediaCompressDone'));
+                await this.reloadDetail(true);
+            } catch (e) {
+                ElMessage.error(e?.message || this.$t('fileDetail.mediaCompressFailed'));
+            } finally {
+                this.mediaBusy = false;
+            }
+        },
+
+        openWebpDialog() {
+            this.webpMode = 'lossy';
+            this.showWebpDialog = true;
+        },
+
+        async doWebp() {
+            const key = String(this.file?.name || '');
+            if (!key || this.mediaBusy) return;
+            this.mediaBusy = true;
+            try {
+                const res = await fetchWithAuth('/api/manage/media/webp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: key, mode: this.webpMode }),
+                });
+                const json = await res.json().catch(() => ({}));
+                if (!res.ok || json?.success === false) throw new Error(json?.message || this.$t('fileDetail.mediaWebpFailed'));
+                this.showWebpDialog = false;
+                ElMessage.success(this.$t('fileDetail.mediaWebpDone'));
+                await this.reloadDetail(true);
+            } catch (e) {
+                ElMessage.error(e?.message || this.$t('fileDetail.mediaWebpFailed'));
+            } finally {
+                this.mediaBusy = false;
+            }
+        },
+
+        /** 转码：先确认（耗时可能很长），后端会先探测编码，已是浏览器可播的直接拒绝 */
+        async doTranscode() {
+            const key = String(this.file?.name || '');
+            if (!key || this.transcodeBusy) return;
+            try {
+                await ElMessageBox.confirm(this.$t('fileDetail.transcodeConfirmText'), this.$t('fileDetail.transcodeConfirmTitle'), {
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                    type: 'warning',
+                });
+            } catch {
+                return;
+            }
+            this.transcodeBusy = true;
+            try {
+                const res = await fetchWithAuth('/api/manage/media/transcode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: key }),
+                });
+                const json = await res.json().catch(() => ({}));
+                if (!res.ok || json?.success === false) throw new Error(json?.message || this.$t('fileDetail.mediaTranscodeFailed'));
+                ElMessage.success(this.$t('fileDetail.mediaTranscodeDone'));
+                await this.reloadDetail(true);
+            } catch (e) {
+                ElMessage.error(e?.message || this.$t('fileDetail.mediaTranscodeFailed'));
+            } finally {
+                this.transcodeBusy = false;
+            }
+        },
+
         async loadExtraMeta() {
             this.noteLoaded = false;
             this.noteVisible = false;
@@ -2097,6 +2495,95 @@ export default {
 </script>
 
 <style scoped>
+/* v1.0.5：标题栏「详情」+ 刷新图标 */
+.detail-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+.detail-header-title {
+    font-size: 16px;
+    line-height: 1.4;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+}
+.detail-header-refresh {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+.detail-header-refresh:hover:not(:disabled) {
+    background: var(--el-fill-color-light);
+    color: var(--el-color-primary);
+}
+.detail-header-refresh:disabled {
+    cursor: default;
+    opacity: 0.75;
+}
+/* 刷新中：图标匀速转，给一个「确实在跑」的反馈 */
+.detail-header-refresh.is-spinning :deep(svg) {
+    animation: detail-refresh-spin 0.9s linear infinite;
+}
+@keyframes detail-refresh-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* ===== v1.0.5：原位媒体编辑弹窗（压缩 / 转WebP） ===== */
+.media-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.media-dialog-text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--el-text-color-regular);
+}
+
+.media-dialog-hint {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+}
+
+.media-dialog-hint.is-warn {
+    color: var(--el-color-warning);
+}
+
+.media-percent-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 6px;
+}
+
+.media-percent-value {
+    min-width: 44px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+    color: var(--el-text-color-primary);
+}
+
+.media-radio {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-start;
+}
 /* v2.8.9：重命名输入框 + 「生成名称」按钮同行 */
 .rename-input-row {
     display: flex;

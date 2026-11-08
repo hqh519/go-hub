@@ -141,45 +141,44 @@
                         />
                     </el-form-item>
                     <!--
-                        自定义规则（v1.0.2）：裸正则换成「起始符 + 截断符 + 最大长度」三段式。
-                        正则写错只会静默失效、还不易自查；三段式所见即所得，谁都能看懂。
+                        v1.0.5：从文件名提取标签 —— 改成「一句话」排版。
+                        三段配置直接嵌在句子中间，读起来就是规则本身，不需要额外的字段名：
+                          从 [__] 为起始，以 [__] 为截断，获取不超过 [__] 位数的内容为标签名自动添加到文件标签。 ☑ 启用功能
+                        规则引擎见后端 UploadService.extractByMarkers（空格恒为截断符）。
                     -->
                     <el-form-item>
                         <template #label>
-                            {{ $t('sysOthers.tagRegex') }}
+                            {{ $t('sysOthers.tagMarkerRule') }}
                             <el-tooltip :content="$t('sysOthers.tagRegexTooltip')" placement="top" raw-content>
                                 <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
                             </el-tooltip>
                         </template>
-                        <div class="tag-rule-field">
-                            <div class="tag-marker-row">
-                                <div class="tag-marker-item">
-                                    <span class="tag-marker-label">{{ $t('sysOthers.tagStartChars') }}</span>
-                                    <el-input
-                                        v-model="autoTag.startChars"
-                                        :placeholder="$t('sysOthers.tagStartCharsPlaceholder')"
-                                    />
-                                </div>
-                                <div class="tag-marker-item">
-                                    <span class="tag-marker-label">{{ $t('sysOthers.tagStopChars') }}</span>
-                                    <el-input
-                                        v-model="autoTag.stopChars"
-                                        :placeholder="$t('sysOthers.tagStopCharsPlaceholder')"
-                                    />
-                                </div>
-                                <div class="tag-marker-item tag-marker-len">
-                                    <span class="tag-marker-label">{{ $t('sysOthers.tagMaxLen') }}</span>
-                                    <el-input-number
-                                        v-model="autoTag.maxLen"
-                                        :min="0"
-                                        :max="50"
-                                        :step="1"
-                                        controls-position="right"
-                                        style="width: 100%"
-                                    />
-                                </div>
-                            </div>
-                            <div class="tag-rule-hint">{{ $t('sysOthers.tagRuleHint') }}</div>
+                        <div class="tag-rule-line">
+                            <span class="tag-rule-word">{{ $t('sysOthers.tagRuleWordFrom') }}</span>
+                            <el-input
+                                v-model="autoTag.startChars"
+                                class="tag-rule-input tag-rule-input-chars"
+                                :placeholder="TAG_RULE_START_EXAMPLE"
+                            />
+                            <span class="tag-rule-word">{{ $t('sysOthers.tagRuleWordStartEnd') }}</span>
+                            <el-input
+                                v-model="autoTag.stopChars"
+                                class="tag-rule-input tag-rule-input-chars"
+                                :placeholder="TAG_RULE_STOP_EXAMPLE"
+                            />
+                            <span class="tag-rule-word">{{ $t('sysOthers.tagRuleWordStopEnd') }}</span>
+                            <el-input-number
+                                v-model="autoTag.maxLen"
+                                class="tag-rule-input tag-rule-input-num"
+                                :min="0"
+                                :max="50"
+                                :step="1"
+                                :controls="false"
+                            />
+                            <span class="tag-rule-word">{{ $t('sysOthers.tagRuleWordTail') }}</span>
+                            <el-checkbox v-model="autoTag.markerEnabled" class="tag-rule-enable">
+                                {{ $t('sysOthers.tagRuleEnable') }}
+                            </el-checkbox>
                         </div>
                     </el-form-item>
                 </template>
@@ -279,11 +278,15 @@ data() {
             enabled: true,
             placeholders: '{mime},{ext},{channelName},{uploadSource},{y}',
             extract: '',
-            // v1.0.2：起始符 / 截断符 / 最大长度（替代原来的裸正则）
-            startChars: '#',
-            stopChars: '["!","！",",","，",".","。","-","—","_","、",";","；",":","：","?","？","(",")","（","）","[","]","【","】","{","}","<",">","《","》","|","/","\\\\"]',
-            maxLen: 14
+            // v1.0.5：从文件名提取标签（一句话排版）——与后端 DEFAULT_TAG_* 完全一致
+            markerEnabled: true,
+            startChars: '["#","@","&"]',
+            stopChars: '["#","@","&","!","-","_"]',
+            maxLen: 10
         },
+        // 输入框占位示例（用户清空后仍能一眼看出该填什么）
+        TAG_RULE_START_EXAMPLE: '["#","@","&"]',
+        TAG_RULE_STOP_EXAMPLE: '["#","@","&","!","-","_"]',
         // 占位符快插按钮（点击追加到「设置占位符」输入框末尾）
         TAG_PLACEHOLDER_CHIPS: [
             { label: '文件类型', token: '{mime}' },
@@ -453,6 +456,8 @@ methods: {
                 enabled: this.autoTag.enabled === true,
                 placeholders: String(this.autoTag.placeholders || ''),
                 extract: String(this.autoTag.extract || ''),
+                // v1.0.5：从文件名提取标签可单独开关
+                markerEnabled: this.autoTag.markerEnabled !== false,
                 startChars: String(this.autoTag.startChars || ''),
                 stopChars: String(this.autoTag.stopChars || ''),
                 maxLen: Math.max(0, Number(this.autoTag.maxLen) || 0)
@@ -532,6 +537,8 @@ mounted() {
             enabled: at.enabled === undefined ? true : !(at.enabled === false || String(at.enabled) === 'false'),
             placeholders: at.placeholders === undefined ? this.autoTag.placeholders : String(at.placeholders ?? ''),
             extract: at.extract === undefined ? '' : String(at.extract ?? ''),
+            markerEnabled:
+                at.markerEnabled === undefined ? true : !(at.markerEnabled === false || String(at.markerEnabled) === 'false'),
             startChars: at.startChars === undefined ? this.autoTag.startChars : String(at.startChars ?? ''),
             stopChars: at.stopChars === undefined ? this.autoTag.stopChars : String(at.stopChars ?? ''),
             maxLen: at.maxLen === undefined ? this.autoTag.maxLen : Math.max(0, Number(at.maxLen) || 0)
@@ -607,6 +614,46 @@ mounted() {
     font-size: 12px;
     line-height: 1.5;
     color: var(--el-text-color-secondary);
+}
+/*
+ * v1.0.5：从文件名提取标签 —— 「一句话」排版。
+ * 三个输入框直接嵌在句子中间，允许换行（窄屏/小窗口时按词换行，不会横向溢出）。
+ */
+.tag-rule-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    width: 100%;
+    line-height: 1.6;
+}
+.tag-rule-word {
+    font-size: 13px;
+    color: var(--el-text-color-regular);
+    white-space: nowrap;
+}
+.tag-rule-input-chars {
+    flex: 1 1 220px;
+    min-width: 160px;
+    max-width: 320px;
+}
+.tag-rule-input-num {
+    flex: 0 0 88px;
+    width: 88px;
+}
+/* el-input-number 默认宽度 150px，句子里要收窄，否则整行会被撑开 */
+.tag-rule-input-num :deep(.el-input__wrapper) {
+    padding-left: 8px;
+    padding-right: 8px;
+}
+.tag-rule-input-num :deep(.el-input__inner) {
+    text-align: center;
+}
+.tag-rule-enable {
+    margin-left: 4px;
+}
+.tag-rule-enable :deep(.el-checkbox__label) {
+    font-size: 13px;
 }
 /* v3.0.0（R5）：文本类配置项一行内可带「复制默认值」按钮 */
 .setting-text-row {

@@ -22,6 +22,8 @@ import { faChevronDown } from '@fortawesome/free-solid-svg-icons/faChevronDown';
 import { faChevronLeft } from '@fortawesome/free-solid-svg-icons/faChevronLeft';
 import { faChevronRight } from '@fortawesome/free-solid-svg-icons/faChevronRight';
 import { faCircleHalfStroke } from '@fortawesome/free-solid-svg-icons/faCircleHalfStroke';
+import { faCrop } from '@fortawesome/free-solid-svg-icons/faCrop';
+import { faFilm } from '@fortawesome/free-solid-svg-icons/faFilm';
 import { faClock } from '@fortawesome/free-solid-svg-icons/faClock';
 import { faCloud } from '@fortawesome/free-solid-svg-icons/faCloud';
 import { faCloudUpload } from '@fortawesome/free-solid-svg-icons/faCloudUpload';
@@ -144,6 +146,8 @@ export default [
     faChevronLeft,
     faChevronRight,
     faCircleHalfStroke,
+    faCrop,
+    faFilm,
     faClock,
     faCloud,
     faCloudflare,

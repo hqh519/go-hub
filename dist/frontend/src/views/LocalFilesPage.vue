@@ -457,8 +457,14 @@
             </template>
         </el-dialog>
 
-        <!-- 上传弹窗 -->
-        <el-dialog v-model="showUpload" :title="$t('localFiles.uploadToBed')" width="560px" append-to-body>
+        <!-- 上传弹窗（v1.0.5：从灯箱发起时抬高层级，否则会被 z-index 3200 的灯箱盖住） -->
+        <el-dialog
+            v-model="showUpload"
+            :title="$t('localFiles.uploadToBed')"
+            width="560px"
+            append-to-body
+            :z-index="uploadFromLightbox ? 3400 : undefined"
+        >
             <el-form label-position="top">
                 <el-form-item :label="$t('localFiles.targetChannel')">
                     <el-select v-model="uploadForm.channelId" :placeholder="$t('localFiles.targetChannelDefault')" clearable style="width: 100%;">
@@ -526,7 +532,38 @@
             v-model="showPreview"
             :items="previewItems"
             :start-index="previewIndex"
+            upload
+            :upload-busy="lightboxUploading"
+            @upload="openLightboxUpload"
         />
+
+        <!--
+            v1.0.5：灯箱内发起的上传 —— 完成后不关灯箱，只在顶部浮一张结果条，
+            提供「完成」（留在灯箱）与「查看详情」（关灯箱、打开文件详情）两个出口。
+        -->
+        <transition name="lf-fade">
+            <div v-if="lightboxUploadResult" class="lf-lightbox-result" role="status">
+                <font-awesome-icon
+                    :icon="lightboxUploadResult.success ? 'check' : 'exclamation-circle'"
+                    class="lf-lightbox-result-icon"
+                    :class="lightboxUploadResult.success ? 'is-ok' : 'is-fail'"
+                />
+                <span class="lf-lightbox-result-text">
+                    <template v-if="lightboxUploadResult.success">
+                        {{ lightboxUploadResult.dedup ? $t('localFiles.resultDedup') : $t('localFiles.resultOk') }}
+                        <em class="lf-lightbox-result-name">{{ lightboxUploadResult.name }}</em>
+                    </template>
+                    <template v-else>{{ lightboxUploadResult.error || $t('localFiles.uploadFailed') }}</template>
+                </span>
+                <el-button size="small" @click="lightboxUploadResult = null">{{ $t('localFiles.done') }}</el-button>
+                <el-button
+                    v-if="lightboxUploadResult.success && lightboxUploadResult.id"
+                    size="small"
+                    type="primary"
+                    @click="viewUploadedFromLightbox"
+                >{{ $t('localFiles.viewDetail') }}</el-button>
+            </div>
+        </transition>
 
         <!-- v3.0.0（R8）：上传结果里的文件详情页（复用统一详情弹窗） -->
         <FileDetailDialog
@@ -604,11 +641,12 @@ export default {
             typeFilter: '',
             sortKey: 'name',
             order: 'asc',
-            settings: { pageSize: 50, maxPerDir: 200, previewThresholdMB: 500 },
-            settingsForm: { pageSize: 50, maxPerDir: 200, previewThresholdMB: 500 },
+            settings: { pageSize: 50, maxPerDir: 200, previewThresholdMB: 500 },            settingsForm: { pageSize: 50, maxPerDir: 200, previewThresholdMB: 500 },
             showSettings: false,
             settingsSaving: false,
             selected: [],
+            /** v1.0.5：移动端返回键接管开关（触屏设备才为 true） */
+            isTouchNav: false,
         /* v3.0.0（R16）：Shift 区间选择的锚点路径 */
         anchorPath: '',
             showUpload: false,
@@ -618,6 +656,15 @@ export default {
             instances: [],
             showResult: false,
             results: [],
+            /*
+             * v1.0.5：灯箱内发起的上传。
+             * uploadFromLightbox=true 时只传「当前预览的这一个文件」，
+             * 且完成后不弹结果弹窗、不关灯箱，改由顶部结果条给出「完成 / 查看详情」。
+             */
+            uploadFromLightbox: false,
+            lightboxUploadTarget: null,
+            lightboxUploadResult: null,
+            lightboxUploading: false,
             showPreview: false,
             previewIndex: 0,
             // v3.0.0（R8）：上传结果 → 文件详情页
@@ -724,12 +771,45 @@ export default {
         this.$nextTick(() => this.measureTopbar());
         document.addEventListener('scroll', this.handlePageScroll, { capture: true, passive: true });
         window.addEventListener('resize', this.measureTopbar, { passive: true });
+        /*
+         * v1.0.5：移动端返回键 = 回上一级目录（对齐「图床文件管理」页）。
+         * 触屏判定用 matchMedia('(hover:none)')，桌面端完全不启用。
+         */
+        this.isTouchNav = typeof window !== 'undefined'
+            && !!window.matchMedia
+            && window.matchMedia('(hover: none)').matches;
+        if (this.isTouchNav) {
+            this.__popStateHandler = this.handleMobilePopState.bind(this);
+            window.addEventListener('popstate', this.__popStateHandler);
+            this.setupBodyMutationWatch();
+        }
     },
     beforeUnmount() {
         document.removeEventListener('scroll', this.handlePageScroll, true);
         window.removeEventListener('resize', this.measureTopbar);
+        if (this.__popStateHandler) {
+            window.removeEventListener('popstate', this.__popStateHandler);
+            this.__popStateHandler = null;
+        }
+        if (this.__bodyObserver) {
+            this.__bodyObserver.disconnect();
+            this.__bodyObserver = null;
+        }
         if (this.scrollFrame !== undefined && this.scrollFrame !== null) cancelAnimationFrame(this.scrollFrame);
         if (this.topbarObserver) this.topbarObserver.disconnect();
+    },
+    watch: {
+        /** v1.0.5：关灯箱就清掉灯箱内上传的结果条，避免下次打开还挂着上一条 */
+        showPreview(v) {
+            if (!v) this.lightboxUploadResult = null;
+        },
+        /** v1.0.5：上传弹窗关闭后退出「灯箱发起」模式（z-index / 目标文件都回到默认） */
+        showUpload(v) {
+            if (!v) {
+                this.uploadFromLightbox = false;
+                this.lightboxUploadTarget = null;
+            }
+        },
     },
     methods: {
         channelLabel,
@@ -901,11 +981,67 @@ export default {
             }
         },
         enterDir(d) {
-            this.dir = d || '';
+            const next = d || '';
+            const entering = !!next && next !== this.dir && next.startsWith(`${this.dir || ''}`);
+            this.dir = next;
             this.rememberDir(this.dir);
             this.clearSelection();
             this.expandAncestors(this.dir);
+            // v1.0.5：进入子目录时压一条历史，返回键才有「上一级」可回
+            if (entering) this.pushFolderHistory();
             this.reload(1);
+        },
+        /* ==================================================================
+         * v1.0.5：移动端返回键 → 回上一级目录
+         * 与「图床文件管理」页完全同款逻辑：
+         *   · 有浮层（灯箱 / 弹窗）时把返回键让给浮层；
+         *   · 程序自己触发的 popstate（浮层哨兵）不能当用户返回；
+         *   · 已在根目录 → 屏蔽返回（补一条同 URL 历史，不离开本页）。
+         * ================================================================== */
+        pushFolderHistory() {
+            if (!this.isTouchNav) return;
+            try {
+                window.history.pushState({ lfDir: this.dir || '' }, '', window.location.href);
+            } catch (e) { /* 隐私模式等环境忽略 */ }
+        },
+        setupBodyMutationWatch() {
+            if (typeof MutationObserver === 'undefined') return;
+            this.__lastBodyMutationAt = 0;
+            this.__bodyObserver = new MutationObserver(() => {
+                this.__lastBodyMutationAt = Date.now();
+            });
+            this.__bodyObserver.observe(document.body, { childList: true });
+        },
+        /** 是否有可见浮层（EP 弹窗关掉后仍留在 DOM，必须看渲染盒子） */
+        hasOpenFloatingLayer() {
+            if (this.showPreview || this.showDetail || this.showUpload || this.showResult || this.showSettings) return true;
+            if (this.treeDrawer) return true;
+            const list = Array.from(document.querySelectorAll('.el-overlay'));
+            const visible = list.some((el) => {
+                if (!el || !el.isConnected) return false;
+                const style = window.getComputedStyle(el);
+                if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+                return el.getBoundingClientRect().width > 0 || el.getBoundingClientRect().height > 0;
+            });
+            if (visible) return true;
+            return !!document.querySelector('.media-viewer');
+        },
+        handleMobilePopState() {
+            if (!this.isTouchNav) return;
+            if (this.hasOpenFloatingLayer()) return;
+            // backGuard 退哨兵 / 灯箱自己退哨兵引起的 popstate → 忽略
+            if (Date.now() - (this.__lastBodyMutationAt || 0) < 300) return;
+            if (Date.now() - (window.__gohubBackGuardAt || 0) < 500) return;
+            if (Date.now() - (window.__gohubMediaViewerPopAt || 0) < 500) return;
+            const parts = String(this.dir || '').split('/').filter(Boolean);
+            if (!parts.length) {
+                // 已在根目录：屏蔽返回，留在本页
+                try {
+                    window.history.pushState({ lfDir: '' }, '', window.location.href);
+                } catch (e) { /* 忽略 */ }
+                return;
+            }
+            this.enterDir(parts.slice(0, -1).join('/'));
         },
         /** v3.0.0（R15）：记住当前渠道下的浏览路径 */
         rememberDir(dir) {
@@ -1170,6 +1306,8 @@ export default {
             return { keep, dup };
         },
         async openUpload() {
+            this.uploadFromLightbox = false;
+            this.lightboxUploadTarget = null;
             if (!this.selected.length) return;
             const { keep, dup } = this.filterInLibraryPaths(this.selected);
             if (dup.length) {
@@ -1179,36 +1317,81 @@ export default {
             if (!this.selected.length) return;
             this.uploadForm = { channelId: '', instanceId: '', uploadFolder: '' };
             this.showUpload = true;
+            await this.loadUploadOptions();
+        },
+        /**
+         * v1.0.5：灯箱里点「上传」—— 目标就是当前正在预览的那一个文件。
+         * 灯箱内部会随左右滑动换集，所以**必须由灯箱把当前项回传**，
+         * 不能用外层的 previewIndex（那个只是打开时的起点）。
+         */
+        async openLightboxUpload(item) {
+            const target = item || this.previewItems[this.previewIndex];
+            if (!target?.key) return;
+            const hit = (this.entries || []).find((e) => e.path === target.key);
+            if (hit && hit.inLibrary) {
+                this.$message?.info(this.$t('localFiles.alreadyUploaded'));
+                return;
+            }
+            this.lightboxUploadTarget = { path: target.key, name: target.name };
+            this.uploadFromLightbox = true;
+            this.uploadForm = { channelId: '', instanceId: '', uploadFolder: '' };
+            this.showUpload = true;
+            await this.loadUploadOptions();
+        },
+        /** 渠道（主渠道）+ 实例列表：上传弹窗的两个下拉共用 */
+        async loadUploadOptions() {
             try {
-                this.bedChannels = await fetchStorageChannels(true);
+                const all = await fetchStorageChannels(true);
+                /*
+                 * v1.0.5：只列「当前账户可用的主渠道」——
+                 * /api/channels 已按授权名单过滤（普通用户只拿到自己被授权的渠道），
+                 * 这里再排掉备份渠道：备份渠道只做上传后的一比一镜像，不能当上传目标。
+                 */
+                this.bedChannels = (all || []).filter((c) => !c.isBackup);
             } catch (e) {
                 this.bedChannels = [];
             }
             try {
                 const res = await fetchWithAuth('/api/instances');
                 const json = await res.json().catch(() => []);
+                // v1.0.5：/api/instances 只返回「自己创建的 + 被拉入的」，天然就是该用户名下实例
                 this.instances = Array.isArray(json) ? json : [];
             } catch (e) {
                 this.instances = [];
             }
         },
+        /** 灯箱结果条 → 「查看详情」：关掉灯箱再打开文件详情（详情弹窗层级低于灯箱） */
+        async viewUploadedFromLightbox() {
+            const r = this.lightboxUploadResult;
+            this.lightboxUploadResult = null;
+            if (!r?.id) return;
+            this.showPreview = false;
+            await this.openResultDetail(r);
+        },
         async doUpload() {
-            if (!this.selected.length) return;
-            // v3.0.0（R14）：提交前再兜底过滤一次（防止弹窗打开期间列表刷新导致误传）
-            const { keep, dup } = this.filterInLibraryPaths(this.selected);
-            if (dup.length) {
-                this.$message?.warning(this.$t('localFiles.inLibrarySkipped', { n: dup.length }));
-                this.selected = keep;
-                if (!this.selected.length) return;
+            const fromLightbox = this.uploadFromLightbox;
+            const paths = fromLightbox
+                ? (this.lightboxUploadTarget ? [this.lightboxUploadTarget.path] : [])
+                : this.selected;
+            if (!paths.length) return;
+            if (!fromLightbox) {
+                // v3.0.0（R14）：提交前再兜底过滤一次（防止弹窗打开期间列表刷新导致误传）
+                const { keep, dup } = this.filterInLibraryPaths(this.selected);
+                if (dup.length) {
+                    this.$message?.warning(this.$t('localFiles.inLibrarySkipped', { n: dup.length }));
+                    this.selected = keep;
+                    if (!this.selected.length) return;
+                }
             }
             this.uploading = true;
+            if (fromLightbox) this.lightboxUploading = true;
             try {
                 const res = await fetchWithAuth('/api/localfiles/upload', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         channelId: this.channelId,
-                        paths: this.selected,
+                        paths: fromLightbox ? paths : this.selected,
                         targetChannelId: this.uploadForm.channelId || '',
                         instanceId: this.uploadForm.instanceId || '',
                         uploadFolder: this.uploadForm.uploadFolder || '',
@@ -1218,11 +1401,26 @@ export default {
                 if (!json.success) throw new Error(json.message || 'upload failed');
                 this.results = Array.isArray(json.data) ? json.data : [];
                 this.showUpload = false;
-                this.showResult = true;
+                if (fromLightbox) {
+                    // 灯箱保持打开：只把这一次的结果挂到顶部结果条
+                    const r = this.results[0];
+                    this.lightboxUploadResult = r
+                        ? { ...r, success: !!r.success }
+                        : { success: false, error: this.$t('localFiles.uploadFailed') };
+                    if (r && r.success) {
+                        // 列表里的「已落库」标记同步刷新，避免再点一次又被后端跳过一次
+                        const hit = (this.entries || []).find((e) => e.path === paths[0]);
+                        if (hit) hit.inLibrary = true;
+                    }
+                } else {
+                    this.showResult = true;
+                }
             } catch (e) {
                 this.$message?.error(this.$t('localFiles.uploadFailed'));
+                if (fromLightbox) this.lightboxUploadResult = { success: false, error: this.$t('localFiles.uploadFailed') };
             } finally {
                 this.uploading = false;
+                this.lightboxUploading = false;
             }
         },
         async retryFailed() {
@@ -2150,5 +2348,68 @@ export default {
 /* 目录树抽屉：给树一点内边距，同左侧目录树样式（作用域样式随插槽内容生效） */
 .lf-tree-drawer .lf-tree {
     padding: 0 8px 12px;
+}
+
+/* ===== v1.0.5：灯箱内上传完成后的结果条（浮在灯箱之上，不关闭灯箱） ===== */
+.lf-lightbox-result {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3400;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: min(92vw, 720px);
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: rgba(28, 30, 36, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    color: #e9eaee;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.lf-lightbox-result-icon {
+    flex: 0 0 auto;
+    font-size: 14px;
+}
+
+.lf-lightbox-result-icon.is-ok { color: #67c23a; }
+.lf-lightbox-result-icon.is-fail { color: #f56c6c; }
+
+.lf-lightbox-result-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lf-lightbox-result-name {
+    font-style: normal;
+    opacity: 0.85;
+    margin-left: 6px;
+}
+
+.lf-fade-enter-active,
+.lf-fade-leave-active {
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.lf-fade-enter-from,
+.lf-fade-leave-to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
+}
+
+@media (max-width: 768px) {
+    .lf-lightbox-result {
+        top: auto;
+        bottom: 16px;
+        max-width: 94vw;
+        flex-wrap: wrap;
+    }
 }
 </style>

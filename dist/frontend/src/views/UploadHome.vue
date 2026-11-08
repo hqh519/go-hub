@@ -30,6 +30,11 @@
                         <font-awesome-icon icon="cogs" style="width: 16px; margin-right: 8px; text-align: center;"/>
                         {{ $t('upload.systemManage') }}
                     </el-dropdown-item>
+                    <!-- v1.0.5：「我的账户」——新标签页打开，不打断当前上传/浏览 -->
+                    <el-dropdown-item command="customerConfig">
+                        <font-awesome-icon icon="user" style="width: 16px; margin-right: 8px; text-align: center;"/>
+                        {{ $t('upload.myAccount') }}
+                    </el-dropdown-item>
                     <el-dropdown-item command="viewDocs">
                         <font-awesome-icon icon="book" style="width: 16px; margin-right: 8px; text-align: center;"/>
                         {{ $t('upload.viewDocs') }}
@@ -101,6 +106,11 @@
                     <el-dropdown-item v-if="isAdminRole" command="systemManage">
                         <font-awesome-icon icon="cogs" style="width: 16px; margin-right: 8px; text-align: center;"/>
                         {{ $t('upload.systemManage') }}
+                    </el-dropdown-item>
+                    <!-- v1.0.5：「我的账户」——新标签页打开，不打断当前上传/浏览 -->
+                    <el-dropdown-item command="customerConfig">
+                        <font-awesome-icon icon="user" style="width: 16px; margin-right: 8px; text-align: center;"/>
+                        {{ $t('upload.myAccount') }}
                     </el-dropdown-item>
                     <el-dropdown-item command="viewDocs">
                         <font-awesome-icon icon="book" style="width: 16px; margin-right: 8px; text-align: center;"/>
@@ -1144,6 +1154,8 @@ export default {
                 setLocale(next)
             } else if (command === 'systemManage') {
                 this.openSystemManage()
+            } else if (command === 'customerConfig') {
+                this.openCustomerConfig()
             } else if (command === 'logout') {
                 // v2.7.0：更多菜单里的退出登录（与原右下角快捷栏同一逻辑）
                 this.handleLogout()
@@ -1161,6 +1173,8 @@ export default {
                 setLocale(next)
             } else if (command === 'systemManage') {
                 this.openSystemManage()
+            } else if (command === 'customerConfig') {
+                this.openCustomerConfig()
             } else if (command === 'logout') {
                 // v2.7.0：更多菜单里的退出登录（桌面端）
                 this.handleLogout()
@@ -1174,6 +1188,11 @@ export default {
         /** 「查看文档」→ 内置文档说明页（新标签打开，不打断当前上传） */
         openDocsPage() {
             const url = this.$router.resolve({ name: 'docs' }).href
+            window.open(url, '_blank', 'noopener')
+        },
+        /** v1.0.5：「我的账户」→ 新标签页打开个性化设置页 */
+        openCustomerConfig() {
+            const url = this.$router.resolve({ name: 'customerConfig' }).href
             window.open(url, '_blank', 'noopener')
         },
         getThemeIcon() {

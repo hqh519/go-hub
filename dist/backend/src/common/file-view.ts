@@ -7,6 +7,13 @@
  */
 import type { Channel, FileCopy, FileRecord } from '@prisma/client';
 
+/*
+ * v1.0.5：详情页「源」对本地文件要显示**物理地址**（磁盘绝对路径 + 落盘文件名），
+ * 而不是本站签发的外链。这里复用 local.adapter 的根目录口径，避免两处算出不同的路径。
+ * local.adapter 不反向依赖本文件，不存在循环引用。
+ */
+import { localAbsPathOf } from '../adapters/local.adapter';
+
 export type FileTypeName = 'image' | 'video' | 'audio' | 'txt' | 'pdf' | 'other';
 
 /**
@@ -432,6 +439,12 @@ export function buildMetadata(
     StorageUrl: storageUrl,
     // 「源」：加载域名 + 固化地址（代理模式优先内网通信域名）
     LoadUrl: loadUrl || storageUrl,
+    /*
+     * v1.0.5：主副本在「本地存储」渠道时，给出磁盘上的**物理地址**（含真实落盘文件名）。
+     * 非本地渠道一律空串，前端据此决定「源」显示物理路径还是外链。
+     * 这一项只在已登录的详情接口里下发，不参与任何对外链接。
+     */
+    LocalPath: primary ? localAbsPathOf(primary.channel, primary.remoteKey || '') : '',
     BackupChannels: backupChannels,
     // v1.0.4：非主、非备份的其他副本（仅排查用，前端暂不渲染）
     OtherCopies: otherCopies,
