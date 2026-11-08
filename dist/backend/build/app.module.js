@@ -18,6 +18,7 @@ const users_controller_1 = require("./users/users.controller");
 const token_api_controller_1 = require("./tokens/token-api.controller");
 const webdav_controller_1 = require("./webdav/webdav.controller");
 const webdav_admin_controller_1 = require("./webdav/webdav-admin.controller");
+const webdav_self_controller_1 = require("./webdav/webdav-self.controller");
 const settings_service_1 = require("./settings/settings.service");
 const sysconfig_service_1 = require("./settings/sysconfig.service");
 const storage_channel_service_1 = require("./storage/storage-channel.service");
@@ -50,6 +51,7 @@ exports.AppModule = AppModule = __decorate([
             token_api_controller_1.TokenApiController,
             webdav_controller_1.WebDavController,
             webdav_admin_controller_1.WebDavAdminController,
+            webdav_self_controller_1.WebDavSelfController,
             compat_controller_1.PublicCompatController,
             compat_controller_1.ManageCompatController,
             access_controller_1.AccessController,

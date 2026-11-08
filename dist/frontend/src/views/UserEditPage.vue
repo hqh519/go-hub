@@ -336,12 +336,19 @@
               任何一层不满足都整卡消失，管理员只能猜。
               现在卡片恒显示，缺哪一层就提示哪一层。
           -->
-          <p v-if="!webdavGlobalEnabled" class="hint webdav-blocked-hint">
-            <font-awesome-icon icon="exclamation-circle" /> {{ $t('userEdit.webdavGlobalOff') }}
-          </p>
-          <p v-else-if="!form.webdavEnabled" class="hint webdav-blocked-hint">
-            <font-awesome-icon icon="exclamation-circle" /> {{ $t('userEdit.webdavAccountOff') }}
-          </p>
+          <!--
+              v1.0.8：「缺哪一层」的提示**只给管理员看**。
+              普通用户进自己的账户页时，系统开关状态与他无关（也读不到），
+              只需知道自己能不能建、能建几个即可，不必看到管理侧的配置提示。
+          -->
+          <template v-if="!isSelf">
+            <p v-if="!webdavGlobalEnabled" class="hint webdav-blocked-hint">
+              <font-awesome-icon icon="exclamation-circle" /> {{ $t('userEdit.webdavGlobalOff') }}
+            </p>
+            <p v-else-if="!form.webdavEnabled" class="hint webdav-blocked-hint">
+              <font-awesome-icon icon="exclamation-circle" /> {{ $t('userEdit.webdavAccountOff') }}
+            </p>
+          </template>
           <div class="instance-actions">
             <el-button size="small" type="primary" plain :disabled="webdavFull || !webdavModuleVisible" @click="openCreateWebdav">
               {{ $t('userEdit.webdavCreate') }}
@@ -762,6 +769,16 @@ export default {
         webdavModuleVisible() {
             return this.isPlainUserAccount && this.webdavGlobalEnabled && this.form.webdavEnabled === true;
         },
+        /**
+         * v1.0.8：创建渠道的地址。
+         * 本人视图走 `/api/webdav-self`（普通用户没有 manage 权限，之前 403 一律被当成
+         * 「总开关没打开」）；管理员编辑他人时仍走 `/api/manage/users/:id/webdav`。
+         */
+        webdavCreateUrl() {
+            return this.isSelf
+                ? '/api/webdav-self'
+                : `/api/manage/users/${encodeURIComponent(this.userId)}/webdav`;
+        },
         /** 已建满配额（创建按钮置灰） */
         webdavFull() {
             return this.webdavChannels.length >= Math.max(1, Number(this.webdavMax) || 2);
@@ -895,8 +912,8 @@ export default {
                 // v3.0.0：实例列表（表单用户名就绪后再拉）
                 await this.loadInstances();
                 // v1.0.6：WebDAV —— 先取全局开关（决定模块是否出现），再取该账户的渠道
-                await this.loadWebdavGlobal();
-                await this.loadWebdav();
+                // v1.0.8：本人视图走自助接口（普通用户没有 /api/manage/* 权限）
+                await this.reloadWebdav();
                 // v3.0.0：?anchor=instances / #instances → 滚动到「实例管理」并高亮一下
                 this.scrollToAnchor();
             } catch (e) {
@@ -941,6 +958,40 @@ export default {
                 for (let i = 0; i < 16; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
             }
             return out;
+        },
+        /**
+         * v1.0.8：本人视图 —— 一次拿全（总开关 + 我的授权 + 我的渠道）。
+         *
+         * 之前普通用户打开自己的账户页，前端读的是 `/api/manage/sysConfig/others`（AdminGuard），
+         * 必然 403；catch 里把 webdavGlobalEnabled 置 false，页面就永远显示
+         * 「系统管理 → 安全设置里的『对外 WebDAV』总开关还没打开」——而管理员进同一页却正常。
+         * 现在本人一律走 `/api/webdav-self`，后端只回该账户自己的数据 + 一个总开关布尔值。
+         */
+        async loadWebdavSelf() {
+            try {
+                const res = await axios.get('/api/webdav-self', { withCredentials: true });
+                const d = res.data?.success ? (res.data.data || {}) : {};
+                this.webdavGlobalEnabled = d.globalEnabled === true;
+                this.webdavMax = Number(d.max) || 2;
+                this.webdavChannels = Array.isArray(d.channels) ? d.channels : [];
+            } catch {
+                this.webdavGlobalEnabled = false;
+                this.webdavChannels = [];
+            }
+        },
+        /** 按「本人 / 管理员」两条链路重新加载 WebDAV 数据（创建、删除后都调它） */
+        async reloadWebdav() {
+            if (this.isSelf) return this.loadWebdavSelf();
+            await this.loadWebdavGlobal();
+            return this.loadWebdav();
+        },
+        /**
+         * 单条渠道的操作地址（改名称 / 轮换密钥 / 删除）。
+         * 本人 → `/api/webdav-self/:id`；管理员 → `/api/manage/webdav/:id`。
+         */
+        webdavItemUrl(id) {
+            const safe = encodeURIComponent(id);
+            return this.isSelf ? `/api/webdav-self/${safe}` : `/api/manage/webdav/${safe}`;
         },
         /** 全局开关：安全设置里的「对外 WebDAV」是否启用（配置存在 sysConfig 的 others 分区） */
         async loadWebdavGlobal() {
@@ -998,7 +1049,7 @@ export default {
             try {
                 if (this.webdavEditing) {
                     const res = await axios.patch(
-                        `/api/manage/webdav/${encodeURIComponent(this.webdavEditing.id)}`,
+                        this.webdavItemUrl(this.webdavEditing.id),
                         { name, note: this.webdavForm.note },
                         { withCredentials: true },
                     );
@@ -1014,7 +1065,7 @@ export default {
                         return;
                     }
                     const res = await axios.post(
-                        `/api/manage/users/${encodeURIComponent(this.userId)}/webdav`,
+                        this.webdavCreateUrl,
                         { name, path, accessKey: String(this.webdavForm.accessKey || '').trim(), note: this.webdavForm.note },
                         { withCredentials: true },
                     );
@@ -1026,7 +1077,7 @@ export default {
                 }
                 this.showWebdavDialog = false;
                 this.webdavEditing = null;
-                await this.loadWebdav();
+                await this.reloadWebdav();
             } catch (e) {
                 this.$message.error(e?.response?.data?.message || this.$t('common.failed'));
             } finally {
@@ -1045,7 +1096,7 @@ export default {
                 return;
             }
             try {
-                const res = await axios.post(`/api/manage/webdav/${encodeURIComponent(row.id)}/key`, {}, { withCredentials: true });
+                const res = await axios.post(`${this.webdavItemUrl(row.id)}/key`, {}, { withCredentials: true });
                 if (!res.data?.success) {
                     this.$message.error(res.data?.message || this.$t('common.failed'));
                     return;
@@ -1069,7 +1120,7 @@ export default {
                 return;
             }
             try {
-                const res = await axios.delete(`/api/manage/webdav/${encodeURIComponent(row.id)}`, { withCredentials: true });
+                const res = await axios.delete(this.webdavItemUrl(row.id), { withCredentials: true });
                 if (!res.data?.success) {
                     this.$message.error(res.data?.message || this.$t('common.failed'));
                     return;

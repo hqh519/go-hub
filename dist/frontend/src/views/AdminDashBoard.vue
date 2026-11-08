@@ -3807,14 +3807,15 @@ methods: {
         this.updateBreadcrumbStuck();
     },
     /**
-     * 吸顶时工具栏应有的 top：顶栏静止位置底部 + 8px（v3.0.0 R11c：常态与吸附态统一 8px）。
+     * 吸顶时工具栏应有的 top：顶栏静止位置底部 + 2px。
+     * v1.0.8：吸附态与常态统一成 2px（原先两处都是 8px，用户要求贴紧顶栏）。
      * 用 offsetTop/offsetHeight 而不是 getBoundingClientRect —— 顶栏显隐靠 transform 位移，
      * rect 会随动画/隐藏状态变化；offset 只反映布局位置，任何时刻都是「顶栏展开时」的底部。
      */
     breadcrumbStickyTop() {
         const header = document.querySelector('.admin-header-content');
-        if (!header) return 68;
-        return Math.round(header.offsetTop + header.offsetHeight + 8);
+        if (!header) return 52;
+        return Math.round(header.offsetTop + header.offsetHeight + 2);
     },
     /** 吸顶中：按顶栏显隐状态同步 fixed 的 top（顶栏隐藏时贴 0，让 -100% 位移能整行滑出屏幕） */
     syncBreadcrumbStuckTop() {
@@ -5662,8 +5663,9 @@ html.dark .trash-btn.is-active,
         gap: 8px;
         /* v3.0.0（R7）：上下内边距 4px、左右 3px；外层圆角收到 5px */
         padding: 4px 3px;
-        /* v3.0.0（R11c）：与顶栏的间隔 8px，与下方文件区仍隔 10px */
-        margin-top: 8px;
+        /* v3.0.0（R11c）：与顶栏的间隔 8px，与下方文件区仍隔 10px
+           v1.0.8：与顶行间隔收到 2px（用户要求「第二行距顶行栏 2px」） */
+        margin-top: 2px;
         margin-bottom: 10px;
         margin-left: -6px;
         margin-right: -6px;

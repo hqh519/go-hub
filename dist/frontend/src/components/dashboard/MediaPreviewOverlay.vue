@@ -93,9 +93,13 @@
                 >
                     <font-awesome-icon icon="list-ul"/>
                 </button>
-                <!-- v3.0.0（R9-F）：视频抓拍从右下角移到右上「详情」左侧（仅父组件展示详情时随视频出现） -->
+                <!--
+                    v3.0.0（R9-F）：视频抓拍从右下角移到右上「详情」左侧。
+                    v1.0.8：不再依赖 showDetail —— 「本地文件」页灯箱（不接详情）也要能抓拍，
+                    抓拍只用到 videoEl 与当前文件名，与详情入口无关。
+                -->
                 <button
-                    v-if="showDetail && current.kind === 'video'"
+                    v-if="current.kind === 'video'"
                     type="button"
                     class="mv-btn"
                     :title="$t('mediaViewer.snapshot')"
@@ -136,11 +140,21 @@
                     v1.0.5：关闭按钮左侧的「上传」入口（仅父组件开启 upload 时出现）。
                     典型场景：在「本地文件」页预览时想把当前这张图传到图床 ——
                     点这里选出渠道 / 实例 / 目录即可后台上传，灯箱**不关闭**。
-                    v1.0.6：位置调到分隔线**左侧**（与「查看详情」同组），
-                            分隔线右侧只剩关闭按钮，视觉上「操作区 | 关闭」两段更清楚。
+                    v1.0.8：文件**已落库**时改显「详情」—— 重复上传没有意义，
+                    直接打开它在图床里的文件详情页（recordId = 图床文件 ID）。
                 -->
                 <button
-                    v-if="upload"
+                    v-if="upload && current.recordId"
+                    type="button"
+                    class="mv-btn"
+                    :title="$t('localFiles.viewDetail')"
+                    :aria-label="$t('localFiles.viewDetail')"
+                    @click.stop="openRecordDetail"
+                >
+                    <font-awesome-icon icon="info-circle"/>
+                </button>
+                <button
+                    v-else-if="upload"
                     type="button"
                     class="mv-btn mv-upload"
                     :class="{ 'is-busy': uploadBusy }"
@@ -151,6 +165,35 @@
                 >
                     <font-awesome-icon :icon="uploadBusy ? 'spinner' : 'cloud-upload-alt'" :spin="uploadBusy"/>
                 </button>
+                <!--
+                    v1.0.8：下拉入口 —— 与上面的按钮等价，只是收进「更多」面板里，
+                    窄屏顶栏放不下太多图标时用这个；已落库项的面板里是「查看详情」，
+                    未落库项是「上传到图床」。
+                -->
+                <div v-if="upload" class="mv-more-wrap">
+                    <button
+                        type="button"
+                        class="mv-btn"
+                        :title="$t('mediaViewer.more')"
+                        :aria-label="$t('mediaViewer.more')"
+                        @click.stop="moreMenuOpen = !moreMenuOpen"
+                    >
+                        <font-awesome-icon icon="ellipsis-h"/>
+                    </button>
+                    <div v-if="moreMenuOpen" class="mv-menu-panel mv-more-menu" @click.stop>
+                        <button
+                            v-if="current.recordId"
+                            type="button"
+                            class="mv-more-item"
+                            @click.stop="openRecordDetail"
+                        >
+                            <font-awesome-icon icon="info-circle"/>{{ $t('localFiles.viewDetail') }}
+                        </button>
+                        <button v-else type="button" class="mv-more-item" @click.stop="moreUpload">
+                            <font-awesome-icon icon="cloud-upload-alt"/>{{ $t('localFiles.uploadToBed') }}
+                        </button>
+                    </div>
+                </div>
                 <span class="mv-tools-sep"></span>
                 <button
                     type="button"
@@ -608,13 +651,14 @@
 
         <!--
             v1.0.7：抓拍图上传前先选「目标渠道 / 归属实例 / 上传目录」。
-            组件与「本地文件」页上传弹窗完全同一套（UploadTargetDialog），
-            z-index 抬到 3400 才不会被 3200 的灯箱盖住。
+            组件与「本地文件」页上传弹窗完全同一套（UploadTargetDialog）。
+            v1.0.8：**不再**给弹窗硬指定 z-index —— 见 UploadTargetDialog 顶部说明：
+            硬设 3400 会让弹窗内部的 el-select 下拉浮层（走 EP 递增，约 3211）落到弹窗下面，
+            表现为「下拉框点开看不见」。交给 EP 全局 zIndex 管理器即可，基准 3210 本就高于灯箱 3200。
         -->
         <UploadTargetDialog
             v-model="snapshotTarget"
             :busy="snapshotUploading"
-            :z-index="3400"
             :prefill="snapshotTargetForm"
             :hint="$t('mediaViewer.snapshotTargetHint')"
             @confirm="doUploadSnapshot"
@@ -670,7 +714,7 @@ export default {
         /** v1.0.5：上传进行中（按钮转圈并禁用） */
         uploadBusy: { type: Boolean, default: false }
     },
-    emits: ['update:modelValue', 'detail', 'close-detail', 'view-uploaded', 'upload'],
+    emits: ['update:modelValue', 'detail', 'close-detail', 'view-uploaded', 'upload', 'record-detail'],
     data() {
         return {
             index: 0,
@@ -729,6 +773,8 @@ export default {
             snapshotUploading: false,
             // v3.0.0（R16）：抓拍询问面板（{ url, name } | null）—— 不再用 EP $confirm
             snapshotPrompt: null,
+            // v1.0.8：本地文件灯箱的「更多」下拉面板（查看详情 / 上传到图床）
+            moreMenuOpen: false,
             // v1.0.7：抓拍图上传前的目标配置弹窗（渠道 / 实例 / 目录）
             snapshotTarget: false,
             snapshotTargetForm: { channelId: '', instanceId: '', uploadFolder: '' },
@@ -2121,6 +2167,21 @@ export default {
             this.pauseAll()
             this.$emit('detail', this.current)
         },
+        /**
+         * v1.0.8：打开「已落库文件」在图床里的详情页。
+         * 与 goDetail 的区别：那个是「当前预览项」的元数据弹窗（父组件自己拼），
+         * 这个是本地文件页专用 —— 手里的 recordId 就是图床文件 ID，交父组件去拉详情。
+         */
+        openRecordDetail() {
+            this.moreMenuOpen = false
+            this.pauseAll()
+            this.$emit('record-detail', this.current)
+        },
+        /** v1.0.8：下拉面板里的「上传到图床」（与工具条按钮同义） */
+        moreUpload() {
+            this.moreMenuOpen = false
+            this.$emit('upload', this.current)
+        },
         /* ── v3.0.0（R12）：文本灯箱「复制全文」────────────────── */
         copyTextAll() {
             const text = String(this.textContent || '')
@@ -2317,6 +2378,40 @@ export default {
     height: 18px;
     background: rgba(255, 255, 255, 0.18);
     margin: 0 4px;
+}
+/* v1.0.8：本地文件灯箱的「更多」下拉 */
+.mv-more-wrap {
+    position: relative;
+    display: inline-flex;
+}
+.mv-more-menu {
+    top: calc(100% + 8px);
+    right: 0;
+    left: auto;
+    min-width: 160px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.mv-more-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #f2f3f5;
+    font-size: 13px;
+    line-height: 1.2;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+.mv-more-item:hover {
+    background: rgba(255, 255, 255, 0.14);
 }
 .mv-btn {
     box-sizing: border-box;

@@ -527,7 +527,8 @@ export default {
     .admin-header-content {
         position: fixed;
         --admin-header-gutter: 4px;
-        top: 6px;
+        /* v1.0.8：移动端顶栏贴顶 —— 距屏幕顶部 2px（原 6px） */
+        top: 2px;
         /* v3.0.0（R7）：内边距各减 2px（上下 3 → 1、左右 2 → 0），移动端顶栏更紧凑 */
         padding: 1px 0;
     }

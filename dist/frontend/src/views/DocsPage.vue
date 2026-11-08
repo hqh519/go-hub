@@ -606,6 +606,23 @@ const ZH = {
         { t: '裁剪图片：默认框就是整张图', d: '裁剪页打开时选择框默认覆盖整张图。只想转个方向的话直接保存不会裁掉任何像素；而且这种「没裁」的情况不会重新编码——JPG 不掉画质，PNG 不会莫名变大。需要裁剪时自己拖四角即可。' },
         { t: '详情页按钮改名', d: '「转本地」改为「存入本地」，「存异地」改为「转到异地」，与按钮实际含义对齐：前者是把第三方渠道的文件取回本地，后者是把本地文件送到异地渠道。' }
       ]
+    },
+    {
+      title: '二十五、v1.0.8 更新要点',
+      intro: 'v1.0.8 没有数据库变更。这一版主要是在收前两版的尾巴：三个「说修好了、实际没好」的问题这次找到了真正原因——文件标签设置整块空白是文案里的 @ 与 | 撞了格式，抓拍上传的下拉框展不开是层级写得一半一半，WebDAV 总开关误报是普通用户读取时被挡在门外却把「读不到」当成了「没打开」。此外把移动端顶栏与第二行的间距收紧到 2px，本地文件灯箱对已入库的文件直接给「详情」，并补上了视频抓拍。',
+      items: [
+        { t: '「文件标签添加设置」终于能正常显示', d: '前两版都以为是被条件隐藏了，实际是这一块的说明文字里出现了 @ 和 | ——它们在文案格式里是「引用另一条消息」和「复数分隔」的语法符号，解析失败后整块设置渲染中断，表现为连开关都看不见。现在这几条说明改用转义写法，三组规则、开关、输入框、快插按钮全部正常显示，正文里的 #@& 示例也能正常阅读。' },
+        { t: '新建文件夹时的不合法提示条', d: '「目录名称不能包含 \ / : * ? " < > |」这条提示里的竖线属于同一类符号冲突，一并改掉了。' },
+        { t: '抓拍图上传：目标渠道与归属实例的下拉框能看见了', d: '以前在视频灯箱抓拍后弹出的上传配置窗里，点开下拉框能点、但列表看不见——列表已经渲染出来，只是被压在弹窗底下（弹窗用了手写的固定层级，而下拉列表用的是系统递增层级，两者不同源）。现在弹窗和下拉都交给同一套层级管理，后打开的必然盖住先打开的。' },
+        { t: 'WebDAV 总开关：普通用户也能读到真实状态', d: '以前普通用户进自己的账户页，读「对外 WebDAV 总开关」用的是管理员接口，被拒绝后前端把「读不到」当成了「没打开」，于是永远提示「总开关还没打开」，而管理员进同一页面却正常。现在新增了一组只返回本人数据的接口，总开关状态能正确读到，提示不再误报。' },
+        { t: 'WebDAV：普通用户可以自助管理自己的渠道', d: '在管理员给账户开通 WebDAV 之后，用户现在可以自己创建渠道、改名称与备注、重新生成访问密钥、删除自己的渠道，不需要管理员代劳。能创建几个仍由管理员在「管理员操作 → 允许创建数量」里设定；管理员账户本身依旧禁止使用 WebDAV。' },
+        { t: '「缺哪一层」的提示只给管理员看', d: '账户页里的「总开关没开 / 该账户未授权」这两条提示会暴露管理侧的配置状态，现在只在管理员查看他人账户时显示；普通用户看自己的页面只保留渠道列表与创建入口。' },
+        { t: '移动端顶栏更贴顶', d: '手机上图床后台的顶行栏与屏幕顶部的间距从 6px 收到 2px。' },
+        { t: '移动端第二行：常态与吸附都贴紧顶栏', d: '「图床文件」页顶部那行全选 / 视图切换按钮，与顶栏的间距从 8px 收到 2px；页面滚动后这行吸附在顶栏下方时同样是 2px，不会出现「一吸顶就多出一段空隙」的跳动。' },
+        { t: '本地文件灯箱：已入库的文件按钮变成「详情」', d: '在「本地文件」页浏览时，如果当前文件已经传到过图床，灯箱右上角不再显示「上传」，而是显示「详情」——点开就是它在图床里的文件详情页，灯箱保持打开，关掉详情还停在原来那张图。未入库的文件仍是「上传到图床」。' },
+        { t: '灯箱新增「更多」下拉', d: '按钮旁边多了一个「更多」下拉面板，里面是与按钮等价的入口（已入库为「查看详情」，未入库为「上传到图床」），窄屏放不下太多图标时用它更顺手。' },
+        { t: '本地文件里的视频也能抓拍了', d: '以前只有「图床文件」页的视频灯箱有抓拍按钮。现在两边一致：打开视频后右上角出现相机图标，抓下当前画面，可以按 v1.0.7 的目标渠道 / 实例 / 目录配置上传，也可以直接下载。' }
+      ]
     }
   ]
 };
@@ -1149,6 +1166,23 @@ const EN = {
         { t: 'WebDAV: large folders open faster', d: 'Listing a folder used to stat every entry sequentially, which stalls Finder or Explorer on directories with thousands of files. Entries are now read with a bounded concurrency pool and cached for three seconds; any write (upload, delete, create, move, copy) invalidates the cache immediately, so a stale listing is never served. The listing also carries an ETag, so repeated requests can be answered with 304.' },
         { t: 'Crop dialog starts at the full image', d: 'The crop selection now covers the whole image when the dialog opens. Rotating and saving therefore never trims pixels by accident, and that no-crop case skips re-encoding entirely: JPEG keeps its quality and PNG does not grow. Drag the corners when you do want to crop.' },
         { t: 'Detail panel button names', d: 'Move to local is now Store to local, and Move to remote is now Send to remote, matching what the buttons actually do: the first pulls a file from a third-party channel back to local storage, the second pushes a local file out to a remote channel.' }
+      ]
+    },
+    {
+      title: '25. What is new in v1.0.8',
+      intro: 'v1.0.8 ships no database changes. This release closes the loop on three issues that were reported fixed but were not: the empty tag settings block was a message-format clash with the @ and | characters, the snapshot dialog could not show its dropdowns because half of the layering was hardcoded, and the WebDAV master switch reported off simply because a regular account was denied the read and the failure was treated as false. It also tightens the mobile spacing to 2px, gives already-imported files a Details button in the Local Files lightbox, and adds video snapshots there.',
+      items: [
+        { t: 'Tag settings finally render', d: 'The previous two releases assumed the block was hidden by a condition. In fact the helper text in that block contained @ and | - the syntax markers for linked messages and plural branches - so parsing failed and the whole settings block stopped rendering, down to the enable switch. The strings are escaped now, so all three rule groups, the switch, the inputs and the placeholder chips render, and the #@& examples in the prose read normally.' },
+        { t: 'Folder name validation hint', d: 'The hint that lists forbidden folder name characters contained the same pipe symbol and is fixed as well.' },
+        { t: 'Snapshot upload: the channel and instance dropdowns are visible', d: 'In the upload dialog opened from a video snapshot, the dropdown could be clicked but its list stayed invisible: the list was rendered under the dialog, because the dialog used a hand-set fixed z-index while the list used the incrementing one from the component library. Both now come from the same manager, so whatever opens later is always on top.' },
+        { t: 'WebDAV master switch: regular accounts read the real value', d: 'A regular user opening their own account page read the master switch through an admin-only endpoint. The request was denied, the front end turned that failure into "switch is off", and the page kept saying the master switch was not enabled while an administrator saw everything fine on the same page. A dedicated endpoint now returns only the caller own data, so the state is read correctly and the misleading hint is gone.' },
+        { t: 'WebDAV: users manage their own channels', d: 'Once an administrator enables WebDAV for an account, the user can create channels, rename them, change notes, rotate the access key, and delete their own channels without an administrator doing it for them. The quota is still set by the administrator, and administrator accounts still cannot use WebDAV.' },
+        { t: 'Layered hints are for administrators only', d: 'The two hint lines that name the missing layer reveal administrative configuration, so they now appear only when an administrator opens another account. A regular user viewing their own page just sees the channel list and the create button.' },
+        { t: 'Mobile header sits closer to the top', d: 'The backend header on phones moves from 6px to 2px from the top edge.' },
+        { t: 'Mobile second row: 2px both static and stuck', d: 'The select-all and view-toggle row on the file dashboard moves from 8px to 2px away from the header, and stays at 2px when it sticks below the header while scrolling, so there is no extra gap the moment it sticks.' },
+        { t: 'Local Files lightbox: imported files show Details', d: 'When the file being previewed in Local Files already exists in the library, the lightbox shows Details instead of Upload. It opens the file detail panel in the library on top of the lightbox, and closing it leaves you on the same image. Files not yet in the library still show Upload.' },
+        { t: 'A More dropdown in the lightbox', d: 'A More dropdown next to the button offers the same action - View details when the file is in the library, Upload to library otherwise - which is easier to reach on narrow screens.' },
+        { t: 'Videos in Local Files can be snapshotted', d: 'Snapshot used to exist only on the file dashboard lightbox. Both places are the same now: open a video, hit the camera icon, and either upload the frame with the target channel, instance and folder picker added in v1.0.7, or download it directly.' }
       ]
     }
   ]

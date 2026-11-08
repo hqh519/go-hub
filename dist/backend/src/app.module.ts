@@ -9,6 +9,8 @@ import { AvatarController, UsersController } from './users/users.controller';
 import { TokenApiController } from './tokens/token-api.controller';
 import { WebDavController } from './webdav/webdav.controller';
 import { WebDavAdminController } from './webdav/webdav-admin.controller';
+// v1.0.8：普通用户自助管理自己的 WebDAV 渠道（/api/webdav-self）
+import { WebDavSelfController } from './webdav/webdav-self.controller';
 import { SettingsService } from './settings/settings.service';
 import { SysConfigService } from './settings/sysconfig.service';
 import { StorageChannelService } from './storage/storage-channel.service';
@@ -42,6 +44,7 @@ import { LocalFilesController } from './localfiles/localfiles.controller';
     TokenApiController,
     WebDavController,
     WebDavAdminController,
+    WebDavSelfController,
     PublicCompatController,
     ManageCompatController,
     AccessController,

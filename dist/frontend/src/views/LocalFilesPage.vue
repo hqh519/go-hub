@@ -555,13 +555,13 @@
         <!--
             上传弹窗：v1.0.7 起改用统一组件 UploadTargetDialog
             （同一套「目标渠道 / 归属实例 / 上传目录」也供视频灯箱的抓拍图上传复用）。
-            从灯箱发起时 z-index 传 3400，否则会被 3200 的灯箱盖住。
+            v1.0.8：不再按「是否从灯箱打开」区分 z-index —— 硬设高值会让弹窗内的
+            el-select 下拉浮层落到底下（浮层走 EP 递增，只有 32xx）。统一交给 EP 管理器。
         -->
         <UploadTargetDialog
             v-model="showUpload"
             :busy="uploading"
             :hint="$t('localFiles.uploadHint', { n: selected.length })"
-            :z-index="uploadFromLightbox ? 3400 : undefined"
             :prefill="uploadForm"
             @confirm="confirmUploadTarget"
         />
@@ -613,6 +613,7 @@
             upload
             :upload-busy="lightboxUploading"
             @upload="openLightboxUpload"
+            @record-detail="openLightboxRecordDetail"
         />
 
         <!--
@@ -785,6 +786,11 @@ export default {
                         ext,
                         sizeText: this.formatSize(f.size),
                         user: '',
+                        /*
+                         * v1.0.8：已落库的文件带图床文件 ID（后端列表字段 inLibrary）。
+                         * 灯箱据此把「上传」换成「详情」，点开就是它在图床里的详情页。
+                         */
+                        recordId: f.inLibrary || '',
                     };
                 });
         },
@@ -1416,6 +1422,15 @@ export default {
             } catch (e) {
                 this.$message?.error(this.$t('localFiles.detailFailed') || String(e.message || e));
             }
+        },
+        /**
+         * v1.0.8：灯箱里点「详情」（或下拉面板里的同名项）——
+         * 当前文件已落库时，直接打开它在图床里的文件详情页；灯箱保持打开（详情弹窗叠在上层）。
+         */
+        async openLightboxRecordDetail(item) {
+            const id = item?.recordId;
+            if (!id) return;
+            await this.openResultDetail({ id, path: item.key });
         },
         /** v2.8.6 同款「开头…结尾」文件名切分 */
         nameParts(name) {
