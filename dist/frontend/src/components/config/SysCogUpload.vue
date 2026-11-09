@@ -882,6 +882,23 @@ export default {
                 : buildDefaults(type);
             this.testResult = null;
         },
+        /**
+         * v1.0.9：本地存储渠道「自定义存储前缀」的一级目录禁止以 "_" 开头。
+         *
+         * 口径与后端 validateObjectPrefix 完全一致：先去掉开头的 "/"（用户常写成 /a/b），
+         * 再看首字符是不是 "_"。磁盘上 `_user` / `_avatars` / `_ipdata` 都是系统保留目录，
+         * 允许用户自定义到这些名字下会污染其它链路的数据。
+         * 返回 true = 通过；不通过时这里已经弹过提示，调用方直接 return。
+         */
+        checkObjectPrefix(type, config) {
+            if (type !== 'local') return true;
+            const raw = String((config && config.objectPrefix) || '').trim().replace(/^\/+/, '');
+            if (!raw.startsWith('_')) return true;
+            this.$message.error(
+                '「自定义存储前缀」的一级目录不能以 "_" 开头（_user / _avatars / _ipdata 是系统保留目录），请换一个名字',
+            );
+            return false;
+        },
         collectConfig(model) {
             // 全部转换为字符串，布尔转 'true'/'false'（与后端适配器约定一致）
             const out = {};
@@ -896,6 +913,8 @@ export default {
         async confirmAddChannel() {
             this.$refs.addForm.validate(async (valid) => {
                 if (!valid) return;
+                // v1.0.9：一级目录禁止以 "_" 开头（系统保留目录名）
+                if (!this.checkObjectPrefix(this.newChannel.type, this.newChannel.config)) return;
                 this.saving = true;
                 try {
                     const resp = await fetchWithAuth('/api/manage/channels', {
@@ -1003,6 +1022,8 @@ export default {
         },
 
         async confirmEditChannel() {
+            // v1.0.9：先做前缀一级目录校验，不合格直接挡在提交前
+            if (!this.checkObjectPrefix(this.currentChannelType, this.editChannel.config)) return;
             this.saving = true;
             try {
                 const payload = {

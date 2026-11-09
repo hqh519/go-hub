@@ -677,12 +677,28 @@ html.dark .ai-settings .el-button--primary.is-link:not(.is-disabled) {
     color: #f56c6c !important;
 }
 
+/*
+ * v1.0.9：横轴不回弹的「触屏版」。
+ * 上面的规则只按宽度 ≤768px 命中，平板 / 折叠屏展开 / 手机横屏都超了这个宽度，
+ * 但它们照样是触屏、照样能横滑返回。这里按能力（无 hover + 粗指针）再补一条。
+ */
+@media (hover: none) and (pointer: coarse) {
+    html,
+    body {
+        overscroll-behavior-x: none;
+    }
+}
+
 /* 消息提示移动端适配 */
 @media (max-width: 768px) {
     /*
      * v1.0.0：整页不再横向「回弹」。
      * 屏幕边缘横滑的返回手势由 utils/edgeSwipeGuard.js 拦截（不牺牲页面内的横向工具条），
      * 这里补一条 overscroll-behavior-x，阻止滚动链把横滑传给文档本身产生拉动动画。
+     *
+     * v1.0.9：只限这一条横轴属性，**不碰纵轴**。
+     * 曾经把 overscroll-behavior 的简写写在 html/body/#app 上（等于纵轴也设成 none），
+     * 触屏下 body 就是原生滚动容器，整站立刻滚不动 —— 这是踩过的坑，不要重犯。
      */
     html,
     body {

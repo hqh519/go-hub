@@ -882,8 +882,26 @@ export class LinkController {
     }
 
     const prefer = await this.settings.getAccessChannel();
-    let active = record.copies.filter((c) => c.status === 'active' && (c.remoteKey || c.remoteUrl));
+    /*
+     * v1.0.9：候选副本的判定口径补上 objectPath。
+     *
+     * 旧口径只认 remoteKey / remoteUrl，把「用固化寻址路径记录位置」的副本
+     * （登记文件、转存落库后部分渠道只回 objectPath）整条过滤掉 —— 只要某文件
+     * 的可用副本恰好是这种形态，active 直接为空，外链 404，代理模式下表现为 502。
+     * 三者任何一个非空都说明「这条副本有办法取到字节」，交给下面的分支去识别。
+     */
+    let active = record.copies.filter(
+      (c) => c.status === 'active' && (c.remoteKey || c.remoteUrl || c.objectPath),
+    );
     if (active.length === 0) {
+      appLog.warn(
+        'file',
+        `外链取源失败：文件没有可用的渠道副本（404）`,
+        `文件=${record.name} ｜ 副本数=${record.copies.length} ｜ 状态=${record.copies
+          .map((c) => `${c.status}/${c.remoteKey ? 'key' : c.objectPath ? 'path' : 'none'}`)
+          .join(',') || '无'}`,
+        req.ip || '',
+      );
       await this.serveFallback(res, isHead, () => res.status(404).send('Not Found'));
       return;
     }
@@ -1805,7 +1823,10 @@ export class ManageController {
     pushGroup(f.users, (v) => v === String(r.uploader || ''));
 
     if (f.backup.length) {
-      const hasBackup = copies.some((c) => c !== primary && c?.status === 'active' && (c?.remoteKey || c?.remoteUrl));
+      // v1.0.9：与取源口径保持一致 —— 只有 objectPath 的副本同样是「有备份」
+      const hasBackup = copies.some(
+        (c) => c !== primary && c?.status === 'active' && (c?.remoteKey || c?.remoteUrl || c?.objectPath),
+      );
       pushGroup(f.backup, (v) => (v === 'backedup' ? hasBackup : !hasBackup));
     }
 
@@ -4917,6 +4938,12 @@ export class ManageController {
       srcLocal ? !isLocalType(c.type) : c.type === 'local',
     );
     const registered = String(rec.uploadSource || '') === 'Record';
+    /*
+     * v1.0.9：把「上一轮没做完的转存」告诉前端。
+     * 前端据此把「存入本地 / 转到异地」按钮改写成「重试转存」，并提示上次失败原因；
+     * 有 staged（实体已写进目标渠道）时重试不会重传字节，只补做数据切换。
+     */
+    const pending = this.readConvertPending(copy?.metas);
 
     return {
       success: true,
@@ -4927,7 +4954,36 @@ export class ManageController {
       canDeleteSource: !srcLocal && !registered,
       forceDeleteSource: srcLocal,
       channels,
+      pending,
     };
+  }
+
+  /** v1.0.9：读 file_copies.metas.__convert（转存中断标记），给前端展示「重试」用 */
+  private readConvertPending(metas: string | null | undefined): {
+    state: string;
+    targetChannelId: string;
+    targetChannelName: string;
+    attempts: number;
+    lastError: string;
+    hasStaged: boolean;
+    startedAt: number;
+  } | null {
+    try {
+      const obj = JSON.parse(String(metas || '{}')) as Record<string, unknown>;
+      const c = obj?.__convert as Record<string, unknown> | undefined;
+      if (!c || typeof c !== 'object') return null;
+      return {
+        state: String(c.state || 'pending'),
+        targetChannelId: String(c.targetChannelId || ''),
+        targetChannelName: String(c.targetChannelName || ''),
+        attempts: Number(c.attempts) || 0,
+        lastError: String(c.lastError || ''),
+        hasStaged: !!(c.staged as Record<string, unknown> | undefined),
+        startedAt: Number(c.startedAt) || 0,
+      };
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -4956,8 +5012,13 @@ export class ManageController {
       ip: req.ip,
     });
     if (!r.ok) {
-      appLog.warn('channel', `文件转存失败：${r.message || '未知原因'}`, `fileId=${id}`, req.ip);
-      return { success: false, message: r.message || '转存失败' };
+      appLog.warn(
+        'channel',
+        `文件转存失败：${r.message || '未知原因'}`,
+        `fileId=${id}${r.retryable ? ' ｜ 可在详情页点「重试转存」继续' : ''}`,
+        req.ip,
+      );
+      return { success: false, message: r.message || '转存失败', retryable: r.retryable === true };
     }
     return { success: true, ...r };
   }

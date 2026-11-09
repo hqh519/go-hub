@@ -161,39 +161,16 @@
                     :title="$t('localFiles.uploadToBed')"
                     :aria-label="$t('localFiles.uploadToBed')"
                     :disabled="uploadBusy"
-                    @click.stop="$emit('upload', current)"
+                    @click.stop="requestUpload"
                 >
                     <font-awesome-icon :icon="uploadBusy ? 'spinner' : 'cloud-upload-alt'" :spin="uploadBusy"/>
                 </button>
                 <!--
-                    v1.0.8：下拉入口 —— 与上面的按钮等价，只是收进「更多」面板里，
-                    窄屏顶栏放不下太多图标时用这个；已落库项的面板里是「查看详情」，
-                    未落库项是「上传到图床」。
+                    v1.0.9：删除这里的「三点」下拉入口。
+                    它与左侧的「上传 / 详情」按钮是同一件事的两种入口，顶栏因此出现
+                    两个看起来都像「上传」的图标（用户反馈「为什么有两个上传按钮」）。
+                    已落库项的「详情」、未落库项的「上传」都已有独立按钮，下拉是多余的。
                 -->
-                <div v-if="upload" class="mv-more-wrap">
-                    <button
-                        type="button"
-                        class="mv-btn"
-                        :title="$t('mediaViewer.more')"
-                        :aria-label="$t('mediaViewer.more')"
-                        @click.stop="moreMenuOpen = !moreMenuOpen"
-                    >
-                        <font-awesome-icon icon="ellipsis-h"/>
-                    </button>
-                    <div v-if="moreMenuOpen" class="mv-menu-panel mv-more-menu" @click.stop>
-                        <button
-                            v-if="current.recordId"
-                            type="button"
-                            class="mv-more-item"
-                            @click.stop="openRecordDetail"
-                        >
-                            <font-awesome-icon icon="info-circle"/>{{ $t('localFiles.viewDetail') }}
-                        </button>
-                        <button v-else type="button" class="mv-more-item" @click.stop="moreUpload">
-                            <font-awesome-icon icon="cloud-upload-alt"/>{{ $t('localFiles.uploadToBed') }}
-                        </button>
-                    </div>
-                </div>
                 <span class="mv-tools-sep"></span>
                 <button
                     type="button"
@@ -773,8 +750,6 @@ export default {
             snapshotUploading: false,
             // v3.0.0（R16）：抓拍询问面板（{ url, name } | null）—— 不再用 EP $confirm
             snapshotPrompt: null,
-            // v1.0.8：本地文件灯箱的「更多」下拉面板（查看详情 / 上传到图床）
-            moreMenuOpen: false,
             // v1.0.7：抓拍图上传前的目标配置弹窗（渠道 / 实例 / 目录）
             snapshotTarget: false,
             snapshotTargetForm: { channelId: '', instanceId: '', uploadFolder: '' },
@@ -1456,6 +1431,13 @@ export default {
                             if (v) v.play().catch(() => {})
                         }
                     })
+                    /*
+                     * v1.0.9：已落库的文件（current.recordId 有值）下拉 → 打开它在图床里的
+                     * 文件详情页；未落库才回落到「当前预览项」的元数据弹窗（showDetail）。
+                     * 旧实现只看 showDetail，而本地文件页不接详情事件，于是下拉毫无反应。
+                     */
+                } else if (this.current.recordId) {
+                    this.openRecordDetail()
                 } else if (this.showDetail) {
                     this.goDetail()
                 }
@@ -2117,8 +2099,13 @@ export default {
                 }
                 const item = Array.isArray(data) ? data[0] : (Array.isArray(data?.data) ? data.data[0] : null)
                 this.snapshotUploaded = {
-                    // id = 上传返回的 File_ID（详情页用它拼 /file/<id>）；fileName = 面板里显示的抓拍名
-                    id: String(item?.name || ''),
+                    /*
+                     * v1.0.9：id 必须取上传响应的 id（File_ID）。
+                     * 旧实现取 name —— 那是「文件名」，不是 File_ID，父组件拿它去
+                     * /api/manage/metadata/<id> 拉详情就直接 404，表现为
+                     * 「抓拍上传完成后点查看打不开详情」。name 只作兜底。
+                     */
+                    id: String(item?.id || item?.name || ''),
                     src: String(item?.src || ''),
                     fileName: name,
                 }
@@ -2173,13 +2160,16 @@ export default {
          * 这个是本地文件页专用 —— 手里的 recordId 就是图床文件 ID，交父组件去拉详情。
          */
         openRecordDetail() {
-            this.moreMenuOpen = false
             this.pauseAll()
             this.$emit('record-detail', this.current)
         },
-        /** v1.0.8：下拉面板里的「上传到图床」（与工具条按钮同义） */
-        moreUpload() {
-            this.moreMenuOpen = false
+        /**
+         * v1.0.9：点「上传到图床」先把视频 / 音频暂停。
+         * 上传弹窗会盖在灯箱上，视频还在后面继续播（声音也还在），观感很差；
+         * 暂停后关掉弹窗也不会自己续播，用户要看得自己点播放。
+         */
+        requestUpload() {
+            this.pauseAll()
             this.$emit('upload', this.current)
         },
         /* ── v3.0.0（R12）：文本灯箱「复制全文」────────────────── */
@@ -2378,40 +2368,6 @@ export default {
     height: 18px;
     background: rgba(255, 255, 255, 0.18);
     margin: 0 4px;
-}
-/* v1.0.8：本地文件灯箱的「更多」下拉 */
-.mv-more-wrap {
-    position: relative;
-    display: inline-flex;
-}
-.mv-more-menu {
-    top: calc(100% + 8px);
-    right: 0;
-    left: auto;
-    min-width: 160px;
-    padding: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-.mv-more-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 8px 10px;
-    border: 0;
-    border-radius: 6px;
-    background: transparent;
-    color: #f2f3f5;
-    font-size: 13px;
-    line-height: 1.2;
-    text-align: left;
-    cursor: pointer;
-    transition: background 0.2s ease;
-}
-.mv-more-item:hover {
-    background: rgba(255, 255, 255, 0.14);
 }
 .mv-btn {
     box-sizing: border-box;

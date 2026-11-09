@@ -16,6 +16,8 @@ const crypto_1 = require("crypto");
 const fs_1 = require("fs");
 const os_1 = require("os");
 const path_1 = require("path");
+const stream_1 = require("stream");
+const promises_1 = require("stream/promises");
 const prisma_1 = require("../common/prisma");
 const tags_1 = require("../common/tags");
 const crypto_service_1 = require("../common/crypto.service");
@@ -2369,92 +2371,279 @@ let UploadService = class UploadService {
         if (deleteSource && registered) {
             return { ok: false, message: '登记文件不允许删除源件（源文件不在本系统管理范围内）' };
         }
+        const prevMarker = this.readConvertMarker(sourceCopy.metas);
+        const sameTarget = !!prevMarker && prevMarker.targetChannelId === targetCh.id;
+        if (prevMarker?.staged && !sameTarget)
+            await this.dropStagedCopy(prevMarker, input.ip);
+        const marker = {
+            state: 'pending',
+            targetChannelId: targetCh.id,
+            targetChannelName: targetCh.name,
+            sourceChannelId: sourceCh.id,
+            deleteSource,
+            startedAt: Date.now(),
+            attempts: (sameTarget ? Number(prevMarker?.attempts) || 0 : 0) + 1,
+            ...(sameTarget && prevMarker?.staged ? { staged: prevMarker.staged } : {}),
+        };
+        try {
+            await this.saveConvertMarker(sourceCopy.id, sourceCopy.metas, marker);
+        }
+        catch (err) {
+            return { ok: false, message: `登记转存任务失败：${err.message}` };
+        }
+        const fail = async (message, retryable = true) => {
+            marker.state = 'failed';
+            marker.lastError = message;
+            await this.saveConvertMarker(sourceCopy.id, sourceCopy.metas, marker).catch(() => undefined);
+            return { ok: false, message, retryable };
+        };
         const srcInfo = this.toChannelInfo(sourceCh);
         const srcAdapter = (0, adapter_factory_1.createAdapter)(srcInfo);
-        let buf;
-        if (srcLocal) {
-            const abs = await (0, local_adapter_1.localFileAbsOf)(sourceCopy.remoteKey);
-            if (!abs)
-                return { ok: false, message: '本地源文件已不存在（可能被手工删除），无法转存' };
-            buf = await fs_1.promises.readFile(abs);
-        }
-        else {
-            const url = srcAdapter.buildDirectUrl((0, adapter_factory_1.toCopyInfo)(sourceCopy), srcInfo, true);
-            if (!url)
-                return { ok: false, message: '无法构造源渠道直链，转存失败' };
-            const resp = await fetch(url);
-            if (!resp.ok)
-                return { ok: false, message: `拉取源文件失败（HTTP ${resp.status}）` };
-            buf = Buffer.from(await resp.arrayBuffer());
-        }
-        if (!buf.length)
-            return { ok: false, message: '源文件为空，已取消转存' };
-        const dstInfo = this.toChannelInfo(targetCh);
-        const dstAdapter = (0, adapter_factory_1.createAdapter)(dstInfo);
-        const dstKey = this.makeKeyFor({ id: targetCh.id, code: targetCh.code, name: targetCh.name, type: targetCh.type, config: targetCh.config }, rec.originalName, undefined, rec.md5 || (0, crypto_1.createHash)('md5').update(buf).digest('hex'), rec.uploader || '');
-        let result;
+        let srcPath = '';
+        let tempSrc = '';
+        let srcSize = 0;
         try {
-            result = await dstAdapter.upload({ buffer: buf, mime: rec.mime, originalName: rec.originalName }, dstKey, dstInfo, { owner: rec.uploader || '', instanceId: rec.instanceId || '' });
-        }
-        catch (err) {
-            app_log_1.appLog.warn('channel', `文件转存失败：写入目标渠道「${targetCh.name}」出错`, `${err.message} ｜ 文件=${rec.name}`, input.ip);
-            return { ok: false, message: `写入目标渠道失败：${err.message}` };
-        }
-        const writeData = { ...this.copyWriteData(result, targetCh), status: 'active', isPrimary: true };
-        try {
-            await prisma_1.prisma.$transaction(async (tx) => {
-                const existingTarget = rec.copies.find((c) => c.channelId === targetCh.id && c.id !== sourceCopy.id);
-                if (existingTarget) {
-                    await tx.fileCopy.update({ where: { id: existingTarget.id }, data: writeData });
-                    await tx.fileCopy.delete({ where: { id: sourceCopy.id } });
-                }
-                else {
-                    await tx.fileCopy.update({
-                        where: { id: sourceCopy.id },
-                        data: { channelId: targetCh.id, ...writeData },
+            if (srcLocal) {
+                const abs = await (0, local_adapter_1.localFileAbsOf)(sourceCopy.remoteKey);
+                if (!abs)
+                    return await fail('本地源文件已不存在（可能被手工删除），无法转存', false);
+                const st = await fs_1.promises.stat(abs).catch(() => null);
+                if (!st || !st.isFile())
+                    return await fail('本地源文件已不存在（可能被手工删除），无法转存', false);
+                if (!st.size)
+                    return await fail('源文件为空，已取消转存', false);
+                srcPath = abs;
+                srcSize = st.size;
+            }
+            else {
+                const url = srcAdapter.buildDirectUrl((0, adapter_factory_1.toCopyInfo)(sourceCopy), srcInfo, true);
+                if (!url)
+                    return await fail('无法构造源渠道直链，转存失败');
+                const pulled = await this.downloadToTempFile(url, rec, input.ip);
+                srcPath = pulled.path;
+                tempSrc = pulled.path;
+                srcSize = pulled.size;
+            }
+            if (!srcSize)
+                return await fail('源文件为空，已取消转存', false);
+            const dstInfo = this.toChannelInfo(targetCh);
+            const dstAdapter = (0, adapter_factory_1.createAdapter)(dstInfo);
+            let result = sameTarget ? prevMarker?.staged : undefined;
+            if (!result) {
+                const dstKey = this.makeKeyFor({ id: targetCh.id, code: targetCh.code, name: targetCh.name, type: targetCh.type, config: targetCh.config }, rec.originalName, undefined, rec.md5 || (await this.md5OfFile(srcPath)), rec.uploader || '');
+                try {
+                    result = await this.uploadFileReliable(dstAdapter, srcPath, srcSize, rec, dstKey, dstInfo, {
+                        owner: rec.uploader || '',
+                        instanceId: rec.instanceId || '',
                     });
                 }
-            });
-        }
-        catch (err) {
-            return { ok: false, message: `更新文件渠道数据失败：${err.message}` };
-        }
-        let deletedSource = false;
-        if (deleteSource) {
+                catch (err) {
+                    app_log_1.appLog.warn('channel', `文件转存失败：写入目标渠道「${targetCh.name}」出错`, `${err.message} ｜ 文件=${rec.name} ｜ 大小=${srcSize}B ｜ 第 ${marker.attempts} 次尝试`, input.ip);
+                    return await fail(`写入目标渠道失败：${err.message}`);
+                }
+                marker.staged = result;
+                try {
+                    await this.saveConvertMarker(sourceCopy.id, sourceCopy.metas, marker);
+                }
+                catch (err) {
+                    app_log_1.appLog.warn('channel', '转存实体已写入，但「已暂存」标记落库失败（重试会重新上传）', `${err.message} ｜ 文件=${rec.name}`, input.ip);
+                }
+                if (dstLocal) {
+                    const dstAbs = await (0, local_adapter_1.localFileAbsOf)(result.remoteKey).catch(() => null);
+                    const st = dstAbs ? await fs_1.promises.stat(dstAbs).catch(() => null) : null;
+                    if (st && st.size !== srcSize) {
+                        return await fail(`目标渠道写入不完整（${st.size}/${srcSize} 字节），已中止切换`);
+                    }
+                }
+            }
+            const staged = result;
+            if (!staged)
+                return await fail('转存实体尚未就绪，请重试', true);
+            const writeData = { ...this.copyWriteData(staged, targetCh), status: 'active', isPrimary: true };
+            const existingTarget = rec.copies.find((c) => c.channelId === targetCh.id && c.id !== sourceCopy.id);
+            const ops = existingTarget
+                ? [
+                    prisma_1.prisma.fileCopy.update({ where: { id: existingTarget.id }, data: writeData }),
+                    prisma_1.prisma.fileCopy.delete({ where: { id: sourceCopy.id } }),
+                ]
+                : [
+                    prisma_1.prisma.fileCopy.update({
+                        where: { id: sourceCopy.id },
+                        data: { channelId: targetCh.id, ...writeData },
+                    }),
+                ];
             try {
-                await srcAdapter.delete((0, adapter_factory_1.toCopyInfo)(sourceCopy), srcInfo);
+                await prisma_1.prisma.$transaction(ops);
             }
             catch (err) {
-                app_log_1.appLog.warn('channel', `转存后删除源件失败（主副本已切到新渠道）：${sourceCh.name}`, `${err.message} ｜ 文件=${rec.name}`, input.ip);
+                const msg = `切换文件渠道数据失败：${err.message}`;
+                app_log_1.appLog.error('channel', '文件转存：数据切换失败（实体已暂存在目标渠道，可重试）', msg, input.ip);
+                return await fail(msg);
             }
-            deletedSource = true;
+            let deletedSource = false;
+            if (deleteSource) {
+                try {
+                    await srcAdapter.delete((0, adapter_factory_1.toCopyInfo)(sourceCopy), srcInfo);
+                }
+                catch (err) {
+                    app_log_1.appLog.warn('channel', `转存后删除源件失败（主副本已切到新渠道）：${sourceCh.name}`, `${err.message} ｜ 文件=${rec.name}`, input.ip);
+                }
+                deletedSource = true;
+            }
+            else {
+                await prisma_1.prisma.fileCopy
+                    .upsert({
+                    where: { fileId_channelId: { fileId: rec.id, channelId: sourceCh.id } },
+                    update: { status: 'active', isPrimary: false },
+                    create: {
+                        fileId: rec.id,
+                        channelId: sourceCh.id,
+                        remoteKey: sourceCopy.remoteKey,
+                        remoteUrl: sourceCopy.remoteUrl || '',
+                        objectPath: sourceCopy.objectPath || '',
+                        urlQuery: sourceCopy.urlQuery || '',
+                        metas: JSON.stringify(this.withoutConvertMarker(sourceCopy.metas)),
+                        status: 'active',
+                        isPrimary: false,
+                    },
+                })
+                    .catch(() => undefined);
+            }
+            app_log_1.appLog.info('channel', `文件转存成功：${sourceCh.name}（${sourceCh.type}）→ ${targetCh.name}（${targetCh.type}）`, `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ ${srcSize}B ｜ 第 ${marker.attempts} 次尝试 ｜ 外链不变`, input.ip);
+            return {
+                ok: true,
+                channelName: targetCh.name,
+                direction: dstLocal ? 'to-local' : 'to-remote',
+                deletedSource,
+                bytes: srcSize,
+                attempts: marker.attempts,
+            };
         }
-        else {
-            await prisma_1.prisma.fileCopy
-                .upsert({
-                where: { fileId_channelId: { fileId: rec.id, channelId: sourceCh.id } },
-                update: { status: 'active', isPrimary: false },
-                create: {
-                    fileId: rec.id,
-                    channelId: sourceCh.id,
-                    remoteKey: sourceCopy.remoteKey,
-                    remoteUrl: sourceCopy.remoteUrl || '',
-                    objectPath: sourceCopy.objectPath || '',
-                    urlQuery: sourceCopy.urlQuery || '',
-                    metas: sourceCopy.metas || '{}',
-                    status: 'active',
-                    isPrimary: false,
-                },
-            })
-                .catch(() => undefined);
+        finally {
+            if (tempSrc)
+                await fs_1.promises.rm(tempSrc, { force: true }).catch(() => undefined);
         }
-        app_log_1.appLog.info('channel', `文件转存成功：${sourceCh.name}（${sourceCh.type}）→ ${targetCh.name}（${targetCh.type}）`, `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ 外链不变`, input.ip);
-        return {
-            ok: true,
-            channelName: targetCh.name,
-            direction: dstLocal ? 'to-local' : 'to-remote',
-            deletedSource,
-        };
+    }
+    readConvertMarker(metas) {
+        try {
+            const obj = JSON.parse(String(metas || '{}'));
+            const c = obj?.__convert;
+            return c && typeof c === 'object' ? c : null;
+        }
+        catch {
+            return null;
+        }
+    }
+    withoutConvertMarker(metas) {
+        let obj = {};
+        try {
+            obj = JSON.parse(String(metas || '{}'));
+        }
+        catch {
+            obj = {};
+        }
+        delete obj.__convert;
+        return obj;
+    }
+    async saveConvertMarker(copyId, baseMetas, marker) {
+        const next = this.withoutConvertMarker(baseMetas);
+        next.__convert = marker;
+        await prisma_1.prisma.fileCopy.update({ where: { id: copyId }, data: { metas: JSON.stringify(next) } });
+    }
+    async dropStagedCopy(marker, ip) {
+        const staged = marker.staged;
+        if (!staged)
+            return;
+        try {
+            const ch = await prisma_1.prisma.channel.findUnique({ where: { id: marker.targetChannelId } });
+            if (!ch)
+                return;
+            const info = this.toChannelInfo(ch);
+            const adapter = (0, adapter_factory_1.createAdapter)(info);
+            await adapter.delete({
+                remoteKey: staged.remoteKey,
+                remoteUrl: staged.remoteUrl || '',
+                objectPath: staged.objectPath || '',
+                urlQuery: staged.urlQuery || '',
+                metas: (staged.metas || {}),
+            }, info);
+        }
+        catch (err) {
+            app_log_1.appLog.warn('channel', '转存：清理上一轮暂存实体失败（目标渠道可能残留一个孤儿文件）', `${err.message} ｜ key=${staged.remoteKey}`, ip);
+        }
+    }
+    async md5OfFile(path) {
+        const hash = (0, crypto_1.createHash)('md5');
+        await new Promise((resolve, reject) => {
+            const rs = (0, fs_1.createReadStream)(path);
+            rs.on('data', (c) => hash.update(c));
+            rs.on('error', reject);
+            rs.on('end', () => resolve());
+        });
+        return hash.digest('hex');
+    }
+    async downloadToTempFile(url, rec, ip) {
+        const dir = await fs_1.promises.mkdtemp((0, path_1.join)((0, os_1.tmpdir)(), 'gohub-convert-')).catch(() => (0, os_1.tmpdir)());
+        const dest = (0, path_1.join)(dir, `src-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok || !resp.body)
+                    throw new Error(`HTTP ${resp.status}`);
+                const expect = Number(resp.headers.get('content-length') || 0) || 0;
+                const hash = (0, crypto_1.createHash)('md5');
+                const tap = new stream_1.Transform({
+                    transform(chunk, _enc, cb) {
+                        hash.update(chunk);
+                        cb(null, chunk);
+                    },
+                });
+                await (0, promises_1.pipeline)(stream_1.Readable.fromWeb(resp.body), tap, (0, fs_1.createWriteStream)(dest));
+                const st = await fs_1.promises.stat(dest);
+                if (!st.size)
+                    throw new Error('下载内容为空');
+                if (expect && st.size !== expect)
+                    throw new Error(`下载不完整（${st.size}/${expect} 字节）`);
+                const digest = hash.digest('hex');
+                const want = String(rec.md5 || '').toLowerCase();
+                if (want && want !== digest)
+                    throw new Error(`MD5 校验不一致（${digest} ≠ ${want}）`);
+                return { path: dest, size: st.size };
+            }
+            catch (err) {
+                lastErr = err;
+                await fs_1.promises.rm(dest, { force: true }).catch(() => undefined);
+                app_log_1.appLog.warn('channel', `转存取源失败（第 ${attempt}/3 次）：${rec.name || ''}`, lastErr.message, ip);
+                if (attempt < 3)
+                    await new Promise((r) => setTimeout(r, 500 * attempt));
+            }
+        }
+        throw new Error(`拉取源文件失败（已重试 3 次）：${lastErr?.message || '未知原因'}`);
+    }
+    async uploadFileReliable(adapter, path, size, rec, key, info, ctx) {
+        let lastErr = null;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+                if (typeof adapter.uploadFile === 'function') {
+                    return await adapter.uploadFile(path, size, { mime: rec.mime, originalName: rec.originalName }, key, info, ctx);
+                }
+                if (size > STREAM_REQUIRED_BYTES) {
+                    throw new Error(`目标渠道不支持流式写入，${(size / 1024 / 1024).toFixed(0)}MB 超过安全阈值，已拒绝以免占满内存`);
+                }
+                const buffer = await fs_1.promises.readFile(path);
+                return await adapter.upload({ buffer, mime: rec.mime, originalName: rec.originalName }, key, info, ctx);
+            }
+            catch (err) {
+                lastErr = err;
+                const code = err?.code || '';
+                const fatal = /不支持流式写入|超过安全阈值|413|401|403|404/i.test(lastErr.message) || code === 'ENOSPC';
+                if (fatal || attempt === 3)
+                    break;
+                await new Promise((r) => setTimeout(r, 400 * attempt));
+            }
+        }
+        throw lastErr || new Error('写入目标渠道失败');
     }
 };
 exports.UploadService = UploadService;

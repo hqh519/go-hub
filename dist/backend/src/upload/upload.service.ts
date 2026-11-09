@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { createReadStream, promises as fsp } from 'fs';
+import { createReadStream, createWriteStream, promises as fsp } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+// v1.0.9：转存的取源做成流式管道（大文件不整份进内存）
+import { Readable, Transform } from 'stream';
+import { pipeline } from 'stream/promises';
 import { prisma } from '../common/prisma';
 import { TAG_TYPE_FILE, findOrCreateTag } from '../common/tags';
 import { CryptoService } from '../common/crypto.service';
@@ -3430,6 +3433,11 @@ export class UploadService {
     channelName?: string;
     direction?: 'to-local' | 'to-remote';
     deletedSource?: boolean;
+    /** v1.0.9：本次搬动的字节数与尝试次数（前端进度提示 / 日志用） */
+    bytes?: number;
+    attempts?: number;
+    /** v1.0.9：失败时是否值得重试（源件不存在之类的错误为 false） */
+    retryable?: boolean;
   }> {
     const rec = await prisma.fileRecord.findFirst({
       // recordId 兼容主键 id 与对外 File_ID（前端详情页只有 name）
@@ -3482,23 +3490,77 @@ export class UploadService {
       return { ok: false, message: '登记文件不允许删除源件（源文件不在本系统管理范围内）' };
     }
 
-    /* ── ① 取源文件字节（本地读磁盘 / 远端按直链拉，均不经过压缩转码） ── */
+    /*
+     * ── ⓪ 先把「转存意图」写进源副本的 metas（单条 UPDATE，不进事务） ──
+     *
+     * v1.0.9：这一版把转存拆成「预登记 → 搬字节 → 切数据 → 清源件」四段，
+     * 每一步都可以从中断处重来：
+     *   · 预登记写在 file_copies.metas.__convert 里，记录目标渠道、方向、尝试次数，
+     *     以及**目标渠道已经写成功的那份实体**（staged）；
+     *   · 任何一步失败 → 标记 state=failed 并保留 staged，详情页按钮变「重试」；
+     *   · 重试时如果目标渠道没变，直接跳过去重传，只补做数据切换；
+     *   · 成功后数据切换会把 metas 整份换成「目标渠道」的快照，标记自然被清掉。
+     *
+     * 这样即使进程被重启、事务超时、远端断流，也不会出现「目标渠道有 177MB 孤儿、
+     * 数据库还指着源渠道」的悬空状态 —— 有 staged 就能一键补完。
+     */
+    const prevMarker = this.readConvertMarker(sourceCopy.metas);
+    const sameTarget = !!prevMarker && prevMarker.targetChannelId === targetCh.id;
+    // 目标渠道换了：上一轮留在旧目标里的实体先清掉，避免养孤儿
+    if (prevMarker?.staged && !sameTarget) await this.dropStagedCopy(prevMarker, input.ip);
+    const marker: ConvertMarker = {
+      state: 'pending',
+      targetChannelId: targetCh.id,
+      targetChannelName: targetCh.name,
+      sourceChannelId: sourceCh.id,
+      deleteSource,
+      startedAt: Date.now(),
+      attempts: (sameTarget ? Number(prevMarker?.attempts) || 0 : 0) + 1,
+      ...(sameTarget && prevMarker?.staged ? { staged: prevMarker.staged } : {}),
+    };
+    try {
+      await this.saveConvertMarker(sourceCopy.id, sourceCopy.metas, marker);
+    } catch (err) {
+      return { ok: false, message: `登记转存任务失败：${(err as Error).message}` };
+    }
+    /** 失败出口：把标记落成 failed（保留 staged），前端据此把按钮变成「重试」 */
+    const fail = async (message: string, retryable = true) => {
+      marker.state = 'failed';
+      marker.lastError = message;
+      await this.saveConvertMarker(sourceCopy.id, sourceCopy.metas, marker).catch(() => undefined);
+      return { ok: false, message, retryable };
+    };
+
+    /* ── ① 取源文件字节（本地读磁盘 / 远端流式落临时文件，均不经过压缩转码） ── */
     const srcInfo = this.toChannelInfo(sourceCh as unknown as { id: string; code?: string; name: string; type: string; config: string });
     const srcAdapter = createAdapter(srcInfo);
-    let buf: Buffer;
-    if (srcLocal) {
-      const abs = await localFileAbsOf(sourceCopy.remoteKey);
-      if (!abs) return { ok: false, message: '本地源文件已不存在（可能被手工删除），无法转存' };
-      buf = await fsp.readFile(abs);
-    } else {
-      // preferInternal=true：优先走渠道配置的内网通信域名，省公网流量
-      const url = srcAdapter.buildDirectUrl(toCopyInfo(sourceCopy as never), srcInfo, true);
-      if (!url) return { ok: false, message: '无法构造源渠道直链，转存失败' };
-      const resp = await fetch(url);
-      if (!resp.ok) return { ok: false, message: `拉取源文件失败（HTTP ${resp.status}）` };
-      buf = Buffer.from(await resp.arrayBuffer());
-    }
-    if (!buf.length) return { ok: false, message: '源文件为空，已取消转存' };
+    let srcPath = '';
+    let tempSrc = '';
+    let srcSize = 0;
+    try {
+      if (srcLocal) {
+        const abs = await localFileAbsOf(sourceCopy.remoteKey);
+        if (!abs) return await fail('本地源文件已不存在（可能被手工删除），无法转存', false);
+        const st = await fsp.stat(abs).catch(() => null);
+        if (!st || !st.isFile()) return await fail('本地源文件已不存在（可能被手工删除），无法转存', false);
+        if (!st.size) return await fail('源文件为空，已取消转存', false);
+        srcPath = abs;
+        srcSize = st.size;
+      } else {
+        // preferInternal=true：优先走渠道配置的内网通信域名，省公网流量
+        const url = srcAdapter.buildDirectUrl(toCopyInfo(sourceCopy as never), srcInfo, true);
+        if (!url) return await fail('无法构造源渠道直链，转存失败');
+        /*
+         * v1.0.9：远端取源改成「流式下载到临时文件 + 三次重试 + 长度/MD5 校验」。
+         * v1.0.8 及以前是 arrayBuffer() 一次性拉进内存 —— 170MB 的转存会同时占
+         * 两三份内存，且中途断流只能整单失败。现在内存占用恒定，断流可重试。
+         */
+        const pulled = await this.downloadToTempFile(url, rec, input.ip);
+        srcPath = pulled.path;
+        tempSrc = pulled.path;
+        srcSize = pulled.size;
+      }
+      if (!srcSize) return await fail('源文件为空，已取消转存', false);
 
     /*
      * ── ② 写入目标渠道（字节原样；但 key 必须按「目标渠道自己的配置」重新生成） ──
@@ -3517,30 +3579,54 @@ export class UploadService {
      */
     const dstInfo = this.toChannelInfo(targetCh as unknown as { id: string; code?: string; name: string; type: string; config: string });
     const dstAdapter = createAdapter(dstInfo);
-    const dstKey = this.makeKeyFor(
-      { id: targetCh.id, code: targetCh.code, name: targetCh.name, type: targetCh.type, config: targetCh.config },
-      rec.originalName,
-      // 命名策略留空 = 走渠道配置；渠道未配置时按默认「原始文件名-时间戳」
-      undefined,
-      rec.md5 || createHash('md5').update(buf).digest('hex'),
-      rec.uploader || '',
-    );
-    let result: { remoteKey: string; remoteUrl?: string; objectPath?: string; urlQuery?: string; metas?: Record<string, unknown> };
-    try {
-      result = await dstAdapter.upload(
-        { buffer: buf, mime: rec.mime, originalName: rec.originalName },
-        dstKey,
-        dstInfo,
-        { owner: rec.uploader || '', instanceId: rec.instanceId || '' },
+    /*
+     * v1.0.9：上一轮已经把实体写进目标渠道（staged）且目标没变 → 不再重传，
+     * 直接补做数据切换。这是「177MB 转存断在最后一步」最省事也最可靠的续跑方式。
+     */
+    let result: ConvertStaged | undefined = sameTarget ? prevMarker?.staged : undefined;
+    if (!result) {
+      const dstKey = this.makeKeyFor(
+        { id: targetCh.id, code: targetCh.code, name: targetCh.name, type: targetCh.type, config: targetCh.config },
+        rec.originalName,
+        // 命名策略留空 = 走渠道配置；渠道未配置时按默认「原始文件名-时间戳」
+        undefined,
+        rec.md5 || (await this.md5OfFile(srcPath)),
+        rec.uploader || '',
       );
-    } catch (err) {
-      appLog.warn(
-        'channel',
-        `文件转存失败：写入目标渠道「${targetCh.name}」出错`,
-        `${(err as Error).message} ｜ 文件=${rec.name}`,
-        input.ip,
-      );
-      return { ok: false, message: `写入目标渠道失败：${(err as Error).message}` };
+      try {
+        result = await this.uploadFileReliable(dstAdapter, srcPath, srcSize, rec, dstKey, dstInfo, {
+          owner: rec.uploader || '',
+          instanceId: rec.instanceId || '',
+        });
+      } catch (err) {
+        appLog.warn(
+          'channel',
+          `文件转存失败：写入目标渠道「${targetCh.name}」出错`,
+          `${(err as Error).message} ｜ 文件=${rec.name} ｜ 大小=${srcSize}B ｜ 第 ${marker.attempts} 次尝试`,
+          input.ip,
+        );
+        return await fail(`写入目标渠道失败：${(err as Error).message}`);
+      }
+      // 实体已落目标渠道：先登记 staged，再做数据切换（切换失败也能一键续跑）
+      marker.staged = result;
+      try {
+        await this.saveConvertMarker(sourceCopy.id, sourceCopy.metas, marker);
+      } catch (err) {
+        appLog.warn(
+          'channel',
+          '转存实体已写入，但「已暂存」标记落库失败（重试会重新上传）',
+          `${(err as Error).message} ｜ 文件=${rec.name}`,
+          input.ip,
+        );
+      }
+      // 落盘型目标做一个字节数复核：完整传输优先于「看起来成功」
+      if (dstLocal) {
+        const dstAbs = await localFileAbsOf(result.remoteKey).catch(() => null);
+        const st = dstAbs ? await fsp.stat(dstAbs).catch(() => null) : null;
+        if (st && st.size !== srcSize) {
+          return await fail(`目标渠道写入不完整（${st.size}/${srcSize} 字节），已中止切换`);
+        }
+      }
     }
 
     /* ── ③ 数据更新：**原地替换主副本这一条记录**，其余副本（含备份渠道）一律不动 ──
@@ -3554,29 +3640,43 @@ export class UploadService {
      * 现在改成「主副本记录搬迁」：把主副本那条记录直接改指向目标渠道，
      * 副本总数不变，备份渠道副本一个字节都不碰。
      */
-    const writeData = { ...this.copyWriteData(result, targetCh), status: 'active', isPrimary: true };
-    try {
-      await prisma.$transaction(async (tx) => {
-        // 目标渠道可能已经有副本记录（最典型：目标就是系统配置的备份渠道）
-        const existingTarget = rec.copies.find((c) => c.channelId === targetCh.id && c.id !== sourceCopy.id);
-        if (existingTarget) {
+    const staged = result;
+    if (!staged) return await fail('转存实体尚未就绪，请重试', true);
+    /*
+     * v1.0.9：改用**数组式事务**（一次性提交两条 DML），不再用 interactive transaction。
+     *
+     * P2028 的成因是「交互式事务从 BEGIN 到 COMMIT 超过 5 秒默认上限」——
+     * 一旦数据库连接排队、行被锁，回调里只有两条 DML 也会被判超时，
+     * 报错还会盖住真正的失败原因。数组式事务由驱动一次性下发并提交，
+     * 没有回调等待窗口，也就没有这个 5 秒悬崖；真失败时错误信息更干净。
+     */
+    const writeData = { ...this.copyWriteData(staged, targetCh), status: 'active', isPrimary: true };
+    // 目标渠道可能已经有副本记录（最典型：目标就是系统配置的备份渠道）
+    const existingTarget = rec.copies.find((c) => c.channelId === targetCh.id && c.id !== sourceCopy.id);
+    const ops: unknown[] = existingTarget
+      ? [
           /*
            * 目标已有记录 → 把它升级为主副本；原主副本记录删除。
            * 这里「动」的仍然是用户主动选定的目标渠道，不是别的备份渠道；
            * 其它副本（例如另一个备份渠道）保持原样。
            */
-          await tx.fileCopy.update({ where: { id: existingTarget.id }, data: writeData });
-          await tx.fileCopy.delete({ where: { id: sourceCopy.id } });
-        } else {
+          prisma.fileCopy.update({ where: { id: existingTarget.id }, data: writeData }),
+          prisma.fileCopy.delete({ where: { id: sourceCopy.id } }),
+        ]
+      : [
           // 目标没有记录 → 直接改写主副本记录，不新增、不降级其它副本
-          await tx.fileCopy.update({
+          prisma.fileCopy.update({
             where: { id: sourceCopy.id },
             data: { channelId: targetCh.id, ...writeData },
-          });
-        }
-      });
+          }),
+        ];
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await prisma.$transaction(ops as any);
     } catch (err) {
-      return { ok: false, message: `更新文件渠道数据失败：${(err as Error).message}` };
+      const msg = `切换文件渠道数据失败：${(err as Error).message}`;
+      appLog.error('channel', '文件转存：数据切换失败（实体已暂存在目标渠道，可重试）', msg, input.ip);
+      return await fail(msg);
     }
 
     /* ── ④ 源件处理：只决定「实体留不留」——主副本记录在 ③ 已经搬走 ── */
@@ -3613,7 +3713,8 @@ export class UploadService {
             remoteUrl: sourceCopy.remoteUrl || '',
             objectPath: sourceCopy.objectPath || '',
             urlQuery: sourceCopy.urlQuery || '',
-            metas: sourceCopy.metas || '{}',
+            // v1.0.9：__convert 是「这一轮转存的临时标记」，不能跟着留到普通副本上
+            metas: JSON.stringify(this.withoutConvertMarker(sourceCopy.metas)),
             status: 'active',
             isPrimary: false,
           },
@@ -3624,7 +3725,7 @@ export class UploadService {
     appLog.info(
       'channel',
       `文件转存成功：${sourceCh.name}（${sourceCh.type}）→ ${targetCh.name}（${targetCh.type}）`,
-      `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ 外链不变`,
+      `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ ${srcSize}B ｜ 第 ${marker.attempts} 次尝试 ｜ 外链不变`,
       input.ip,
     );
 
@@ -3633,6 +3734,209 @@ export class UploadService {
       channelName: targetCh.name,
       direction: dstLocal ? 'to-local' : 'to-remote',
       deletedSource,
+      bytes: srcSize,
+      attempts: marker.attempts,
     };
+    } finally {
+      // 远端取源用的临时文件：无论成败都清掉（失败时它是半截/可疑数据）
+      if (tempSrc) await fsp.rm(tempSrc, { force: true }).catch(() => undefined);
+    }
   }
+
+  /* ────────────────────────────────────────────────────────────────
+   * v1.0.9：转存的可恢复性支撑
+   * ──────────────────────────────────────────────────────────────── */
+
+  /** 读副本 metas 里的转存标记（非法 JSON / 无标记一律返回 null） */
+  private readConvertMarker(metas: string | null | undefined): ConvertMarker | null {
+    try {
+      const obj = JSON.parse(String(metas || '{}')) as Record<string, unknown>;
+      const c = obj?.__convert;
+      return c && typeof c === 'object' ? (c as ConvertMarker) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 去掉 __convert 的副本 metas（保留渠道侧凭证） */
+  private withoutConvertMarker(metas: string | null | undefined): Record<string, unknown> {
+    let obj: Record<string, unknown> = {};
+    try {
+      obj = JSON.parse(String(metas || '{}')) as Record<string, unknown>;
+    } catch {
+      obj = {};
+    }
+    delete obj.__convert;
+    return obj;
+  }
+
+  /**
+   * 把转存标记合并进源副本的 metas。
+   * 用单条 UPDATE（不套事务）：这一步必须尽可能快、尽可能简单，
+   * 它是「后面所有步骤可续跑」的地基。
+   */
+  private async saveConvertMarker(copyId: string, baseMetas: string | null, marker: ConvertMarker) {
+    const next = this.withoutConvertMarker(baseMetas);
+    next.__convert = marker;
+    await prisma.fileCopy.update({ where: { id: copyId }, data: { metas: JSON.stringify(next) } });
+  }
+
+  /** 清掉目标渠道上「上一轮已写入但没被接管」的实体（换了目标渠道时调用） */
+  private async dropStagedCopy(marker: ConvertMarker, ip?: string) {
+    const staged = marker.staged;
+    if (!staged) return;
+    try {
+      const ch = await prisma.channel.findUnique({ where: { id: marker.targetChannelId } });
+      if (!ch) return;
+      const info = this.toChannelInfo(ch as unknown as { id: string; code?: string; name: string; type: string; config: string });
+      const adapter = createAdapter(info);
+      await adapter.delete(
+        {
+          remoteKey: staged.remoteKey,
+          remoteUrl: staged.remoteUrl || '',
+          objectPath: staged.objectPath || '',
+          urlQuery: staged.urlQuery || '',
+          metas: (staged.metas || {}) as Record<string, unknown>,
+        },
+        info,
+      );
+    } catch (err) {
+      appLog.warn(
+        'channel',
+        '转存：清理上一轮暂存实体失败（目标渠道可能残留一个孤儿文件）',
+        `${(err as Error).message} ｜ key=${staged.remoteKey}`,
+        ip,
+      );
+    }
+  }
+
+  /** 流式计算文件 MD5（命名模板 {md5} 用；不整份读进内存） */
+  private async md5OfFile(path: string): Promise<string> {
+    const hash = createHash('md5');
+    await new Promise<void>((resolve, reject) => {
+      const rs = createReadStream(path);
+      rs.on('data', (c) => hash.update(c as Buffer));
+      rs.on('error', reject);
+      rs.on('end', () => resolve());
+    });
+    return hash.digest('hex');
+  }
+
+  /**
+   * v1.0.9：远端取源 —— 流式落临时文件 + 三次重试 + 完整性校验。
+   *
+   * 「完整传输」是第一目标，所以这里做三道校验：
+   *   1) 落盘字节数非 0；
+   *   2) 有 Content-Length 时逐字节比对（断流最典型的形态就是「少了最后一段」）；
+   *   3) 记录里存过 MD5 时比对（渠道能给出原始字节的前提下，这是最强校验）。
+   * 任一条不过就删掉半截文件重试，三次都失败才把错误抛给上层（上层会保留 staged 供重试）。
+   */
+  private async downloadToTempFile(
+    url: string,
+    rec: { md5?: string | null; name?: string },
+    ip?: string,
+  ): Promise<{ path: string; size: number }> {
+    const dir = await fsp.mkdtemp(join(tmpdir(), 'gohub-convert-')).catch(() => tmpdir());
+    const dest = join(dir, `src-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+        const expect = Number(resp.headers.get('content-length') || 0) || 0;
+        const hash = createHash('md5');
+        const tap = new Transform({
+          transform(chunk, _enc, cb) {
+            hash.update(chunk as Buffer);
+            cb(null, chunk);
+          },
+        });
+        await pipeline(Readable.fromWeb(resp.body as never), tap, createWriteStream(dest));
+        const st = await fsp.stat(dest);
+        if (!st.size) throw new Error('下载内容为空');
+        if (expect && st.size !== expect) throw new Error(`下载不完整（${st.size}/${expect} 字节）`);
+        const digest = hash.digest('hex');
+        const want = String(rec.md5 || '').toLowerCase();
+        if (want && want !== digest) throw new Error(`MD5 校验不一致（${digest} ≠ ${want}）`);
+        return { path: dest, size: st.size };
+      } catch (err) {
+        lastErr = err as Error;
+        await fsp.rm(dest, { force: true }).catch(() => undefined);
+        appLog.warn(
+          'channel',
+          `转存取源失败（第 ${attempt}/3 次）：${rec.name || ''}`,
+          lastErr.message,
+          ip,
+        );
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 500 * attempt));
+      }
+    }
+    throw new Error(`拉取源文件失败（已重试 3 次）：${lastErr?.message || '未知原因'}`);
+  }
+
+  /**
+   * v1.0.9：写入目标渠道 —— 优先流式（uploadFile），失败自动重试。
+   *
+   * 旧实现是「整份 Buffer 交给适配器 upload()」，170MB 的文件直接吃掉 170MB×2 内存，
+   * 且传输中途出错只能整单失败。现在：
+   *   · 有 uploadFile 的渠道（本地 / S3 / WebDAV）走磁盘直传，内存占用恒定；
+   *   · 没有的能力的渠道（http-post / immich / aliyun）在 256MB 以内才允许回退整份读，
+   *     超过阈值直接报错，避免把进程拖死；
+   *   · 每次失败按 400ms × 次数 退避后重试，最多 3 次。
+   */
+  private async uploadFileReliable(
+    adapter: StorageAdapter,
+    path: string,
+    size: number,
+    rec: { mime: string; originalName: string },
+    key: string,
+    info: ChannelInfo,
+    ctx: { owner: string; instanceId: string },
+  ): Promise<ConvertStaged> {
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        if (typeof adapter.uploadFile === 'function') {
+          return await adapter.uploadFile(path, size, { mime: rec.mime, originalName: rec.originalName }, key, info, ctx);
+        }
+        if (size > STREAM_REQUIRED_BYTES) {
+          throw new Error(
+            `目标渠道不支持流式写入，${(size / 1024 / 1024).toFixed(0)}MB 超过安全阈值，已拒绝以免占满内存`,
+          );
+        }
+        const buffer = await fsp.readFile(path);
+        return await adapter.upload({ buffer, mime: rec.mime, originalName: rec.originalName }, key, info, ctx);
+      } catch (err) {
+        lastErr = err as Error;
+        // 重试会重新生成 key（可能撞上已写入的半成品），因此只在明确可重试的错误上继续
+        const code = (err as NodeJS.ErrnoException)?.code || '';
+        const fatal = /不支持流式写入|超过安全阈值|413|401|403|404/i.test(lastErr.message) || code === 'ENOSPC';
+        if (fatal || attempt === 3) break;
+        await new Promise((r) => setTimeout(r, 400 * attempt));
+      }
+    }
+    throw lastErr || new Error('写入目标渠道失败');
+  }
+}
+
+/** v1.0.9：转存标记里「已写入目标渠道的那份实体」 */
+interface ConvertStaged {
+  remoteKey: string;
+  remoteUrl?: string;
+  objectPath?: string;
+  urlQuery?: string;
+  metas?: Record<string, unknown>;
+}
+
+/** v1.0.9：转存标记（落 file_copies.metas.__convert） */
+interface ConvertMarker {
+  state: 'pending' | 'failed';
+  targetChannelId: string;
+  targetChannelName?: string;
+  sourceChannelId?: string;
+  deleteSource?: boolean;
+  startedAt: number;
+  attempts: number;
+  lastError?: string;
+  staged?: ConvertStaged;
 }

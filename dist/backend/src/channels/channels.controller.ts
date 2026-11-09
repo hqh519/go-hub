@@ -620,6 +620,27 @@ export class ChannelManageController {
   }
 
   /**
+   * v1.0.9：本地存储渠道「自定义存储前缀」的一级目录校验。
+   *
+   * 规则只针对**第一段**：先去掉开头的 "/"（用户习惯写成 /a/b），
+   * 剩下的字符串如果以 "_" 开头就拒绝 —— 磁盘上 `_user` / `_avatars` / `_ipdata`
+   * 都是系统保留目录，允许用户自定义到这些名字下会直接污染其它链路的数据。
+   * 第二段之后允许出现 "_"（例如 `{user}/_thumbs`），那里不构成系统目录冲突。
+   */
+  private validateObjectPrefix(raw: unknown): { ok: true } | { ok: false; message: string } {
+    const s = String(raw ?? '').trim().replace(/^\/+/, '');
+    if (!s) return { ok: true };
+    if (s.startsWith('_')) {
+      return {
+        ok: false,
+        message:
+          '「自定义存储前缀」的一级目录不能以 "_" 开头：以 _ 开头的目录是系统保留目录（_user / _avatars / _ipdata），请换一个名字',
+      };
+    }
+    return { ok: true };
+  }
+
+  /**
    * v3.0.0（R11）：本地文件渠道的「浏览目录」校验。
    *
    * 字段是 rootPaths（多行 / 数组），不是 rootPath ——
@@ -673,6 +694,9 @@ export class ChannelManageController {
       const check = this.validateLocalRootPath(raw.rootPath);
       if (!check.ok) return { success: false, message: check.message };
       rootPath = check.rootPath;
+      // v1.0.9：一级目录禁止以下划线开头（系统保留目录名）
+      const pc = this.validateObjectPrefix(raw.objectPrefix);
+      if (!pc.ok) return { success: false, message: pc.message };
     } else if (body.type === 'localfiles') {
       const check = this.validateLocalRootPaths(raw.rootPaths ?? raw.rootPath);
       if (!check.ok) return { success: false, message: check.message };
@@ -765,6 +789,19 @@ export class ChannelManageController {
     if (ch.code === LOCAL_CHANNEL_CODE) {
       merged.objectPrefix = String(old.objectPrefix ?? '');
       merged.nameTemplate = String(old.nameTemplate ?? '');
+    }
+    /*
+     * v1.0.9：本地存储渠道的「自定义存储前缀」一级目录禁止以 _ 开头。
+     *
+     * 磁盘上以 `_` 开头的一级目录是系统保留区（uploads/_user、_avatars、_ipdata …），
+     * 用户把前缀写成 `_user/xxx` 会直接落进别人的归档目录，前端的同名校验
+     * 只是提前提示，这里再挡一层（防止绕过界面直接调接口）。
+     * 校验对象是**最终生效值**（上面的内置渠道锁定已经覆盖完），
+     * 所以内置渠道即使传了非法值也只会沿用原值、不会误报。
+     */
+    if (ch.type === 'local') {
+      const check = this.validateObjectPrefix(merged.objectPrefix);
+      if (!check.ok) return { success: false, message: check.message };
     }
     /*
      * v3.0.0（R10）：公开访问域名在 UI 上已改为必填。

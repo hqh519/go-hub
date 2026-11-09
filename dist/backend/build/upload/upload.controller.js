@@ -281,7 +281,7 @@ let UploadController = class UploadController {
                             return res.status(500).json({ success: false, message: r.error });
                         }
                         await (0, upload_session_1.markSessionCompleted)(session, { fileId: r.id, name: r.finalName || originalName });
-                        return res.json([{ src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
+                        return res.json([{ id: r.id, src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
                     }
                     catch (err) {
                         app_log_1.appLog.error('upload', `分片合并后上传异常：${session.originalName}`, err.message);
@@ -337,7 +337,7 @@ let UploadController = class UploadController {
             if (r.error)
                 return res.status(500).json({ success: false, message: r.error });
             await (0, upload_session_1.updateStaging)(meta, { committedAt: Date.now() });
-            return res.json([{ src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
+            return res.json([{ id: r.id, src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
         }
         if (!file)
             return res.status(400).json({ success: false, message: '缺少文件' });
@@ -345,7 +345,7 @@ let UploadController = class UploadController {
         const r = await this.svc.upload({ buffer: file.buffer, mime: file.mimetype, originalName }, opts);
         if (r.error)
             return res.status(500).json({ success: false, message: r.error });
-        return res.json([{ src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
+        return res.json([{ id: r.id, src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
     }
     async fetchRes(body, res) {
         const url = body.url || '';

@@ -610,8 +610,11 @@ let LinkController = class LinkController {
             });
         }
         const prefer = await this.settings.getAccessChannel();
-        let active = record.copies.filter((c) => c.status === 'active' && (c.remoteKey || c.remoteUrl));
+        let active = record.copies.filter((c) => c.status === 'active' && (c.remoteKey || c.remoteUrl || c.objectPath));
         if (active.length === 0) {
+            app_log_1.appLog.warn('file', `外链取源失败：文件没有可用的渠道副本（404）`, `文件=${record.name} ｜ 副本数=${record.copies.length} ｜ 状态=${record.copies
+                .map((c) => `${c.status}/${c.remoteKey ? 'key' : c.objectPath ? 'path' : 'none'}`)
+                .join(',') || '无'}`, req.ip || '');
             await this.serveFallback(res, isHead, () => res.status(404).send('Not Found'));
             return;
         }
@@ -1312,7 +1315,7 @@ let ManageController = ManageController_1 = class ManageController {
         pushGroup(f.uploadSource, (v) => v === (0, file_view_1.normalizeUploadSource)(r.uploadSource));
         pushGroup(f.users, (v) => v === String(r.uploader || ''));
         if (f.backup.length) {
-            const hasBackup = copies.some((c) => c !== primary && c?.status === 'active' && (c?.remoteKey || c?.remoteUrl));
+            const hasBackup = copies.some((c) => c !== primary && c?.status === 'active' && (c?.remoteKey || c?.remoteUrl || c?.objectPath));
             pushGroup(f.backup, (v) => (v === 'backedup' ? hasBackup : !hasBackup));
         }
         if (f.redirect.length) {
@@ -3638,6 +3641,7 @@ let ManageController = ManageController_1 = class ManageController {
         });
         const channels = all.filter((c) => srcLocal ? !isLocalType(c.type) : c.type === 'local');
         const registered = String(rec.uploadSource || '') === 'Record';
+        const pending = this.readConvertPending(copy?.metas);
         return {
             success: true,
             direction: srcLocal ? 'to-remote' : 'to-local',
@@ -3646,7 +3650,28 @@ let ManageController = ManageController_1 = class ManageController {
             canDeleteSource: !srcLocal && !registered,
             forceDeleteSource: srcLocal,
             channels,
+            pending,
         };
+    }
+    readConvertPending(metas) {
+        try {
+            const obj = JSON.parse(String(metas || '{}'));
+            const c = obj?.__convert;
+            if (!c || typeof c !== 'object')
+                return null;
+            return {
+                state: String(c.state || 'pending'),
+                targetChannelId: String(c.targetChannelId || ''),
+                targetChannelName: String(c.targetChannelName || ''),
+                attempts: Number(c.attempts) || 0,
+                lastError: String(c.lastError || ''),
+                hasStaged: !!c.staged,
+                startedAt: Number(c.startedAt) || 0,
+            };
+        }
+        catch {
+            return null;
+        }
     }
     async convertFile(req, body) {
         const me = (0, auth_guard_1.currentSession)(req)?.user || '';
@@ -3666,8 +3691,8 @@ let ManageController = ManageController_1 = class ManageController {
             ip: req.ip,
         });
         if (!r.ok) {
-            app_log_1.appLog.warn('channel', `文件转存失败：${r.message || '未知原因'}`, `fileId=${id}`, req.ip);
-            return { success: false, message: r.message || '转存失败' };
+            app_log_1.appLog.warn('channel', `文件转存失败：${r.message || '未知原因'}`, `fileId=${id}${r.retryable ? ' ｜ 可在详情页点「重试转存」继续' : ''}`, req.ip);
+            return { success: false, message: r.message || '转存失败', retryable: r.retryable === true };
         }
         return { success: true, ...r };
     }

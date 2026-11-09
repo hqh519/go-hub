@@ -537,6 +537,18 @@ let ChannelManageController = class ChannelManageController {
             return { ok: false, message: 'rootPath 禁止包含 ".."' };
         return { ok: true, rootPath: s };
     }
+    validateObjectPrefix(raw) {
+        const s = String(raw ?? '').trim().replace(/^\/+/, '');
+        if (!s)
+            return { ok: true };
+        if (s.startsWith('_')) {
+            return {
+                ok: false,
+                message: '「自定义存储前缀」的一级目录不能以 "_" 开头：以 _ 开头的目录是系统保留目录（_user / _avatars / _ipdata），请换一个名字',
+            };
+        }
+        return { ok: true };
+    }
     validateLocalRootPaths(raw) {
         let list = [];
         if (Array.isArray(raw)) {
@@ -577,6 +589,9 @@ let ChannelManageController = class ChannelManageController {
             if (!check.ok)
                 return { success: false, message: check.message };
             rootPath = check.rootPath;
+            const pc = this.validateObjectPrefix(raw.objectPrefix);
+            if (!pc.ok)
+                return { success: false, message: pc.message };
         }
         else if (body.type === 'localfiles') {
             const check = this.validateLocalRootPaths(raw.rootPaths ?? raw.rootPath);
@@ -643,6 +658,11 @@ let ChannelManageController = class ChannelManageController {
         if (ch.code === exports.LOCAL_CHANNEL_CODE) {
             merged.objectPrefix = String(old.objectPrefix ?? '');
             merged.nameTemplate = String(old.nameTemplate ?? '');
+        }
+        if (ch.type === 'local') {
+            const check = this.validateObjectPrefix(merged.objectPrefix);
+            if (!check.ok)
+                return { success: false, message: check.message };
         }
         if (!['local', 'localfiles'].includes(ch.type)) {
             const pd = String(merged.publicDomain || '').trim();

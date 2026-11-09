@@ -726,6 +726,27 @@
             class="convert-dialog"
         >
             <div v-loading="convertLoading" class="convert-body">
+                <!--
+                    v1.0.9：上一次转存没做完时的说明条。
+                    hasStaged=true 表示实体已经在目标渠道里，重试只补「数据切换」——
+                    用户最需要知道的就是这一点（否则会以为要再传一次几百 MB）。
+                -->
+                <div v-if="convertPending" class="convert-pending">
+                    <div class="convert-pending-title">
+                        <font-awesome-icon icon="exclamation-circle" class="convert-pending-icon" />
+                        {{ $t('fileDetail.convertPendingTitle') }}
+                    </div>
+                    <p class="convert-pending-text">
+                        {{
+                            convertPending.hasStaged
+                                ? $t('fileDetail.convertPendingStaged', { channel: convertPending.targetChannelName || '—' })
+                                : $t('fileDetail.convertPendingFresh', { reason: convertPending.lastError || '—' })
+                        }}
+                    </p>
+                    <p class="convert-pending-text is-muted">
+                        {{ $t('fileDetail.convertPendingRetryHint', { channel: convertPending.targetChannelName || '—' }) }}
+                    </p>
+                </div>
                 <div class="convert-row">
                     <span class="convert-label">{{ $t('fileDetail.convertCurrent') }}</span>
                     <span class="convert-value">{{ convertCurrentChannel }}</span>
@@ -1028,6 +1049,8 @@ export default {
             // null = 还没选（转本地时必须二选一才能提交）
             convertDeleteSource: null,
             convertCanDeleteSource: true,
+            /* v1.0.9：上一轮没做完的转存（后端 file_copies.metas.__convert），非空时按钮变「重试转存」 */
+            convertPending: null,
             // v3.0.0：「所属实例」行 —— GET /api/instances 的缓存（同一会话内只拉一次）
             instances: [],
             instancesLoaded: false,
@@ -1105,6 +1128,8 @@ export default {
         },
         /** v1.0.3：转存按钮文案 —— 当前在本地渠道就「转异地」，否则「转本地」 */
         convertDirectionLabel() {
+            // v1.0.9：上一轮转存没做完 → 按钮直接变成「重试转存」
+            if (this.convertPending) return this.$t('fileDetail.convertRetry');
             return this.convertDirection === 'to-local'
                 ? this.$t('fileDetail.convertToLocal')
                 : this.$t('fileDetail.convertToRemote');
@@ -1643,6 +1668,7 @@ export default {
             const key = String(this.file?.name || '');
             if (!key || this.trashMode) {
                 this.convertChannels = [];
+                this.convertPending = null;
                 return;
             }
             try {
@@ -1650,6 +1676,7 @@ export default {
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || data?.success === false) {
                     this.convertChannels = [];
+                    this.convertPending = null;
                     return;
                 }
                 this.convertDirection = data.direction === 'to-local' ? 'to-local' : 'to-remote';
@@ -1658,8 +1685,14 @@ export default {
                     : '—';
                 this.convertChannels = Array.isArray(data.channels) ? data.channels : [];
                 this.convertCanDeleteSource = data.canDeleteSource !== false;
+                /*
+                 * v1.0.9：上一次转存中断（进程重启 / 事务超时 / 远端断流）时，
+                 * 后端把「已写到目标渠道的实体」留在 metas 里，这里据此把按钮变成「重试转存」。
+                 */
+                this.convertPending = data.pending && data.pending.state ? data.pending : null;
             } catch (e) {
                 this.convertChannels = [];
+                this.convertPending = null;
             }
         },
         /** 打开转存弹窗：每次重新拉一次候选，避免渠道刚增删过导致选到停用渠道 */
@@ -1670,7 +1703,15 @@ export default {
                 ElMessage.warning(this.$t('fileDetail.convertNoChannel'));
                 return;
             }
-            this.convertChannelId = '';
+            /*
+             * v1.0.9：重试场景直接把上次的目标渠道选回来 —— 后端只有在
+             * 「目标渠道与上次一致」时才会复用已暂存的实体（不重传字节）。
+             * 用户当然也可以换成别的渠道，那样会重新走一遍传输。
+             */
+            const pend = this.convertPending;
+            this.convertChannelId = pend && this.convertChannels.some((c) => c.id === pend.targetChannelId)
+                ? pend.targetChannelId
+                : '';
             this.convertDeleteSource = null;
             this.showConvertDialog = true;
         },
@@ -1699,14 +1740,26 @@ export default {
                 });
                 const data = await resp.json().catch(() => ({}));
                 if (!resp.ok || data?.success === false) {
-                    throw new Error(data?.message || this.$t('fileDetail.convertFailed'));
+                    // v1.0.9：后端会带回 retryable —— 值得重试时把「怎么继续」直接写进提示
+                    const base = data?.message || this.$t('fileDetail.convertFailed');
+                    throw new Error(
+                        data?.retryable ? `${base}；${this.$t('fileDetail.convertRetryTip')}` : base,
+                    );
                 }
                 this.showConvertDialog = false;
                 ElMessage.success(this.$t('fileDetail.convertSuccess', { channel: data.channelName || '' }));
+                // 成功后后端已经把 __convert 标记清掉，这里同步清空「重试」态
+                this.convertPending = null;
                 // 让父级刷新列表行（渠道列 / 渠道类型都会变）
                 this.$emit('metadataUpdated');
             } catch (e) {
                 ElMessage.error(e?.message || this.$t('fileDetail.convertFailed'));
+                /*
+                 * v1.0.9：失败后立刻回读一次状态。
+                 * 后端这时已经把「转存中断」记在副本 metas 里，重新拉 options 就能
+                 * 让按钮变成「重试转存」，用户不用再猜「点过一次失败了要怎么办」。
+                 */
+                await this.loadConvertOptions();
             } finally {
                 this.convertLoading = false;
             }
@@ -2892,6 +2945,35 @@ export default {
 }
 .convert-hint.is-warn {
     color: var(--el-color-warning);
+}
+/* v1.0.9：上一次转存中断的说明条（浅色底，不喧哗） */
+.convert-pending {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--el-color-warning-light-9, #fdf6ec);
+    border: 1px solid var(--el-color-warning-light-7, #faecd8);
+}
+.convert-pending-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-color-warning-dark-2, #b88230);
+    margin-bottom: 4px;
+}
+.convert-pending-icon {
+    flex: none;
+}
+.convert-pending-text {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-regular);
+}
+.convert-pending-text.is-muted {
+    margin-top: 2px;
+    color: var(--el-text-color-secondary);
 }
 /* v2.6.0 #301：换行格式（ip␤归属地）按多行展示 */
 .ip-display-multiline {

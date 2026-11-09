@@ -2349,6 +2349,14 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
 @media (max-width: 768px) {
     .upload-stack {
         top: -3.8vh;
+        /*
+         * v1.0.9：上传操作区只接受纵向手势。
+         * 「文件」模式下这一整块是页面中心最大的可触区域，从上面往右滑时，
+         * 浏览器会把它当成「返回上一页」的横滑手势，边缘随之出现拉伸预览动画。
+         * pan-y 把横向手势在元素层就掐掉（纵向滚动不受影响），
+         * 这里内部没有横向滚动容器，不存在误伤。
+         */
+        touch-action: pan-y;
     }
     .upload-method-tabs {
         /* v2.7.0：切换模块与下方操作区的间距调小一点（原 10px）

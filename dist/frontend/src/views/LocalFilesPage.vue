@@ -614,7 +614,21 @@
             :upload-busy="lightboxUploading"
             @upload="openLightboxUpload"
             @record-detail="openLightboxRecordDetail"
+            @view-uploaded="openSnapshotDetail"
         />
+
+        <!--
+            v1.0.9：上传中提示。
+            两处都需要：① 批量选中文件后在弹窗里确认提交；② 灯箱里点上传、选完渠道提交。
+            上传期间弹窗会立刻关掉，页面看起来「什么都没发生」，大文件尤其像卡死；
+            这里给一条固定在底部的进度条提示（pointer-events: none，不挡任何操作）。
+        -->
+        <transition name="lf-fade">
+            <div v-if="uploadBusyTip" class="lf-uploading-tip" role="status" aria-live="polite">
+                <font-awesome-icon icon="spinner" spin class="lf-uploading-spinner" />
+                <span class="lf-uploading-text">{{ uploadTipText }}</span>
+            </div>
+        </transition>
 
         <!--
             v1.0.5：灯箱内发起的上传 —— 完成后不关灯箱，只在顶部浮一张结果条，
@@ -793,6 +807,20 @@ export default {
                         recordId: f.inLibrary || '',
                     };
                 });
+        },
+        /**
+         * v1.0.9：是否正在上传（批量 / 灯箱两条链路共用一条提示）。
+         * uploading 只在提交后到响应前为 true；lightboxUploading 额外覆盖灯箱内的单文件上传。
+         */
+        uploadBusyTip() {
+            return this.uploading || this.lightboxUploading;
+        },
+        /** v1.0.9：提示文案里的数量 —— 灯箱只看当前一个，批量看选中的个数 */
+        uploadTipCount() {
+            return this.lightboxUploading ? 1 : (this.selected.length || 1);
+        },
+        uploadTipText() {
+            return this.$t('localFiles.uploadingTip', { n: this.uploadTipCount });
         },
         /** 上传结果统计：成功（新写入）/ 命中 MD5 去重 / 失败 */
         resultOk() {
@@ -1432,6 +1460,20 @@ export default {
             if (!id) return;
             await this.openResultDetail({ id, path: item.key });
         },
+        /**
+         * v1.0.9：灯箱视频抓拍面板里点「查看」——
+         * 抓拍图不是本地目录里的文件（previewItems 里没有它），所以不能走 record-detail；
+         * 上传响应带回来的 id 就是它在图床里的 File_ID，直接按 ID 拉详情。
+         * 详情弹窗叠在灯箱之上，灯箱与抓拍面板都不关闭。
+         */
+        async openSnapshotDetail(payload) {
+            const id = String(payload?.id || '');
+            if (!id) {
+                this.$message?.error(this.$t('localFiles.detailFailed'));
+                return;
+            }
+            await this.openResultDetail({ id, path: payload?.fileName || '' });
+        },
         /** v2.8.6 同款「开头…结尾」文件名切分 */
         nameParts(name) {
             return splitFileName(String(name || ''));
@@ -1652,9 +1694,15 @@ export default {
                         ? { ...r, success: !!r.success }
                         : { success: false, error: this.$t('localFiles.uploadFailed') };
                     if (r && r.success) {
-                        // 列表里的「已落库」标记同步刷新，避免再点一次又被后端跳过一次
+                        /*
+                         * 列表里的「已落库」标记同步刷新，避免再点一次又被后端跳过一次。
+                         * v1.0.9：这里必须写**真实的 File_ID**（r.id）。
+                         * 旧实现写的是布尔 true，previewItems 的 recordId 于是变成 true，
+                         * 灯箱顶栏「详情」按钮紧接着按 /api/manage/metadata/true 拉详情 ——
+                         * 直接 404，用户看到的就是「上传成功后点详情提示获取失败」。
+                         */
                         const hit = (this.entries || []).find((e) => e.path === paths[0]);
-                        if (hit) hit.inLibrary = true;
+                        if (hit) hit.inLibrary = r.id || true;
                     }
                 } else {
                     this.showResult = true;
@@ -2729,6 +2777,51 @@ export default {
         bottom: 16px;
         max-width: 94vw;
         flex-wrap: wrap;
+    }
+}
+
+/* ===== v1.0.9：上传中提示（批量 / 灯箱共用，固定底部，不拦截任何点击） ===== */
+.lf-uploading-tip {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    z-index: 3400;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(92vw, 520px);
+    padding: 9px 14px;
+    border-radius: 999px;
+    background: rgba(28, 30, 36, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.34);
+    color: #eef0f4;
+    font-size: 13px;
+    line-height: 1.4;
+    /* 提示层只是「通知」，不能挡住底下的按钮（尤其是灯箱里的工具栏） */
+    pointer-events: none;
+}
+
+.lf-uploading-spinner {
+    flex: 0 0 auto;
+    font-size: 14px;
+    color: #7cc4ff;
+}
+
+.lf-uploading-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+    .lf-uploading-tip {
+        /* 移动端底部有操作条 / 安全区，往上抬一点避免被遮住 */
+        bottom: calc(18px + env(safe-area-inset-bottom, 0px) + 52px);
+        font-size: 12.5px;
+        padding: 8px 12px;
     }
 }
 </style>

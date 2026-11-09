@@ -570,7 +570,8 @@ export class UploadController {
               return res.status(500).json({ success: false, message: r.error });
             }
             await markSessionCompleted(session, { fileId: r.id, name: r.finalName || originalName });
-            return res.json([{ src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
+            // v1.0.9：响应补上 File_ID（灯箱抓拍的「查看」要靠它打开详情，name 是文件名不是 ID）
+            return res.json([{ id: r.id, src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
           } catch (err) {
             appLog.error('upload', `分片合并后上传异常：${session.originalName}`, (err as Error).message);
             return res.status(500).json({ success: false, message: (err as Error).message });
@@ -628,7 +629,8 @@ export class UploadController {
       if (r.error) return res.status(500).json({ success: false, message: r.error });
       // 标记已提交：再保留 2h 供异步备份读取，之后由 TTL 清理
       await updateStaging(meta, { committedAt: Date.now() });
-      return res.json([{ src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
+      // v1.0.9：响应补上 File_ID（与分片合并链路保持一致）
+      return res.json([{ id: r.id, src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
     }
 
     // 常规上传
@@ -641,7 +643,8 @@ export class UploadController {
     if (r.error) return res.status(500).json({ success: false, message: r.error });
     // ⚠️ 前端读取 response.data[0].src —— 响应体必须是【裸数组】，不能包 {success,data}
     // src 是「全站统一出口」的完整外链（自定义访问域名优先）
-    return res.json([{ src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
+    // v1.0.9：补 id（File_ID）—— 灯箱抓拍的「查看」要用它打开文件详情页
+    return res.json([{ id: r.id, src: await this.signedSrc(r.id, req), name: r.finalName || originalName }]);
   }
 
   /**
