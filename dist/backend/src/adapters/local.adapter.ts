@@ -6,24 +6,25 @@ import { Readable } from 'stream';
 import { AdapterError, ChannelInfo, CopyInfo, StorageAdapter, UploadResult } from './adapter.interface';
 import { backendRoot, backendSub } from '../common/project-paths';
 import { appLog } from '../common/app-log';
-import { LOCAL_DEFAULT_PREFIX, renderFileName, renderObjectPrefix, randomUuid } from '../common/path-template';
+import { LOCAL_DEFAULT_PREFIX, LOCAL_USER_ROOT, renderFileName, renderObjectPrefix, randomUuid } from '../common/path-template';
 
 /**
  * 本地存储渠道适配器 —— v3.0.0
  *
  * v3.0.0 起本地存储分两种形态，共用本适配器：
  *   1) 内置本地渠道（code=999999，系统自动创建，不可删除）——
- *      config: { name, enabled, prefixPath(固定忽略，始终 uploads), objectPrefix,
+ *      config: { name, enabled, prefixPath(固定忽略，始终 uploads/_user), objectPrefix,
  *                nameTemplate, sizeLimitEnabled, sizeLimitGB, note }
- *      落盘根：<后端根>/uploads
+ *      落盘根：<后端根>/uploads/_user    ← v1.0.8.1 起
  *   2) 自定义本地渠道（「添加渠道」选 local 创建，code 99xxxx）——
  *      config: { name, enabled, rootPath(容器内存储地址), hostPath(仅展示),
  *                objectPrefix, nameTemplate, sizeLimitEnabled, sizeLimitGB, note }
  *      落盘根：<rootPath>（拒绝包含 '..'）
  *
- * ## 落盘规则（v3.0.0 R11 起）
+ * ## 落盘规则（v3.0.0 R11 起；v1.0.8.1 只在根上多了一层 `_user`）
  *   <根>/<objectPrefix 或 {user}/{ID}/{y}/{m}>/<文件名>
- *   · objectPrefix 支持 {user}{ID}{y}{m}{d}，留空时默认 `{user}/{ID}/{y}/{m}`；
+ *   · 内置渠道的「根」是 uploads/_user（`_user` 为字面目录名，与账户无关），
+ *     于是默认落点是 uploads/_user/<用户名>/<渠道ID>/<年>/<月>/<文件名>；
  *     前缀里已含 {user} 时不再额外叠加「上传者/实例」目录（避免 alice/default/alice/…）；
  *     自定义前缀不含 {user} 时保持老布局 `<根>/<上传者>/<实例>/<前缀>/<文件名>`；
  *   · nameTemplate 支持 {filename}{uuid}{md5}{timestamp}{ext}：
@@ -41,9 +42,20 @@ import { LOCAL_DEFAULT_PREFIX, renderFileName, renderObjectPrefix, randomUuid } 
  * 由 /file/:name 走本站代理读取（外链域名、代理缓存、Range 复用同一套逻辑）。
  */
 export class LocalAdapter implements StorageAdapter {
-  /** 内置本地存储根目录：<后端根>/uploads */
+  /** 物理上传根目录：<后端根>/uploads（`_user` / `_avatars` / `_ipdata` 都在它下面） */
   static root(): string {
     return backendSub('uploads');
+  }
+
+  /**
+   * v1.0.8.1：内置本地存储渠道的落盘根 = <后端根>/uploads/_user。
+   *
+   * `_user` 是**字面目录名**（不是 `{user}` 占位符），恒定不变；
+   * 渠道「存储地址」展示为 `uploads/_user`，其后的「自定义存储前缀」才是
+   * `{user}/{ID}/{y}/{m}` 这类按用户/时间展开的模板。
+   */
+  static userRoot(): string {
+    return join(LocalAdapter.root(), LOCAL_USER_ROOT);
   }
 
   /**
@@ -145,9 +157,9 @@ export class LocalAdapter implements StorageAdapter {
     return `${LocalAdapter.ownerSegment(owner)}/${LocalAdapter.instanceSegment(instanceId)}/${rel}`;
   }
 
-  /** 磁盘绝对路径（内置根 + 越界校验：结果必须仍在上传根目录内）—— 仅内置渠道用 */
+  /** 磁盘绝对路径（内置根 uploads/_user + 越界校验：结果必须仍在该目录内）—— 仅内置渠道用 */
   static absolutePath(key: string): string {
-    const root = LocalAdapter.root();
+    const root = LocalAdapter.userRoot();
     const abs = normalize(join(root, LocalAdapter.toRelativePath(key)));
     const rootWithSep = root.endsWith(sep) ? root : root + sep;
     if (!abs.startsWith(rootWithSep)) {
@@ -156,10 +168,10 @@ export class LocalAdapter implements StorageAdapter {
     return abs;
   }
 
-  /** 本渠道的落盘根目录（内置 → uploads；自定义 → rootPath） */
+  /** 本渠道的落盘根目录（内置 → uploads/_user；自定义 → rootPath） */
   private baseRoot(channel?: ChannelInfo | null): string {
     const cfg = LocalAdapter.readChannelCfg(channel);
-    return cfg.isCustom ? cfg.rootPath : LocalAdapter.root();
+    return cfg.isCustom ? cfg.rootPath : LocalAdapter.userRoot();
   }
 
   /** join 后做越界校验：结果必须仍在 base 内（防 remoteKey 被写脏后读到 base 外） */
@@ -517,7 +529,7 @@ function probeRoot(root: string, rel: string): string {
  *   · localAbsPathOf —— 「这个文件按配置应该落在哪」，给详情页展示物理地址用，
  *     必须同步（buildMetadata 是同步序列化），而且不该因为文件暂时不存在就返回空。
  *
- * 根目录口径与 localFileAbsOf 一致：渠道配了 rootPath 就用它，否则是内置 uploads。
+ * 根目录口径与 localFileAbsOf 一致：渠道配了 rootPath 就用它，否则是内置的 uploads/_user。
  */
 export function localAbsPathOf(
   channel: { type?: string; config?: string | null } | null | undefined,
@@ -538,22 +550,29 @@ export function localAbsPathOf(
   } catch {
     root = '';
   }
-  if (!root) root = LocalAdapter.root();
+  if (!root) root = LocalAdapter.userRoot();
   return normalize(join(root, rel));
 }
 
 /**
  * 本地文件的绝对路径（供 /file 控制器直接读流）；不存在返回空串。
- * v3.0.0：先按内置 uploads 根定位；未命中再探测各自定义本地渠道的 rootPath
+ * v3.0.0：先按内置渠道的落盘根定位；未命中再探测各自定义本地渠道的 rootPath
  * （自定义渠道的 remoteKey 是相对其 rootPath 的路径）。
  * 自定义渠道根目录清单做 30 秒缓存，避免每次外链访问都查库。
  */
 export async function localFileAbsOf(remoteKey: string): Promise<string> {
   const rel = String(remoteKey || '').replace(/^\/+/, '');
   if (!rel) return '';
-  // 1) 内置 uploads 根（绝大多数文件的落点）
-  const builtin = probeRoot(LocalAdapter.root(), rel);
+  // 1) 内置渠道落盘根 uploads/_user（绝大多数文件的落点，remoteKey 相对它）
+  const builtin = probeRoot(LocalAdapter.userRoot(), rel);
   if (builtin) return builtin;
+  /*
+   * v1.0.8.1：迁移前的历史文件还躺在 uploads/<用户名>/… 下。
+   * 正常流程由随包迁移脚本搬进 uploads/_user/，但生产库若暂时没跑迁移，
+   * 这一层兜底能保证老外链不至于立刻 404（只读兜底，不改变写入位置）。
+   */
+  const legacy = probeRoot(LocalAdapter.root(), rel);
+  if (legacy) return legacy;
   // 2) 自定义本地渠道的 rootPath
   try {
     // 延迟 require 避免 prisma 在适配器层形成硬依赖（测试/工具场景可单跑）
@@ -581,11 +600,11 @@ export async function localFileAbsOf(remoteKey: string): Promise<string> {
   return '';
 }
 
-/** 本地文件的绝对路径（仅内置 uploads 根；同步版保留给既有调用方） */
+/** 本地文件的绝对路径（内置渠道 uploads/_user，未命中再回退老的 uploads 根） */
 export function localFileAbs(remoteKey: string): string {
   const rel = String(remoteKey || '').replace(/^\/+/, '');
   if (!rel) return '';
-  return probeRoot(LocalAdapter.root(), rel);
+  return probeRoot(LocalAdapter.userRoot(), rel) || probeRoot(LocalAdapter.root(), rel);
 }
 
 /**

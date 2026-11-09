@@ -1,7 +1,7 @@
 /**
  * 纯真 IP 归属地本地数据包（qqwry.dat）解析（v2.6.0 #301）。
  *
- * 数据文件由管理员在后台上传，存放于 backend/uploads/ipdata/qqwry.dat
+ * 数据文件由管理员在后台上传，存放于 backend/uploads/_ipdata/qqwry.dat
  * （uploads 整卷在 Docker 里持久化，重建容器不丢）。
  *
  * 实现要点：
@@ -15,9 +15,9 @@ import { readFileSync, writeFileSync, renameSync, statSync, mkdirSync } from 'fs
 import { dirname, join } from 'path';
 import { backendSub } from './project-paths';
 
-/** 数据包固定路径：backend/uploads/ipdata/qqwry.dat（随 uploads 卷持久化） */
+/** 数据包固定路径：backend/uploads/_ipdata/qqwry.dat（v1.0.8.1 起；随 uploads 卷持久化） */
 export function qqwryPath(): string {
-  return join(backendSub('uploads'), 'ipdata', 'qqwry.dat');
+  return join(backendSub('uploads'), '_ipdata', 'qqwry.dat');
 }
 
 let decoder: TextDecoder | null = null;

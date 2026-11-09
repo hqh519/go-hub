@@ -56,7 +56,7 @@ const K_PREVIEW_MB = 'localFilesPreviewMB';
  * v1.0.6：「默认本地文件」虚拟渠道。
  *
  * 每个账户的上传到内置本地存储渠道（code=999999）的文件，物理落在
- * `uploads/{用户名}/999999/...`。这条目录不在任何「本地文件」渠道的配置里，
+ * `uploads/_user/{用户名}/999999/...`（`_user` 是字面目录名）。这条目录不在任何「本地文件」渠道的配置里，
  * 用户此前只能通过图床文件管理看这些文件，看不到磁盘上的真实目录。
  *
  * 这里把它作为一条**不落库的虚拟渠道**塞进渠道列表：
@@ -66,7 +66,11 @@ const K_PREVIEW_MB = 'localFilesPreviewMB';
  */
 const DEFAULT_LOCAL_CHANNEL_CODE = '999999';
 const DEFAULT_LOCAL_VIRTUAL_ID = '__default_local__';
-const DEFAULT_LOCAL_ROOT_NAME = '默认本地文件';
+/*
+ * v1.0.8.1：加载项名称由「默认本地文件」改为「本地默认文件」，
+ * 与目录一起变化：uploads/_user/{当前账户}/999999。
+ */
+const DEFAULT_LOCAL_ROOT_NAME = '本地默认文件';
 
 /**
  * v1.0.6：「WebDAV 文件」虚拟渠道。
@@ -79,6 +83,18 @@ const DEFAULT_LOCAL_ROOT_NAME = '默认本地文件';
  */
 const WEBDAV_VIRTUAL_ID = '__webdav__';
 const WEBDAV_ROOT_NAME = 'WebDAV 文件';
+
+/**
+ * v1.0.8.1：管理员专属的「WebDav存储文件」加载项。
+ *
+ * 与上面那条「WebDAV 文件」（普通用户看到自己的 webdav/{账户}）的区别：
+ *   · 只对管理员出现；
+ *   · 根目录是容器内的 WebDAV**总根** <backend>/webdav，不带账户子目录，
+ *     管理员因此能直接看到所有账户的网盘目录；
+ *   · id 单独一个，避免与用户那条混淆。
+ */
+const WEBDAV_ADMIN_VIRTUAL_ID = '__webdav_admin__';
+const WEBDAV_ADMIN_ROOT_NAME = 'WebDav存储文件';
 
 /** 扩展名 → MIME（够用即可，上传链路只依赖它做类型归类） */
 const MIME_MAP: Record<string, string> = {
@@ -178,6 +194,46 @@ export class LocalFilesController {
     const id = String(channelId || '').trim();
     if (!id) return { error: '请选择本地文件渠道' as string };
     /*
+     * v1.0.8.1：管理员专属「WebDav存储文件」——容器内 WebDAV 总根 <backend>/webdav。
+     *
+     * 只给管理员：普通账户仍然只看自己的 webdav/{账户}（下一条分支）。
+     * 这里是**直接浏览磁盘目录**，不走 /dav 协议，因此不受「对外 WebDAV」总开关影响。
+     */
+    if (id === WEBDAV_ADMIN_VIRTUAL_ID) {
+      if (!localFilesAdminOnly(this.role(req))) return { error: '仅管理员可浏览该目录' };
+      const base = webdavRoot();
+      await fsp.mkdir(base, { recursive: true }).catch(() => undefined);
+      let real = base;
+      try {
+        real = await fsp.realpath(base);
+      } catch {
+        /* 目录不可达时沿用字面路径，下面的 stat 会给出准确报错 */
+      }
+      try {
+        const st = await fsp.stat(real);
+        if (!st.isDirectory()) throw new Error('not a directory');
+        const pseudo = {
+          id: WEBDAV_ADMIN_VIRTUAL_ID,
+          code: 'WEBDAV',
+          name: WEBDAV_ADMIN_ROOT_NAME,
+          type: 'webdav',
+          enabled: true,
+          config: '{}',
+          authorizedUsers: '[]',
+        };
+        return {
+          channel: pseudo,
+          root: real,
+          roots: [{ name: WEBDAV_ADMIN_ROOT_NAME, display: base, real, mtime: st.mtimeMs }],
+          broken: [] as string[],
+        };
+      } catch (err) {
+        logLocalFileError('读取 WebDAV 目录', `管理员 路径=${base}`, err);
+        return { error: 'WebDAV 目录不存在或不可访问' };
+      }
+    }
+
+    /*
      * v1.0.6：虚拟渠道「WebDAV 文件」——webdav/{当前账户}。
      *
      * 这是用户所有 WebDAV 渠道的公共上级目录（每个渠道自己的存储路径是它的子目录）。
@@ -219,14 +275,15 @@ export class LocalFilesController {
       }
     }
     /*
-     * v1.0.6：虚拟渠道「默认本地文件」——uploads/{当前账户}/999999。
+     * v1.0.8.1：虚拟渠道「本地默认文件」——uploads/_user/{当前账户}/999999。
      * 不查库，就地合成渠道对象；目录不存在则创建空目录（新账户第一次进来应当看到空列表，
      * 而不是「浏览目录不存在」的报错）。
+     * `_user` 是字面目录名，`me` 才是用户名。
      */
     if (id === DEFAULT_LOCAL_VIRTUAL_ID) {
       const me = this.userName(req);
       if (!me) return { error: '请先登录' };
-      const dir = path.join(LocalAdapter.root(), me, DEFAULT_LOCAL_CHANNEL_CODE);
+      const dir = path.join(LocalAdapter.userRoot(), me, DEFAULT_LOCAL_CHANNEL_CODE);
       await fsp.mkdir(dir, { recursive: true }).catch(() => undefined);
       let real = dir;
       try {
@@ -374,8 +431,8 @@ export class LocalFilesController {
       })
       .filter(Boolean);
     /*
-     * v1.0.6：每个账户都先放一条「默认本地文件」——
-     * 目录固定为 uploads/{当前账户}/999999，也就是走内置本地存储渠道上传时文件真正落盘的位置。
+     * v1.0.8.1：每个账户都先放一条「本地默认文件」——
+     * 目录固定为 uploads/_user/{当前账户}/999999，也就是走内置本地存储渠道上传时文件真正落盘的位置。
      * 它不在渠道表里（上面那条 findMany 查不到），所以单独拼在最前面；
      * 前端拿 id 就能浏览，不需要用户先在后台配一条本地文件渠道。
      */
@@ -383,7 +440,7 @@ export class LocalFilesController {
       id: DEFAULT_LOCAL_VIRTUAL_ID,
       code: DEFAULT_LOCAL_CHANNEL_CODE,
       name: DEFAULT_LOCAL_ROOT_NAME,
-      rootPath: path.join(LocalAdapter.root(), me, DEFAULT_LOCAL_CHANNEL_CODE),
+      rootPath: path.join(LocalAdapter.userRoot(), me, DEFAULT_LOCAL_CHANNEL_CODE),
       enabled: true,
       source: 'default',
     };
@@ -419,7 +476,29 @@ export class LocalFilesController {
         };
       }
     }
-    return { success: true, data: [mine, ...(webdavItem ? [webdavItem] : []), ...configured] };
+    /*
+     * v1.0.8.1：管理员在「本地文件」里多一条「WebDav存储文件」。
+     *
+     * 指向容器内 WebDAV **总根** <backend>/webdav（不带账户子目录），
+     * 因此管理员一眼能看到所有账户的网盘目录。
+     * 这是直接浏览磁盘，不走 /dav 协议，所以不受「对外 WebDAV」总开关影响
+     * （用户那条仍然受开关约束，见上）。
+     */
+    const adminWebdavItem: Record<string, unknown> | null = admin
+      ? {
+          id: WEBDAV_ADMIN_VIRTUAL_ID,
+          code: 'WEBDAV',
+          name: WEBDAV_ADMIN_ROOT_NAME,
+          rootPath: webdavRoot(),
+          enabled: true,
+          source: 'webdav',
+        }
+      : null;
+
+    return {
+      success: true,
+      data: [mine, ...(adminWebdavItem ? [adminWebdavItem] : []), ...(webdavItem ? [webdavItem] : []), ...configured],
+    };
   }
 
   @Get('settings')

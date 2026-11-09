@@ -9,7 +9,7 @@ const fs_1 = require("fs");
 const path_1 = require("path");
 const project_paths_1 = require("./project-paths");
 function qqwryPath() {
-    return (0, path_1.join)((0, project_paths_1.backendSub)('uploads'), 'ipdata', 'qqwry.dat');
+    return (0, path_1.join)((0, project_paths_1.backendSub)('uploads'), '_ipdata', 'qqwry.dat');
 }
 let decoder = null;
 function gbk() {

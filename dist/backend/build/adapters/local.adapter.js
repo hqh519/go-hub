@@ -50,6 +50,9 @@ class LocalAdapter {
     static root() {
         return (0, project_paths_1.backendSub)('uploads');
     }
+    static userRoot() {
+        return (0, path_1.join)(LocalAdapter.root(), path_template_1.LOCAL_USER_ROOT);
+    }
     static readChannelCfg(channel) {
         let cfg = {};
         try {
@@ -116,7 +119,7 @@ class LocalAdapter {
         return `${LocalAdapter.ownerSegment(owner)}/${LocalAdapter.instanceSegment(instanceId)}/${rel}`;
     }
     static absolutePath(key) {
-        const root = LocalAdapter.root();
+        const root = LocalAdapter.userRoot();
         const abs = (0, path_1.normalize)((0, path_1.join)(root, LocalAdapter.toRelativePath(key)));
         const rootWithSep = root.endsWith(path_1.sep) ? root : root + path_1.sep;
         if (!abs.startsWith(rootWithSep)) {
@@ -126,7 +129,7 @@ class LocalAdapter {
     }
     baseRoot(channel) {
         const cfg = LocalAdapter.readChannelCfg(channel);
-        return cfg.isCustom ? cfg.rootPath : LocalAdapter.root();
+        return cfg.isCustom ? cfg.rootPath : LocalAdapter.userRoot();
     }
     static safeJoin(base, rel) {
         const abs = (0, path_1.normalize)((0, path_1.join)(base, rel));
@@ -385,16 +388,19 @@ function localAbsPathOf(channel, remoteKey) {
         root = '';
     }
     if (!root)
-        root = LocalAdapter.root();
+        root = LocalAdapter.userRoot();
     return (0, path_1.normalize)((0, path_1.join)(root, rel));
 }
 async function localFileAbsOf(remoteKey) {
     const rel = String(remoteKey || '').replace(/^\/+/, '');
     if (!rel)
         return '';
-    const builtin = probeRoot(LocalAdapter.root(), rel);
+    const builtin = probeRoot(LocalAdapter.userRoot(), rel);
     if (builtin)
         return builtin;
+    const legacy = probeRoot(LocalAdapter.root(), rel);
+    if (legacy)
+        return legacy;
     try {
         const { prisma } = await Promise.resolve().then(() => __importStar(require('../common/prisma')));
         const channels = await prisma.channel.findMany({ where: { type: 'local' }, select: { id: true, config: true } });
@@ -431,7 +437,7 @@ function localFileAbs(remoteKey) {
     const rel = String(remoteKey || '').replace(/^\/+/, '');
     if (!rel)
         return '';
-    return probeRoot(LocalAdapter.root(), rel);
+    return probeRoot(LocalAdapter.userRoot(), rel) || probeRoot(LocalAdapter.root(), rel);
 }
 async function writeLocalStream(relKey, source) {
     const abs = LocalAdapter.absolutePath(relKey);

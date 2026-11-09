@@ -707,7 +707,7 @@ export default {
             /*
              * v3.0.0：本地存储渠道按上下文区分字段 ——
              *   · 添加渠道 → 自定义本地渠道（rootPath / hostPath ...）；
-             *   · 编辑 / 详情 → code=999999 用内置字段（prefixPath 固定 uploads），其余 code 用自定义字段。
+             *   · 编辑 / 详情 → code=999999 用内置字段（prefixPath 固定 uploads/_user），其余 code 用自定义字段。
              */
             if (type === 'local') {
                 if (this.showAddDialog) return LOCAL_CUSTOM_FIELDS();

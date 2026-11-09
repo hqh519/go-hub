@@ -1173,14 +1173,23 @@ function normalizeBkImg(raw: unknown): string | null {
   return list.length ? JSON.stringify(list) : '';
 }
 
-/** 头像目录：<后端根>/uploads/avatars */
+/** 头像目录：<后端根>/uploads/_avatars（v1.0.8.1 起，原 uploads/avatars） */
 function avatarDir(): string {
+  return backendSub('uploads', '_avatars');
+}
+
+/**
+ * 老头像目录：<后端根>/uploads/avatars（v1.0.8.1 之前的落点）。
+ * 随包迁移脚本会把实体文件搬到 _avatars；这里只在读取时兜底一层，
+ * 万一生产库还没跑迁移，存量头像也不会立刻变成默认 logo。
+ */
+function avatarDirLegacy(): string {
   return backendSub('uploads', 'avatars');
 }
 
 /**
  * 头像访问（公开）—— 前端 logo / 用户列表都直接用它。
- * 路径固定为 uploads/avatars/<userId>.webp，按用户名反查 id；
+ * 路径固定为 uploads/_avatars/<userId>.webp（v1.0.8.1 起），按用户名反查 id；
  * 找不到文件时返回 404，前端自动回落到系统 logo。
  */
 @Controller('api/avatar')
@@ -1189,14 +1198,14 @@ export class AvatarController {
   async get(@Param('username') username: string, @Res() res: Response) {
     const u = await prisma.user.findUnique({ where: { username } });
     if (!u || !u.avatar) return res.status(404).end();
-    try {
-      const buf = await fsp.readFile(join(avatarDir(), `${u.id}.webp`));
-      res.setHeader('Content-Type', 'image/webp');
-      // 版本戳在 URL 上（?v=），文件本身可以长缓存
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      return res.end(buf);
-    } catch {
-      return res.status(404).end();
-    }
+    // v1.0.8.1：新目录优先，未命中再回退老目录（兼容尚未迁移的存量头像）
+    const buf = await fsp
+      .readFile(join(avatarDir(), `${u.id}.webp`))
+      .catch(() => fsp.readFile(join(avatarDirLegacy(), `${u.id}.webp`)).catch(() => null));
+    if (!buf) return res.status(404).end();
+    res.setHeader('Content-Type', 'image/webp');
+    // 版本戳在 URL 上（?v=），文件本身可以长缓存
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    return res.end(buf);
   }
 }

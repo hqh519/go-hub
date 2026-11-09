@@ -1180,6 +1180,9 @@ function normalizeBkImg(raw) {
     return list.length ? JSON.stringify(list) : '';
 }
 function avatarDir() {
+    return (0, project_paths_1.backendSub)('uploads', '_avatars');
+}
+function avatarDirLegacy() {
     return (0, project_paths_1.backendSub)('uploads', 'avatars');
 }
 let AvatarController = class AvatarController {
@@ -1187,15 +1190,14 @@ let AvatarController = class AvatarController {
         const u = await prisma_1.prisma.user.findUnique({ where: { username } });
         if (!u || !u.avatar)
             return res.status(404).end();
-        try {
-            const buf = await fs_1.promises.readFile((0, path_1.join)(avatarDir(), `${u.id}.webp`));
-            res.setHeader('Content-Type', 'image/webp');
-            res.setHeader('Cache-Control', 'public, max-age=86400');
-            return res.end(buf);
-        }
-        catch {
+        const buf = await fs_1.promises
+            .readFile((0, path_1.join)(avatarDir(), `${u.id}.webp`))
+            .catch(() => fs_1.promises.readFile((0, path_1.join)(avatarDirLegacy(), `${u.id}.webp`)).catch(() => null));
+        if (!buf)
             return res.status(404).end();
-        }
+        res.setHeader('Content-Type', 'image/webp');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.end(buf);
     }
 };
 exports.AvatarController = AvatarController;

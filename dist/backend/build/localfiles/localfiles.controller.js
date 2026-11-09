@@ -64,9 +64,11 @@ const K_MAX_PER_DIR = 'localFilesMaxPerDir';
 const K_PREVIEW_MB = 'localFilesPreviewMB';
 const DEFAULT_LOCAL_CHANNEL_CODE = '999999';
 const DEFAULT_LOCAL_VIRTUAL_ID = '__default_local__';
-const DEFAULT_LOCAL_ROOT_NAME = '默认本地文件';
+const DEFAULT_LOCAL_ROOT_NAME = '本地默认文件';
 const WEBDAV_VIRTUAL_ID = '__webdav__';
 const WEBDAV_ROOT_NAME = 'WebDAV 文件';
+const WEBDAV_ADMIN_VIRTUAL_ID = '__webdav_admin__';
+const WEBDAV_ADMIN_ROOT_NAME = 'WebDav存储文件';
 const MIME_MAP = {
     jpg: 'image/jpeg', jpeg: 'image/jpeg', jfif: 'image/jpeg', png: 'image/png', gif: 'image/gif',
     webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', avif: 'image/avif', ico: 'image/x-icon',
@@ -141,6 +143,42 @@ let LocalFilesController = class LocalFilesController {
         const id = String(channelId || '').trim();
         if (!id)
             return { error: '请选择本地文件渠道' };
+        if (id === WEBDAV_ADMIN_VIRTUAL_ID) {
+            if (!(0, localfiles_util_1.localFilesAdminOnly)(this.role(req)))
+                return { error: '仅管理员可浏览该目录' };
+            const base = (0, webdav_storage_1.webdavRoot)();
+            await fs_1.promises.mkdir(base, { recursive: true }).catch(() => undefined);
+            let real = base;
+            try {
+                real = await fs_1.promises.realpath(base);
+            }
+            catch {
+            }
+            try {
+                const st = await fs_1.promises.stat(real);
+                if (!st.isDirectory())
+                    throw new Error('not a directory');
+                const pseudo = {
+                    id: WEBDAV_ADMIN_VIRTUAL_ID,
+                    code: 'WEBDAV',
+                    name: WEBDAV_ADMIN_ROOT_NAME,
+                    type: 'webdav',
+                    enabled: true,
+                    config: '{}',
+                    authorizedUsers: '[]',
+                };
+                return {
+                    channel: pseudo,
+                    root: real,
+                    roots: [{ name: WEBDAV_ADMIN_ROOT_NAME, display: base, real, mtime: st.mtimeMs }],
+                    broken: [],
+                };
+            }
+            catch (err) {
+                (0, localfiles_util_1.logLocalFileError)('读取 WebDAV 目录', `管理员 路径=${base}`, err);
+                return { error: 'WebDAV 目录不存在或不可访问' };
+            }
+        }
         if (id === WEBDAV_VIRTUAL_ID) {
             const me = this.userName(req);
             if (!me)
@@ -184,7 +222,7 @@ let LocalFilesController = class LocalFilesController {
             const me = this.userName(req);
             if (!me)
                 return { error: '请先登录' };
-            const dir = path.join(local_adapter_1.LocalAdapter.root(), me, DEFAULT_LOCAL_CHANNEL_CODE);
+            const dir = path.join(local_adapter_1.LocalAdapter.userRoot(), me, DEFAULT_LOCAL_CHANNEL_CODE);
             await fs_1.promises.mkdir(dir, { recursive: true }).catch(() => undefined);
             let real = dir;
             try {
@@ -325,7 +363,7 @@ let LocalFilesController = class LocalFilesController {
             id: DEFAULT_LOCAL_VIRTUAL_ID,
             code: DEFAULT_LOCAL_CHANNEL_CODE,
             name: DEFAULT_LOCAL_ROOT_NAME,
-            rootPath: path.join(local_adapter_1.LocalAdapter.root(), me, DEFAULT_LOCAL_CHANNEL_CODE),
+            rootPath: path.join(local_adapter_1.LocalAdapter.userRoot(), me, DEFAULT_LOCAL_CHANNEL_CODE),
             enabled: true,
             source: 'default',
         };
@@ -345,7 +383,20 @@ let LocalFilesController = class LocalFilesController {
                 };
             }
         }
-        return { success: true, data: [mine, ...(webdavItem ? [webdavItem] : []), ...configured] };
+        const adminWebdavItem = admin
+            ? {
+                id: WEBDAV_ADMIN_VIRTUAL_ID,
+                code: 'WEBDAV',
+                name: WEBDAV_ADMIN_ROOT_NAME,
+                rootPath: (0, webdav_storage_1.webdavRoot)(),
+                enabled: true,
+                source: 'webdav',
+            }
+            : null;
+        return {
+            success: true,
+            data: [mine, ...(adminWebdavItem ? [adminWebdavItem] : []), ...(webdavItem ? [webdavItem] : []), ...configured],
+        };
     }
     async getSettings(req) {
         if (!this.session(req))

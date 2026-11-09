@@ -29,8 +29,8 @@ const SECRET_FIELDS: Record<string, string[]> = {
 /**
  * 可通过「添加渠道」创建的类型。
  * v3.0.0 起包含 local —— 允许创建自定义本地存储渠道（自备容器内存储目录），
- * 与内置本地渠道（code=999999，根固定 uploads）并存：
- *   · 内置渠道根固定 <后端根>/uploads，不可删除；
+ * 与内置本地渠道（code=999999，根固定 uploads/_user）并存：
+ *   · 内置渠道根固定 <后端根>/uploads/_user（v1.0.8.1 起），不可删除；
  *   · 自定义渠道 config.rootPath 指定容器内存储地址（拒绝 '..' 穿越），可删除。
  */
 export const CHANNEL_TYPES = ['cos', 'minio', 'r2', 's3', 'aliyun', 'easyimages', 'lsky', 'webdav', 'immich', 'custom', 'local', 'localfiles'] as const;
@@ -215,7 +215,7 @@ export class ChannelsService {
       /*
        * v1.0.6：内置本地存储渠道恒为「自动授权所有用户」。
        *
-       * 每个账户的默认本地目录都挂在这条渠道下（uploads/{用户名}/999999），
+       * 每个账户的默认本地目录都挂在这条渠道下（uploads/_user/{用户名}/999999），
        * 它必须对所有人开放 —— 包括以后新建的账户，否则新用户进来「本地文件」页是空的、
        * 上传也会报「没有可用的主渠道」。存量库里没有哨兵 `*` 的，这里补一次。
        */
@@ -756,7 +756,7 @@ export class ChannelManageController {
     /*
      * v1.0.6：内置「本地存储」渠道（999999）的「自定义存储前缀」「自定义文件命名」一律锁定。
      *
-     * 这条渠道承载的是**每个用户的默认本地目录** uploads/{用户名}/999999 ——
+     * 这条渠道承载的是**每个用户的默认本地目录** uploads/_user/{用户名}/999999 ——
      * 前缀和命名一旦被改，全站新上传文件的落盘路径会整体偏移，老文件读不出来，
      * 「本地文件」页里那个默认加载项也会指向空目录。
      * 前端把两个输入框置灰，后端在这里再挡一层：直接沿用库里的原值，
@@ -971,7 +971,7 @@ export class ChannelManageController {
     const valid = exists.map((u) => u.username).filter((u) => u !== AUTH_ALL);
     /*
      * 默认本地存储渠道（code=999999）：必须对全体账户开放，且不允许被关掉。
-     * 每个用户的默认本地目录都落在这条渠道下（uploads/{用户名}/999999），
+     * 每个用户的默认本地目录都落在这条渠道下（uploads/_user/{用户名}/999999），
      * 一旦关掉，新用户就没有任何可用的本地落脚点，「本地文件」页也会空着。
      */
     const forceAll = ch.code === LOCAL_CHANNEL_CODE;

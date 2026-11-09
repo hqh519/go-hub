@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PREFIX_CAPABLE_TYPES = exports.LOCAL_DEFAULT_PREFIX = void 0;
+exports.PREFIX_CAPABLE_TYPES = exports.LOCAL_USER_ROOT = exports.LOCAL_DEFAULT_PREFIX = void 0;
 exports.sanitizeNameSegment = sanitizeNameSegment;
 exports.renderObjectPrefix = renderObjectPrefix;
 exports.renderFileName = renderFileName;
@@ -8,6 +8,7 @@ exports.joinObjectKey = joinObjectKey;
 exports.randomUuid = randomUuid;
 exports.supportsPrefix = supportsPrefix;
 exports.LOCAL_DEFAULT_PREFIX = '{user}/{ID}/{y}/{m}';
+exports.LOCAL_USER_ROOT = '_user';
 function pad(n, len = 2) {
     return String(n).padStart(len, '0');
 }

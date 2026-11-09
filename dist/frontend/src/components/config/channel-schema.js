@@ -87,7 +87,7 @@ export const SUMMARY_KEYS = {
 
 /** 各类型顶部提示 */
 export const TYPE_TIPS = {
-    local: '自定义本地存储渠道：文件写入服务端容器内的指定目录（rootPath），可选择映射到宿主机目录；对象前缀与自定义命名支持占位符（前缀留空默认 {user}/{ID}/{y}/{m}），可启用容量限制。内置本地渠道（存储地址固定 uploads）随安装自动存在、不可删除，只能禁用。',
+    local: '自定义本地存储渠道：文件写入服务端容器内的指定目录（rootPath），可选择映射到宿主机目录；对象前缀与自定义命名支持占位符（前缀留空默认 {user}/{ID}/{y}/{m}），可启用容量限制。内置本地渠道（存储地址固定 uploads/_user）随安装自动存在、不可删除，只能禁用。',
     cos: '腾讯云 COS 走专属通道：填写地域后可自动生成 Endpoint，也可手填 CDN 加速域名作为外链。',
     minio: 'MinIO 走专属通道：默认使用 Path-Style 寻址，桶需设置为「公开读」才能直接访问外链。若 MinIO 与图床同机 / 同 docker 网络，Endpoint 可直接填容器名（如 minio:9000）走内网通信。',
     r2: 'Cloudflare R2 走专属通道：Endpoint 可只填账户 ID（自动补全 r2.cloudflarestorage.com），外链需填写 r2.dev 子域或自定义域名。',
@@ -102,16 +102,19 @@ export const TYPE_TIPS = {
 
 /**
  * 本地存储（内置渠道 code=999999）：
- * v3.0.0 契约字段 —— prefixPath 固定 uploads（只读）、objectPrefix、nameTemplate、
- * sizeLimitEnabled / sizeLimitGB、note。落盘规则：uploads/用户名/实例/对象前缀。
+ * v3.0.0 契约字段 —— prefixPath 固定 uploads/_user（只读）、objectPrefix、nameTemplate、
+ * sizeLimitEnabled / sizeLimitGB、note。
+ * v1.0.8.1：落盘根由 uploads 改为 uploads/_user —— `_user` 是字面目录名，
+ * 与账户无关；其后的「自定义存储前缀」才是 {user}/{ID}/{y}/{m} 这类模板。
  */
 export const LOCAL_BUILTIN_FIELDS = () => [
     f('prefixPath', '存储地址', {
-        def: 'uploads',
+        def: 'uploads/_user',
         fixed: true,
-        placeholder: 'uploads',
-        tip: '系统内置路径，不可修改。实体文件按「uploads / 自定义存储前缀 / 文件名」落盘' +
-            '（前缀留空时默认 {user}/{ID}/{y}/{m}），外链统一由本站 /file/ 代理下发。'
+        placeholder: 'uploads/_user',
+        tip: '系统内置路径，不可修改。实体文件按「uploads/_user / 自定义存储前缀 / 文件名」落盘' +
+            '（前缀留空时默认 {user}/{ID}/{y}/{m}），外链统一由本站 /file/ 代理下发。' +
+            '其中 `_user` 是固定目录名，不是用户名占位符。'
     }),
     f('objectPrefix', '自定义存储前缀（可选）', {
         placeholder: '{user}/{ID}/{y}/{m}',

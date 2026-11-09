@@ -48,6 +48,21 @@ export interface PrefixTokens {
  */
 export const LOCAL_DEFAULT_PREFIX = '{user}/{ID}/{y}/{m}';
 
+/**
+ * v1.0.8.1：内置本地存储渠道的**保留目录名**（字面量，不是占位符）。
+ *
+ * 它是磁盘上一个真真切切叫 `_user` 的目录，由系统固定拼在 `uploads` 之下：
+ *   `uploads/_user/<自定义存储前缀>/<文件名>`
+ * 前缀留空时仍是 `{user}/{ID}/{y}/{m}`，于是实际路径形如
+ *   `uploads/_user/alice/999999/2026/11/x.png`
+ * 其中 `_user` 恒定不变，`alice` 才是 `{user}` 渲染出来的用户名。
+ *
+ * 为什么要独立一层：`uploads` 下还有 `_avatars` / `_ipdata` 这类系统目录，
+ * 把用户文件统一收进 `_user` 之后，「用户数据」与「系统数据」在磁盘上就能一眼分开，
+ * 也避免用户自建的存储地址与它们同名。
+ */
+export const LOCAL_USER_ROOT = '_user';
+
 function pad(n: number, len = 2): string {
   return String(n).padStart(len, '0');
 }
