@@ -18,7 +18,7 @@ exports.buildMetadata = buildMetadata;
 exports.serializeFile = serializeFile;
 exports.normalizeDir = normalizeDir;
 const local_adapter_1 = require("../adapters/local.adapter");
-exports.UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record'];
+exports.UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record', 'StoreIn', 'StoreOut'];
 exports.CLIENT_UPLOAD_SOURCES = ['Upload', 'Fetch'];
 function normalizeUploadSource(raw) {
     const v = String(raw || '').trim();

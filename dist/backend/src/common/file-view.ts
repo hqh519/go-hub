@@ -26,8 +26,13 @@ export type FileTypeName = 'image' | 'video' | 'audio' | 'txt' | 'pdf' | 'other'
  *   API-Web —— API Token 的「Web 通用」通道
  *   API-S3  —— API Token 的「S3 协议」通道
  *   Record  —— 「登记文件」：文件本来就在别的渠道上，这里只补一条记录（v2.8.8）
+ *   StoreIn —— v1.1.0：文件由「异地渠道 → 本地渠道」转存而来（详情页显示「异地存入」）
+ *   StoreOut—— v1.1.0：文件由「本地渠道 → 异地渠道」转存而来（详情页显示「本地转出」）
+ *
+ * 说明：StoreIn / StoreOut 记录的是**最近一次成功的转存方向**，由 convertChannel 写入；
+ * 一个文件被反复转存时以最后一次成功的转存为准（不会因为方向来回而回退成 Default）。
  */
-export const UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record'] as const;
+export const UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record', 'StoreIn', 'StoreOut'] as const;
 
 /** 前端上传页允许声明的来源（其它来源只能由服务端通道自己写死，不接受外部指定） */
 export const CLIENT_UPLOAD_SOURCES = ['Upload', 'Fetch'] as const;

@@ -1318,7 +1318,14 @@ let UploadService = class UploadService {
                 app_log_1.appLog.info('upload', `去重跳过：${originalName} 与已有文件 ${d0.name} 内容相同，但渠道${scope === 'channel' ? '名称' : '类型'}不同（去重范围为「${scope === 'channel' ? '同一渠道名称内' : '同一渠道类型内'}」）`, `目标渠道=${main.name}（类型=${main.type}） ｜ 已有文件渠道=${pc?.channel?.name || '未知'}（类型=${pc?.channel?.type || '未知'}）`, uploadIp);
             }
             if (hit) {
-                const cloned = await this.cloneDedupRecord(hit.name, opts, uploadIp);
+                const cloned = await this.cloneDedupRecord(hit.name, {
+                    uploader: opts.uploader,
+                    uploadSource: opts.uploadSource,
+                    instanceId: opts.instanceId,
+                    originalName,
+                    mime,
+                    channelType: main.type,
+                }, uploadIp);
                 app_log_1.appLog.info('upload', `命中去重：${originalName} 与已有文件 ${hit.originalName}（${hit.name}）内容相同，已为本次上传克隆记录 ${cloned}`, `md5=${md5} ｜ 原始大小=${originalSize}B ｜ 范围=${scope === 'channel' ? `同一渠道名称内（${main.name}）` : scope === 'channelType' ? `同一渠道类型内（${main.type}）` : '全部渠道'}`, uploadIp);
                 return { id: cloned, dedup: true, finalName: originalName };
             }
@@ -2079,7 +2086,7 @@ let UploadService = class UploadService {
     async cloneDedupRecord(sourceName, opts, ip) {
         const src = await prisma_1.prisma.fileRecord.findUnique({
             where: { name: sourceName },
-            include: { copies: true },
+            include: { copies: true, tags: true },
         });
         if (!src)
             return sourceName;
@@ -2096,13 +2103,36 @@ let UploadService = class UploadService {
             status: c.status === 'failed' ? 'failed' : 'active',
             isPrimary: c.isPrimary,
         }));
+        const newOriginalName = String(opts.originalName || '').trim() || src.originalName;
+        const instanceId = String(opts.instanceId || '');
+        const sameInstance = String(src.instanceId || '') === instanceId;
+        const tagRows = sameInstance ? src.tags.map((t) => ({ tagId: t.tagId })) : [];
+        let metas = src.metas;
         try {
+            const obj = (JSON.parse(src.metas || '{}') || {});
+            const prev = (obj.ProcessEvent && typeof obj.ProcessEvent === 'object' ? obj.ProcessEvent : {});
+            obj.ProcessEvent = {
+                ...prev,
+                Dedup: {
+                    IsDuplicate: true,
+                    SourceFileId: src.name,
+                    SourceOriginalName: src.originalName,
+                    ClonedAt: new Date().toISOString(),
+                },
+            };
+            metas = JSON.stringify(obj);
+        }
+        catch {
+            metas = src.metas;
+        }
+        try {
+            const now = new Date();
             const created = await prisma_1.prisma.fileRecord.create({
                 data: {
                     name: fileId,
                     firstName: fileId,
                     prevName: '',
-                    originalName: src.originalName,
+                    originalName: newOriginalName,
                     size: src.size,
                     originalSize: src.originalSize,
                     mime: src.mime,
@@ -2112,14 +2142,24 @@ let UploadService = class UploadService {
                     uploader: opts.uploader || '',
                     uploadSource: opts.uploadSource || 'Default',
                     ip,
-                    instanceId: opts.instanceId || '',
-                    metas: src.metas,
-                    uploadStartedAt: new Date(),
-                    uploadFinishedAt: new Date(),
+                    instanceId,
+                    metas,
+                    uploadStartedAt: now,
+                    uploadFinishedAt: now,
                     copies: { create: copies },
+                    ...(tagRows.length ? { tags: { create: tagRows } } : {}),
                 },
-                select: { name: true },
+                select: { name: true, id: true },
             });
+            await this.autoTag(created.id, {
+                originalName: newOriginalName,
+                mime: opts.mime || src.mime,
+                channelType: String(opts.channelType || ''),
+                uploadSource: opts.uploadSource || 'Default',
+                instanceId,
+                owner: opts.uploader || '',
+            });
+            app_log_1.appLog.info('upload', `去重复刻完成：${newOriginalName} → ${created.name}`, `源文件=${src.name}（${src.originalName}） ｜ 复刻标签=${tagRows.length} ｜ 实例=${instanceId || '默认'}`, ip);
             return created.name;
         }
         catch (err) {
@@ -2461,16 +2501,23 @@ let UploadService = class UploadService {
                 return await fail('转存实体尚未就绪，请重试', true);
             const writeData = { ...this.copyWriteData(staged, targetCh), status: 'active', isPrimary: true };
             const existingTarget = rec.copies.find((c) => c.channelId === targetCh.id && c.id !== sourceCopy.id);
+            const convertSource = dstLocal ? 'StoreIn' : 'StoreOut';
+            const uploadSourceOp = prisma_1.prisma.fileRecord.update({
+                where: { id: rec.id },
+                data: { uploadSource: convertSource },
+            });
             const ops = existingTarget
                 ? [
                     prisma_1.prisma.fileCopy.update({ where: { id: existingTarget.id }, data: writeData }),
                     prisma_1.prisma.fileCopy.delete({ where: { id: sourceCopy.id } }),
+                    uploadSourceOp,
                 ]
                 : [
                     prisma_1.prisma.fileCopy.update({
                         where: { id: sourceCopy.id },
                         data: { channelId: targetCh.id, ...writeData },
                     }),
+                    uploadSourceOp,
                 ];
             try {
                 await prisma_1.prisma.$transaction(ops);
@@ -2509,7 +2556,7 @@ let UploadService = class UploadService {
                 })
                     .catch(() => undefined);
             }
-            app_log_1.appLog.info('channel', `文件转存成功：${sourceCh.name}（${sourceCh.type}）→ ${targetCh.name}（${targetCh.type}）`, `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ ${srcSize}B ｜ 第 ${marker.attempts} 次尝试 ｜ 外链不变`, input.ip);
+            app_log_1.appLog.info('channel', `文件转存成功：${sourceCh.name}（${sourceCh.type}）→ ${targetCh.name}（${targetCh.type}）`, `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ ${srcSize}B ｜ 第 ${marker.attempts} 次尝试 ｜ 上传方式=${convertSource} ｜ 外链不变`, input.ip);
             return {
                 ok: true,
                 channelName: targetCh.name,

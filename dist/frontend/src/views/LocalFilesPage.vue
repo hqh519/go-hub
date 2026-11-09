@@ -682,6 +682,7 @@ import MediaPreviewOverlay from '@/components/dashboard/MediaPreviewOverlay.vue'
 import DashboardTabs from '@/components/DashboardTabs.vue';
 import AdminToggleDark from '@/components/dashboard/AdminToggleDark.vue';
 import FileDetailDialog from '@/components/dashboard/FileDetailDialog.vue';
+import { registerLayer, unregisterLayer } from '@/utils/layerStack';
 
 /** v3.0.0（R7）：记住「上次选择的本地文件渠道」，刷新 / 重新进入沿用 */
 const CHANNEL_STORE_KEY = 'gohub_localfiles_channel';
@@ -914,6 +915,8 @@ export default {
     beforeUnmount() {
         document.removeEventListener('scroll', this.handlePageScroll, true);
         window.removeEventListener('resize', this.measureTopbar);
+        // v1.1.0：离开页面时把详情页这一层从浮层栈摘掉（否则栈里会残留一个关不掉的层）
+        unregisterLayer('lf-file-detail');
         if (this.__popStateHandler) {
             window.removeEventListener('popstate', this.__popStateHandler);
             this.__popStateHandler = null;
@@ -929,6 +932,29 @@ export default {
         /** v1.0.5：关灯箱就清掉灯箱内上传的结果条，避免下次打开还挂着上一条 */
         showPreview(v) {
             if (!v) this.lightboxUploadResult = null;
+        },
+        /**
+         * v1.1.0：文件详情页要作为独立一层压进浮层栈。
+         *
+         * 现象（修复前）：灯箱里打开详情页后，
+         *   · 移动端从边缘滑动触发返回 → 浮层栈栈顶只有灯箱 → 先关掉灯箱，详情页却还在；
+         *   · 桌面端按 Esc → 同样只关灯箱（layerStack 接管 Esc 并 stopPropagation，
+         *     Element Plus 自己的 Esc 收不到），详情页留下。
+         *
+         * 根因：详情弹窗根节点带 `data-gohub-layer`，全局 backGuard 的 MutationObserver
+         * 会跳过它（避免重复登记），而本页之前没有像 AdminDashBoard 那样显式登记，
+         * 于是「灯箱 + 详情」两层里只有灯箱在栈里。
+         *
+         * 现在：详情页打开即登记 `lf-file-detail`（后登记 = 栈顶），关闭即注销。
+         *   · 移动端返回 → closeTop() 先关详情页，灯箱保留；再返回才关灯箱；
+         *   · 桌面端 Esc → 该层 esc:false，交回 Element Plus 关详情页，灯箱不动。
+         */
+        showDetail(v) {
+            if (v) {
+                registerLayer('lf-file-detail', () => { this.showDetail = false; }, { esc: false });
+            } else {
+                unregisterLayer('lf-file-detail');
+            }
         },
         /** v1.0.5：上传弹窗关闭后退出「灯箱发起」模式（z-index / 目标文件都回到默认） */
         showUpload(v) {

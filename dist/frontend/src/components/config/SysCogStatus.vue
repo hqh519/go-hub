@@ -1129,13 +1129,16 @@ export default {
       return this.trendColors[index % this.trendColors.length]
     },
     // 格式化趋势序列名称
-    /** 上传接口展示名（Default / Upload / Fetch / WebDAV / API-Web / API-S3 → 文案） */
+    /** 上传接口展示名（Default / Upload / Fetch / StoreIn / StoreOut / WebDAV / API-Web / API-S3 → 文案） */
     uploadSourceLabel(raw) {
       const key = String(raw || '')
       const map = {
         Default: 'filter.uploadSourceDefault',
         Upload: 'filter.uploadSourceUpload',
         Fetch: 'filter.uploadSourceFetch',
+        StoreIn: 'filter.uploadSourceStoreIn',
+        StoreOut: 'filter.uploadSourceStoreOut',
+        Record: 'filter.uploadSourceRecord',
         WebDAV: 'filter.uploadSourceWebdav',
         'API-Web': 'filter.uploadSourceApiWeb',
         'API-S3': 'filter.uploadSourceApiS3'

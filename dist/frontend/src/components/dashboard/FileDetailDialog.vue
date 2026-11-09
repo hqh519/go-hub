@@ -1491,6 +1491,30 @@ export default {
                 return n > 0 ? this.formatBytes(n) : '-';
             };
 
+            /*
+             * ⓪ v1.1.0：去重复刻标记 —— 这条记录是「命中已有相同内容」后复刻出来的。
+             *    明确写进详情页，避免用户以为这次上传又占了一份存储空间。
+             */
+            if (ev.Dedup && typeof ev.Dedup === 'object') {
+                const d = ev.Dedup;
+                const dedupRows = [
+                    { label: t('fileDetail.processDedupIsCopy'), value: t('fileDetail.processDedupIsCopyYes') },
+                ];
+                if (d.SourceOriginalName) {
+                    dedupRows.push({ label: t('fileDetail.processDedupSourceName'), value: String(d.SourceOriginalName) });
+                }
+                if (d.SourceFileId) {
+                    dedupRows.push({ label: t('fileDetail.processDedupSourceId'), value: String(d.SourceFileId) });
+                }
+                if (d.ClonedAt) {
+                    const at = new Date(d.ClonedAt);
+                    if (!Number.isNaN(at.getTime())) {
+                        dedupRows.push({ label: t('fileDetail.processDedupAt'), value: at.toLocaleString() });
+                    }
+                }
+                groups.push({ key: 'dedup', title: t('fileDetail.processGroupDedup'), rows: dedupRows });
+            }
+
             // ① 失败（次数 / 原因）
             const failRows = [];
             const failCount = Number(ev.failCount) || 0;
@@ -1926,6 +1950,9 @@ export default {
                 Default: 'filter.uploadSourceDefault',
                 Upload: 'filter.uploadSourceUpload',
                 Fetch: 'filter.uploadSourceFetch',
+                // v1.1.0：转存方向（异地 → 本地 / 本地 → 异地）
+                StoreIn: 'filter.uploadSourceStoreIn',
+                StoreOut: 'filter.uploadSourceStoreOut',
                 WebDAV: 'filter.uploadSourceWebdav',
                 'API-Web': 'filter.uploadSourceApiWeb',
                 'API-S3': 'filter.uploadSourceApiS3',

@@ -204,9 +204,15 @@ model FileRecord {
   uploader     String    @default("") // 上传者用户名（用户账户体系：文件按此归集给用户）
   // 上传渠道（上传来源入口）：
   //   Default  —— GoHub 前端上传页
+  //   Upload   —— 前端上传页「文件」模式
+  //   Fetch    —— 前端上传页「链接」模式 / 链接暂存提交
   //   WebDAV   —— 对外 WebDAV
   //   API-Web  —— API Token 的「Web 通用」通道
   //   API-S3   —— API Token 的「S3 协议」通道
+  //   Record   —— 「登记文件」（文件本来就在别的渠道）
+  //   StoreIn  —— v1.1.0：异地渠道 → 本地渠道转存成功（详情页「异地存入」）
+  //   StoreOut —— v1.1.0：本地渠道 → 异地渠道转存成功（详情页「本地转出」）
+  // 注：String 而非 enum，新增取值不需要数据库迁移；无法识别的旧值统一按 Default 展示。
   uploadSource String    @default("Default")
   ip           String    @default("") // 上传来源 IP
   // 重定向地址：非空时 /file/:name 直接 302 到该地址（在不改图床外链的前提下替换真实文件源）；

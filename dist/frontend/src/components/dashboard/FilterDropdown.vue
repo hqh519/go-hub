@@ -255,12 +255,14 @@ export default {
             ];
         },
         // v2.7.0：上传渠道选项（与后端 UPLOAD_SOURCES 对齐；v2.8.6 新增 Upload / Fetch）
+        // v1.1.0：新增 StoreIn / StoreOut，移除 WebDAV（与 FilterDialog 保持一致，避免两处口径打架）
         uploadSourceOptions() {
             return [
                 { label: this.$t('filter.uploadSourceDefault'), value: 'Default' },
                 { label: this.$t('filter.uploadSourceUpload'), value: 'Upload' },
                 { label: this.$t('filter.uploadSourceFetch'), value: 'Fetch' },
-                { label: this.$t('filter.uploadSourceWebdav'), value: 'WebDAV' },
+                { label: this.$t('filter.uploadSourceStoreIn'), value: 'StoreIn' },
+                { label: this.$t('filter.uploadSourceStoreOut'), value: 'StoreOut' },
                 { label: this.$t('filter.uploadSourceApiWeb'), value: 'API-Web' },
                 { label: this.$t('filter.uploadSourceApiS3'), value: 'API-S3' }
             ];

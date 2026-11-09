@@ -611,11 +611,17 @@ export default {
             ];
         },
         uploadSourceOptions() {
+            /*
+             * v1.1.0：
+             *   · 新增 StoreIn / StoreOut（转存方向），位置按需求排在 Fetch 之后；
+             *   · 移除 WebDAV 筛选项（该来源仍在详情页/统计里按原值展示，只是不再作为筛选条件）。
+             */
             return [
                 { label: this.$t('filter.uploadSourceDefault'), value: 'Default' },
                 { label: this.$t('filter.uploadSourceUpload'), value: 'Upload' },
                 { label: this.$t('filter.uploadSourceFetch'), value: 'Fetch' },
-                { label: this.$t('filter.uploadSourceWebdav'), value: 'WebDAV' },
+                { label: this.$t('filter.uploadSourceStoreIn'), value: 'StoreIn' },
+                { label: this.$t('filter.uploadSourceStoreOut'), value: 'StoreOut' },
                 { label: this.$t('filter.uploadSourceApiWeb'), value: 'API-Web' },
                 { label: this.$t('filter.uploadSourceApiS3'), value: 'API-S3' },
                 // v3.0.0：「登记文件」来源（与后端 uploadSource=Record 一致）

@@ -2034,7 +2034,19 @@ export class UploadService {
          * 新副本行（指向同一个远端对象，零字节冗余）。删除侧按引用计数决定是否删远端对象，
          * 只有最后一个使用者才真正删除远端文件。
          */
-        const cloned = await this.cloneDedupRecord(hit.name, opts, uploadIp);
+        const cloned = await this.cloneDedupRecord(
+          hit.name,
+          {
+            uploader: opts.uploader,
+            uploadSource: opts.uploadSource,
+            instanceId: opts.instanceId,
+            // v1.1.0：原文件名 / MIME / 目标渠道类型都取「本次上传」的，不再复刻源记录的
+            originalName,
+            mime,
+            channelType: main.type,
+          },
+          uploadIp,
+        );
         appLog.info(
           'upload',
           `命中去重：${originalName} 与已有文件 ${hit.originalName}（${hit.name}）内容相同，已为本次上传克隆记录 ${cloned}`,
@@ -3106,15 +3118,34 @@ export class UploadService {
    * 克隆什么：内容元数据 + 全部 active 副本行（同 remoteKey / objectPath，指向同一对象）。
    * 不克隆什么：访问量、评分、等级、备注、外链密码/限时/重定向、重命名历史 ——
    * 这些属于「个人使用状态」，必须归零重来，否则会与原主串味。
+   *
+   * v1.1.0（需求：命中去重后「以最新文件为准」）：
+   *   · originalName 用**本次上传**的文件名，不再复刻源记录的原名 ——
+   *     同一份内容被换名上传时，详情页显示的就该是用户这次提交的名字；
+   *   · 标签 = 源记录已有的标签 + 本次按「系统管理 → 其他设置 → 文件标签添加设置」
+   *     算出来的标签，按 tagId 合并去重（同一条标签不会重复挂两遍）；
+   *   · 上传时间 / 上传计时本来就是本次落库时间，继续以新文件为准；
+   *   · metas.ProcessEvent.Dedup 记一条「本条记录是复刻出来的重复文件」，
+   *     详情页「处理记录」单独一组展示，方便排查「为什么这次上传没占新空间」。
    */
   private async cloneDedupRecord(
     sourceName: string,
-    opts: { uploader?: string; uploadSource?: string; instanceId?: string },
+    opts: {
+      uploader?: string;
+      uploadSource?: string;
+      instanceId?: string;
+      /** v1.1.0：本次上传的原文件名（不复刻源记录的名字） */
+      originalName?: string;
+      /** v1.1.0：本次上传的 MIME（缺省沿用源记录） */
+      mime?: string;
+      /** v1.1.0：本次落库的目标渠道类型（自动标签的 {channelName} 用） */
+      channelType?: string;
+    },
     ip: string,
   ): Promise<string> {
     const src = await prisma.fileRecord.findUnique({
       where: { name: sourceName },
-      include: { copies: true },
+      include: { copies: true, tags: true },
     });
     if (!src) return sourceName;
     const fileId = this.makeFileId();
@@ -3130,13 +3161,46 @@ export class UploadService {
         status: c.status === 'failed' ? 'failed' : 'active',
         isPrimary: c.isPrimary,
       }));
+    // v1.1.0：本次上传的原名优先（空则退回源记录，保证字段不为空）
+    const newOriginalName = String(opts.originalName || '').trim() || src.originalName;
+    const instanceId = String(opts.instanceId || '');
+    /*
+     * 标签是「实例 + 类型 + 名称」确权的：跨实例把源记录的标签搬过来，等于把别的实例的
+     * 标签行挂到本实例的文件上，筛选 / 标签云都会串味。所以只有同实例才复刻标签，
+     * 不同实例只按规则生成本次的标签。
+     */
+    const sameInstance = String(src.instanceId || '') === instanceId;
+    const tagRows = sameInstance ? src.tags.map((t) => ({ tagId: t.tagId })) : [];
+    /*
+     * 处理记录：保留源记录已有的压缩 / 转码结果（内容相同，结果同样成立），
+     * 再补一个 Dedup 子对象标明「这条是复刻品」。
+     */
+    let metas = src.metas;
     try {
+      const obj = (JSON.parse(src.metas || '{}') || {}) as Record<string, unknown>;
+      const prev = (obj.ProcessEvent && typeof obj.ProcessEvent === 'object' ? obj.ProcessEvent : {}) as Record<string, unknown>;
+      obj.ProcessEvent = {
+        ...prev,
+        Dedup: {
+          IsDuplicate: true,
+          SourceFileId: src.name,
+          SourceOriginalName: src.originalName,
+          ClonedAt: new Date().toISOString(),
+        },
+      };
+      metas = JSON.stringify(obj);
+    } catch {
+      // metas 不是合法 JSON：不加标记也不能让上传失败，原样带过去
+      metas = src.metas;
+    }
+    try {
+      const now = new Date();
       const created = await prisma.fileRecord.create({
         data: {
           name: fileId,
           firstName: fileId,
           prevName: '',
-          originalName: src.originalName,
+          originalName: newOriginalName,
           size: src.size,
           originalSize: src.originalSize,
           mime: src.mime,
@@ -3146,14 +3210,35 @@ export class UploadService {
           uploader: opts.uploader || '',
           uploadSource: opts.uploadSource || 'Default',
           ip,
-          instanceId: opts.instanceId || '',
-          metas: src.metas,
-          uploadStartedAt: new Date(),
-          uploadFinishedAt: new Date(),
+          instanceId,
+          metas,
+          uploadStartedAt: now,
+          uploadFinishedAt: now,
           copies: { create: copies },
+          // v1.1.0：先把源记录的标签复刻过来（同一 tagId 不会重复）
+          ...(tagRows.length ? { tags: { create: tagRows } } : {}),
         },
-        select: { name: true },
+        select: { name: true, id: true },
       });
+      /*
+       * v1.1.0：再按当前规则给「这条新记录」补标签。
+       * autoTag 内部会先查 fileId+tagId 是否已存在，所以与上面复刻来的标签天然合并去重；
+       * 规则算出来的标签若与复刻的标签同名，findOrCreateTag 会命中同一个 Tag 行。
+       */
+      await this.autoTag(created.id, {
+        originalName: newOriginalName,
+        mime: opts.mime || src.mime,
+        channelType: String(opts.channelType || ''),
+        uploadSource: opts.uploadSource || 'Default',
+        instanceId,
+        owner: opts.uploader || '',
+      });
+      appLog.info(
+        'upload',
+        `去重复刻完成：${newOriginalName} → ${created.name}`,
+        `源文件=${src.name}（${src.originalName}） ｜ 复刻标签=${tagRows.length} ｜ 实例=${instanceId || '默认'}`,
+        ip,
+      );
       return created.name;
     } catch (err) {
       appLog.warn('upload', `去重克隆失败，回退复用原外链`, `${(err as Error).message} ｜ 源=${sourceName}`, ip);
@@ -3409,7 +3494,9 @@ export class UploadService {
    * 设计约束（来自需求）：
    *   1) 只搬「实体文件 + 跟随渠道变化的数据」，**签发外链不变** ——
    *      所以 FileRecord 的 name / firstName / originalName / size / mime / folder /
-   *      tags / 分类 / 上传时间 / 评分全部原样保留，只更新 FileCopy（渠道副本）。
+   *      tags / 分类 / 上传时间 / 评分全部原样保留，只更新 FileCopy（渠道副本）；
+   *      v1.1.0 起唯一额外改写的是 uploadSource（转存方向：StoreIn / StoreOut），
+   *      因为它描述的就是「文件现在是怎么落到这个渠道上的」，必须跟着转存一起变。
    *   2) 源文件原封不动传到目标渠道：不压缩、不转码、不转 webp、不改文件名，
    *      沿用源副本的 remoteKey（渠道内标识），因此目标渠道的自定义命名规则不参与。
    *   3) 本地 → 第三方：上传成功后**删除本地实体文件**（需求明确要求，不可选）。
@@ -3653,6 +3740,20 @@ export class UploadService {
     const writeData = { ...this.copyWriteData(staged, targetCh), status: 'active', isPrimary: true };
     // 目标渠道可能已经有副本记录（最典型：目标就是系统配置的备份渠道）
     const existingTarget = rec.copies.find((c) => c.channelId === targetCh.id && c.id !== sourceCopy.id);
+    /*
+     * v1.1.0：转存成功后同步改写文件的「上传方式」（FileRecord.uploadSource）——
+     *   · 异地 → 本地（dstLocal 为真）→ StoreIn  「异地存入」
+     *   · 本地 → 异地（dstLocal 为假）→ StoreOut 「本地转出」
+     *
+     * 需求口径：只要转存成功就按本次方向覆盖，记录「文件当前是通过哪种方式落到手边这份渠道上的」。
+     * 放在同一个数组式事务里提交：副本切换与来源改写要么一起成立、要么一起不成立，
+     * 不会出现「副本已搬到本地、上传方式还写着 WebDAV/Fetch」这种自相矛盾的状态。
+     */
+    const convertSource = dstLocal ? 'StoreIn' : 'StoreOut';
+    const uploadSourceOp = prisma.fileRecord.update({
+      where: { id: rec.id },
+      data: { uploadSource: convertSource },
+    });
     const ops: unknown[] = existingTarget
       ? [
           /*
@@ -3662,6 +3763,7 @@ export class UploadService {
            */
           prisma.fileCopy.update({ where: { id: existingTarget.id }, data: writeData }),
           prisma.fileCopy.delete({ where: { id: sourceCopy.id } }),
+          uploadSourceOp,
         ]
       : [
           // 目标没有记录 → 直接改写主副本记录，不新增、不降级其它副本
@@ -3669,6 +3771,7 @@ export class UploadService {
             where: { id: sourceCopy.id },
             data: { channelId: targetCh.id, ...writeData },
           }),
+          uploadSourceOp,
         ];
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3725,7 +3828,7 @@ export class UploadService {
     appLog.info(
       'channel',
       `文件转存成功：${sourceCh.name}（${sourceCh.type}）→ ${targetCh.name}（${targetCh.type}）`,
-      `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ ${srcSize}B ｜ 第 ${marker.attempts} 次尝试 ｜ 外链不变`,
+      `${deletedSource ? '已删除源件' : '保留源件'} ｜ 文件=${rec.name} ｜ ${srcSize}B ｜ 第 ${marker.attempts} 次尝试 ｜ 上传方式=${convertSource} ｜ 外链不变`,
       input.ip,
     );
 
