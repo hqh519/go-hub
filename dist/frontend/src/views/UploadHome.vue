@@ -279,6 +279,20 @@
                 <font-awesome-icon icon="link" class="upload-method-tab-icon"/>
                 <span>{{ $t('upload.linkTab') }}</span>
             </button>
+            <!--
+                v1.1.1：笔记板块「记录」入口（前台唯一入口）。
+                它不是上传方式，而是切到另一个页面，所以单独成一个 router-link，
+                样式沿用 .upload-method-tab（加 .is-page-link 做视觉分隔），
+                前台首页不再堆第二套导航。
+            -->
+            <router-link
+                :to="{ name: 'notes' }"
+                class="upload-method-tab is-page-link"
+                :title="$t('upload.recordTab')"
+            >
+                <font-awesome-icon icon="note-sticky" class="upload-method-tab-icon"/>
+                <span>{{ $t('upload.recordTab') }}</span>
+            </router-link>
         </div>
         <!-- v2.8.9：convertToWebp 改用 v-model —— 原先只传 prop 未监听 update 事件，顶栏「转为WebP」开关点不动 -->
         <UploadForm
@@ -2345,6 +2359,28 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
 }
 .upload-method-tab-icon {
     font-size: 14px;
+}
+/* v1.1.1：「记录」入口是切页链接，不是上传方式 —— 用左侧细线做视觉分隔，避免被当成第三种上传方式 */
+.upload-method-tab.is-page-link {
+    text-decoration: none;
+    margin-left: 2px;
+    padding-left: 20px;
+    position: relative;
+}
+.upload-method-tab.is-page-link:before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 20%;
+    height: 60%;
+    width: 1px;
+    background: var(--glass-border, rgba(0, 0, 0, 0.1));
+}
+.upload-method-tab.is-page-link:focus,
+.upload-method-tab.is-page-link:focus-visible,
+.upload-method-tab.is-page-link:active {
+    outline: none;
+    box-shadow: none;
 }
 @media (max-width: 768px) {
     .upload-stack {

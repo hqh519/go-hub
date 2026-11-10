@@ -416,6 +416,15 @@ const routes = [
     beforeEnter: manageAuthGuard
   },
   {
+    // v1.1.1：笔记管理（「瞬间」便签式笔记）。
+    // 守卫沿用后台页（manageAuthGuard）—— 管理员与普通用户都能进，
+    // 普通用户只看/改自己的瞬间，管理员在实例内看全部；实例隔离由后端按 instanceId 兜底。
+    path: '/notes',
+    name: 'notes',
+    component: () => import('../views/NotesManagePage.vue'),
+    beforeEnter: manageAuthGuard
+  },
+  {
     // 访问记录管理（v2.3.0）：系统状态页的「访问记录」块与「访问次数」统计块
     // 都以新标签打开本页；仅管理员可进。
     path: '/manage/access',

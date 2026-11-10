@@ -332,6 +332,8 @@ model Tag {
   createdAt DateTime @default(now())
 
   files FileTag[]
+  // v1.2.0：笔记板块的标签关联（type='note' 的标签走这里）
+  noteTags NoteTag[]
 
   // v1.0.3：唯一键正式改为「实例 + 类型 + 名称」（数据库层生效）。
   //   · 旧键 [name, instanceId, owner] 已删除 —— 它允许同一实例下不同用户各存一份同名标签，
@@ -497,4 +499,119 @@ model ShareLink {
   @@index([owner])
   @@index([instanceId])
   @@map("share_links")
+}
+
+// ============================================================
+//  笔记板块（v1.2.0 起）
+//
+//  结构：notes 主干（所有笔记类型共用的最小字段集）
+//        + note_moments / note_articles / …（1:1 类型专属扩展）
+//        + note_assets（附件 → files.id）
+//        + note_tags（标签 → tags.id，type='note'）
+//
+//  为什么是「主干 + 扩展」而不是「一张大宽表」或「每种类型一张独立表」：
+//    a) 「全部」视图要按类型混合分页 —— 一张主干表就是一句 findMany 带 skip/take，
+//       分表则要手写 UNION（Prisma 不支持），游标 / 总数 / 排序都得各写一遍；
+//    b) 内容之间要互相引用（收集引用瞬间、文章引用待办…），引用一律指向 notes.id，
+//       一次查询搞定，不用 targetType 二次分发；
+//    c) 回收站 / 标签 / 通知 / 搜索都是跨类型能力，分表等于每个功能写 N 遍。
+//  反过来，类型专属字段（文章的 title/excerpt/slug…）不进主干：
+//   「五种类型里有三种以上要用」才放主干，否则会让别的类型 80% 的列长期为 null。
+//
+//  附件只存 fileId（files.id，cuid 永不变），**不存 objectPath / 完整 URL**：
+//   objectPath 是渠道内相对路径，执行一次「转存 / 存入本地」就变了；
+//   完整 URL 会把访问域名写死。渲染时按 fileId → 当前 FileRecord.name 拼 /file/<name>，
+//   于是文件改名、换渠道、换自定义域名，历史笔记都不会挂图。
+// ============================================================
+
+/// 笔记主干（所有笔记类型共用）
+model Note {
+  id            String    @id @default(cuid())
+  /// moment | article | collection | nav | todo | board（只有 moment 在本版实现，其余为预留）
+  kind          String
+  /// 正文：瞬间 = 纯文本；文章 / 备注 = markdown
+  content       String    @default("")
+  /// 封面 → files.id（空 = 无封面）
+  coverFileId   String    @default("")
+  /// private | public | specified（本版只落 private / public，公开页后续版本再做）
+  visibility    String    @default("private")
+  /// draft | published | deleted（deleted = 在回收站，可恢复）
+  status        String    @default("published")
+  /// 作者（用户名；空 = 系统）
+  author        String    @default("")
+  /// 所属实例（空 = 默认实例）—— 与文件体系同一套实例隔离口径
+  instanceId    String    @default("")
+  /// 乐观并发版本号：每次保存 +1（协作编辑的锁/冲突检测后续版本会用）
+  version       Int       @default(1)
+  publishedAt   DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  /// 扩展数据（JSON 字符串）。需要筛选/排序的字段必须独立成列，不要塞这里
+  metas         String    @default("{}")
+
+  moment NoteMoment?
+  assets NoteAsset[]
+  tags   NoteTag[]
+
+  /// 类型 tab + 时间排序（「全部」视图走 kind 前缀，单类型走等值）
+  @@index([instanceId, kind, status, publishedAt])
+  /// 作者视角列表 / 「我的笔记」
+  @@index([instanceId, author, status, publishedAt])
+  /// 回收站
+  @@index([instanceId, status, deletedAt, createdAt])
+  @@map("notes")
+}
+
+/// 瞬间专属（1:1）
+model NoteMoment {
+  noteId    String @id
+  /// 冗余列：发布/编辑时算一次写死 —— 列表筛选与排版直接读，不用每次翻页都聚合附件表
+  /// text | image | video | audio | mixed
+  mediaKind String @default("text")
+  assetCount Int   @default(0)
+  /// 正文字数（只数汉字 + 字母 + 数字，不含标点与符号 —— 与前端计数同一套规则）
+  charCount Int    @default(0)
+  /// 枚举字符串，不存 emoji（emoji 只是前端的展示形态）
+  weather   String @default("")
+  mood      String @default("")
+  location  String @default("")
+  note      Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([mediaKind])
+  @@map("note_moments")
+}
+
+/// 笔记附件（→ files.id）
+///
+/// 刻意**不建**到 files 的外键：文件「彻底删除」是物理删除，
+/// 建了外键会让删除失败（或者被迫级联删掉笔记里的引用记录）。
+/// 这里保留松散引用 + fileId 索引：读的时候批量反查文件，文件没了就跳过这一格；
+/// 反查索引同时支撑「这个文件被哪些笔记引用」。
+model NoteAsset {
+  id     String @id @default(cuid())
+  noteId String
+  /// → files.id
+  fileId String
+  sort   Int    @default(0)
+  /// attachment | cover | inline（本版只用 attachment / cover）
+  usage  String @default("attachment")
+  note   Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, fileId])
+  @@index([noteId, sort])
+  @@index([fileId])
+  @@map("note_assets")
+}
+
+/// 笔记-标签关联（标签本体复用 Tag，type='note'）
+model NoteTag {
+  noteId String
+  tagId  String
+  note   Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, tagId])
+  @@index([tagId])
+  @@map("note_tags")
 }

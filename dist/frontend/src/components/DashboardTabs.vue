@@ -113,6 +113,8 @@ export default {
             // 「系统管理」仅管理员可见。
             const base = [
                 { name: 'dashboard', icon: 'images', label: 'dashboardTabs.fileManagement' },
+                // v1.1.1：笔记管理（「瞬间」便签式笔记）—— 排在「文件管理」之后
+                { name: 'notes', icon: 'note-sticky', label: 'dashboardTabs.notesManagement' },
             ];
             // 「本地文件」页：管理员恒显示（页面内会提示「还没有本地文件渠道」）；
             // 普通用户仅在存在被授权的本地文件渠道时显示

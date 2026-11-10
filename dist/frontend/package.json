@@ -1,6 +1,6 @@
 {
   "name": "gohub-frontend",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "description": "GoHub 前端（基于 Sanyue-ImgHub 改造，Vite 构建）",

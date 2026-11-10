@@ -52,6 +52,8 @@ import { faEye } from '@fortawesome/free-solid-svg-icons/faEye';
 import { faEyeSlash } from '@fortawesome/free-solid-svg-icons/faEyeSlash';
 import { faFile } from '@fortawesome/free-solid-svg-icons/faFile';
 import { faFileAlt } from '@fortawesome/free-solid-svg-icons/faFileAlt';
+// v1.1.1：笔记管理（「瞬间」）的顶栏图标
+import { faNoteSticky } from '@fortawesome/free-solid-svg-icons/faNoteSticky';
 import { faFileExport } from '@fortawesome/free-solid-svg-icons/faFileExport';
 import { faFileSignature } from '@fortawesome/free-solid-svg-icons/faFileSignature';
 import { faFilter } from '@fortawesome/free-solid-svg-icons/faFilter';
@@ -179,6 +181,7 @@ export default [
     faEyeSlash,
     faFile,
     faFileAlt,
+    faNoteSticky,
     faFileExport,
     faFileSignature,
     faFilter,

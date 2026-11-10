@@ -26,6 +26,9 @@ import { InstancesModule } from './instances/instances.module';
 import { SharesModule } from './shares/shares.module';
 // v3.0.0 本地文件系统：浏览 / 预览 / 批量上传到图床（/api/localfiles）
 import { LocalFilesController } from './localfiles/localfiles.controller';
+// v1.2.0 笔记板块（首发热身：瞬间）—— /api/notes
+import { NotesController } from './notes/notes.controller';
+import { NotesService } from './notes/notes.service';
 
 @Module({
   imports: [InstancesModule, SharesModule],
@@ -51,6 +54,7 @@ import { LocalFilesController } from './localfiles/localfiles.controller';
     AccessAdminController,
     MailController,
     LocalFilesController,
+    NotesController,
   ],
   providers: [
     SettingsService,
@@ -61,6 +65,7 @@ import { LocalFilesController } from './localfiles/localfiles.controller';
     OptionalAuthGuard,
     AccessService,
     MailService,
+    NotesService,
   ],
 })
 export class AppModule {}

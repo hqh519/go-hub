@@ -1,0 +1,537 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NotesService = void 0;
+const common_1 = require("@nestjs/common");
+const prisma_1 = require("../common/prisma");
+const app_log_1 = require("../common/app-log");
+const tags_1 = require("../common/tags");
+const file_view_1 = require("../common/file-view");
+const notes_util_1 = require("./notes.util");
+const SORTABLE = {
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt',
+    publishedAt: 'publishedAt',
+};
+const FILE_SELECT = {
+    id: true,
+    name: true,
+    originalName: true,
+    mime: true,
+    size: true,
+};
+let NotesService = class NotesService {
+    async momentMaxChars() {
+        try {
+            const row = await prisma_1.prisma.setting.findUnique({ where: { key: 'notesMomentMaxChars' } });
+            const n = Number(row?.value);
+            if (Number.isFinite(n) && n >= 50 && n <= 20000)
+                return Math.round(n);
+        }
+        catch {
+        }
+        return notes_util_1.DEFAULT_MOMENT_MAX_CHARS;
+    }
+    async resolveAssetFiles(rawIds, instanceId) {
+        const ids = Array.from(new Set((rawIds || []).map((x) => String(x || '').trim()).filter(Boolean)));
+        if (!ids.length)
+            return { ordered: [], missing: [] };
+        const rows = await prisma_1.prisma.fileRecord.findMany({
+            where: {
+                instanceId,
+                status: 'active',
+                OR: [{ id: { in: ids } }, { name: { in: ids } }],
+            },
+            select: FILE_SELECT,
+        });
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        const byName = new Map(rows.map((r) => [r.name, r]));
+        const ordered = [];
+        const missing = [];
+        const seen = new Set();
+        for (const raw of ids) {
+            const hit = byId.get(raw) || byName.get(raw);
+            if (!hit) {
+                missing.push(raw);
+                continue;
+            }
+            if (seen.has(hit.id))
+                continue;
+            seen.add(hit.id);
+            ordered.push(hit);
+        }
+        return { ordered, missing };
+    }
+    async resolveFiles(fileIds) {
+        const ids = Array.from(new Set((fileIds || []).filter(Boolean)));
+        const map = new Map();
+        if (!ids.length)
+            return map;
+        const rows = await prisma_1.prisma.fileRecord.findMany({
+            where: { id: { in: ids } },
+            select: FILE_SELECT,
+        });
+        for (const r of rows) {
+            const kind = (0, notes_util_1.mediaKindOfMime)(r.mime);
+            map.set(r.id, {
+                fileId: r.id,
+                url: (0, notes_util_1.fileUrlOf)(r.name),
+                thumbUrl: (0, notes_util_1.fileUrlOf)(r.name, kind === 'image' ? 480 : undefined),
+                name: r.name,
+                originalName: r.originalName,
+                mime: r.mime,
+                size: r.size,
+                mediaKind: kind,
+                alive: true,
+            });
+        }
+        return map;
+    }
+    async toListItem(row) {
+        const assets = [];
+        const map = await this.resolveFiles((row.assets || []).map((a) => a.fileId));
+        for (const a of row.assets || []) {
+            const hit = map.get(a.fileId);
+            if (hit)
+                assets.push(hit);
+        }
+        return {
+            id: row.id,
+            kind: row.kind,
+            title: String((0, notes_util_1.safeParse)(row.metas).title || ''),
+            content: row.content || '',
+            coverFileId: row.coverFileId || '',
+            visibility: row.visibility || 'private',
+            status: row.status,
+            author: row.author || '',
+            instanceId: row.instanceId || '',
+            version: Number(row.version) || 1,
+            publishedAt: row.publishedAt ? new Date(row.publishedAt).getTime() : 0,
+            createdAt: row.createdAt ? new Date(row.createdAt).getTime() : 0,
+            updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : 0,
+            moment: row.moment
+                ? {
+                    mediaKind: row.moment.mediaKind || 'text',
+                    assetCount: Number(row.moment.assetCount) || assets.length,
+                    charCount: Number(row.moment.charCount) || 0,
+                    weather: row.moment.weather || '',
+                    mood: row.moment.mood || '',
+                    location: row.moment.location || '',
+                }
+                : null,
+            assets,
+            tags: (row.tags || []).map((t) => ({ id: t.tag?.id || t.tagId, name: t.tag?.name || '' })).filter((t) => t.name),
+        };
+    }
+    buildWhere(input) {
+        const where = {
+            instanceId: String(input.instanceId || ''),
+        };
+        if (input.kind)
+            where.kind = String(input.kind);
+        where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
+        if (!input.isAdmin)
+            where.author = String(input.viewer || '');
+        if (input.search) {
+            const s = String(input.search);
+            where.OR = [
+                { content: { contains: s, mode: 'insensitive' } },
+                { metas: { contains: s, mode: 'insensitive' } },
+            ];
+        }
+        if (input.mediaKind)
+            where.moment = { mediaKind: String(input.mediaKind) };
+        if (input.tagId)
+            where.tags = { some: { tagId: String(input.tagId) } };
+        if (input.from || input.to) {
+            const range = {};
+            if (input.from) {
+                const d = new Date(input.from);
+                if (!Number.isNaN(d.getTime()))
+                    range.gte = d;
+            }
+            if (input.to) {
+                const d = new Date(input.to);
+                if (!Number.isNaN(d.getTime())) {
+                    d.setHours(23, 59, 59, 999);
+                    range.lte = d;
+                }
+            }
+            if (Object.keys(range).length)
+                where.createdAt = range;
+        }
+        return where;
+    }
+    async list(input) {
+        const where = this.buildWhere(input);
+        const page = Math.max(1, Math.floor(Number(input.page) || 1));
+        const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 20)));
+        const sortKey = SORTABLE[String(input.sort || '')] || 'createdAt';
+        const order = String(input.order || 'desc') === 'asc' ? 'asc' : 'desc';
+        const [total, rows] = await Promise.all([
+            prisma_1.prisma.note.count({ where: where }),
+            prisma_1.prisma.note.findMany({
+                where: where,
+                orderBy: { [sortKey]: order },
+                skip: (page - 1) * pageSize,
+                take: pageSize,
+                include: {
+                    moment: true,
+                    assets: { orderBy: { sort: 'asc' } },
+                    tags: { include: { tag: true } },
+                },
+            }),
+        ]);
+        const allFileIds = rows.flatMap((r) => (r.assets || []).map((a) => a.fileId));
+        const fileMap = await this.resolveFiles(allFileIds);
+        const list = rows.map((row) => {
+            const assets = [];
+            for (const a of row.assets || []) {
+                const hit = fileMap.get(a.fileId);
+                if (hit)
+                    assets.push(hit);
+            }
+            return this.shape(row, assets);
+        });
+        return { total, page, pageSize, list };
+    }
+    shape(row, assets) {
+        return {
+            id: row.id,
+            kind: row.kind,
+            title: String((0, notes_util_1.safeParse)(row.metas).title || ''),
+            content: row.content || '',
+            coverFileId: row.coverFileId || '',
+            visibility: row.visibility || 'private',
+            status: row.status,
+            author: row.author || '',
+            instanceId: row.instanceId || '',
+            version: Number(row.version) || 1,
+            publishedAt: row.publishedAt ? new Date(row.publishedAt).getTime() : 0,
+            createdAt: row.createdAt ? new Date(row.createdAt).getTime() : 0,
+            updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : 0,
+            moment: row.moment
+                ? {
+                    mediaKind: row.moment.mediaKind || 'text',
+                    assetCount: Number(row.moment.assetCount) || assets.length,
+                    charCount: Number(row.moment.charCount) || 0,
+                    weather: row.moment.weather || '',
+                    mood: row.moment.mood || '',
+                    location: row.moment.location || '',
+                }
+                : null,
+            assets,
+            tags: (row.tags || [])
+                .map((t) => ({ id: t.tag?.id || t.tagId, name: t.tag?.name || '' }))
+                .filter((t) => t.name),
+        };
+    }
+    async detail(id, viewer, isAdmin, instanceId) {
+        const row = await prisma_1.prisma.note.findFirst({
+            where: {
+                id: String(id || ''),
+                instanceId: String(instanceId || ''),
+                ...(isAdmin ? {} : { author: String(viewer || '') }),
+            },
+            include: {
+                moment: true,
+                assets: { orderBy: { sort: 'asc' } },
+                tags: { include: { tag: true } },
+            },
+        });
+        if (!row)
+            return null;
+        return this.toListItem(row);
+    }
+    async createMoment(input, viewer, ip) {
+        const instanceId = String(input.instanceId || '');
+        const maxChars = await this.momentMaxChars();
+        const content = String(input.content ?? '');
+        const charCount = (0, notes_util_1.countTextChars)(content);
+        if (charCount > maxChars) {
+            return { error: `正文超出上限：当前 ${charCount} 字，上限 ${maxChars} 字（标点与符号不计入）` };
+        }
+        const assetIds = Array.isArray(input.assetIds) ? Array.from(new Set(input.assetIds.map(String).filter(Boolean))) : [];
+        if (assetIds.length > notes_util_1.MAX_ASSETS_PER_NOTE) {
+            return { error: `附件过多：当前 ${assetIds.length} 个，上限 ${notes_util_1.MAX_ASSETS_PER_NOTE} 个` };
+        }
+        if (!content.trim() && assetIds.length === 0) {
+            return { error: '瞬间内容不能为空：请填写文字或添加附件' };
+        }
+        const resolved = await this.resolveAssetFiles(assetIds, instanceId);
+        if (resolved.missing.length) {
+            return { error: `有 ${resolved.missing.length} 个附件不存在或不属于当前实例，请重新选择` };
+        }
+        const ordered = resolved.ordered;
+        const mediaKind = (0, notes_util_1.mediaKindOf)(ordered.map((f) => f.mime));
+        const tagNames = (0, notes_util_1.normalizeTagNames)(input.tagNames);
+        const tagRows = [];
+        for (const name of tagNames) {
+            tagRows.push(await (0, tags_1.findOrCreateTag)(name, instanceId, viewer, 'note'));
+        }
+        const visibility = notes_util_1.NOTE_VISIBILITIES.includes(String(input.visibility || ''))
+            ? String(input.visibility)
+            : 'private';
+        const now = new Date();
+        try {
+            const created = await prisma_1.prisma.note.create({
+                data: {
+                    kind: 'moment',
+                    content,
+                    coverFileId: ordered.find((f) => (0, notes_util_1.mediaKindOfMime)(f.mime) === 'image')?.id || '',
+                    visibility,
+                    status: 'published',
+                    author: viewer,
+                    instanceId,
+                    publishedAt: now,
+                    metas: JSON.stringify({ title: String(input.title || '').trim().slice(0, 80) }),
+                    moment: {
+                        create: {
+                            mediaKind,
+                            assetCount: ordered.length,
+                            charCount,
+                            mood: String(input.mood || '').slice(0, 32),
+                            weather: String(input.weather || '').slice(0, 32),
+                            location: String(input.location || '').slice(0, 80),
+                        },
+                    },
+                    assets: {
+                        create: ordered.map((f, idx) => ({ fileId: f.id, sort: idx, usage: 'attachment' })),
+                    },
+                    tags: {
+                        create: tagRows.map((t) => ({ tagId: t.id })),
+                    },
+                },
+                select: { id: true },
+            });
+            app_log_1.appLog.info('note', `发布瞬间成功：${created.id}`, `正文 ${charCount} 字 ｜ 附件 ${ordered.length} 个（${mediaKind}）｜ 标签 ${tagRows.length} 个 ｜ 实例=${instanceId || '默认'}`, ip);
+            return { id: created.id };
+        }
+        catch (err) {
+            app_log_1.appLog.error('note', '发布瞬间失败', `${err.message} ｜ 作者=${viewer}`, ip);
+            return { error: `发布失败：${err.message}` };
+        }
+    }
+    async updateMoment(id, input, viewer, isAdmin, ip) {
+        const existing = await prisma_1.prisma.note.findUnique({
+            where: { id: String(id || '') },
+            include: { assets: true },
+        });
+        if (!existing || existing.kind !== 'moment')
+            return { error: '瞬间不存在' };
+        if (existing.status === 'deleted')
+            return { error: '该瞬间在回收站里，请先恢复再编辑' };
+        if (!isAdmin && existing.author !== viewer)
+            return { error: '无权编辑他人的瞬间' };
+        if (String(input.instanceId || '') !== String(existing.instanceId || '')) {
+            return { error: '实例不匹配，请刷新后重试' };
+        }
+        const instanceId = existing.instanceId || '';
+        const maxChars = await this.momentMaxChars();
+        const content = input.content === undefined ? existing.content : String(input.content);
+        const charCount = (0, notes_util_1.countTextChars)(content);
+        if (charCount > maxChars) {
+            return { error: `正文超出上限：当前 ${charCount} 字，上限 ${maxChars} 字（标点与符号不计入）` };
+        }
+        const assetIds = input.assetIds === undefined
+            ? null
+            : Array.from(new Set((input.assetIds || []).map(String).filter(Boolean)));
+        if (assetIds && assetIds.length > notes_util_1.MAX_ASSETS_PER_NOTE) {
+            return { error: `附件过多：当前 ${assetIds.length} 个，上限 ${notes_util_1.MAX_ASSETS_PER_NOTE} 个` };
+        }
+        if (!content.trim() && assetIds !== null && assetIds.length === 0) {
+            return { error: '瞬间内容不能为空：请填写文字或添加附件' };
+        }
+        let ordered = null;
+        if (assetIds) {
+            const resolved = await this.resolveAssetFiles(assetIds, instanceId);
+            if (resolved.missing.length)
+                return { error: '有附件不存在或不属于当前实例，请重新选择' };
+            ordered = resolved.ordered;
+        }
+        const finalAssetIds = assetIds || existing.assets.map((a) => a.fileId);
+        const finalFiles = assetIds
+            ? ordered
+            : await prisma_1.prisma.fileRecord.findMany({ where: { id: { in: finalAssetIds } }, select: FILE_SELECT });
+        const mediaKind = (0, notes_util_1.mediaKindOf)(finalFiles.map((f) => f.mime));
+        const tagNames = input.tagNames === undefined ? null : (0, notes_util_1.normalizeTagNames)(input.tagNames);
+        const tagRows = [];
+        if (tagNames) {
+            for (const name of tagNames)
+                tagRows.push(await (0, tags_1.findOrCreateTag)(name, instanceId, viewer, 'note'));
+        }
+        const visibility = input.visibility !== undefined && notes_util_1.NOTE_VISIBILITIES.includes(String(input.visibility))
+            ? String(input.visibility)
+            : existing.visibility;
+        try {
+            await prisma_1.prisma.note.update({
+                where: { id: existing.id },
+                data: {
+                    content,
+                    visibility,
+                    coverFileId: finalFiles.find((f) => (0, notes_util_1.mediaKindOfMime)(f.mime) === 'image')?.id || '',
+                    version: { increment: 1 },
+                    ...(input.title === undefined
+                        ? {}
+                        : { metas: JSON.stringify({ ...(0, notes_util_1.safeParse)(existing.metas), title: String(input.title).trim().slice(0, 80) }) }),
+                    moment: {
+                        upsert: {
+                            create: {
+                                mediaKind,
+                                assetCount: finalFiles.length,
+                                charCount,
+                                mood: String(input.mood || '').slice(0, 32),
+                                weather: String(input.weather || '').slice(0, 32),
+                                location: String(input.location || '').slice(0, 80),
+                            },
+                            update: {
+                                mediaKind,
+                                assetCount: finalFiles.length,
+                                charCount,
+                                ...(input.mood === undefined ? {} : { mood: String(input.mood).slice(0, 32) }),
+                                ...(input.weather === undefined ? {} : { weather: String(input.weather).slice(0, 32) }),
+                                ...(input.location === undefined ? {} : { location: String(input.location).slice(0, 80) }),
+                            },
+                        },
+                    },
+                    ...(assetIds && ordered
+                        ? {
+                            assets: {
+                                deleteMany: {},
+                                create: ordered.map((f, idx) => ({ fileId: f.id, sort: idx, usage: 'attachment' })),
+                            },
+                        }
+                        : {}),
+                    ...(tagRows
+                        ? {
+                            tags: {
+                                deleteMany: {},
+                                create: tagRows.map((t) => ({ tagId: t.id })),
+                            },
+                        }
+                        : {}),
+                },
+            });
+            app_log_1.appLog.info('note', `编辑瞬间成功：${existing.id}`, `正文 ${charCount} 字 ｜ 附件 ${finalFiles.length} 个（${mediaKind}）`, ip);
+            return { id: existing.id };
+        }
+        catch (err) {
+            app_log_1.appLog.error('note', '编辑瞬间失败', `${err.message} ｜ ID=${existing.id}`, ip);
+            return { error: `保存失败：${err.message}` };
+        }
+    }
+    async findOwned(id, viewer, isAdmin) {
+        const row = await prisma_1.prisma.note.findUnique({ where: { id: String(id || '') } });
+        if (!row)
+            return { error: '瞬间不存在' };
+        if (!isAdmin && row.author !== viewer)
+            return { error: '无权操作他人的瞬间' };
+        return { row };
+    }
+    async softDelete(id, viewer, isAdmin, ip) {
+        const hit = await this.findOwned(id, viewer, isAdmin);
+        if ('error' in hit)
+            return { error: hit.error };
+        await prisma_1.prisma.note.update({
+            where: { id: hit.row.id },
+            data: { status: 'deleted', deletedAt: new Date() },
+        });
+        app_log_1.appLog.info('note', `瞬间移入回收站：${hit.row.id}`, `作者=${hit.row.author}`, ip);
+        return { id: hit.row.id };
+    }
+    async restore(id, viewer, isAdmin, ip) {
+        const hit = await this.findOwned(id, viewer, isAdmin);
+        if ('error' in hit)
+            return { error: hit.error };
+        await prisma_1.prisma.note.update({
+            where: { id: hit.row.id },
+            data: { status: 'published', deletedAt: null },
+        });
+        app_log_1.appLog.info('note', `恢复瞬间：${hit.row.id}`, `作者=${hit.row.author}`, ip);
+        return { id: hit.row.id };
+    }
+    async purge(id, viewer, isAdmin, ip) {
+        const hit = await this.findOwned(id, viewer, isAdmin);
+        if ('error' in hit)
+            return { error: hit.error };
+        await prisma_1.prisma.note.delete({ where: { id: hit.row.id } });
+        app_log_1.appLog.info('note', `彻底删除瞬间：${hit.row.id}`, `作者=${hit.row.author}`, ip);
+        return { ok: true };
+    }
+    async tagCandidates(instanceId) {
+        const rows = await prisma_1.prisma.tag.findMany({
+            where: { instanceId: String(instanceId || ''), type: 'note' },
+            select: { id: true, name: true, _count: { select: { noteTags: true } } },
+            orderBy: { createdAt: 'desc' },
+            take: 200,
+        });
+        return rows
+            .map((r) => ({ id: r.id, name: r.name, count: r._count.noteTags }))
+            .sort((a, b) => b.count - a.count);
+    }
+    async pickFiles(input) {
+        const page = Math.max(1, Math.floor(Number(input.page) || 1));
+        const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 24)));
+        const where = {
+            status: 'active',
+            instanceId: String(input.instanceId || ''),
+        };
+        if (!input.isAdmin)
+            where.uploader = String(input.viewer || '');
+        if (input.search) {
+            where.OR = [
+                { originalName: { contains: String(input.search), mode: 'insensitive' } },
+                { name: { contains: String(input.search), mode: 'insensitive' } },
+            ];
+        }
+        const type = String(input.type || '');
+        if (type === 'image')
+            where.mime = { startsWith: 'image/' };
+        else if (type === 'video')
+            where.mime = { startsWith: 'video/' };
+        else if (type === 'audio')
+            where.mime = { startsWith: 'audio/' };
+        const [total, rows] = await Promise.all([
+            prisma_1.prisma.fileRecord.count({ where: where }),
+            prisma_1.prisma.fileRecord.findMany({
+                where: where,
+                orderBy: { createdAt: 'desc' },
+                skip: (page - 1) * pageSize,
+                take: pageSize,
+                select: { ...FILE_SELECT, createdAt: true },
+            }),
+        ]);
+        return {
+            total,
+            page,
+            pageSize,
+            list: rows.map((r) => {
+                const kind = (0, notes_util_1.mediaKindOfMime)(r.mime);
+                return {
+                    id: r.id,
+                    name: r.name,
+                    originalName: r.originalName,
+                    mime: r.mime,
+                    size: r.size,
+                    mediaKind: kind,
+                    url: (0, notes_util_1.fileUrlOf)(r.name),
+                    thumbUrl: (0, notes_util_1.fileUrlOf)(r.name, kind === 'image' ? 320 : undefined),
+                    createdAt: new Date(r.createdAt).getTime(),
+                    fileType: (0, file_view_1.fileTypeOf)(r.mime),
+                };
+            }),
+        };
+    }
+    readMetas(raw) {
+        return (0, notes_util_1.safeParse)(raw, {});
+    }
+};
+exports.NotesService = NotesService;
+exports.NotesService = NotesService = __decorate([
+    (0, common_1.Injectable)()
+], NotesService);
