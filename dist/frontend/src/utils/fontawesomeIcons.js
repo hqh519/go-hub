@@ -21,6 +21,7 @@ import { faCheckSquare } from '@fortawesome/free-solid-svg-icons/faCheckSquare';
 import { faChevronDown } from '@fortawesome/free-solid-svg-icons/faChevronDown';
 import { faChevronLeft } from '@fortawesome/free-solid-svg-icons/faChevronLeft';
 import { faChevronRight } from '@fortawesome/free-solid-svg-icons/faChevronRight';
+import { faChevronUp } from '@fortawesome/free-solid-svg-icons/faChevronUp';
 import { faCircleHalfStroke } from '@fortawesome/free-solid-svg-icons/faCircleHalfStroke';
 import { faCrop } from '@fortawesome/free-solid-svg-icons/faCrop';
 import { faFilm } from '@fortawesome/free-solid-svg-icons/faFilm';
@@ -62,6 +63,11 @@ import { faFolderOpen } from '@fortawesome/free-solid-svg-icons/faFolderOpen';
 import { faFileCirclePlus } from '@fortawesome/free-solid-svg-icons/faFileCirclePlus';
 import { faCamera } from '@fortawesome/free-solid-svg-icons/faCamera';
 import { faHeart } from '@fortawesome/free-solid-svg-icons/faHeart';
+// v1.1.2.1：笔记设置（分类图标 + 入口图标）
+import { faSlidersH } from '@fortawesome/free-solid-svg-icons/faSlidersH';
+import { faBolt } from '@fortawesome/free-solid-svg-icons/faBolt';
+import { faCompass } from '@fortawesome/free-solid-svg-icons/faCompass';
+import { faLayerGroup } from '@fortawesome/free-solid-svg-icons/faLayerGroup';
 // v3.0.0（R12）：卡片上的评分/级别图标改为「空心」—— 需要 regular 风格的同名图标
 import { faStar as farStar } from '@fortawesome/free-regular-svg-icons/faStar';
 import { faHeart as farHeart } from '@fortawesome/free-regular-svg-icons/faHeart';
@@ -148,6 +154,7 @@ export default [
     faChevronDown,
     faChevronLeft,
     faChevronRight,
+    faChevronUp,
     faCircleHalfStroke,
     faCrop,
     faFilm,
@@ -256,5 +263,10 @@ export default [
     farHeart,
     faAdjust,
     faVolumeMute,
-    faVolumeUp
+    faVolumeUp,
+    // v1.1.2.1：笔记设置
+    faSlidersH,
+    faBolt,
+    faCompass,
+    faLayerGroup
 ];

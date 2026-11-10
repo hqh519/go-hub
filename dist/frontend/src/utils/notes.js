@@ -8,14 +8,64 @@
  * 后端是权威校验，前端这份只用于实时计数与预览。
  */
 
-/** 瞬间正文字数上限（后端可在设置里改，这里只是前端默认值与提示用） */
-export const MOMENT_MAX_CHARS = 500
+/**
+ * 瞬间正文字数上限（后端可在设置里改，这里只是前端默认值与提示用）。
+ * v1.1.2：500 → 1000（口径不变，仍只数「中文 + 字母 + 数字」）。
+ */
+export const MOMENT_MAX_CHARS = 1000
 
 /** 单篇附件上限（与后端 MAX_ASSETS_PER_NOTE 一致） */
 export const MAX_ASSETS_PER_NOTE = 50
 
+/** 瞬间留言的字数上限（v1.1.2 新增，与后端 MAX_COMMENT_CHARS 一致） */
+export const COMMENT_MAX_CHARS = 500
+
 /** 九宫格一屏最多显示几个，超出部分进灯箱浏览 */
 export const GRID_MAX = 9
+
+/**
+ * 瞬间「文字区」的最大高度占比（固定 30%，不进笔记设置）。
+ * v1.1.2.3 起口径放大为**整块文字区**：从卡片顶部的边框 / 分割线开始，
+ * 到正文下方的「全文 / 收起」按钮那一行为止 —— 标题、心情天气、正文、按钮都算在内，
+ * 附件区与留言区不算。超过就折叠正文并显示「全文」按钮。
+ */
+export const MOMENT_TEXT_MAX_RATIO = 0.3
+
+/**
+ * 留言区默认展示高度占比（v1.1.2.3，固定 20%，不进笔记设置）。
+ * 留言多到超过这个高度时只显示「更多」，点开才把剩下的全部铺开。
+ */
+export const COMMENT_BLOCK_MAX_RATIO = 0.2
+
+/**
+ * 「回复某条留言」的文本前缀（v1.1.2.3）。
+ *
+ * 为什么用文本前缀而不是给 note_comments 加 parentId：
+ *   · 加列就要写迁移，升级时用户得先跑一次 prisma migrate 才能启动服务，
+ *     为一个「朋友圈式回复」付这个代价不划算；
+ *   · 微信朋友圈本身也是把「回复 @某某：」写在留言正文里，展示效果一致；
+ *   · 前端 parseCommentContent 反向解析出「回复给谁 + 正文」，
+ *     渲染成两段样式，用户看到的是结构化的一条回复。
+ */
+export function buildReplyContent(name, text) {
+  const who = String(name || '').trim()
+  const body = String(text || '')
+  if (!who) return body
+  return `回复 @${who}：${body}`
+}
+
+/**
+ * 解析一条留言的内容：
+ *   · 普通留言 → { replyTo: '', text: content }
+ *   · 回复留言 → { replyTo: '张三', text: '正文' }
+ * 只匹配我们自己拼出来的前缀，其它内容原样当正文，不做任何假设。
+ */
+export function parseCommentContent(content) {
+  const s = String(content ?? '')
+  const hit = s.match(/^回复 @([^：:\n]{1,40})[：:]([\s\S]*)$/)
+  if (!hit) return { replyTo: '', text: s }
+  return { replyTo: hit[1], text: hit[2] }
+}
 
 /**
  * 正文字数统计：只数「汉字 + 字母 + 数字」。

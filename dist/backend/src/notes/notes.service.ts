@@ -26,12 +26,14 @@ import { fileTypeOf } from '../common/file-view';
 import {
   DEFAULT_MOMENT_MAX_CHARS,
   MAX_ASSETS_PER_NOTE,
+  MAX_COMMENT_CHARS,
   NOTE_VISIBILITIES,
   countTextChars,
   fileUrlOf,
   mediaKindOf,
   mediaKindOfMime,
   normalizeTagNames,
+  normalizeNoteSettings,
   safeParse,
 } from './notes.util';
 
@@ -73,11 +75,34 @@ export interface NoteListItem {
     charCount: number;
     weather: string;
     mood: string;
+    /** v1.1.2：心情 / 天气的名称（「开心」「晴」…），入参时由前端一并送来 */
+    weatherName: string;
+    moodName: string;
     location: string;
   } | null;
   assets: NoteAssetView[];
   tags: { id: string; name: string }[];
+  /**
+   * v1.1.2.3：留言（内联展示在卡片底部）。
+   * 列表一次批量取回，前端不再逐条请求（一页 20 条 × 每条一次请求 = 20 个请求）。
+   */
+  comments: NoteCommentView[];
+  /** 留言总数（可能大于 comments.length —— 单条笔记最多带 100 条，超出由前端按需补拉） */
+  commentCount: number;
 }
+
+/** 列表里带的留言形态（字段与 listComments 完全一致，前端一套渲染逻辑） */
+export interface NoteCommentView {
+  id: string;
+  content: string;
+  charCount: number;
+  author: string;
+  createdAt: number;
+  mine: boolean;
+}
+
+/** 一条瞬间最多随列表带多少条留言（超出部分按需补拉，避免一页几百 KB） */
+export const LIST_COMMENT_MAX = 100;
 
 export interface ListInput {
   kind?: string;
@@ -103,6 +128,9 @@ export interface MomentInput {
   content?: string;
   mood?: string;
   weather?: string;
+  /** v1.1.2：心情 / 天气的名称（与 mood/weather 成对写入，供以后筛选统计） */
+  moodName?: string;
+  weatherName?: string;
   location?: string;
   visibility?: string;
   assetIds?: string[];
@@ -213,40 +241,21 @@ export class NotesService {
   }
 
   /** 把数据库行转成前端契约（附件缺文件时跳过该格，不让整条崩掉） */
-  private async toListItem(row: any): Promise<NoteListItem> {
+  private async toListItem(row: any, viewer = ''): Promise<NoteListItem> {
     const assets: NoteAssetView[] = [];
     const map = await this.resolveFiles((row.assets || []).map((a: any) => a.fileId));
     for (const a of row.assets || []) {
       const hit = map.get(a.fileId);
       if (hit) assets.push(hit);
     }
-    return {
-      id: row.id,
-      kind: row.kind,
-      title: String(safeParse(row.metas).title || ''),
-      content: row.content || '',
-      coverFileId: row.coverFileId || '',
-      visibility: row.visibility || 'private',
-      status: row.status,
-      author: row.author || '',
-      instanceId: row.instanceId || '',
-      version: Number(row.version) || 1,
-      publishedAt: row.publishedAt ? new Date(row.publishedAt).getTime() : 0,
-      createdAt: row.createdAt ? new Date(row.createdAt).getTime() : 0,
-      updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : 0,
-      moment: row.moment
-        ? {
-            mediaKind: row.moment.mediaKind || 'text',
-            assetCount: Number(row.moment.assetCount) || assets.length,
-            charCount: Number(row.moment.charCount) || 0,
-            weather: row.moment.weather || '',
-            mood: row.moment.mood || '',
-            location: row.moment.location || '',
-          }
-        : null,
-      assets,
-      tags: (row.tags || []).map((t: any) => ({ id: t.tag?.id || t.tagId, name: t.tag?.name || '' })).filter((t: any) => t.name),
-    };
+    // v1.1.2.3：详情接口也带留言，详情页与列表用同一份渲染逻辑
+    const commentRows = await prisma.noteComment.findMany({
+      where: { noteId: row.id },
+      orderBy: { createdAt: 'asc' },
+      take: LIST_COMMENT_MAX,
+    });
+    const commentCount = await prisma.noteComment.count({ where: { noteId: row.id } });
+    return this.shape(row, assets, commentRows, commentCount, viewer);
   }
 
   /* ========================================================================
@@ -318,20 +327,59 @@ export class NotesService {
     // 分页内所有笔记的附件一次性批量解析（避免每条一次查询的 N+1）
     const allFileIds = rows.flatMap((r: any) => (r.assets || []).map((a: any) => a.fileId));
     const fileMap = await this.resolveFiles(allFileIds);
+
+    // v1.1.2.3：留言也批量取（一条 SQL 取回本页所有笔记的留言，再按 noteId 分组），
+    // 不能让每张卡片自己请求一次 —— 一页 20 条就是 20 个请求。
+    const noteIds = rows.map((r: any) => String(r.id));
+    const [commentRows, commentCounts] = noteIds.length
+      ? await Promise.all([
+          prisma.noteComment.findMany({
+            where: { noteId: { in: noteIds } },
+            orderBy: { createdAt: 'asc' },
+          }),
+          prisma.noteComment.groupBy({ by: ['noteId'], where: { noteId: { in: noteIds } }, _count: { _all: true } }),
+        ])
+      : [[], []];
+    const commentsByNote = new Map<string, any[]>();
+    for (const c of commentRows as any[]) {
+      const key = String(c.noteId);
+      const arr = commentsByNote.get(key);
+      if (arr) arr.push(c);
+      else commentsByNote.set(key, [c]);
+    }
+    const countByNote = new Map<string, number>();
+    for (const g of commentCounts as any[]) {
+      countByNote.set(String(g.noteId), Number(g._count && g._count._all) || 0);
+    }
+
     const list = rows.map((row: any) => {
       const assets: NoteAssetView[] = [];
       for (const a of row.assets || []) {
         const hit = fileMap.get(a.fileId);
         if (hit) assets.push(hit);
       }
-      return this.shape(row, assets);
+      const all = commentsByNote.get(String(row.id)) || [];
+      return this.shape(row, assets, all.slice(0, LIST_COMMENT_MAX), countByNote.get(String(row.id)) || all.length, input.viewer);
     });
 
     return { total, page, pageSize, list };
   }
 
-  /** 纯同步的行 → 契约映射（附件由调用方传入，便于批量复用） */
-  private shape(row: any, assets: NoteAssetView[]): NoteListItem {
+  /** 把数据库留言行转成前端契约（列表 / 详情 / 留言接口共用同一形态，前端一套渲染） */
+  private shapeComments(rows: any[], viewer: string): NoteCommentView[] {
+    return (rows || []).map((r: any) => ({
+      id: r.id,
+      content: r.content,
+      charCount: Number(r.charCount) || 0,
+      author: r.author,
+      createdAt: r.createdAt ? new Date(r.createdAt).getTime() : 0,
+      // 前端据此决定要不要显示删除按钮（后端仍然会再校验一次）
+      mine: r.author === viewer,
+    }));
+  }
+
+  /** 纯同步的行 → 契约映射（附件与留言由调用方传入，便于批量复用） */
+  private shape(row: any, assets: NoteAssetView[], comments: any[] = [], commentCount = 0, viewer = ''): NoteListItem {
     return {
       id: row.id,
       kind: row.kind,
@@ -353,6 +401,8 @@ export class NotesService {
             charCount: Number(row.moment.charCount) || 0,
             weather: row.moment.weather || '',
             mood: row.moment.mood || '',
+            weatherName: row.moment.weatherName || '',
+            moodName: row.moment.moodName || '',
             location: row.moment.location || '',
           }
         : null,
@@ -360,6 +410,8 @@ export class NotesService {
       tags: (row.tags || [])
         .map((t: any) => ({ id: t.tag?.id || t.tagId, name: t.tag?.name || '' }))
         .filter((t: any) => t.name),
+      comments: this.shapeComments(comments, viewer),
+      commentCount: Number(commentCount) || 0,
     };
   }
 
@@ -380,7 +432,7 @@ export class NotesService {
       },
     });
     if (!row) return null;
-    return this.toListItem(row);
+    return this.toListItem(row, viewer);
   }
 
   /* ========================================================================
@@ -446,6 +498,8 @@ export class NotesService {
               charCount,
               mood: String(input.mood || '').slice(0, 32),
               weather: String(input.weather || '').slice(0, 32),
+              moodName: String(input.moodName || '').slice(0, 32),
+              weatherName: String(input.weatherName || '').slice(0, 32),
               location: String(input.location || '').slice(0, 80),
             },
           },
@@ -552,6 +606,8 @@ export class NotesService {
                 charCount,
                 mood: String(input.mood || '').slice(0, 32),
                 weather: String(input.weather || '').slice(0, 32),
+                moodName: String(input.moodName || '').slice(0, 32),
+                weatherName: String(input.weatherName || '').slice(0, 32),
                 location: String(input.location || '').slice(0, 80),
               },
               update: {
@@ -560,6 +616,8 @@ export class NotesService {
                 charCount,
                 ...(input.mood === undefined ? {} : { mood: String(input.mood).slice(0, 32) }),
                 ...(input.weather === undefined ? {} : { weather: String(input.weather).slice(0, 32) }),
+                ...(input.moodName === undefined ? {} : { moodName: String(input.moodName).slice(0, 32) }),
+                ...(input.weatherName === undefined ? {} : { weatherName: String(input.weatherName).slice(0, 32) }),
                 ...(input.location === undefined ? {} : { location: String(input.location).slice(0, 80) }),
               },
             },
@@ -652,6 +710,126 @@ export class NotesService {
   }
 
   /* ========================================================================
+   *  标签管理（v1.1.2）—— 复刻图床「标签管理」的只读列表部分
+   * ----------------------------------------------------------------------
+   * 与图床那套的区别：笔记标签要能按「笔记分类」切换 —— 一个标签属于哪个分类，
+   * 由「它被哪些分类的笔记使用」决定（不额外存 kind 列：
+   *   · 同一标签可能同时用在瞬间和文章上，存单个 kind 会丢信息；
+   *   · 用法派生出来的口径永远与列表一致，不会出现「标签说属于瞬间，但瞬间里筛不到」）。
+   * 合并 / 拆分 / 改名 / 备注直接复用图床已有的 /api/tags/* 接口（已支持 type='note'）。
+   * ====================================================================== */
+  async tagAdmin(instanceId: string, kind: string) {
+    const where: Record<string, unknown> = { instanceId: String(instanceId || ''), type: 'note' };
+    const tags = await prisma.tag.findMany({ where: where as any, orderBy: { createdAt: 'asc' } });
+    if (!tags.length) return [];
+    const links = await prisma.noteTag.findMany({
+      where: { tagId: { in: tags.map((t) => t.id) } },
+      select: { tagId: true, note: { select: { kind: true } } },
+    });
+    const byTag = new Map<string, Map<string, number>>();
+    for (const l of links) {
+      const noteKind = String(l.note?.kind || '');
+      const bucket = byTag.get(l.tagId) || new Map<string, number>();
+      bucket.set(noteKind, (bucket.get(noteKind) || 0) + 1);
+      byTag.set(l.tagId, bucket);
+    }
+    const out = tags.map((t) => {
+      const bucket = byTag.get(t.id) || new Map<string, number>();
+      const kindCounts: Record<string, number> = {};
+      for (const [k, v] of bucket.entries()) kindCounts[k] = v;
+      return {
+        id: t.id,
+        name: t.name,
+        // 全部使用次数（所有分类相加）
+        count: Array.from(bucket.values()).reduce((a, b) => a + b, 0),
+        // 每个分类下的使用次数 —— 前端「全部 / 瞬间 / 待办…」切换时直接读
+        kindCounts,
+        note: String(safeParse(t.metas).note || ''),
+        creator: t.owner || '',
+        createdAt: new Date(t.createdAt).getTime(),
+      };
+    });
+    if (!kind) return out;
+    return out
+      .filter((t) => (t.kindCounts[kind] || 0) > 0)
+      .map((t) => ({ ...t, count: t.kindCounts[kind] }));
+  }
+
+  /* ========================================================================
+   *  留言（v1.1.2）
+   * ----------------------------------------------------------------------
+   * 每条上限 500 字（同样只数汉字/字母/数字）；空留言拒绝。
+   * 权限：能看见这条瞬间就能看见留言；留言只能由作者本人或管理员删除。
+   * ====================================================================== */
+  private async accessibleNote(id: string, viewer: string, isAdmin: boolean, instanceId: string) {
+    return prisma.note.findFirst({
+      where: {
+        id: String(id || ''),
+        instanceId: String(instanceId || ''),
+        ...(isAdmin ? {} : { author: String(viewer || '') }),
+      },
+      select: { id: true, author: true, status: true, instanceId: true, metas: true },
+    });
+  }
+
+  async listComments(input: { noteId: string; viewer: string; isAdmin: boolean; instanceId: string; page?: number; pageSize?: number }) {
+    const note = await this.accessibleNote(input.noteId, input.viewer, input.isAdmin, input.instanceId);
+    if (!note) return { error: '瞬间不存在或无权查看' };
+    const page = Math.max(1, Math.floor(Number(input.page) || 1));
+    const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 20)));
+    const [total, rows] = await Promise.all([
+      prisma.noteComment.count({ where: { noteId: note.id } }),
+      prisma.noteComment.findMany({
+        where: { noteId: note.id },
+        orderBy: { createdAt: 'asc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return {
+      total,
+      page,
+      pageSize,
+      // 与列表 / 详情返回的留言完全同形（shapeComments），前端一套渲染逻辑
+      list: this.shapeComments(rows as any[], input.viewer),
+    };
+  }
+
+  async addComment(input: { noteId: string; content: string; viewer: string; isAdmin: boolean; instanceId: string; ip: string }) {
+    const note = await this.accessibleNote(input.noteId, input.viewer, input.isAdmin, input.instanceId);
+    if (!note) return { error: '瞬间不存在或无权留言' };
+    const content = String(input.content ?? '').trim();
+    if (!content) return { error: '留言内容不能为空' };
+    const charCount = countTextChars(content);
+    if (charCount > MAX_COMMENT_CHARS) {
+      return { error: `留言超出上限：当前 ${charCount} 字，上限 ${MAX_COMMENT_CHARS} 字（标点与符号不计入）` };
+    }
+    const created = await prisma.noteComment.create({
+      data: {
+        noteId: note.id,
+        content,
+        charCount,
+        author: input.viewer,
+        instanceId: note.instanceId || '',
+      },
+    });
+    appLog.info('note', `瞬间留言：${note.id}`, `${charCount} 字 ｜ 留言人=${input.viewer}`, input.ip);
+    // v1.1.2.3：直接把整条留言回给前端 —— 卡片内联展示时可以就地追加，
+    // 不必为了看到自己刚发的留言再整页重载一次
+    const [view] = this.shapeComments([created], input.viewer);
+    return { id: created.id, comment: view };
+  }
+
+  async deleteComment(id: string, viewer: string, isAdmin: boolean, ip: string) {
+    const row = await prisma.noteComment.findUnique({ where: { id: String(id || '') } });
+    if (!row) return { error: '留言不存在' };
+    if (!isAdmin && row.author !== viewer) return { error: '无权删除他人的留言' };
+    await prisma.noteComment.delete({ where: { id: row.id } });
+    appLog.info('note', `删除瞬间留言：${row.noteId}`, `留言人=${row.author}`, ip);
+    return { ok: true };
+  }
+
+  /* ========================================================================
    *  图床选文件器（只读，供「从图床选择」用）
    * ====================================================================== */
   async pickFiles(input: {
@@ -681,6 +859,17 @@ export class NotesService {
     if (type === 'image') where.mime = { startsWith: 'image/' };
     else if (type === 'video') where.mime = { startsWith: 'video/' };
     else if (type === 'audio') where.mime = { startsWith: 'audio/' };
+    /*
+     * v1.1.2：新增「其他」—— 图 / 视 / 音之外的普通文件（pdf、压缩包、文本…）。
+     * 用 NOT + 三个前缀表达，比列举 mime 白名单更稳（新格式自动归到「其他」）。
+     */
+    else if (type === 'other') {
+      where.NOT = [
+        { mime: { startsWith: 'image/' } },
+        { mime: { startsWith: 'video/' } },
+        { mime: { startsWith: 'audio/' } },
+      ];
+    }
 
     const [total, rows] = await Promise.all([
       prisma.fileRecord.count({ where: where as any }),
@@ -718,5 +907,68 @@ export class NotesService {
   /** 从 metas 里读扩展字段（保留给后续版本的封面/水印等） */
   readMetas(raw: unknown) {
     return safeParse(raw, {});
+  }
+
+  // ==========================================================
+  //  笔记设置（v1.1.2.1）—— 按实例存，实例之间互不影响
+  // ==========================================================
+
+  /**
+   * 设置表的键名。
+   *
+   * 口径是**实例**（不是用户）：同一个实例里的人看到同一套附件区布局，
+   * 换到另一个实例就是另一套 —— 与文件、标签、笔记的隔离口径完全一致。
+   * 空串代表默认实例，键名里用 `~default` 代替，避免出现 `note-settings:` 这种
+   * 结尾是冒号的键（排查时容易看错）。
+   */
+  private noteSettingsKey(instanceId: string) {
+    const id = String(instanceId || '').trim();
+    return `note-settings:${id || '~default'}`;
+  }
+
+  /**
+   * 读某个实例的笔记设置。
+   * 没存过 / 存坏了都返回默认值 —— 前端永远拿到一份完整对象，不用自己兜底。
+   */
+  async getNoteSettings(instanceId: string) {
+    const key = this.noteSettingsKey(instanceId);
+    let raw = '';
+    try {
+      const row = await prisma.setting.findUnique({ where: { key } });
+      raw = String(row?.value || '');
+    } catch (e) {
+      // 读失败不影响页面：退回默认值，但要留痕（否则用户会觉得「设置没生效」）
+      appLog.warn('notes', `读取笔记设置失败（${key}）：${(e as Error)?.message || e}`);
+    }
+    return normalizeNoteSettings(safeParse(raw, {}));
+  }
+
+  /** 写设置：合并式保存（只覆盖传进来的分类，不会把别的分类清掉） */
+  async saveNoteSettings(instanceId: string, patch: Record<string, unknown>) {
+    const key = this.noteSettingsKey(instanceId);
+    const current = await this.getNoteSettings(instanceId);
+    const p = patch && typeof patch === 'object' ? patch : {};
+    /*
+     * v1.1.2.2：分类对象也要合并，不能整块替换。
+     * 前端每次都会提交完整的 moment（所以以前没暴露问题），但只要有人只提交
+     * 「改掉的那一项」，整块替换就会把没提交的项打回默认值 —— 这里按分类浅合并，
+     * 让 PUT 真正具备「只改我传的字段」的语义。
+     */
+    const merged: Record<string, unknown> = { ...current, ...p };
+    if (p.moment && typeof p.moment === 'object') {
+      merged.moment = {
+        ...(current.moment as unknown as Record<string, unknown>),
+        ...(p.moment as Record<string, unknown>),
+      };
+    }
+    const next = normalizeNoteSettings(merged);
+    const value = JSON.stringify(next);
+    await prisma.setting.upsert({
+      where: { key },
+      update: { value },
+      create: { key, value },
+    });
+    appLog.info('notes', `笔记设置已更新（${key}）：${value}`);
+    return next;
   }
 }

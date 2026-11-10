@@ -18,8 +18,8 @@ exports.buildMetadata = buildMetadata;
 exports.serializeFile = serializeFile;
 exports.normalizeDir = normalizeDir;
 const local_adapter_1 = require("../adapters/local.adapter");
-exports.UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record', 'StoreIn', 'StoreOut'];
-exports.CLIENT_UPLOAD_SOURCES = ['Upload', 'Fetch'];
+exports.UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record', 'StoreIn', 'StoreOut', 'Attachment'];
+exports.CLIENT_UPLOAD_SOURCES = ['Upload', 'Fetch', 'Attachment'];
 function normalizeUploadSource(raw) {
     const v = String(raw || '').trim();
     return exports.UPLOAD_SOURCES.includes(v) ? v : 'Default';
@@ -188,6 +188,13 @@ function pickPrimaryCopy(copies) {
         list.find((c) => c.channel?.isMain === true) ||
         list[0]);
 }
+function realNameOfCopy(copy) {
+    const key = String(copy?.remoteKey || '').replace(/\\/g, '/');
+    if (!key)
+        return '';
+    const seg = key.split('/').filter(Boolean).pop() || '';
+    return seg;
+}
 function buildMetadata(rec, copies, opts = {}) {
     const metas = safeParse(rec.metas);
     const primary = pickPrimaryCopy(copies);
@@ -224,6 +231,7 @@ function buildMetadata(rec, copies, opts = {}) {
         FilePrevName: rec.prevName || '',
         FileType: fileTypeOf(rec.mime),
         FileExt: fileExtOf(rec.originalName, rec.mime),
+        FileRealName: realNameOfCopy(primary),
         FileSize: formatSize(size),
         FileSizeBytes: size,
         FileSizeOriginal: formatSize(originalSize),

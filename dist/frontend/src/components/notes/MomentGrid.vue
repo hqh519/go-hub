@@ -1,30 +1,52 @@
 <template>
     <!--
-        瞬间附件排版（九宫格）
+        瞬间附件排版
         ----------------------------------------------------------------------------
-        需求（docs/规划/GoHub笔记板块-瞬间.md）：
+        数量与列数：
           · 无附件 → 不渲染本组件
-          · 1 个   → 单张大图，居中，高度约等于九宫格
-          · 2 个   → 一行两个，各占一半
+          · 1 个   → 单张，**按原图宽高比**（v1.1.2.2 起不再 1:1 裁切）
+          · 2 个   → 一行两个
           · 3 个   → 一行三个
-          · 4-9 个 → 三列自动换行（4 = 3+1、5 = 3+2、7 = 3+3+1…）
-          · 超过 9 → 只显示前 9 个，第 9 格叠「+N」，点开灯箱看全部
+          · 4 个   → 2 x 2（上行两个、下行两个）
+          · 5-9 个 → 三列自动换行
+          · 超过「加载几行 x 3」→ 最后一格叠「+N」，点开灯箱看全部
 
-        实现要点：
-          · 4-6 与 7-9 是**同一套代码** —— grid 自动换行，最后一行不满就靠左，
-            不需要为「7 个也显示 3 行」写特例；
-          · 格子用 aspect-ratio 固定正方形，图片 object-fit: cover，任何数量都不变形；
-          · 音频没有画面 → 图标卡（音乐图标 + 文件名 + 时长），不参与图片比例计算逻辑；
-          · 视频不内联播放（preload="none" 会被浏览器加载元数据，一屏几十个就是几十个请求），
-            统一用「播放角标 + 文件名」的封面卡，点开才在灯箱里播。
+        尺寸口径（v1.1.2.3，需求原文表格）：
+          · 单附件：高度 = 视口高度 x 设定比例 x 80%，宽度 = 高度 x 原图宽高比；
+            「自动比例」下则沿用「宽度约 62%」，高度由宽高比反推（并用 45% 视口高封顶）。
+          · 2 个及以上：总高 = 视口高度 x 设定比例 x 个数系数
+            （2 个 70%、3 个 60%、4~6 个 80%、7 个以上 100%），
+            格宽 = 由高度反推的正方形边长；**一行放不下就按可用宽度收**，收完仍是 1:1。
+          · 可用宽度由父节点（卡片）实测，不靠猜：卡片宽度变了（窗口缩放、
+            移动端抽屉）会通过 ResizeObserver 重新算。
+
+        其它：
+          · 音频没有画面 → 图标卡（音乐图标 + 文件名 + 时长）；
+          · 视频不内联播放（preload="none" 仍会加载元数据，一屏几十个就是几十个请求），
+            统一用「首帧缩略图 + 播放角标」的封面卡，点开才在灯箱里播。
     -->
-    <div class="mg" :class="[`mg-count-${visibleCount}`, { 'is-single': items.length === 1 }]">
+    <div
+        class="mg"
+        :class="[
+            `mg-count-${visibleCount}`,
+            {
+                'is-single': isSingle,
+                'is-grid4': items.length === 4,
+                'is-custom': !!multiBudget,
+                'is-sized': !!singleBudget,
+                'is-left': alignLeft,
+                'is-center': !alignLeft && (!!multiBudget || !!singleBudget)
+            }
+        ]"
+        :style="gridStyle"
+    >
         <button
             v-for="(it, i) in items"
             :key="it.fileId || i"
             type="button"
             class="mg-cell"
             :class="`is-${it.mediaKind}`"
+            :style="cellStyle"
             :aria-label="it.originalName || it.name"
             @click.stop="$emit('preview', i)"
         >
@@ -34,15 +56,31 @@
                 :src="it.thumbUrl || it.url"
                 :alt="it.originalName || ''"
                 class="mg-img"
+                :class="{ 'is-contain': !!singleBudget }"
                 loading="lazy"
                 decoding="async"
+                @load="onImgLoad($event, it)"
                 @error="onImgError($event, it)"
             />
 
-            <!-- 视频：封面卡（不加载视频本体） -->
-            <span v-else-if="it.mediaKind === 'video'" class="mg-cover">
-                <font-awesome-icon icon="play" class="mg-cover-icon" />
-                <span class="mg-cover-name">{{ it.originalName || it.name }}</span>
+            <!--
+                视频：封面卡（不加载视频本体）。
+                用浏览器抽首帧当缩略图（utils/videoPoster，按 URL 缓存、并发限 2），
+                抽不到时退回「图标 + 文件名」的封面卡；抽到了就在正中压一个小播放图标。
+            -->
+            <span v-else-if="it.mediaKind === 'video'" class="mg-cover is-video" :class="{ 'has-poster': !!posters[it.fileId || it.url] }">
+                <img
+                    v-if="posters[it.fileId || it.url]"
+                    :src="posters[it.fileId || it.url]"
+                    class="mg-img"
+                    :class="{ 'is-contain': !!singleBudget }"
+                    alt=""
+                    loading="lazy"
+                />
+                <span class="mg-play" :class="{ 'is-overlay': !!posters[it.fileId || it.url] }">
+                    <font-awesome-icon icon="play" class="mg-play-icon" />
+                </span>
+                <span v-if="!posters[it.fileId || it.url]" class="mg-cover-name">{{ it.originalName || it.name }}</span>
             </span>
 
             <!-- 音频：图标卡 + 时长（时长由浏览器读元数据，读不到就只显示图标和名字） -->
@@ -58,7 +96,7 @@
                 <span class="mg-cover-name">{{ it.originalName || it.name }}</span>
             </span>
 
-            <!-- 超过 9 个：最后一格叠「+N」 -->
+            <!-- 超出「加载几行」的部分：最后一格叠「+N」 -->
             <span v-if="hiddenCount && i === items.length - 1" class="mg-more">+{{ hiddenCount }}</span>
         </button>
     </div>
@@ -66,6 +104,8 @@
 
 <script>
 import { GRID_MAX } from '@/utils/notes';
+import { videoPoster } from '@/utils/videoPoster';
+import { noteSettings, attachBudget, singleBudget, ATTACH_ROWS_OPTIONS } from '@/utils/noteSettings';
 
 /**
  * 音频时长探测：浏览器读元数据即可，不需要后端存字段。
@@ -119,6 +159,9 @@ function formatDuration(sec) {
     return `${m}:${String(r).padStart(2, '0')}`;
 }
 
+/** 兜底宽高比：拿不到原图尺寸时按 4:3 —— 宁可保守也不能让单图占满一屏 */
+const FALLBACK_ASPECT = 4 / 3;
+
 export default {
     name: 'MomentGrid',
     props: {
@@ -129,13 +172,25 @@ export default {
     data() {
         return {
             // fileId → 时长文本（'' = 探测失败，不显示）
-            durations: {}
+            durations: {},
+            // fileId / url → 视频首帧（dataURL，'' = 抽帧失败）
+            posters: {},
+            // v1.1.2.2：附件 key → 原图宽高比（width / height），单图排版用
+            aspects: {},
+            // 父节点（卡片）的可用宽度，单图 / 宽度收敛都要用
+            availWidth: 0
         };
     },
     computed: {
-        /** 最多显示 9 个 */
+        /** 「加载几行」→ 最多显示几个（每行 3 个，且不超过九宫格上限） */
+        maxItems() {
+            const rows = ATTACH_ROWS_OPTIONS.includes(noteSettings.moment.attachRows)
+                ? noteSettings.moment.attachRows
+                : 3;
+            return Math.min(GRID_MAX, rows * 3);
+        },
         items() {
-            return (this.assets || []).filter(Boolean).slice(0, GRID_MAX);
+            return (this.assets || []).filter(Boolean).slice(0, this.maxItems);
         },
         visibleCount() {
             const n = this.items.length;
@@ -143,20 +198,131 @@ export default {
             if (n === 2) return 2;
             return 3;
         },
-        /** 被折叠的附件数量（第 9 格显示 +N） */
+        /** 被折叠的附件数量（最后一格显示 +N） */
         hiddenCount() {
-            return Math.max(0, (this.assets || []).length - GRID_MAX);
+            return Math.max(0, (this.assets || []).length - this.maxItems);
+        },
+        isSingle() {
+            return this.items.length === 1;
+        },
+        /** 单图的原图宽高比（拿到真实尺寸前用 4:3，拿到后立刻校正） */
+        singleAspect() {
+            const it = this.items[0];
+            if (!it) return FALLBACK_ASPECT;
+            const a = this.aspects[it.fileId || it.url];
+            return Number(a) > 0 ? Number(a) : FALLBACK_ASPECT;
+        },
+        /**
+         * 列数（决定「几行」）。
+         *   · 1 个 → 1 列；2 个 → 2 列；3 个 → 3 列；
+         *   · 正好 4 个 → 2 列（上行两个、下行两个）；
+         *   · 其余（5 ~ 9）→ 3 列自动换行。
+         */
+        cols() {
+            const n = this.items.length;
+            if (n <= 1) return 1;
+            if (n === 2) return 2;
+            if (n === 3) return 3;
+            if (n === 4) return 2;
+            return 3;
+        },
+        /**
+         * 单附件预算：按原图宽高比排，高度来自设置（详见 utils/noteSettings 的 singleBudgetOf）。
+         * 非单图时返回 null。
+         */
+        singleBudget() {
+            if (!this.isSingle) return null;
+            return singleBudget(this.availWidth, this.singleAspect);
+        },
+        /**
+         * 多附件预算。返回 null = 用户选了「默认」且不是单图，保持既有布局，
+         * 此时不给任何内联尺寸，连类名都不加（见模板里的 is-custom）。
+         */
+        multiBudget() {
+            if (this.isSingle) return null;
+            return attachBudget(this.items.length, this.cols, this.availWidth);
+        },
+        alignLeft() {
+            return noteSettings.moment.attachAlign === 'left';
+        },
+        gridStyle() {
+            const b = this.singleBudget;
+            if (b) return { width: `${b.width}px` };
+            const m = this.multiBudget;
+            if (!m) return {};
+            return {
+                '--mg-cols': String(this.cols),
+                // min() 兜底：万一没测到可用宽度（首帧），也不会撑破卡片
+                width: `min(${Math.round(m.width)}px, 100%)`
+            };
+        },
+        /** 单图：高度由预算定，宽度铺满网格（网格宽度 = 预算宽度） */
+        cellStyle() {
+            const b = this.singleBudget;
+            return b ? { height: `${b.height}px` } : {};
         }
     },
     watch: {
         'items.length'() {
             this.probeAudios();
+            this.loadPosters();
+        },
+        /** 设置里改「加载几行」后，新露出来的附件要补探测 */
+        maxItems() {
+            this.probeAudios();
+            this.loadPosters();
         }
     },
     mounted() {
+        this.measureAvail();
+        this.bindResize();
         this.probeAudios();
+        this.loadPosters();
+    },
+    beforeUnmount() {
+        if (this.ro) {
+            this.ro.disconnect();
+            this.ro = null;
+        }
+        window.removeEventListener('resize', this.onWindowResize);
     },
     methods: {
+        /**
+         * 量父节点的**内容宽度**（clientWidth 含 padding，要减掉），
+         * 用它做「宽度不够就收缩」的依据。
+         * 监听父节点而不是自己：自己的宽度是算出来的，监听自己会形成回路。
+         */
+        measureAvail() {
+            const el = this.$el;
+            const parent = el && el.parentElement;
+            if (!parent) return;
+            const cs = window.getComputedStyle(parent);
+            const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+            const w = parent.clientWidth - pad;
+            if (!(w > 0)) return;
+            if (Math.abs(w - this.availWidth) > 1) this.availWidth = w;
+        },
+        bindResize() {
+            const parent = this.$el && this.$el.parentElement;
+            if (parent && typeof ResizeObserver !== 'undefined') {
+                this.ro = new ResizeObserver(() => this.measureAvail());
+                this.ro.observe(parent);
+            }
+            // ResizeObserver 在老浏览器 / 某些嵌套布局下可能不触发，window resize 兜底
+            window.addEventListener('resize', this.onWindowResize, { passive: true });
+        },
+        onWindowResize() {
+            this.measureAvail();
+        },
+        /** 图片加载完拿到原图宽高比 —— 单图据此排版（首帧先按 4:3，加载后校正） */
+        onImgLoad(e, it) {
+            const el = e && e.target;
+            if (!el || !el.naturalWidth || !el.naturalHeight) return;
+            const key = (it && (it.fileId || it.url)) || '';
+            if (!key) return;
+            const a = el.naturalWidth / el.naturalHeight;
+            if (Math.abs((this.aspects[key] || 0) - a) > 0.001) this.aspects[key] = a;
+        },
         /** 只为音频格子探测时长（图片/视频不需要） */
         probeAudios() {
             for (const it of this.items) {
@@ -165,6 +331,27 @@ export default {
                 probeDuration(it.url).then((text) => {
                     // Vue 3 是 Proxy 响应式，直接赋值新 key 即可触发更新（没有 Vue 2 的 $set）
                     if (text) this.durations[it.fileId] = text;
+                });
+            }
+        },
+        /** 为视频格抽首帧（一屏最多 9 格，工具内部已限并发 2 并缓存结果） */
+        loadPosters() {
+            for (const it of this.items) {
+                if (it.mediaKind !== 'video' || !it.url) continue;
+                const key = it.fileId || it.url;
+                if (this.posters[key] !== undefined) continue;
+                videoPoster(it.url).then((dataUrl) => {
+                    this.posters[key] = dataUrl || '';
+                    // 单视频也要按原视频比例排：拿首帧的尺寸当宽高比
+                    if (dataUrl && !this.aspects[key]) {
+                        const probe = new Image();
+                        probe.onload = () => {
+                            if (probe.naturalWidth && probe.naturalHeight) {
+                                this.aspects[key] = probe.naturalWidth / probe.naturalHeight;
+                            }
+                        };
+                        probe.src = dataUrl;
+                    }
                 });
             }
         },
@@ -196,7 +383,7 @@ export default {
 <style scoped>
 .mg {
     display: grid;
-    gap: 4px;
+    gap: 3px;
     margin-top: 10px;
     /* 卡片本身已被 .nt-main 收在 760px 内，九宫格直接铺满卡片宽度 ——
        再卡一个 520px 会在右边留出一道明显空白，看起来像没对齐 */
@@ -215,13 +402,69 @@ export default {
     grid-template-columns: repeat(3, 1fr);
 }
 
-/* 单图：居中，宽度约 62%，高度按 4:3 —— 与「高度约等于九宫格」的观感一致 */
-.mg.is-single {
-    width: 62%;
-    min-width: 160px;
-    /* 需求：单图居中（宽度只有 62%，不居中的话会贴在左边） */
+/*
+ * 正好 4 个附件时按「上行两个、下行两个」排。
+ * 仍然沿用正方形格子，只是列数从 3 改成 2 —— 每格更大，四张图的观感更整齐。
+ */
+.mg.is-grid4 {
+    grid-template-columns: repeat(2, 1fr);
+}
+
+/*
+ * 「附件加载区域大小 = 指定比例」
+ * 宽度已由内联样式 `width: min(Xpx, 100%)` 定死，这里只按列数均分，
+ * 格子再靠 aspect-ratio: 1/1 反向锁定行高 —— 于是
+ * 「三行共占页面 30%」这个约束自动成立，不需要 JS 逐格算高。
+ */
+.mg.is-custom {
+    grid-template-columns: repeat(var(--mg-cols, 3), minmax(0, 1fr));
+}
+
+/* 自定义尺寸下所有格子一律正方形（默认布局里单图是 4:3，必须覆盖） */
+.mg.is-custom .mg-cell,
+.mg.is-custom.is-single .mg-cell {
+    aspect-ratio: 1 / 1;
+}
+
+/*
+ * v1.1.2.2 单附件：按原图宽高比排。
+ * 宽度由内联样式给定（= 预算宽度），高度由内联样式给定，画面上不再裁切。
+ */
+.mg.is-sized {
+    min-width: 0;
+    width: auto;
+}
+
+.mg.is-sized .mg-cell {
+    aspect-ratio: auto;
+}
+
+/* 单图里的图片用 contain：极端比例（超宽全景 / 超高长图）也不会被裁掉 */
+.mg-img.is-contain {
+    object-fit: contain;
+}
+
+/* 位置：默认居中（块本身窄于卡片时才看得出效果），左对齐则与正文左边缘对齐 */
+.mg.is-center {
     margin-left: auto;
     margin-right: auto;
+}
+
+.mg.is-left {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+/* 单图：默认居中（宽度由预算决定，不再固定 62%） */
+.mg.is-single {
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* 左对齐要压过上面的 .is-single（同权重时后写的赢，所以这里加一级 specificity） */
+.mg.is-left.is-single {
+    margin-left: 0;
+    margin-right: 0;
 }
 
 .mg-cell {
@@ -230,7 +473,8 @@ export default {
     width: 100%;
     padding: 0;
     border: none;
-    border-radius: 8px;
+    /* v1.1.2.3：每个附件的圆角 5px → 3px */
+    border-radius: 3px;
     overflow: hidden;
     background: var(--note-cell-bg, rgba(127, 127, 127, 0.1));
     aspect-ratio: 1 / 1;
@@ -241,6 +485,11 @@ export default {
 
 .mg.is-single .mg-cell {
     aspect-ratio: 4 / 3;
+}
+
+/* 有预算时高度由内联样式给，不能再被 4:3 规则盖掉 */
+.mg.is-single.is-sized .mg-cell {
+    aspect-ratio: auto;
 }
 
 .mg-cell:focus-visible {
@@ -279,6 +528,36 @@ export default {
     font-size: 20px;
 }
 
+/* 播放图标 —— 无缩略图时居中当封面图标；有缩略图时压在半透明圆底上 */
+.mg-play {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.42);
+    color: #fff;
+}
+
+.mg-play.is-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    /* 需求：图标不用太大，一眼看出是视频即可 */
+    width: 30px;
+    height: 30px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+    pointer-events: none;
+}
+
+.mg-play-icon {
+    font-size: 12px;
+    /* 播放三角视觉重心偏左，右移 1px 更居中 */
+    transform: translateX(1px);
+}
+
 .mg-cover-name {
     display: -webkit-box;
     -webkit-box-orient: vertical;
@@ -313,10 +592,6 @@ export default {
 @media (max-width: 768px) {
     .mg {
         max-width: 100%;
-    }
-
-    .mg.is-single {
-        width: 68%;
     }
 
     .mg-cover-icon {

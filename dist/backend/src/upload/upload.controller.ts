@@ -374,7 +374,14 @@ export class UploadController {
      *   没声明（curl、老前端、第三方客户端）→ 归一化为 Default。
      */
     const declaredSource = isClientUploadSource(q.uploadSource) ? normalizeUploadSource(q.uploadSource) : '';
-    const uploadSource = q.stagingId ? 'Fetch' : declaredSource || 'Default';
+    /*
+     * v1.1.2：白名单内**显式声明**的来源优先于「暂存即 Fetch」的旧规则。
+     *   笔记附件走链接提取时同样带 stagingId，若沿用旧规则会被记成 Fetch，
+     *   文件详情里就看不出它是「作为附件上传」的，与需求冲突。
+     *   对既有调用方零影响 —— 前端上传页不声明来源（仍是 Default），
+     *   声明 Fetch 的调用方结果也不变。
+     */
+    const uploadSource = declaredSource || (q.stagingId ? 'Fetch' : 'Default');
     const opts = {
       uploadChannel: q.uploadChannel,
       // 渠道一律按 ID 匹配；兼容老前端传来的 channelName 参数名（其值同样是渠道 ID）

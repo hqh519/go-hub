@@ -56,7 +56,15 @@ export default {
          * v3.0.0：页面已在自己的工具栏里放了「标签管理 / 声音切换 / 链接格式」图标按钮，
          * 传 true 可让移动端「更多菜单」不再重复列出这三项。
          */
-        inlineActions: Boolean
+        inlineActions: Boolean,
+        /*
+         * v1.1.2：顶栏「上滑隐藏」的触发阈值（离开顶部多少 px 之后才允许隐藏）。
+         * 默认 40 与图床文件管理页原有手感一致；笔记管理页在移动端传一个更小的值，
+         * 让「轻轻往下拨一点」就收起两行栏（需求：阈值调小）。
+         */
+        hideThreshold: { type: Number, default: 40 },
+        /* v1.1.2：判定「这次滚动是同一个方向」的最小位移（默认 2px，越小越灵敏） */
+        hideDelta: { type: Number, default: 2 }
     },
     // v3.0.0：移动端更多菜单「标签管理」透传给页面
     emits: ['link-format', 'tag-management'],
@@ -89,10 +97,15 @@ export default {
          */
         updateScrollHidden(y) {
             const delta = y - this.lastScrollY;
-            // 小于 2px 的抖动不改变状态，避免触控板惯性滚动时顶栏闪烁
-            if (Math.abs(delta) < 2) return;
+            /*
+             * 小于 hideDelta 的抖动不改变状态，避免触控板惯性滚动时顶栏闪烁。
+             * v1.1.2：阈值改为可配置 —— 笔记管理页要更灵敏，传 1（1px 位移即生效）。
+             */
+            const minDelta = Math.max(0, Number(this.hideDelta) || 0);
+            if (Math.abs(delta) < minDelta) return;
             this.lastScrollY = y;
-            const next = !(y <= 40 || delta < 0);
+            const threshold = Math.max(0, Number(this.hideThreshold) || 0);
+            const next = !(y <= threshold || delta < 0);
             if (next !== this.scrollHidden) {
                 this.scrollHidden = next;
                 // v3.0.0（R9 修复）：记录动画起点，供 snapHeaderNow 判断「正在动画中」

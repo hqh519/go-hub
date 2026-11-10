@@ -52,6 +52,16 @@ let NotesController = class NotesController {
         this.ctx(req);
         return this.notes.tagCandidates(instanceId || '');
     }
+    async getSettings(req, instanceId) {
+        this.ctx(req);
+        return { success: true, data: await this.notes.getNoteSettings(instanceId || '') };
+    }
+    async saveSettings(req, body) {
+        this.ctx(req);
+        const { instanceId, ...patch } = body || {};
+        const data = await this.notes.saveNoteSettings(String(instanceId || ''), patch);
+        return { success: true, data };
+    }
     async files(req, search, type, page, pageSize, instanceId) {
         const { viewer, isAdmin } = this.ctx(req);
         return this.notes.pickFiles({
@@ -63,6 +73,45 @@ let NotesController = class NotesController {
             viewer,
             isAdmin,
         });
+    }
+    async tagAdmin(req, instanceId, kind) {
+        this.ctx(req);
+        return this.notes.tagAdmin(instanceId || '', kind || '');
+    }
+    async comments(req, id, instanceId, page, pageSize) {
+        const { viewer, isAdmin } = this.ctx(req);
+        const r = await this.notes.listComments({
+            noteId: id,
+            viewer,
+            isAdmin,
+            instanceId: instanceId || '',
+            page: Number(page) || 1,
+            pageSize: Number(pageSize) || 20,
+        });
+        if ('error' in r && r.error)
+            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.NOT_FOUND);
+        return r;
+    }
+    async addComment(req, id, body) {
+        const { viewer, isAdmin } = this.ctx(req);
+        const r = await this.notes.addComment({
+            noteId: id,
+            content: String(body.content ?? ''),
+            viewer,
+            isAdmin,
+            instanceId: String(body.instanceId ?? ''),
+            ip: String(req.ip || ''),
+        });
+        if ('error' in r && r.error)
+            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
+        return { success: true, id: r.id, comment: r.comment || null };
+    }
+    async deleteComment(req, commentId) {
+        const { viewer, isAdmin } = this.ctx(req);
+        const r = await this.notes.deleteComment(commentId, viewer, isAdmin, String(req.ip || ''));
+        if ('error' in r && r.error)
+            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
+        return { success: true };
     }
     async detail(req, id, instanceId) {
         const { viewer, isAdmin } = this.ctx(req);
@@ -78,6 +127,8 @@ let NotesController = class NotesController {
             content: body.content,
             mood: body.mood,
             weather: body.weather,
+            moodName: body.moodName,
+            weatherName: body.weatherName,
             location: body.location,
             visibility: body.visibility,
             assetIds: body.assetIds,
@@ -95,6 +146,8 @@ let NotesController = class NotesController {
             content: body.content,
             mood: body.mood,
             weather: body.weather,
+            moodName: body.moodName,
+            weatherName: body.weatherName,
             location: body.location,
             visibility: body.visibility,
             assetIds: body.assetIds,
@@ -156,6 +209,22 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "tags", null);
 __decorate([
+    (0, common_1.Get)('settings'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "getSettings", null);
+__decorate([
+    (0, common_1.Put)('settings'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "saveSettings", null);
+__decorate([
     (0, common_1.Get)('files'),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Query)('search')),
@@ -167,6 +236,43 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, String, String, String, String]),
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "files", null);
+__decorate([
+    (0, common_1.Get)('tag-admin'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('instanceId')),
+    __param(2, (0, common_1.Query)('kind')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "tagAdmin", null);
+__decorate([
+    (0, common_1.Get)(':id/comments'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Query)('instanceId')),
+    __param(3, (0, common_1.Query)('page')),
+    __param(4, (0, common_1.Query)('pageSize')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, String, String]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "comments", null);
+__decorate([
+    (0, common_1.Post)(':id/comments'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "addComment", null);
+__decorate([
+    (0, common_1.Delete)('comments/:commentId'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('commentId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "deleteComment", null);
 __decorate([
     (0, common_1.Get)(':id'),
     __param(0, (0, common_1.Req)()),

@@ -351,6 +351,32 @@
                 <el-input v-if="isEditing" v-model="editForm.FileName" size="small" :placeholder="$t('fileDetail.fileNamePlaceholder')"></el-input>
                 <span v-else>{{ file?.metadata?.FileName || file?.name }}</span>
             </el-descriptions-item>
+            <!--
+                v1.1.2：文件实名 —— 上传到渠道后实际写入的物理文件名（remoteKey 末段）。
+                「文件原名」是上传时用户看到的名字，渠道可能按命名规则改写，排查时只能看这一项。
+            -->
+            <el-descriptions-item :label="$t('fileDetail.fileRealName')">
+                <span v-if="file?.metadata?.FileRealName" class="detail-realname">{{ file.metadata.FileRealName }}</span>
+                <span v-else style="color: var(--el-text-color-secondary);">{{ $t('fileDetail.unknown') }}</span>
+            </el-descriptions-item>
+            <!--
+                v1.1.2：文件引用 —— 该文件被哪些对象使用。
+                v1.1.2.1：统计口径扩到全类型（笔记 + 分享），数量后面补一行来源小计，
+                          只有一种来源时不显示小计，避免啰嗦。
+                数量后面跟「查看」，新标签页打开引用明细（不影响当前详情页）。
+            -->
+            <el-descriptions-item :label="$t('fileDetail.fileRef')">
+                <span class="detail-ref">
+                    <span :class="{ 'is-zero': !file?.metadata?.FileRefCount }">{{ file?.metadata?.FileRefCount || 0 }}</span>
+                    <span v-if="refBreakdown" class="detail-ref-sub">{{ refBreakdown }}</span>
+                    <button
+                        v-if="file?.metadata?.FileRefCount"
+                        type="button"
+                        class="detail-ref-link"
+                        @click.prevent="openFileRefs"
+                    >{{ $t('fileDetail.fileRefView') }}</button>
+                </span>
+            </el-descriptions-item>
             <el-descriptions-item :label="$t('fileDetail.fileType')">
                 <el-input v-if="isEditing" v-model="editForm.FileType" size="small" :placeholder="$t('fileDetail.fileTypePlaceholder')"></el-input>
                 <span v-else>{{ fileTypeDisplay }}</span>
@@ -1107,6 +1133,16 @@ export default {
         }
     },
     computed: {
+        /**
+         * v1.1.2.1：引用来源小计。
+         * 只有「笔记 + 分享」两种来源同时存在时才显示 —— 只有一种时数字本身已经说明问题。
+         */
+        refBreakdown() {
+            const note = Number(this.file?.metadata?.FileRefNoteCount || 0);
+            const share = Number(this.file?.metadata?.FileRefShareCount || 0);
+            if (!note || !share) return '';
+            return this.$t('fileDetail.fileRefBreakdown', { note, share });
+        },
         /** v1.0.5：媒体编辑按钮的显示总闸 —— 只有后端确认「可原位编辑」才整组出现 */
         mediaReady() {
             return !!(this.mediaInfo && (this.mediaInfo.canCrop || this.mediaInfo.canCompress || this.mediaInfo.canWebp || this.mediaInfo.canTranscode));
@@ -1944,6 +1980,13 @@ export default {
                 this.instancesLoading = false;
             }
         },
+        /** v1.1.2：新标签页打开「文件引用」明细页 */
+        openFileRefs() {
+            const name = this.file?.name || '';
+            if (!name) return;
+            const url = this.$router.resolve({ name: 'fileRefs', query: { name } }).href;
+            window.open(url, '_blank', 'noopener');
+        },
         uploadSourceLabel(raw) {
             const key = String(raw || 'Default');
             const map = {
@@ -1957,7 +2000,9 @@ export default {
                 'API-Web': 'filter.uploadSourceApiWeb',
                 'API-S3': 'filter.uploadSourceApiS3',
                 // v2.8.9：登记文件（只登记外链、不搬文件）
-                Record: 'filter.uploadSourceRecord'
+                Record: 'filter.uploadSourceRecord',
+                // v1.1.2：通过内容发布作为附件上传（笔记板块）
+                Attachment: 'filter.uploadSourceAttachment'
             };
             return map[key] ? this.$t(map[key]) : key;
         },
@@ -3530,5 +3575,43 @@ export default {
     .expiry-date-popper--center .el-date-picker.has-sidebar {
         width: min(92vw, 340px) !important;
     }
+}
+
+/* v1.1.2：文件实名（等宽字体，长文件名可换行）+ 文件引用数量 / 查看按钮 */
+.detail-realname {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    word-break: break-all;
+}
+
+.detail-ref {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.detail-ref .is-zero {
+    color: var(--el-text-color-secondary);
+}
+
+/* v1.1.2.1：引用来源小计（笔记 N / 分享 M），弱化显示 */
+.detail-ref-sub {
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+}
+
+.detail-ref-link {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--el-color-primary);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.detail-ref-link:hover {
+    opacity: 0.8;
 }
 </style>

@@ -36,6 +36,9 @@ import { SettingsService } from '../settings/settings.service';
 import { SysConfigService } from '../settings/sysconfig.service';
 import { AdminGuard, ManageAuthGuard, SESSION_COOKIE, currentSession, isAdminRole, parseSession } from '../auth/auth.guard';
 import { buildDirectoryTree, CHANNEL_LABEL, CopyWithChannel, fileExtOf, fileTypeOf, formatSize, isRecordFile, normalizeDir, normalizeUploadSource, pickPrimaryCopy, safeParse, serializeFile } from '../common/file-view';
+// v1.1.2：文件被引用时禁止删除 / 详情页「文件引用」明细
+// v1.1.2.1：引用范围由「笔记」扩到全类型（笔记 + 分享链接），见 common/file-refs.ts
+import { batchReferenceBlockMessage, fileReferenceBlockMessage, refsOfFile, countBySource } from '../common/file-refs';
 
 // v1.0.5：详情页「原位媒体编辑」（裁剪 / 压缩 / 转 WebP / 视频转码）
 import {
@@ -1420,6 +1423,15 @@ export class LinkController {
     const sourceIdSet = new Set(sources.map((s) => s.id));
     const instanceId = sources[0].instanceId;
     const owner = String(sources[0].owner || '');
+    /*
+     * v1.1.2：笔记标签（Tag.type='note'）也在同一个「标签管理」里合并 ——
+     * 关联表不同（note_tags vs file_tags），按源标签的类型分流；
+     * 混着不同类型时不合并（findOrCreateTag 的类型不同，合并会造出跨类型关联）。
+     */
+    const tagType = String((sources[0] as { type?: string }).type || TAG_TYPE_FILE);
+    if (sources.some((t) => String((t as { type?: string }).type || TAG_TYPE_FILE) !== tagType)) {
+      return { success: false, message: '不同类型（文件标签 / 笔记标签）的标签不能合并' };
+    }
 
     // 目标标签：targetId 优先；否则按 targetName 在同实例内找/建（复合唯一键 name_instanceId_owner）
     let target: { id: string; name: string } | null = null;
@@ -1431,23 +1443,43 @@ export class LinkController {
       const name = String(body?.targetName || '').trim();
       if (!name) return { success: false, message: '缺少 targetId 或 targetName' };
       // v1.0.2：按「同实例 + 同类型」找/建，owner 只记创建人
-      const row = await findOrCreateTag(name, instanceId, this.sessionUser(req), TAG_TYPE_FILE);
+      const row = await findOrCreateTag(name, instanceId, this.sessionUser(req), tagType);
       target = { id: row.id, name: row.name };
     }
     if (sourceIdSet.has(target.id)) return { success: false, message: '目标标签不能同时是源标签' };
 
     // 迁移关联：目标上已存在的直接删源关联，否则改挂到目标
     let moved = 0;
-    for (const sid of sourceIdSet) {
-      const links = await prisma.fileTag.findMany({ where: { tagId: sid } });
-      for (const link of links) {
-        const exists = await prisma.fileTag.findUnique({
-          where: { fileId_tagId: { fileId: link.fileId, tagId: target.id } },
-        });
-        if (exists) await prisma.fileTag.delete({ where: { id: link.id } });
-        else {
-          await prisma.fileTag.update({ where: { id: link.id }, data: { tagId: target.id } });
-          moved += 1;
+    if (tagType === 'note') {
+      // v1.1.2：笔记标签 → note_tags（复合主键 noteId+tagId，没有独立 id）
+      for (const sid of sourceIdSet) {
+        const links = await prisma.noteTag.findMany({ where: { tagId: sid } });
+        for (const link of links) {
+          const exists = await prisma.noteTag.findUnique({
+            where: { noteId_tagId: { noteId: link.noteId, tagId: target.id } },
+          });
+          if (exists) await prisma.noteTag.delete({ where: { noteId_tagId: { noteId: link.noteId, tagId: sid } } });
+          else {
+            await prisma.noteTag.update({
+              where: { noteId_tagId: { noteId: link.noteId, tagId: sid } },
+              data: { tagId: target.id },
+            });
+            moved += 1;
+          }
+        }
+      }
+    } else {
+      for (const sid of sourceIdSet) {
+        const links = await prisma.fileTag.findMany({ where: { tagId: sid } });
+        for (const link of links) {
+          const exists = await prisma.fileTag.findUnique({
+            where: { fileId_tagId: { fileId: link.fileId, tagId: target.id } },
+          });
+          if (exists) await prisma.fileTag.delete({ where: { id: link.id } });
+          else {
+            await prisma.fileTag.update({ where: { id: link.id }, data: { tagId: target.id } });
+            moved += 1;
+          }
         }
       }
     }
@@ -1523,17 +1555,31 @@ export class LinkController {
     );
     if (!names.length) throw new BadRequestException('names 不能为空');
 
-    // 被拆标签当前关联的文件（file_tags）
-    const links = await prisma.fileTag.findMany({ where: { tagId: tag.id }, select: { fileId: true } });
+    /*
+     * v1.1.2：被拆标签的关联 —— 文件标签走 file_tags，笔记标签走 note_tags。
+     * 拆分语义在两类标签上完全一致（复制全部关联到新标签），只是表不同。
+     */
+    const tagType = String((tag as { type?: string }).type || TAG_TYPE_FILE);
+    const isNoteTag = tagType === 'note';
+    const fileLinks = isNoteTag ? [] : await prisma.fileTag.findMany({ where: { tagId: tag.id }, select: { fileId: true } });
+    const noteLinks = isNoteTag ? await prisma.noteTag.findMany({ where: { tagId: tag.id }, select: { noteId: true } }) : [];
     const created: { id: string; name: string }[] = [];
     let linked = 0;
     for (const name of names) {
       // v1.0.2：按「同实例 + 同类型」找/建（同名已存在则复用，不再按 owner 区分）
-      const target = await findOrCreateTag(name, tag.instanceId, owner, TAG_TYPE_FILE);
+      const target = await findOrCreateTag(name, tag.instanceId, owner, tagType);
       created.push({ id: target.id, name: target.name });
-      if (links.length) {
+      if (isNoteTag) {
+        if (noteLinks.length) {
+          const res = await prisma.noteTag.createMany({
+            data: noteLinks.map((l) => ({ noteId: l.noteId, tagId: target.id })),
+            skipDuplicates: true,
+          });
+          linked += res.count;
+        }
+      } else if (fileLinks.length) {
         const res = await prisma.fileTag.createMany({
-          data: links.map((l) => ({ fileId: l.fileId, tagId: target.id })),
+          data: fileLinks.map((l) => ({ fileId: l.fileId, tagId: target.id })),
           skipDuplicates: true,
         });
         linked += res.count;
@@ -1542,7 +1588,7 @@ export class LinkController {
     appLog.info(
       'tag',
       `拆分标签 ${tag.name} → ${created.map((c) => c.name).join('、')}`,
-      `复制关联 ${linked} 条（源标签 ${links.length} 条 / 实例=${tag.instanceId || '默认'}）`,
+      `复制关联 ${linked} 条（源标签 ${isNoteTag ? noteLinks.length : fileLinks.length} 条 / 实例=${tag.instanceId || '默认'}）`,
     );
     return { success: true, created, linked };
   }
@@ -2824,6 +2870,9 @@ export class ManageController {
           OR: [{ folder: prefix }, { folder: { startsWith: `${prefix}/` } }],
         },
       });
+      // v1.1.2：目录里只要有一个文件被笔记引用，整批拒绝（列出引用它的笔记标题）
+      const batchMsg = await batchReferenceBlockMessage(rows.map((r) => r.id));
+      if (batchMsg) return { success: false, message: batchMsg };
       for (const r of rows) await this.trashRecord(r.id, r.name);
       /*
        * v3.0.0（R12）：目录删除必须同时清掉「目录自身」的三处登记 ——
@@ -2904,6 +2953,14 @@ export class ManageController {
     if (sharedHit) {
       return { success: false, message: `该文件位于 ${sharedHit.owner} 共享给你的「${sharedHit.path}」内，不允许删除` };
     }
+    /*
+     * v1.1.2：被笔记引用的文件不允许删除。
+     * 若允许删，笔记里的附件会变成空洞（列表按「文件不存在」跳过该格），
+     * 用户只会觉得「图莫名不见了」。这里直接把引用它的笔记标题抛出来，
+     * 让用户先去处理笔记，而不是事后猜。
+     */
+    const refMsg = await fileReferenceBlockMessage(record.id);
+    if (refMsg) return { success: false, message: refMsg };
     await this.trashRecord(record.id, record.name);
     return { success: true, deleted: 1 };
   }
@@ -4363,6 +4420,21 @@ export class ManageController {
     }).metadata as Record<string, unknown>;
     // 限时：把截止时间带给前端（0 = 永久）
     metadata.LinkExpiresAt = rec.linkExpiresAt ? rec.linkExpiresAt.getTime() : 0;
+    /*
+     * v1.1.2：文件引用 —— 该文件作为附件被哪些笔记使用。
+     * v1.1.2.1：扩到全类型 —— 笔记附件（强引用）+ 分享链接（弱引用）。
+     * 详情页在「文件实名」后面展示总数 + 「查看」按钮（跳 /file-refs 明细页）。
+     * 这里只给数量与标题摘要，明细走 /api/file-refs/*（避免每次开详情都拖一堆数据）。
+     */
+    const refs = await refsOfFile(rec.id);
+    const bySource = countBySource(refs);
+    metadata.FileRefCount = refs.length;
+    metadata.FileRefNoteCount = bySource.note;
+    metadata.FileRefShareCount = bySource.share;
+    metadata.FileRefNotes = refs
+      .filter((r) => r.source === 'note')
+      .slice(0, 5)
+      .map((r) => r.title || '未命名');
     // v2.6.0 #301：全系统 IP 显示统一 —— 详情页直接拿格式化后的展示文本
     try {
       const m: any = metadata;
@@ -4383,6 +4455,47 @@ export class ManageController {
         // 上传者账户被删/改名后，原「仅作者」规则会让备注对所有现存账户永久不可见）
         ...(this.canUseNote(req, rec) ? { note: rec.note, Note: rec.note } : {}),
         metadata,
+      },
+    };
+  }
+
+  /**
+   * v1.1.2：文件引用明细 —— GET /api/file-refs/*
+   *
+   * 入参是 File_ID（= /file/:name 的标识），与详情页「查看」按钮一致。
+   * 返回被哪些对象引用（笔记：标题 / 分类 / 状态 / 时间 / 作者；分享：目录或标签名），
+   * 供独立页面展示。v1.1.2.1 起 source 字段区分来源，页面按来源打标。
+   * 权限：必须是登录用户，且只能查自己看得到的文件（普通用户限本人上传）。
+   */
+  @Get('api/file-refs/*')
+  async fileRefs(@Req() req: Request) {
+    const me = currentSession(req)?.user || '';
+    if (!me) return { success: false, message: '请先登录后再查看引用' };
+    const rec = await this.resolveFile(wildcardParam(req), this.admin(req) ? '' : me);
+    if (!rec) return { success: false, message: '文件不存在或无权查看' };
+    const refs = await refsOfFile(rec.id);
+    const bySource = countBySource(refs);
+    return {
+      success: true,
+      data: {
+        fileId: rec.id,
+        name: rec.name,
+        originalName: rec.originalName,
+        count: refs.length,
+        noteCount: bySource.note,
+        shareCount: bySource.share,
+        list: refs.map((r) => ({
+          source: r.source,
+          // 笔记用 noteId；分享用 shareId —— 前端两种都可能用到，所以两个字段都给上
+          noteId: r.source === 'note' ? r.id : '',
+          shareId: r.source === 'share' ? r.id : '',
+          // 瞬间的标题存在 metas.title；没填时前端按创建时间显示，这里给空串
+          title: r.title,
+          kind: r.kind,
+          status: r.status,
+          author: r.author,
+          createdAt: r.createdAt,
+        })),
       },
     };
   }

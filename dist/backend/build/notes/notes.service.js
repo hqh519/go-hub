@@ -6,13 +6,14 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NotesService = void 0;
+exports.NotesService = exports.LIST_COMMENT_MAX = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const tags_1 = require("../common/tags");
 const file_view_1 = require("../common/file-view");
 const notes_util_1 = require("./notes.util");
+exports.LIST_COMMENT_MAX = 100;
 const SORTABLE = {
     createdAt: 'createdAt',
     updatedAt: 'updatedAt',
@@ -92,7 +93,7 @@ let NotesService = class NotesService {
         }
         return map;
     }
-    async toListItem(row) {
+    async toListItem(row, viewer = '') {
         const assets = [];
         const map = await this.resolveFiles((row.assets || []).map((a) => a.fileId));
         for (const a of row.assets || []) {
@@ -100,33 +101,13 @@ let NotesService = class NotesService {
             if (hit)
                 assets.push(hit);
         }
-        return {
-            id: row.id,
-            kind: row.kind,
-            title: String((0, notes_util_1.safeParse)(row.metas).title || ''),
-            content: row.content || '',
-            coverFileId: row.coverFileId || '',
-            visibility: row.visibility || 'private',
-            status: row.status,
-            author: row.author || '',
-            instanceId: row.instanceId || '',
-            version: Number(row.version) || 1,
-            publishedAt: row.publishedAt ? new Date(row.publishedAt).getTime() : 0,
-            createdAt: row.createdAt ? new Date(row.createdAt).getTime() : 0,
-            updatedAt: row.updatedAt ? new Date(row.updatedAt).getTime() : 0,
-            moment: row.moment
-                ? {
-                    mediaKind: row.moment.mediaKind || 'text',
-                    assetCount: Number(row.moment.assetCount) || assets.length,
-                    charCount: Number(row.moment.charCount) || 0,
-                    weather: row.moment.weather || '',
-                    mood: row.moment.mood || '',
-                    location: row.moment.location || '',
-                }
-                : null,
-            assets,
-            tags: (row.tags || []).map((t) => ({ id: t.tag?.id || t.tagId, name: t.tag?.name || '' })).filter((t) => t.name),
-        };
+        const commentRows = await prisma_1.prisma.noteComment.findMany({
+            where: { noteId: row.id },
+            orderBy: { createdAt: 'asc' },
+            take: exports.LIST_COMMENT_MAX,
+        });
+        const commentCount = await prisma_1.prisma.noteComment.count({ where: { noteId: row.id } });
+        return this.shape(row, assets, commentRows, commentCount, viewer);
     }
     buildWhere(input) {
         const where = {
@@ -189,6 +170,29 @@ let NotesService = class NotesService {
         ]);
         const allFileIds = rows.flatMap((r) => (r.assets || []).map((a) => a.fileId));
         const fileMap = await this.resolveFiles(allFileIds);
+        const noteIds = rows.map((r) => String(r.id));
+        const [commentRows, commentCounts] = noteIds.length
+            ? await Promise.all([
+                prisma_1.prisma.noteComment.findMany({
+                    where: { noteId: { in: noteIds } },
+                    orderBy: { createdAt: 'asc' },
+                }),
+                prisma_1.prisma.noteComment.groupBy({ by: ['noteId'], where: { noteId: { in: noteIds } }, _count: { _all: true } }),
+            ])
+            : [[], []];
+        const commentsByNote = new Map();
+        for (const c of commentRows) {
+            const key = String(c.noteId);
+            const arr = commentsByNote.get(key);
+            if (arr)
+                arr.push(c);
+            else
+                commentsByNote.set(key, [c]);
+        }
+        const countByNote = new Map();
+        for (const g of commentCounts) {
+            countByNote.set(String(g.noteId), Number(g._count && g._count._all) || 0);
+        }
         const list = rows.map((row) => {
             const assets = [];
             for (const a of row.assets || []) {
@@ -196,11 +200,22 @@ let NotesService = class NotesService {
                 if (hit)
                     assets.push(hit);
             }
-            return this.shape(row, assets);
+            const all = commentsByNote.get(String(row.id)) || [];
+            return this.shape(row, assets, all.slice(0, exports.LIST_COMMENT_MAX), countByNote.get(String(row.id)) || all.length, input.viewer);
         });
         return { total, page, pageSize, list };
     }
-    shape(row, assets) {
+    shapeComments(rows, viewer) {
+        return (rows || []).map((r) => ({
+            id: r.id,
+            content: r.content,
+            charCount: Number(r.charCount) || 0,
+            author: r.author,
+            createdAt: r.createdAt ? new Date(r.createdAt).getTime() : 0,
+            mine: r.author === viewer,
+        }));
+    }
+    shape(row, assets, comments = [], commentCount = 0, viewer = '') {
         return {
             id: row.id,
             kind: row.kind,
@@ -222,6 +237,8 @@ let NotesService = class NotesService {
                     charCount: Number(row.moment.charCount) || 0,
                     weather: row.moment.weather || '',
                     mood: row.moment.mood || '',
+                    weatherName: row.moment.weatherName || '',
+                    moodName: row.moment.moodName || '',
                     location: row.moment.location || '',
                 }
                 : null,
@@ -229,6 +246,8 @@ let NotesService = class NotesService {
             tags: (row.tags || [])
                 .map((t) => ({ id: t.tag?.id || t.tagId, name: t.tag?.name || '' }))
                 .filter((t) => t.name),
+            comments: this.shapeComments(comments, viewer),
+            commentCount: Number(commentCount) || 0,
         };
     }
     async detail(id, viewer, isAdmin, instanceId) {
@@ -246,7 +265,7 @@ let NotesService = class NotesService {
         });
         if (!row)
             return null;
-        return this.toListItem(row);
+        return this.toListItem(row, viewer);
     }
     async createMoment(input, viewer, ip) {
         const instanceId = String(input.instanceId || '');
@@ -297,6 +316,8 @@ let NotesService = class NotesService {
                             charCount,
                             mood: String(input.mood || '').slice(0, 32),
                             weather: String(input.weather || '').slice(0, 32),
+                            moodName: String(input.moodName || '').slice(0, 32),
+                            weatherName: String(input.weatherName || '').slice(0, 32),
                             location: String(input.location || '').slice(0, 80),
                         },
                     },
@@ -387,6 +408,8 @@ let NotesService = class NotesService {
                                 charCount,
                                 mood: String(input.mood || '').slice(0, 32),
                                 weather: String(input.weather || '').slice(0, 32),
+                                moodName: String(input.moodName || '').slice(0, 32),
+                                weatherName: String(input.weatherName || '').slice(0, 32),
                                 location: String(input.location || '').slice(0, 80),
                             },
                             update: {
@@ -395,6 +418,8 @@ let NotesService = class NotesService {
                                 charCount,
                                 ...(input.mood === undefined ? {} : { mood: String(input.mood).slice(0, 32) }),
                                 ...(input.weather === undefined ? {} : { weather: String(input.weather).slice(0, 32) }),
+                                ...(input.moodName === undefined ? {} : { moodName: String(input.moodName).slice(0, 32) }),
+                                ...(input.weatherName === undefined ? {} : { weatherName: String(input.weatherName).slice(0, 32) }),
                                 ...(input.location === undefined ? {} : { location: String(input.location).slice(0, 80) }),
                             },
                         },
@@ -474,6 +499,109 @@ let NotesService = class NotesService {
             .map((r) => ({ id: r.id, name: r.name, count: r._count.noteTags }))
             .sort((a, b) => b.count - a.count);
     }
+    async tagAdmin(instanceId, kind) {
+        const where = { instanceId: String(instanceId || ''), type: 'note' };
+        const tags = await prisma_1.prisma.tag.findMany({ where: where, orderBy: { createdAt: 'asc' } });
+        if (!tags.length)
+            return [];
+        const links = await prisma_1.prisma.noteTag.findMany({
+            where: { tagId: { in: tags.map((t) => t.id) } },
+            select: { tagId: true, note: { select: { kind: true } } },
+        });
+        const byTag = new Map();
+        for (const l of links) {
+            const noteKind = String(l.note?.kind || '');
+            const bucket = byTag.get(l.tagId) || new Map();
+            bucket.set(noteKind, (bucket.get(noteKind) || 0) + 1);
+            byTag.set(l.tagId, bucket);
+        }
+        const out = tags.map((t) => {
+            const bucket = byTag.get(t.id) || new Map();
+            const kindCounts = {};
+            for (const [k, v] of bucket.entries())
+                kindCounts[k] = v;
+            return {
+                id: t.id,
+                name: t.name,
+                count: Array.from(bucket.values()).reduce((a, b) => a + b, 0),
+                kindCounts,
+                note: String((0, notes_util_1.safeParse)(t.metas).note || ''),
+                creator: t.owner || '',
+                createdAt: new Date(t.createdAt).getTime(),
+            };
+        });
+        if (!kind)
+            return out;
+        return out
+            .filter((t) => (t.kindCounts[kind] || 0) > 0)
+            .map((t) => ({ ...t, count: t.kindCounts[kind] }));
+    }
+    async accessibleNote(id, viewer, isAdmin, instanceId) {
+        return prisma_1.prisma.note.findFirst({
+            where: {
+                id: String(id || ''),
+                instanceId: String(instanceId || ''),
+                ...(isAdmin ? {} : { author: String(viewer || '') }),
+            },
+            select: { id: true, author: true, status: true, instanceId: true, metas: true },
+        });
+    }
+    async listComments(input) {
+        const note = await this.accessibleNote(input.noteId, input.viewer, input.isAdmin, input.instanceId);
+        if (!note)
+            return { error: '瞬间不存在或无权查看' };
+        const page = Math.max(1, Math.floor(Number(input.page) || 1));
+        const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 20)));
+        const [total, rows] = await Promise.all([
+            prisma_1.prisma.noteComment.count({ where: { noteId: note.id } }),
+            prisma_1.prisma.noteComment.findMany({
+                where: { noteId: note.id },
+                orderBy: { createdAt: 'asc' },
+                skip: (page - 1) * pageSize,
+                take: pageSize,
+            }),
+        ]);
+        return {
+            total,
+            page,
+            pageSize,
+            list: this.shapeComments(rows, input.viewer),
+        };
+    }
+    async addComment(input) {
+        const note = await this.accessibleNote(input.noteId, input.viewer, input.isAdmin, input.instanceId);
+        if (!note)
+            return { error: '瞬间不存在或无权留言' };
+        const content = String(input.content ?? '').trim();
+        if (!content)
+            return { error: '留言内容不能为空' };
+        const charCount = (0, notes_util_1.countTextChars)(content);
+        if (charCount > notes_util_1.MAX_COMMENT_CHARS) {
+            return { error: `留言超出上限：当前 ${charCount} 字，上限 ${notes_util_1.MAX_COMMENT_CHARS} 字（标点与符号不计入）` };
+        }
+        const created = await prisma_1.prisma.noteComment.create({
+            data: {
+                noteId: note.id,
+                content,
+                charCount,
+                author: input.viewer,
+                instanceId: note.instanceId || '',
+            },
+        });
+        app_log_1.appLog.info('note', `瞬间留言：${note.id}`, `${charCount} 字 ｜ 留言人=${input.viewer}`, input.ip);
+        const [view] = this.shapeComments([created], input.viewer);
+        return { id: created.id, comment: view };
+    }
+    async deleteComment(id, viewer, isAdmin, ip) {
+        const row = await prisma_1.prisma.noteComment.findUnique({ where: { id: String(id || '') } });
+        if (!row)
+            return { error: '留言不存在' };
+        if (!isAdmin && row.author !== viewer)
+            return { error: '无权删除他人的留言' };
+        await prisma_1.prisma.noteComment.delete({ where: { id: row.id } });
+        app_log_1.appLog.info('note', `删除瞬间留言：${row.noteId}`, `留言人=${row.author}`, ip);
+        return { ok: true };
+    }
     async pickFiles(input) {
         const page = Math.max(1, Math.floor(Number(input.page) || 1));
         const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 24)));
@@ -496,6 +624,13 @@ let NotesService = class NotesService {
             where.mime = { startsWith: 'video/' };
         else if (type === 'audio')
             where.mime = { startsWith: 'audio/' };
+        else if (type === 'other') {
+            where.NOT = [
+                { mime: { startsWith: 'image/' } },
+                { mime: { startsWith: 'video/' } },
+                { mime: { startsWith: 'audio/' } },
+            ];
+        }
         const [total, rows] = await Promise.all([
             prisma_1.prisma.fileRecord.count({ where: where }),
             prisma_1.prisma.fileRecord.findMany({
@@ -529,6 +664,43 @@ let NotesService = class NotesService {
     }
     readMetas(raw) {
         return (0, notes_util_1.safeParse)(raw, {});
+    }
+    noteSettingsKey(instanceId) {
+        const id = String(instanceId || '').trim();
+        return `note-settings:${id || '~default'}`;
+    }
+    async getNoteSettings(instanceId) {
+        const key = this.noteSettingsKey(instanceId);
+        let raw = '';
+        try {
+            const row = await prisma_1.prisma.setting.findUnique({ where: { key } });
+            raw = String(row?.value || '');
+        }
+        catch (e) {
+            app_log_1.appLog.warn('notes', `读取笔记设置失败（${key}）：${e?.message || e}`);
+        }
+        return (0, notes_util_1.normalizeNoteSettings)((0, notes_util_1.safeParse)(raw, {}));
+    }
+    async saveNoteSettings(instanceId, patch) {
+        const key = this.noteSettingsKey(instanceId);
+        const current = await this.getNoteSettings(instanceId);
+        const p = patch && typeof patch === 'object' ? patch : {};
+        const merged = { ...current, ...p };
+        if (p.moment && typeof p.moment === 'object') {
+            merged.moment = {
+                ...current.moment,
+                ...p.moment,
+            };
+        }
+        const next = (0, notes_util_1.normalizeNoteSettings)(merged);
+        const value = JSON.stringify(next);
+        await prisma_1.prisma.setting.upsert({
+            where: { key },
+            update: { value },
+            create: { key, value },
+        });
+        app_log_1.appLog.info('notes', `笔记设置已更新（${key}）：${value}`);
+        return next;
     }
 };
 exports.NotesService = NotesService;

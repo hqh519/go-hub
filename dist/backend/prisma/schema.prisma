@@ -553,6 +553,7 @@ model Note {
   moment NoteMoment?
   assets NoteAsset[]
   tags   NoteTag[]
+  comments NoteComment[]
 
   /// 类型 tab + 时间排序（「全部」视图走 kind 前缀，单类型走等值）
   @@index([instanceId, kind, status, publishedAt])
@@ -575,6 +576,11 @@ model NoteMoment {
   /// 枚举字符串，不存 emoji（emoji 只是前端的展示形态）
   weather   String @default("")
   mood      String @default("")
+  /// v1.1.2：心情 / 天气的**名称**（「开心」「晴」…）。
+  /// 枚举值以后可能增删，名称独立存一列 —— 后续做筛选/统计时直接按名称查，
+  /// 不用在前端维护一张枚举 → 中文的映射表（多语言下也不会串）。
+  weatherName String @default("")
+  moodName    String @default("")
   location  String @default("")
   note      Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
@@ -614,4 +620,29 @@ model NoteTag {
   @@id([noteId, tagId])
   @@index([tagId])
   @@map("note_tags")
+}
+
+/// v1.1.2：瞬间留言
+/// ----------------------------------------------------------------------------
+/// 独立成表而不是塞进 Note.metas 的原因：
+///   · 一条瞬间可能积累很多留言，塞进 JSON 会让每次读列表都把留言一起拖出来；
+///   · 留言需要按时间排序、分页、单独删除 —— JSON 里做不到（也没有索引）。
+/// 字数口径与正文完全一致（countTextChars：只数汉字/字母/数字），上限 500。
+model NoteComment {
+  id         String   @id @default(cuid())
+  noteId     String
+  content    String   @default("")
+  /// 留言字数（与正文同一套计数规则）
+  charCount  Int      @default(0)
+  /// 留言人（用户名）
+  author     String   @default("")
+  /// 所属实例（与笔记同一口径，便于以后按实例统计/清理）
+  instanceId String   @default("")
+  createdAt  DateTime @default(now())
+
+  note Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  /// 某条瞬间的留言列表（按时间正序翻页）
+  @@index([noteId, createdAt])
+  @@map("note_comments")
 }

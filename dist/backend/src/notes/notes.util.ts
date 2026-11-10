@@ -20,8 +20,14 @@ export type NoteKind = (typeof NOTE_KINDS)[number];
 export const MOMENT_MEDIA_KINDS = ['text', 'image', 'video', 'audio', 'mixed'] as const;
 export type MomentMediaKind = (typeof MOMENT_MEDIA_KINDS)[number];
 
-/** 瞬间正文字数上限（只数汉字/字母/数字，不含标点与符号） */
-export const DEFAULT_MOMENT_MAX_CHARS = 500;
+/**
+ * 瞬间正文字数上限（只数汉字/字母/数字，不含标点与符号）。
+ * v1.1.2：按需求由 500 提到 1000 —— 计数口径不变，标点/符号/空格仍不计入。
+ */
+export const DEFAULT_MOMENT_MAX_CHARS = 1000;
+
+/** 单条留言的字数上限（v1.1.2，需求：每篇留言上限 500 字，计数规则同正文） */
+export const MAX_COMMENT_CHARS = 500;
 
 /**
  * 单篇附件的硬上限。
@@ -36,6 +42,116 @@ export const MAX_TAGS_PER_NOTE = 20;
 
 /** 可见性白名单（本版只落 private / public；specified = 指定人，留到分享版本） */
 export const NOTE_VISIBILITIES = ['private', 'public', 'specified'] as const;
+
+// ============================================================
+//  笔记设置（v1.1.2.1）
+//  ---------------------------------------------------------------------------
+//  按**实例**保存（不是按用户、不是全局）：同一个实例里的人看到同一套附件区布局，
+//  不同实例之间互不影响 —— 与文件 / 标签 / 笔记的隔离口径一致。
+//  存储走设置表 key = `note-settings:<实例 id>`（默认实例用 `~default`），
+//  值是一段 JSON —— 以后加「待办设置 / 导航设置 / 文章设置 / 收集设置」
+//  只需要在同一个 JSON 里多挂一个键，不用改表结构、不用写迁移。
+// ============================================================
+
+/** 附件区大小模式：default = 保持现有布局；custom = 按「占页面最高比例」算 */
+export const MOMENT_ATTACH_SIZES = ['default', 'custom'] as const;
+/** 附件区水平位置：center = 居中（现有布局）；left = 与正文一样靠左 */
+export const MOMENT_ATTACH_ALIGNS = ['center', 'left'] as const;
+
+/**
+ * v1.1.2.2 内容排版样式：
+ *   default = 默认样式（每条瞬间一张带边框的卡片，现有观感）
+ *   divider = 分割线样式（去掉外边框，条目之间用一条分割线隔开）
+ */
+export const MOMENT_LAYOUT_STYLES = ['default', 'divider'] as const;
+
+/**
+ * v1.1.2.2 附件数量加载（最多加载几行，每行 3 个）：
+ *   3 = 加载三行（最多 9 个，现有行为）；2 = 加载两行（最多 6 个）；1 = 加载一行（最多 3 个）
+ * 只影响「显示几个」，尺寸仍由 attachSize / attachRatio 决定。
+ */
+export const MOMENT_ATTACH_ROWS = [1, 2, 3] as const;
+
+/** 「附件占页面最高比例」默认值 / 允许区间（百分比）。v1.1.2.3 起默认 35% */
+export const DEFAULT_MOMENT_ATTACH_RATIO = 35;
+export const MOMENT_ATTACH_RATIO_MIN = 5;
+export const MOMENT_ATTACH_RATIO_MAX = 80;
+
+/**
+ * 显示个数 → 用户设定比例的折算系数（v1.1.2.3 需求原文表格）：
+ *   一行 1 个        = 比例 x 80%
+ *   一行 2 个        = 比例 x 70%
+ *   一行 3 个        = 比例 x 60%
+ *   两行 4 ~ 6 个    = 比例 x 80%
+ *   三行 7 个及以上  = 比例 x 100%
+ *
+ * 注意口径是「**实际显示个数**」而不是「附件总数」：笔记设置里可以限制最多加载几行，
+ * 被截断的部分不占高度，所以 9 个附件在「加载两行」下按 6 个（两行 80%）算。
+ * 前端 `utils/noteSettings.js` 的 `attachHeightFactor()` 必须与这里保持一致。
+ */
+export function attachHeightFactorOf(count: number): number {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  if (n <= 1) return 0.8;
+  if (n === 2) return 0.7;
+  if (n === 3) return 0.6;
+  if (n <= 6) return 0.8;
+  return 1;
+}
+
+/**
+ * v1.1.2.3：**只有一个附件**时的折算系数。
+ * 单附件按原图宽高比显示，总高度 = 页面高度 x 比例 x 80%（v1.1.2.2 是 70%）。
+ * 前端 `utils/noteSettings.js` 里的 ATTACH_SINGLE_FACTOR 必须与这里保持一致。
+ */
+export const MOMENT_ATTACH_SINGLE_FACTOR = 0.8;
+
+export interface MomentSettings {
+  attachSize: (typeof MOMENT_ATTACH_SIZES)[number];
+  attachRatio: number;
+  attachAlign: (typeof MOMENT_ATTACH_ALIGNS)[number];
+  /** v1.1.2.2：内容排版样式 */
+  layoutStyle: (typeof MOMENT_LAYOUT_STYLES)[number];
+  /** v1.1.2.2：附件最多加载几行（1 / 2 / 3） */
+  attachRows: number;
+}
+
+export interface NoteSettings {
+  moment: MomentSettings;
+  [key: string]: unknown;
+}
+
+/**
+ * 把任意脏输入收敛成合法的「瞬间设置」。
+ *
+ * v1.1.2.3 起出厂默认改为：指定比例 / 35% / 左对齐 / 分割线样式 / 加载两行。
+ * 这里只在**键缺失或非法**时落默认值 —— 用户明确存过的值（哪怕是旧默认
+ * 'default' / 'center' / 'default' / 3）原样保留，升级不会把人家改过的设置顶掉。
+ */
+export function normalizeMomentSettings(raw: unknown): MomentSettings {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const size = (MOMENT_ATTACH_SIZES as readonly string[]).includes(String(o.attachSize))
+    ? (String(o.attachSize) as MomentSettings['attachSize'])
+    : 'custom';
+  const align = (MOMENT_ATTACH_ALIGNS as readonly string[]).includes(String(o.attachAlign))
+    ? (String(o.attachAlign) as MomentSettings['attachAlign'])
+    : 'left';
+  let ratio = Number(o.attachRatio);
+  if (!Number.isFinite(ratio) || ratio <= 0) ratio = DEFAULT_MOMENT_ATTACH_RATIO;
+  ratio = Math.min(MOMENT_ATTACH_RATIO_MAX, Math.max(MOMENT_ATTACH_RATIO_MIN, Math.round(ratio * 10) / 10));
+  // 排版样式 / 附件行数：历史数据里没有这两个键 → 落到新的出厂默认（分割线 + 两行）
+  const layoutStyle = (MOMENT_LAYOUT_STYLES as readonly string[]).includes(String(o.layoutStyle))
+    ? (String(o.layoutStyle) as MomentSettings['layoutStyle'])
+    : 'divider';
+  const rowsNum = Math.round(Number(o.attachRows));
+  const attachRows = (MOMENT_ATTACH_ROWS as readonly number[]).includes(rowsNum) ? rowsNum : 2;
+  return { attachSize: size, attachRatio: ratio, attachAlign: align, layoutStyle, attachRows };
+}
+
+/** 整份笔记设置（未知分类原样透传，便于以后灰度上线新分类） */
+export function normalizeNoteSettings(raw: unknown): NoteSettings {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return { ...o, moment: normalizeMomentSettings(o.moment) } as NoteSettings;
+}
 
 /**
  * 正文字数统计：只数「汉字 + 字母 + 数字」。

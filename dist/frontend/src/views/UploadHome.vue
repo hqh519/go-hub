@@ -261,9 +261,9 @@
                 type="button"
                 role="tab"
                 class="upload-method-tab"
-                :class="{ 'is-active': uploadMethod === 'default' }"
-                :aria-selected="uploadMethod === 'default'"
-                @click="setUploadMethod('default')"
+                :class="{ 'is-active': !recordTab && uploadMethod === 'default' }"
+                :aria-selected="!recordTab && uploadMethod === 'default'"
+                @click="switchUploadTab('default')"
             >
                 <font-awesome-icon icon="folder-open" class="upload-method-tab-icon"/>
                 <span>{{ $t('upload.defaultTab') }}</span>
@@ -272,30 +272,69 @@
                 type="button"
                 role="tab"
                 class="upload-method-tab"
-                :class="{ 'is-active': uploadMethod === 'paste' }"
-                :aria-selected="uploadMethod === 'paste'"
-                @click="setUploadMethod('paste')"
+                :class="{ 'is-active': !recordTab && uploadMethod === 'paste' }"
+                :aria-selected="!recordTab && uploadMethod === 'paste'"
+                @click="switchUploadTab('paste')"
             >
                 <font-awesome-icon icon="link" class="upload-method-tab-icon"/>
                 <span>{{ $t('upload.linkTab') }}</span>
             </button>
             <!--
-                v1.1.1：笔记板块「记录」入口（前台唯一入口）。
-                它不是上传方式，而是切到另一个页面，所以单独成一个 router-link，
-                样式沿用 .upload-method-tab（加 .is-page-link 做视觉分隔），
-                前台首页不再堆第二套导航。
+                v1.1.2：「记录」不再是跳转链接，而是和前两个一样的第三个切换页。
+                切到它时，下方的虚线操作区换成 5 个 app 图标（瞬间 / 待办 / 导航 / 文章 / 收集），
+                点图标直接调出对应的编辑页，发布完的内容就列在这个区域里（刷新清零）。
+                与「链接」之间那条竖分隔线按需求去掉了。
             -->
-            <router-link
-                :to="{ name: 'notes' }"
-                class="upload-method-tab is-page-link"
+            <button
+                type="button"
+                role="tab"
+                class="upload-method-tab"
+                :class="{ 'is-active': recordTab }"
+                :aria-selected="recordTab"
                 :title="$t('upload.recordTab')"
+                @click="switchUploadTab('record')"
             >
                 <font-awesome-icon icon="note-sticky" class="upload-method-tab-icon"/>
                 <span>{{ $t('upload.recordTab') }}</span>
-            </router-link>
+            </button>
         </div>
+        <!--
+            v1.1.2：「记录」页的虚线操作区 —— 尺寸与「文件 / 链接」两页的虚线卡片保持一致，
+            区内是 5 个 1:1 的 app 图标，点一下直接开对应的编辑页。
+            发布成功的内容会追加到下方列表（只存在内存里，刷新即清零，与另两页一致）。
+        -->
+        <div v-if="recordTab" class="record-panel">
+            <div class="record-apps" role="group" :aria-label="$t('notes.record')">
+                <button
+                    v-for="app in recordApps"
+                    :key="app.kind"
+                    type="button"
+                    class="record-app"
+                    :class="{ 'is-ready': app.ready }"
+                    :title="app.ready ? app.label : `${app.label} · ${$t('notes.typeNotReady')}`"
+                    @click="openRecordApp(app)"
+                >
+                    <span class="record-app-icon" :style="{ '--app-color': app.color }">
+                        <font-awesome-icon :icon="app.icon" />
+                    </span>
+                    <span class="record-app-label">{{ app.label }}</span>
+                </button>
+            </div>
+
+            <p v-if="!recordResults.length" class="record-tip">{{ $t('notes.recordTip') }}</p>
+            <ul v-else class="record-list">
+                <li v-for="n in recordResults" :key="n.id" class="record-item">
+                    <span class="record-item-kind">{{ kindLabelOf(n.kind) }}</span>
+                    <span class="record-item-title">{{ n.title || formatRecordTime(n.publishedAt || n.createdAt) }}</span>
+                    <span class="record-item-time">{{ formatRecordTime(n.publishedAt || n.createdAt) }}</span>
+                    <p v-if="n.content" class="record-item-text">{{ n.content }}</p>
+                </li>
+            </ul>
+        </div>
+
         <!-- v2.8.9：convertToWebp 改用 v-model —— 原先只传 prop 未监听 update 事件，顶栏「转为WebP」开关点不动 -->
         <UploadForm
+            v-else
             ref="uploadForm"
             :selectedUrlForm="selectedUrlForm"
             v-model:customerCompress="customerCompress"
@@ -328,6 +367,13 @@
             class="upload"
         />
         </div>
+        <!-- v1.1.2：「记录」页点「瞬间」直接开编辑页，发布完成后把这一条追加到上方列表 -->
+        <MomentPublishDialog
+            v-model="recordDialogVisible"
+            :note="null"
+            :instance-id="currentInstanceId || ''"
+            @saved="onRecordSaved"
+        />
         <el-dialog :title="$t('settings.linkFormatTitle')" v-model="showUrlDialog" :width="dialogWidth" :show-close="false" class="settings-dialog settings-dialog-scope">
             <div class="dialog-section">
                 <div class="section-header">
@@ -472,6 +518,9 @@ import UploadSettingsDialog from '@/components/upload/UploadSettingsDialog.vue'
 import RecordFileDialog from '@/components/upload/RecordFileDialog.vue'
 import DirectoryTreePicker from '@/components/DirectoryTreePicker.vue'
 import DirectorySuggestionInput from '@/components/DirectorySuggestionInput.vue'
+import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue'
+import fetchWithAuth from '@/utils/fetchWithAuth'
+import { formatMomentTime } from '@/utils/notes'
 import backgroundManager from '@/mixins/backgroundManager'
 import pageActivation from '@/mixins/pageActivation'
 import axios from '@/utils/axios'
@@ -518,6 +567,14 @@ export default {
             autoUpload: localStorage.getItem('gohub_autoUpload') !== '0', //自动上传（记忆模式：记住上次选择，刷新不重置）
             useDefaultWallPaper: false,
             uploadMethod: 'default', //上传方式
+            /*
+             * v1.1.2：「记录」是第三个切换页，但**不是**一种上传方式 ——
+             * 单独一个开关，避免把 'record' 塞进 uploadMethod 影响 UploadForm 的既有判断。
+             */
+            recordTab: false,
+            recordDialogVisible: false,
+            /** 本次会话里刚发布的内容（只放内存，刷新即清零，与「文件 / 链接」页的上传结果一致） */
+            recordResults: [],
             uploadFolder: '', // 上传文件夹
             isFolderInputActive: false,
             isQuickToolbarOpen: false,
@@ -613,6 +670,20 @@ export default {
     },
     computed: {
         ...mapGetters(['userConfig', 'uploadCopyUrlForm', 'compressConfig', 'storeUploadChannel', 'storeChannelName', 'storeUploadNameType', 'customUrlSettings', 'storeAutoRetry', 'storeUploadMethod', 'storeUploadFolder', 'isAdminRole', 'sessionUser']),
+        /**
+         * 「记录」页的 5 个 app 图标。
+         * ready 表示对应编辑页已经实装 —— 目前只有「瞬间」，
+         * 其余四种点下去先给一句「未开放」，免得点了毫无反馈。
+         */
+        recordApps() {
+            return [
+                { kind: 'moment', icon: 'note-sticky', color: '#409eff', ready: true, label: this.$t('notes.typeMoment') },
+                { kind: 'todo', icon: 'check-square', color: '#67c23a', ready: false, label: this.$t('notes.typeTodo') },
+                { kind: 'nav', icon: 'globe', color: '#e6a23c', ready: false, label: this.$t('notes.typeNav') },
+                { kind: 'article', icon: 'book', color: '#909399', ready: false, label: this.$t('notes.typeArticle') },
+                { kind: 'collection', icon: 'images', color: '#f56c6c', ready: false, label: this.$t('notes.typeCollection') }
+            ];
+        },
         ownerName() {
             return this.userConfig?.ownerName || 'GoHub'
         },
@@ -774,7 +845,8 @@ export default {
         UploadSettingsDialog,
         RecordFileDialog,
         DirectoryTreePicker,
-        DirectorySuggestionInput
+        DirectorySuggestionInput,
+        MomentPublishDialog
     },
     methods: {
         /**
@@ -1135,6 +1207,54 @@ export default {
             if (method !== 'default' && method !== 'paste') return
             this.uploadMethod = method
             this.$store.commit('setUploadMethod', method)
+        },
+        /**
+         * 三个切换页统一入口：'default' / 'paste' 是上传方式，'record' 是笔记记录页。
+         * 走同一个函数是为了保证「同时只有一个激活」，不会出现两个按钮都高亮。
+         */
+        switchUploadTab(method) {
+            if (method === 'record') {
+                this.recordTab = true
+                return
+            }
+            this.recordTab = false
+            this.setUploadMethod(method)
+        },
+        /** 点 app 图标：瞬间直接开编辑页，其余类型还没实装 */
+        openRecordApp(app) {
+            if (!app.ready) {
+                this.$message.warning(this.$t('notes.typeNotReadyTip'))
+                return
+            }
+            this.recordDialogVisible = true
+        },
+        /** 发布完成：按 id 拉回这一条，追加到列表顶部（刷新页面即清空） */
+        async onRecordSaved(payload) {
+            const id = payload && payload.id
+            if (!id) return
+            try {
+                const qs = new URLSearchParams()
+                qs.set('instanceId', this.currentInstanceId || '')
+                const res = await fetchWithAuth(`/api/notes/${encodeURIComponent(id)}?${qs.toString()}`)
+                const data = await res.json().catch(() => ({}))
+                if (!res.ok || !data || !data.id) return
+                this.recordResults = [data].concat(this.recordResults).slice(0, 20)
+            } catch (e) {
+                /* 拉不到就不展示，发布本身已经成功了 */
+            }
+        },
+        kindLabelOf(kind) {
+            const map = {
+                moment: 'notes.typeMoment',
+                todo: 'notes.typeTodo',
+                nav: 'notes.typeNav',
+                article: 'notes.typeArticle',
+                collection: 'notes.typeCollection'
+            }
+            return this.$t(map[kind] || 'notes.typeMoment')
+        },
+        formatRecordTime(ts) {
+            return formatMomentTime(ts, (k) => this.$t(k))
         },
         handleMobileMenuCommand(command) {
             if (command === 'toggleTheme') {
@@ -2360,27 +2480,157 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
 .upload-method-tab-icon {
     font-size: 14px;
 }
-/* v1.1.1：「记录」入口是切页链接，不是上传方式 —— 用左侧细线做视觉分隔，避免被当成第三种上传方式 */
-.upload-method-tab.is-page-link {
-    text-decoration: none;
-    margin-left: 2px;
-    padding-left: 20px;
-    position: relative;
+/* ── v1.1.2「记录」页 ───────────────────────────────────────
+   虚线操作区：宽高与「文件 / 链接」两页的虚线卡片保持一致（55vw / 45vh，移动端 70vw），
+   区内放 5 个 1:1 的 app 图标，点一下直接开对应编辑页。 */
+.record-panel {
+    box-sizing: border-box;
+    width: 55vw;
+    min-height: var(--upload-card-height, 45vh);
+    margin: 0 auto;
+    padding: 18px;
+    border: 1px dashed var(--el-border-color, rgba(127, 127, 127, 0.45));
+    border-radius: 15px;
+    background-color: var(--el-upload-dragger-bg-color, rgba(127, 127, 127, 0.04));
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
 }
-.upload-method-tab.is-page-link:before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 20%;
-    height: 60%;
-    width: 1px;
-    background: var(--glass-border, rgba(0, 0, 0, 0.1));
+
+.record-apps {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
 }
-.upload-method-tab.is-page-link:focus,
-.upload-method-tab.is-page-link:focus-visible,
-.upload-method-tab.is-page-link:active {
-    outline: none;
-    box-shadow: none;
+
+.record-app {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+/* 图标本体：1:1 正方形，圆角 + 淡色底，视觉上就是一排 app */
+.record-app-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 20%;
+    background: color-mix(in srgb, var(--app-color, #409eff) 14%, transparent);
+    color: var(--app-color, #409eff);
+    font-size: 22px;
+    transition: transform 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+}
+
+.record-app:hover .record-app-icon {
+    transform: translateY(-2px);
+    background: color-mix(in srgb, var(--app-color, #409eff) 22%, transparent);
+    box-shadow: 0 6px 16px color-mix(in srgb, var(--app-color, #409eff) 26%, transparent);
+}
+
+.record-app:active .record-app-icon {
+    transform: scale(0.96);
+}
+
+/* 未实装的类型：图标降饱和，hover 也不给「可以点」的暗示 */
+.record-app:not(.is-ready) .record-app-icon {
+    filter: grayscale(0.55);
+    opacity: 0.7;
+}
+
+.record-app-label {
+    font-size: 12px;
+    line-height: 1.3;
+    color: var(--text-color-secondary, #666);
+    white-space: nowrap;
+}
+
+.record-tip {
+    margin: 0;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--text-color-secondary, #888);
+}
+
+.record-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 26vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.record-item {
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: var(--glass-bg, rgba(127, 127, 127, 0.06));
+    border: 1px solid var(--glass-border, rgba(127, 127, 127, 0.12));
+}
+
+.record-item-kind {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+    color: var(--primary-color);
+    font-size: 11px;
+    line-height: 17px;
+}
+
+.record-item-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color, #303133);
+}
+
+.record-item-time {
+    float: right;
+    font-size: 11px;
+    color: var(--text-color-secondary, #909399);
+}
+
+.record-item-text {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-color-secondary, #606266);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+@media (max-width: 768px) {
+    .record-panel {
+        width: 70vw;
+        padding: 12px;
+    }
+
+    .record-apps {
+        gap: 8px;
+    }
+
+    .record-app-icon {
+        font-size: 18px;
+    }
+
+    .record-app-label {
+        font-size: 11px;
+    }
 }
 @media (max-width: 768px) {
     .upload-stack {
@@ -2400,7 +2650,8 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
         margin-bottom: 2px;
     }
     .upload-method-tab {
-        padding: 6px 14px;
+        /* v1.1.2：三个切换页在移动端把左右内边距调小（需求），一屏放得下不挤 */
+        padding: 6px 10px;
         font-size: 13px;
     }
 }

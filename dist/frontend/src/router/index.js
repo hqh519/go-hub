@@ -425,6 +425,14 @@ const routes = [
     beforeEnter: manageAuthGuard
   },
   {
+    // v1.1.2：文件引用明细页（文件详情 →「文件引用」→ 查看，新标签页打开）。
+    // 只读页，登录即可访问；具体文件能不能看由后端按上传者 / 管理员判定。
+    path: '/file-refs',
+    name: 'fileRefs',
+    component: () => import('../views/FileRefsPage.vue'),
+    beforeEnter: manageAuthGuard
+  },
+  {
     // 访问记录管理（v2.3.0）：系统状态页的「访问记录」块与「访问次数」统计块
     // 都以新标签打开本页；仅管理员可进。
     path: '/manage/access',

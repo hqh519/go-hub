@@ -95,6 +95,28 @@ export class NotesController {
     return this.notes.tagCandidates(instanceId || '');
   }
 
+  /**
+   * 笔记设置（v1.1.2.1）
+   * ------------------------------------------------------------------
+   * 按**实例**保存：同一个实例里的所有人看到同一套附件区布局，
+   * 换到另一个实例就是另一套 —— 与文件 / 标签 / 笔记的隔离口径一致。
+   * 路由必须排在 `@Get(':id')` 之前，否则 'settings' 会被当成笔记 id。
+   */
+  @Get('settings')
+  async getSettings(@Req() req: Request, @Query('instanceId') instanceId?: string) {
+    this.ctx(req);
+    return { success: true, data: await this.notes.getNoteSettings(instanceId || '') };
+  }
+
+  /** 保存笔记设置（合并式：只传变化的分类即可） */
+  @Put('settings')
+  async saveSettings(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    this.ctx(req);
+    const { instanceId, ...patch } = body || {};
+    const data = await this.notes.saveNoteSettings(String(instanceId || ''), patch);
+    return { success: true, data };
+  }
+
   /** 图床选文件器：分页 + 搜索 + 类型过滤，只读不写 */
   @Get('files')
   async files(
@@ -115,6 +137,74 @@ export class NotesController {
       viewer,
       isAdmin,
     });
+  }
+
+  /**
+   * 标签管理（v1.1.2）
+   * GET /api/notes/tag-admin?instanceId=&kind=
+   *   kind 不传 = 「全部」分类下的全部笔记标签；传具体 kind 只返回该分类用到的标签。
+   *   返回带「每个分类的使用次数」，前端切换分类时不用重新请求。
+   */
+  @Get('tag-admin')
+  async tagAdmin(
+    @Req() req: Request,
+    @Query('instanceId') instanceId?: string,
+    @Query('kind') kind?: string,
+  ) {
+    this.ctx(req);
+    return this.notes.tagAdmin(instanceId || '', kind || '');
+  }
+
+  /** 某条瞬间的留言列表 */
+  @Get(':id/comments')
+  async comments(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Query('instanceId') instanceId?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    const { viewer, isAdmin } = this.ctx(req);
+    const r = await this.notes.listComments({
+      noteId: id,
+      viewer,
+      isAdmin,
+      instanceId: instanceId || '',
+      page: Number(page) || 1,
+      pageSize: Number(pageSize) || 20,
+    });
+    if ('error' in r && r.error) throw new HttpException({ success: false, message: r.error }, HttpStatus.NOT_FOUND);
+    return r;
+  }
+
+  /** 新增留言（上限 500 字） */
+  @Post(':id/comments')
+  async addComment(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    const { viewer, isAdmin } = this.ctx(req);
+    const r = await this.notes.addComment({
+      noteId: id,
+      content: String(body.content ?? ''),
+      viewer,
+      isAdmin,
+      instanceId: String(body.instanceId ?? ''),
+      ip: String(req.ip || ''),
+    });
+    if ('error' in r && r.error) throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
+    // comment 是给人看的（卡片内联追加，省一次整页重载）；id 保留给老调用方
+    return { success: true, id: (r as { id: string }).id, comment: (r as { comment?: unknown }).comment || null };
+  }
+
+  /** 删除留言（本人或管理员） */
+  @Delete('comments/:commentId')
+  async deleteComment(@Req() req: Request, @Param('commentId') commentId: string) {
+    const { viewer, isAdmin } = this.ctx(req);
+    const r = await this.notes.deleteComment(commentId, viewer, isAdmin, String(req.ip || ''));
+    if ('error' in r && r.error) throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
+    return { success: true };
   }
 
   /** 详情 */
@@ -140,6 +230,8 @@ export class NotesController {
         content: body.content as string,
         mood: body.mood as string,
         weather: body.weather as string,
+        moodName: body.moodName as string,
+        weatherName: body.weatherName as string,
         location: body.location as string,
         visibility: body.visibility as string,
         assetIds: body.assetIds as string[],
@@ -164,6 +256,8 @@ export class NotesController {
         content: body.content as string,
         mood: body.mood as string,
         weather: body.weather as string,
+        moodName: body.moodName as string,
+        weatherName: body.weatherName as string,
         location: body.location as string,
         visibility: body.visibility as string,
         assetIds: body.assetIds as string[],

@@ -1,6 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_KINDS = void 0;
+exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_KINDS = void 0;
+exports.attachHeightFactorOf = attachHeightFactorOf;
+exports.normalizeMomentSettings = normalizeMomentSettings;
+exports.normalizeNoteSettings = normalizeNoteSettings;
 exports.countTextChars = countTextChars;
 exports.mediaKindOfMime = mediaKindOfMime;
 exports.mediaKindOf = mediaKindOf;
@@ -10,11 +13,55 @@ exports.safeParse = safeParse;
 exports.brief = brief;
 exports.NOTE_KINDS = ['moment', 'article', 'collection', 'nav', 'todo', 'board'];
 exports.MOMENT_MEDIA_KINDS = ['text', 'image', 'video', 'audio', 'mixed'];
-exports.DEFAULT_MOMENT_MAX_CHARS = 500;
+exports.DEFAULT_MOMENT_MAX_CHARS = 1000;
+exports.MAX_COMMENT_CHARS = 500;
 exports.MAX_ASSETS_PER_NOTE = 50;
 exports.MAX_TAG_NAME_LENGTH = 20;
 exports.MAX_TAGS_PER_NOTE = 20;
 exports.NOTE_VISIBILITIES = ['private', 'public', 'specified'];
+exports.MOMENT_ATTACH_SIZES = ['default', 'custom'];
+exports.MOMENT_ATTACH_ALIGNS = ['center', 'left'];
+exports.MOMENT_LAYOUT_STYLES = ['default', 'divider'];
+exports.MOMENT_ATTACH_ROWS = [1, 2, 3];
+exports.DEFAULT_MOMENT_ATTACH_RATIO = 35;
+exports.MOMENT_ATTACH_RATIO_MIN = 5;
+exports.MOMENT_ATTACH_RATIO_MAX = 80;
+function attachHeightFactorOf(count) {
+    const n = Math.max(0, Math.floor(Number(count) || 0));
+    if (n <= 1)
+        return 0.8;
+    if (n === 2)
+        return 0.7;
+    if (n === 3)
+        return 0.6;
+    if (n <= 6)
+        return 0.8;
+    return 1;
+}
+exports.MOMENT_ATTACH_SINGLE_FACTOR = 0.8;
+function normalizeMomentSettings(raw) {
+    const o = (raw && typeof raw === 'object' ? raw : {});
+    const size = exports.MOMENT_ATTACH_SIZES.includes(String(o.attachSize))
+        ? String(o.attachSize)
+        : 'custom';
+    const align = exports.MOMENT_ATTACH_ALIGNS.includes(String(o.attachAlign))
+        ? String(o.attachAlign)
+        : 'left';
+    let ratio = Number(o.attachRatio);
+    if (!Number.isFinite(ratio) || ratio <= 0)
+        ratio = exports.DEFAULT_MOMENT_ATTACH_RATIO;
+    ratio = Math.min(exports.MOMENT_ATTACH_RATIO_MAX, Math.max(exports.MOMENT_ATTACH_RATIO_MIN, Math.round(ratio * 10) / 10));
+    const layoutStyle = exports.MOMENT_LAYOUT_STYLES.includes(String(o.layoutStyle))
+        ? String(o.layoutStyle)
+        : 'divider';
+    const rowsNum = Math.round(Number(o.attachRows));
+    const attachRows = exports.MOMENT_ATTACH_ROWS.includes(rowsNum) ? rowsNum : 2;
+    return { attachSize: size, attachRatio: ratio, attachAlign: align, layoutStyle, attachRows };
+}
+function normalizeNoteSettings(raw) {
+    const o = (raw && typeof raw === 'object' ? raw : {});
+    return { ...o, moment: normalizeMomentSettings(o.moment) };
+}
 function countTextChars(input) {
     const s = String(input ?? '');
     if (!s)

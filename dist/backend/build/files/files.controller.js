@@ -35,6 +35,7 @@ const settings_service_1 = require("../settings/settings.service");
 const sysconfig_service_1 = require("../settings/sysconfig.service");
 const auth_guard_1 = require("../auth/auth.guard");
 const file_view_1 = require("../common/file-view");
+const file_refs_1 = require("../common/file-refs");
 const media_edit_1 = require("./media-edit");
 const compress_1 = require("../common/compress");
 const app_log_1 = require("../common/app-log");
@@ -966,6 +967,10 @@ let LinkController = class LinkController {
         const sourceIdSet = new Set(sources.map((s) => s.id));
         const instanceId = sources[0].instanceId;
         const owner = String(sources[0].owner || '');
+        const tagType = String(sources[0].type || tags_1.TAG_TYPE_FILE);
+        if (sources.some((t) => String(t.type || tags_1.TAG_TYPE_FILE) !== tagType)) {
+            return { success: false, message: '不同类型（文件标签 / 笔记标签）的标签不能合并' };
+        }
         let target = null;
         if (body?.targetId) {
             const row = await prisma_1.prisma.tag.findUnique({ where: { id: String(body.targetId) } });
@@ -976,23 +981,44 @@ let LinkController = class LinkController {
             const name = String(body?.targetName || '').trim();
             if (!name)
                 return { success: false, message: '缺少 targetId 或 targetName' };
-            const row = await (0, tags_1.findOrCreateTag)(name, instanceId, this.sessionUser(req), tags_1.TAG_TYPE_FILE);
+            const row = await (0, tags_1.findOrCreateTag)(name, instanceId, this.sessionUser(req), tagType);
             target = { id: row.id, name: row.name };
         }
         if (sourceIdSet.has(target.id))
             return { success: false, message: '目标标签不能同时是源标签' };
         let moved = 0;
-        for (const sid of sourceIdSet) {
-            const links = await prisma_1.prisma.fileTag.findMany({ where: { tagId: sid } });
-            for (const link of links) {
-                const exists = await prisma_1.prisma.fileTag.findUnique({
-                    where: { fileId_tagId: { fileId: link.fileId, tagId: target.id } },
-                });
-                if (exists)
-                    await prisma_1.prisma.fileTag.delete({ where: { id: link.id } });
-                else {
-                    await prisma_1.prisma.fileTag.update({ where: { id: link.id }, data: { tagId: target.id } });
-                    moved += 1;
+        if (tagType === 'note') {
+            for (const sid of sourceIdSet) {
+                const links = await prisma_1.prisma.noteTag.findMany({ where: { tagId: sid } });
+                for (const link of links) {
+                    const exists = await prisma_1.prisma.noteTag.findUnique({
+                        where: { noteId_tagId: { noteId: link.noteId, tagId: target.id } },
+                    });
+                    if (exists)
+                        await prisma_1.prisma.noteTag.delete({ where: { noteId_tagId: { noteId: link.noteId, tagId: sid } } });
+                    else {
+                        await prisma_1.prisma.noteTag.update({
+                            where: { noteId_tagId: { noteId: link.noteId, tagId: sid } },
+                            data: { tagId: target.id },
+                        });
+                        moved += 1;
+                    }
+                }
+            }
+        }
+        else {
+            for (const sid of sourceIdSet) {
+                const links = await prisma_1.prisma.fileTag.findMany({ where: { tagId: sid } });
+                for (const link of links) {
+                    const exists = await prisma_1.prisma.fileTag.findUnique({
+                        where: { fileId_tagId: { fileId: link.fileId, tagId: target.id } },
+                    });
+                    if (exists)
+                        await prisma_1.prisma.fileTag.delete({ where: { id: link.id } });
+                    else {
+                        await prisma_1.prisma.fileTag.update({ where: { id: link.id }, data: { tagId: target.id } });
+                        moved += 1;
+                    }
                 }
             }
         }
@@ -1025,21 +1051,33 @@ let LinkController = class LinkController {
             .filter((n) => n !== tag.name)));
         if (!names.length)
             throw new common_1.BadRequestException('names 不能为空');
-        const links = await prisma_1.prisma.fileTag.findMany({ where: { tagId: tag.id }, select: { fileId: true } });
+        const tagType = String(tag.type || tags_1.TAG_TYPE_FILE);
+        const isNoteTag = tagType === 'note';
+        const fileLinks = isNoteTag ? [] : await prisma_1.prisma.fileTag.findMany({ where: { tagId: tag.id }, select: { fileId: true } });
+        const noteLinks = isNoteTag ? await prisma_1.prisma.noteTag.findMany({ where: { tagId: tag.id }, select: { noteId: true } }) : [];
         const created = [];
         let linked = 0;
         for (const name of names) {
-            const target = await (0, tags_1.findOrCreateTag)(name, tag.instanceId, owner, tags_1.TAG_TYPE_FILE);
+            const target = await (0, tags_1.findOrCreateTag)(name, tag.instanceId, owner, tagType);
             created.push({ id: target.id, name: target.name });
-            if (links.length) {
+            if (isNoteTag) {
+                if (noteLinks.length) {
+                    const res = await prisma_1.prisma.noteTag.createMany({
+                        data: noteLinks.map((l) => ({ noteId: l.noteId, tagId: target.id })),
+                        skipDuplicates: true,
+                    });
+                    linked += res.count;
+                }
+            }
+            else if (fileLinks.length) {
                 const res = await prisma_1.prisma.fileTag.createMany({
-                    data: links.map((l) => ({ fileId: l.fileId, tagId: target.id })),
+                    data: fileLinks.map((l) => ({ fileId: l.fileId, tagId: target.id })),
                     skipDuplicates: true,
                 });
                 linked += res.count;
             }
         }
-        app_log_1.appLog.info('tag', `拆分标签 ${tag.name} → ${created.map((c) => c.name).join('、')}`, `复制关联 ${linked} 条（源标签 ${links.length} 条 / 实例=${tag.instanceId || '默认'}）`);
+        app_log_1.appLog.info('tag', `拆分标签 ${tag.name} → ${created.map((c) => c.name).join('、')}`, `复制关联 ${linked} 条（源标签 ${isNoteTag ? noteLinks.length : fileLinks.length} 条 / 实例=${tag.instanceId || '默认'}）`);
         return { success: true, created, linked };
     }
     async tagsBatchPassword(req, body) {
@@ -2062,6 +2100,9 @@ let ManageController = ManageController_1 = class ManageController {
                     OR: [{ folder: prefix }, { folder: { startsWith: `${prefix}/` } }],
                 },
             });
+            const batchMsg = await (0, file_refs_1.batchReferenceBlockMessage)(rows.map((r) => r.id));
+            if (batchMsg)
+                return { success: false, message: batchMsg };
             for (const r of rows)
                 await this.trashRecord(r.id, r.name);
             const unregistered = await this.unregisterFolders(owner, prefix, delInstance === '*' ? '' : delInstance);
@@ -2119,6 +2160,9 @@ let ManageController = ManageController_1 = class ManageController {
         if (sharedHit) {
             return { success: false, message: `该文件位于 ${sharedHit.owner} 共享给你的「${sharedHit.path}」内，不允许删除` };
         }
+        const refMsg = await (0, file_refs_1.fileReferenceBlockMessage)(record.id);
+        if (refMsg)
+            return { success: false, message: refMsg };
         await this.trashRecord(record.id, record.name);
         return { success: true, deleted: 1 };
     }
@@ -3236,6 +3280,15 @@ let ManageController = ManageController_1 = class ManageController {
             resolveDirectUrl: this.directUrlResolver(), resolveLoadUrl: this.directUrlResolver(true),
         }).metadata;
         metadata.LinkExpiresAt = rec.linkExpiresAt ? rec.linkExpiresAt.getTime() : 0;
+        const refs = await (0, file_refs_1.refsOfFile)(rec.id);
+        const bySource = (0, file_refs_1.countBySource)(refs);
+        metadata.FileRefCount = refs.length;
+        metadata.FileRefNoteCount = bySource.note;
+        metadata.FileRefShareCount = bySource.share;
+        metadata.FileRefNotes = refs
+            .filter((r) => r.source === 'note')
+            .slice(0, 5)
+            .map((r) => r.title || '未命名');
         try {
             const m = metadata;
             if (m.UploadIP) {
@@ -3254,6 +3307,37 @@ let ManageController = ManageController_1 = class ManageController {
                 name: rec.name,
                 ...(this.canUseNote(req, rec) ? { note: rec.note, Note: rec.note } : {}),
                 metadata,
+            },
+        };
+    }
+    async fileRefs(req) {
+        const me = (0, auth_guard_1.currentSession)(req)?.user || '';
+        if (!me)
+            return { success: false, message: '请先登录后再查看引用' };
+        const rec = await this.resolveFile(wildcardParam(req), this.admin(req) ? '' : me);
+        if (!rec)
+            return { success: false, message: '文件不存在或无权查看' };
+        const refs = await (0, file_refs_1.refsOfFile)(rec.id);
+        const bySource = (0, file_refs_1.countBySource)(refs);
+        return {
+            success: true,
+            data: {
+                fileId: rec.id,
+                name: rec.name,
+                originalName: rec.originalName,
+                count: refs.length,
+                noteCount: bySource.note,
+                shareCount: bySource.share,
+                list: refs.map((r) => ({
+                    source: r.source,
+                    noteId: r.source === 'note' ? r.id : '',
+                    shareId: r.source === 'share' ? r.id : '',
+                    title: r.title,
+                    kind: r.kind,
+                    status: r.status,
+                    author: r.author,
+                    createdAt: r.createdAt,
+                })),
             },
         };
     }
@@ -4250,6 +4334,13 @@ __decorate([
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], ManageController.prototype, "getMeta", null);
+__decorate([
+    (0, common_1.Get)('api/file-refs/*'),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "fileRefs", null);
 __decorate([
     (0, common_1.Post)('expiry/*'),
     __param(0, (0, common_1.Req)()),

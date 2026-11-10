@@ -1,20 +1,29 @@
 <template>
     <!--
-        「从图床选择」文件选择器
+        「图床选择」文件选择器（v1.1.2 改版）
         ----------------------------------------------------------------------------
         为什么不直接复用后台文件管理页：
           · 那个页面带目录树、批量操作、拖拽移动、回收站……对本场景全是噪声；
           · 这里只需要「按类型筛 + 搜索 + 点选」，一个弹窗就能装下。
         数据走 /api/notes/files（只读接口，按实例与账户收窄），
         **不改动图床任何既有接口**。
+
+        v1.1.2 变更点（对照需求）：
+          · 弹窗高度 = 窗口 96%，内容区自己滚，不再把整页顶出去
+          · 滚动到底自动加载下一页，去掉「加载更多」按钮
+          · 视频格加载首帧缩略图（前端 <video> + canvas 抽帧，见 utils/videoPoster）
+          · 缩略图左下角加「小眼睛」：按住出预览、放开关闭
+            （PC 悬停即出；触屏长按 300ms 出，参考 go-imgbed-2.9.0 的交互）
+          · 类型去掉「全部」，改成 图片 / 视频 / 音频 / 其他，默认停在「图片」
     -->
     <el-dialog
         v-model="visible"
         :title="$t('notes.pickFileTitle')"
         :width="dialogWidth"
         append-to-body
-        class="note-picker-dialog"
+        class="file-picker-dialog"
         @open="onOpen"
+        @closed="onClosed"
     >
         <div class="np-toolbar">
             <div class="np-tabs" role="tablist">
@@ -44,9 +53,9 @@
             </el-input>
         </div>
 
-        <div class="np-body" v-loading="loading">
+        <div ref="bodyEl" class="np-body" v-loading="loading && !list.length" @scroll.passive="onScroll">
             <div v-if="!list.length && !loading" class="np-empty">
-                <font-awesome-icon icon="images" class="np-empty-icon" />
+                <font-awesome-icon :icon="emptyIcon" class="np-empty-icon" />
                 <p>{{ $t('notes.pickFileEmpty') }}</p>
             </div>
             <div v-else class="np-grid">
@@ -61,12 +70,13 @@
                     @click="toggle(f)"
                 >
                     <!--
-                        图片加载失败（文件已被删除 / 缩略图通道不可用）时退回图标卡，
+                        图片 / 视频都优先显示缩略图；
+                        加载失败（文件已被删除 / 抽帧不支持）时退回图标卡，
                         否则整格是一个破图标，看起来像页面坏了。
                     -->
                     <img
-                        v-if="f.mediaKind === 'image' && !f.broken"
-                        :src="f.thumbUrl || f.url"
+                        v-if="coverOf(f) && !f.broken"
+                        :src="coverOf(f)"
                         class="np-img"
                         loading="lazy"
                         alt=""
@@ -76,6 +86,31 @@
                         <font-awesome-icon :icon="iconOf(f)" class="np-cover-icon" />
                         <span class="np-cover-name">{{ f.originalName }}</span>
                     </span>
+
+                    <!-- 视频：缩略图上压一个播放角标，一眼能和图片区分 -->
+                    <span v-if="f.mediaKind === 'video' && coverOf(f)" class="np-play">
+                        <font-awesome-icon icon="play" />
+                    </span>
+
+                    <!-- 小眼睛：按住加载预览，放开关闭 -->
+                    <span
+                        v-if="f.mediaKind === 'image' || f.mediaKind === 'video'"
+                        class="np-eye no-hswipe-guard"
+                        role="button"
+                        :aria-label="$t('notes.pickPreviewHold')"
+                        @click.stop.prevent
+                        @mousedown.stop.prevent
+                        @mouseenter.stop="openPreview(f, $event)"
+                        @mouseleave.stop="closePreview"
+                        @touchstart.stop.prevent="eyeTouchStart(f, $event)"
+                        @touchmove.stop="eyeTouchMove"
+                        @touchend.stop.prevent="eyeTouchEnd"
+                        @touchcancel.stop.prevent="eyeTouchEnd"
+                        @contextmenu.prevent
+                    >
+                        <font-awesome-icon icon="eye" />
+                    </span>
+
                     <span v-if="pickedMap[f.id]" class="np-check">
                         <font-awesome-icon icon="check" />
                     </span>
@@ -83,10 +118,9 @@
                 </button>
             </div>
 
-            <div v-if="hasMore" class="np-more">
-                <el-button size="small" :loading="loading" @click="loadMore">{{ $t('notes.pickFileMore') }}</el-button>
-            </div>
-            <p v-else-if="list.length" class="np-end">{{ $t('notes.pickFileEnd', { n: total }) }}</p>
+            <!-- 滚动到底自动加载：这里只留状态文案，不再占一个按钮 -->
+            <p v-if="loading && list.length" class="np-end">{{ $t('notes.loading') }}</p>
+            <p v-else-if="!hasMore && list.length" class="np-end">{{ $t('notes.pickFileEnd', { n: total }) }}</p>
         </div>
 
         <template #footer>
@@ -100,12 +134,36 @@
                 </div>
             </div>
         </template>
+
+        <!-- 预览浮层：teleport 到 body，position: fixed，跟着小眼睛走 -->
+        <teleport to="body">
+            <div v-if="preview.visible" class="np-preview" :style="previewStyle" aria-hidden="true">
+                <video
+                    v-if="preview.type === 'video'"
+                    :src="preview.src"
+                    class="np-preview-media"
+                    autoplay
+                    muted
+                    loop
+                    playsinline
+                ></video>
+                <img v-else :src="preview.src" class="np-preview-media" alt="" decoding="async" />
+            </div>
+        </teleport>
     </el-dialog>
 </template>
 
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
 import { formatSize } from '@/utils/notes';
+import { videoPoster } from '@/utils/videoPoster';
+
+/** 预览浮层边长（正方形画布，media 用 object-fit: contain 装进去） */
+const PREVIEW_SIZE = 300;
+/** 触屏长按多久算「按住预览」 */
+const EYE_PRESS_MS = 300;
+/** 距底部多少像素开始预加载下一页 */
+const SCROLL_TRIGGER = 160;
 
 export default {
     name: 'FilePickerDialog',
@@ -118,7 +176,8 @@ export default {
     emits: ['update:modelValue', 'confirm'],
     data() {
         return {
-            type: '',
+            // 默认「图片」：绝大多数场景就是找图，少点一次
+            type: 'image',
             search: '',
             list: [],
             total: 0,
@@ -126,7 +185,10 @@ export default {
             pageSize: 24,
             loading: false,
             picked: [],
-            loaded: false
+            loaded: false,
+            /** 视频首帧：id -> dataURL */
+            posters: {},
+            preview: { visible: false, src: '', type: 'image', left: 0, top: 0 }
         };
     },
     computed: {
@@ -139,15 +201,21 @@ export default {
             }
         },
         dialogWidth() {
-            return window.innerWidth < 768 ? '94%' : '760px';
+            return window.innerWidth < 768 ? '94%' : '820px';
         },
         typeTabs() {
             return [
-                { value: '', label: 'notes.mediaAll' },
                 { value: 'image', label: 'notes.mediaImage' },
                 { value: 'video', label: 'notes.mediaVideo' },
-                { value: 'audio', label: 'notes.mediaAudio' }
+                { value: 'audio', label: 'notes.mediaAudio' },
+                { value: 'other', label: 'notes.mediaOther' }
             ];
+        },
+        emptyIcon() {
+            if (this.type === 'video') return 'film';
+            if (this.type === 'audio') return 'music';
+            if (this.type === 'other') return 'file';
+            return 'images';
         },
         excluded() {
             return (this.excludeIds || []).map(String);
@@ -159,6 +227,14 @@ export default {
         },
         hasMore() {
             return this.list.length < this.total;
+        },
+        previewStyle() {
+            return {
+                left: `${this.preview.left}px`,
+                top: `${this.preview.top}px`,
+                width: `${PREVIEW_SIZE}px`,
+                height: `${PREVIEW_SIZE}px`
+            };
         }
     },
     methods: {
@@ -171,14 +247,30 @@ export default {
             if (f.fileType === 'txt') return 'file-alt';
             return 'file';
         },
+        /** 格子封面：图片用后端缩略图，视频用前端抽出的首帧 */
+        coverOf(f) {
+            if (f.mediaKind === 'image') return f.thumbUrl || f.url || '';
+            if (f.mediaKind === 'video') return this.posters[f.id] || '';
+            return '';
+        },
+
+        /* ── 打开 / 关闭 ───────────────────────────────────────── */
         onOpen() {
             if (this.loaded) return;
             this.loaded = true;
             this.reload();
         },
+        onClosed() {
+            // 每次关闭都清掉待选状态与预览，避免下次打开还挂着上一轮
+            this.picked = [];
+            this.closePreview();
+        },
+
+        /* ── 数据 ───────────────────────────────────────────────── */
         switchType(v) {
             if (this.type === v) return;
             this.type = v;
+            this.closePreview();
             this.reload();
         },
         reload() {
@@ -191,6 +283,14 @@ export default {
             if (this.loading || !this.hasMore) return;
             this.page += 1;
             return this.fetch(false);
+        },
+        /** 滚动到底自动加载（阈值留 160px，滚到底之前就开始拉，观感上不会卡一下） */
+        onScroll() {
+            const el = this.$refs.bodyEl;
+            if (!el) return;
+            if (!this.hasMore || this.loading) return;
+            const rest = el.scrollHeight - el.scrollTop - el.clientHeight;
+            if (rest < SCROLL_TRIGGER) this.loadMore();
         },
         async fetch(reset) {
             this.loading = true;
@@ -207,12 +307,37 @@ export default {
                 const rows = Array.isArray(data.list) ? data.list : [];
                 this.total = Number(data.total) || 0;
                 this.list = reset ? rows : this.list.concat(rows);
+                this.$nextTick(() => {
+                    // 一页填不满时继续拉，否则「滚动加载」在宽屏上永远不会再触发
+                    this.fillViewport();
+                    this.loadPosters();
+                });
             } catch (e) {
                 this.$message.error(this.$t('notes.pickFileLoadFail'));
             } finally {
                 this.loading = false;
             }
         },
+        /** 首屏内容不足一屏时自动补下一页（多数是「其他」这种稀疏分类才会遇到） */
+        fillViewport() {
+            const el = this.$refs.bodyEl;
+            if (!el || !this.hasMore || this.loading) return;
+            if (el.scrollHeight <= el.clientHeight + SCROLL_TRIGGER) this.loadMore();
+        },
+        /** 给列表里的视频抽首帧（videoPoster 内部并发限 2 + 按 URL 缓存） */
+        loadPosters() {
+            for (const f of this.list) {
+                if (f.mediaKind !== 'video' || this.posters[f.id]) continue;
+                const url = f.url || '';
+                if (!url) continue;
+                videoPoster(url).then((dataUrl) => {
+                    if (!dataUrl) return;
+                    this.posters = { ...this.posters, [f.id]: dataUrl };
+                });
+            }
+        },
+
+        /* ── 选择 ───────────────────────────────────────────────── */
         toggle(f) {
             if (this.excluded.includes(f.id)) return;
             const idx = this.picked.findIndex((x) => x.id === f.id);
@@ -222,12 +347,84 @@ export default {
         confirm() {
             this.$emit('confirm', this.picked.slice());
             this.visible = false;
+        },
+
+        /* ── 小眼睛：按住预览 ───────────────────────────────────── */
+        openPreview(f, e) {
+            const src = f.mediaKind === 'video' ? (f.url || '') : (f.url || f.thumbUrl || '');
+            if (!src) return;
+            // 锚点：眼睛按钮自身的矩形（不是鼠标位置），浮层贴着眼睛弹出
+            const rect = e && e.currentTarget ? e.currentTarget.getBoundingClientRect() : null;
+            let left = 8;
+            let top = 8;
+            if (rect) {
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+                // 右边放不下就放左边，两边都放不下就居中
+                if (rect.right + 12 + PREVIEW_SIZE <= vw - 8) left = rect.right + 12;
+                else if (rect.left - 12 - PREVIEW_SIZE >= 8) left = rect.left - 12 - PREVIEW_SIZE;
+                else left = Math.max(8, (vw - PREVIEW_SIZE) / 2);
+                top = rect.top + rect.height / 2 - PREVIEW_SIZE / 2;
+                top = Math.min(Math.max(8, top), Math.max(8, vh - PREVIEW_SIZE - 8));
+            }
+            this.preview = {
+                visible: true,
+                src,
+                type: f.mediaKind === 'video' ? 'video' : 'image',
+                left,
+                top
+            };
+        },
+        closePreview() {
+            this.clearEyeTimer();
+            if (!this.preview.visible) return;
+            this.preview = { ...this.preview, visible: false };
+        },
+        eyeTouchStart(f, e) {
+            this.clearEyeTimer();
+            const touch = (e.touches && e.touches[0]) || e;
+            this._eyeX = touch.clientX || 0;
+            this._eyeY = touch.clientY || 0;
+            // currentTarget 在事件派发结束后会被置空，必须在定时器外先取好
+            const rect = e.currentTarget ? e.currentTarget.getBoundingClientRect() : null;
+            this._eyeRect = rect;
+            this._eyeFile = f;
+            this._eyeTimer = setTimeout(() => {
+                this._eyeTimer = null;
+                this.openPreview(this._eyeFile, { currentTarget: { getBoundingClientRect: () => this._eyeRect } });
+            }, EYE_PRESS_MS);
+        },
+        eyeTouchMove(e) {
+            // 手指明显滑动（>10px）视为要滚动列表，取消长按；微抖不取消
+            const touch = e.touches && e.touches[0];
+            if (!touch || typeof this._eyeX !== 'number') return;
+            const dx = touch.clientX - this._eyeX;
+            const dy = touch.clientY - this._eyeY;
+            if (dx * dx + dy * dy > 100) {
+                this.clearEyeTimer();
+                this.closePreview();
+            }
+        },
+        eyeTouchEnd() {
+            this.clearEyeTimer();
+            this.closePreview();
+        },
+        clearEyeTimer() {
+            if (this._eyeTimer) {
+                clearTimeout(this._eyeTimer);
+                this._eyeTimer = null;
+            }
         }
+    },
+    beforeUnmount() {
+        this.clearEyeTimer();
     },
     watch: {
         visible(v) {
-            // 每次关闭都清掉待选状态，避免下次打开还挂着上一轮
-            if (!v) this.picked = [];
+            if (!v) {
+                this.picked = [];
+                this.closePreview();
+            }
         }
     }
 };
@@ -241,6 +438,7 @@ export default {
     gap: 10px;
     flex-wrap: wrap;
     margin-bottom: 10px;
+    flex: 0 0 auto;
 }
 
 .np-tabs {
@@ -278,16 +476,18 @@ export default {
     opacity: 0.6;
 }
 
+/* 内容区自己滚：弹窗整体 96vh 高，滚动只发生在这一层 */
 .np-body {
-    min-height: 220px;
-    max-height: 52vh;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
+    padding-right: 2px;
 }
 
 .np-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
     gap: 8px;
 }
 
@@ -350,6 +550,54 @@ export default {
     word-break: break-all;
 }
 
+/* 视频角标 */
+.np-play {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin: -13px 0 0 -13px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.45);
+    color: #fff;
+    font-size: 10px;
+    pointer-events: none;
+}
+
+/* 小眼睛：左下角，半透明，悬停/按下时变实 */
+.np-eye {
+    position: absolute;
+    left: 4px;
+    bottom: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.45);
+    color: #fff;
+    font-size: 10px;
+    cursor: pointer;
+    opacity: 0.75;
+    transition: opacity 0.15s ease, background 0.15s ease;
+    /* 长按不要触发系统菜单 / 文本选择 */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: none;
+}
+
+.np-eye:hover,
+.np-eye:active {
+    opacity: 1;
+    background: var(--el-color-primary);
+}
+
 .np-check {
     position: absolute;
     top: 4px;
@@ -392,12 +640,6 @@ export default {
     opacity: 0.5;
 }
 
-.np-more {
-    display: flex;
-    justify-content: center;
-    padding: 12px 0 4px;
-}
-
 .np-end {
     margin: 12px 0 2px;
     text-align: center;
@@ -430,8 +672,76 @@ export default {
     }
 
     .np-grid {
-        grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
         gap: 6px;
     }
+}
+</style>
+
+<style>
+/* 预览浮层：挂到 body 上，必须全局样式 */
+.np-preview {
+    position: fixed;
+    z-index: 4000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    box-sizing: border-box;
+    border-radius: 10px;
+    background: rgba(20, 20, 20, 0.82);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+    animation: np-preview-in 0.12s ease-out;
+}
+
+.np-preview-media {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 6px;
+    display: block;
+}
+
+@keyframes np-preview-in {
+    from {
+        opacity: 0;
+        transform: scale(0.96);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/*
+ * 弹窗本体：高度 = 窗口 96%（需求）。
+ * same trick as MomentPublishDialog —— flex 纵向布局，头部/底部固定，
+ * body 撑满剩余空间并作为滚动容器。
+ */
+.el-dialog.file-picker-dialog {
+    display: flex;
+    flex-direction: column;
+    height: 96vh;
+    max-height: 96vh;
+    margin: 2vh auto;
+}
+
+.el-dialog.file-picker-dialog .el-dialog__header {
+    flex: 0 0 auto;
+}
+
+.el-dialog.file-picker-dialog .el-dialog__body {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+.el-dialog.file-picker-dialog .el-dialog__footer {
+    flex: 0 0 auto;
 }
 </style>

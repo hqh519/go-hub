@@ -2,56 +2,62 @@
     <!--
         单条瞬间卡片（朋友圈式）
         ----------------------------------------------------------------------------
-        文本截断规则（需求）：
-          · 无附件 → 最多 10 行
-          · 有附件 → 最多 5 行
-          · 超出才显示「全文 / 收起」
+        正文截断规则（v1.1.2.3 起按「整块文字区」限高）：
+          · 文字区 = 标题行 + 正文 + 「全文 / 收起」按钮，最高 = 页面高度 x 30%；
+          · 从卡片的顶部边框 / 分割线开始算，到「全文」按钮那一行为止；
+            附件区、底部操作行、留言区都不计入（需求原文如此）；
+          · 超过才在正文后面显示「全文 / 收起」。
 
-        为什么必须用 JS 量一次：
-          `-webkit-line-clamp` 只能「截断」，它**不会告诉我们到底有没有溢出**。
-          只靠 CSS 会出现两种错：要么所有卡片都显示「全文」（很难看），
-          要么真溢出了却不显示（内容看不到）。所以挂载后解除 clamp 量一次 scrollHeight，
-          再决定是否需要这个按钮。
+        为什么用 CSS flex 把正文压住、再只量一次 scrollHeight：
+          单靠 CSS 不知道「到底有没有超出」，会出现两种错：所有卡片都显示「全文」
+          （很难看），或真溢出了却不显示（内容看不到）。所以挂载后量一次，
+          只有 scrollHeight > clientHeight 才认为溢出。
+
+        排版样式（笔记设置 → 内容排版样式）：
+          · 边框样式：带边框的卡片；
+          · 分割线样式：去掉外边框，条目之间用一条与边框同色的分割线隔开。
+
+        留言（v1.1.2.3）：
+          · 留言直接显示在卡片底部（「更多」⋯ 按钮那一行的下一行），不再开弹窗；
+          · 默认最多占视口高度 20%，超出显示「更多留言」，点开后铺满；
+          · 样式照朋友圈：`姓名：内容`，点任意一条即回复该条（输入框自动带「回复 @姓名：」）。
     -->
-    <article class="mc" :class="{ 'is-deleted': note.status === 'deleted' }">
-        <!-- 头部：时间 + 心情 + 天气 + 位置 + 可见性 -->
-        <header class="mc-head">
-            <!-- 标题：编辑页自动填「日期 + 时间」，用户可改；没填标题就退化成时间 -->
-            <span class="mc-time">{{ note.title || timeText }}</span>
-            <span v-if="note.title" class="mc-time-sub">{{ timeText }}</span>
-            <span v-if="moodEmoji" class="mc-chip" :title="moodTitle">{{ moodEmoji }}</span>
-            <span v-if="weatherEmoji" class="mc-chip" :title="weatherTitle">{{ weatherEmoji }}</span>
-            <span v-if="note.moment && note.moment.location" class="mc-loc">
-                <font-awesome-icon icon="globe" class="mc-loc-icon" />{{ note.moment.location }}
-            </span>
-            <span v-if="note.visibility === 'public'" class="mc-public">
-                {{ $t('notes.publicBadge') }}
-            </span>
-            <span class="mc-spacer"></span>
-            <span v-if="note.moment && note.moment.mediaKind !== 'text'" class="mc-media-kind">
-                {{ mediaKindText }}
-            </span>
-        </header>
+    <article class="mc" :class="{ 'is-deleted': note.status === 'deleted', 'is-divider': isDivider }">
+        <!-- 文字区：标题 + 正文 + 全文按钮，整块受 30% 视口高度约束 -->
+        <div class="mc-text" :class="{ 'is-expanded': expanded }" :style="{ '--mc-text-max': maxTextHeight + 'px' }">
+            <!-- 头部：时间 + 心情 + 天气 + 位置 + 可见性 -->
+            <header class="mc-head">
+                <!-- 标题：编辑页自动填「日期 + 时间」，用户可改；没填标题就退化成时间 -->
+                <span class="mc-time">{{ note.title || timeText }}</span>
+                <span v-if="note.title" class="mc-time-sub">{{ timeText }}</span>
+                <span v-if="moodEmoji" class="mc-chip" :title="moodTitle">{{ moodEmoji }}</span>
+                <span v-if="weatherEmoji" class="mc-chip" :title="weatherTitle">{{ weatherEmoji }}</span>
+                <span v-if="note.moment && note.moment.location" class="mc-loc">
+                    <font-awesome-icon icon="globe" class="mc-loc-icon" />{{ note.moment.location }}
+                </span>
+                <span v-if="note.visibility === 'public'" class="mc-public">
+                    {{ $t('notes.publicBadge') }}
+                </span>
+                <span class="mc-spacer"></span>
+                <span v-if="note.moment && note.moment.mediaKind !== 'text'" class="mc-media-kind">
+                    {{ mediaKindText }}
+                </span>
+            </header>
 
-        <!-- 正文（纯文本，不做 md 渲染；Vue 插值天然转义，不存在 XSS） -->
-        <div
-            v-if="note.content"
-            ref="body"
-            class="mc-body"
-            :class="{ 'is-clamp': !expanded }"
-            :style="{ '--mc-lines': maxLines }"
-        >{{ note.content }}</div>
+            <!-- 正文（纯文本，不做 md 渲染；Vue 插值天然转义，不存在 XSS） -->
+            <div v-if="note.content" ref="body" class="mc-body">{{ note.content }}</div>
 
-        <button
-            v-if="overflow"
-            type="button"
-            class="mc-toggle"
-            @click.stop="expanded = !expanded"
-        >
-            {{ expanded ? $t('notes.collapse') : $t('notes.showFull') }}
-        </button>
+            <button
+                v-if="overflow"
+                type="button"
+                class="mc-toggle"
+                @click.stop="expanded = !expanded"
+            >
+                {{ expanded ? $t('notes.collapse') : $t('notes.showFull') }}
+            </button>
+        </div>
 
-        <!-- 附件九宫格：超过 9 个只显示 9 个 + 「+N」，点开灯箱看全部 -->
+        <!-- 附件九宫格：超过「加载几行」的部分只显示 +N，点开灯箱看全部 -->
         <MomentGrid
             v-if="assets.length"
             :assets="assets"
@@ -77,23 +83,145 @@
                     <button type="button" class="mc-act is-danger" :title="$t('notes.purge')" @click.stop="$emit('purge', note)">
                         <font-awesome-icon icon="trash-alt" /><span class="mc-act-text">{{ $t('notes.purge') }}</span>
                     </button>
+                    <!-- 回收站里也保留留言入口（只读看历史留言），但不给编辑 / 删除 -->
+                    <el-dropdown trigger="click" placement="top-end" @command="onCommand">
+                        <button type="button" class="mc-act mc-more" :title="$t('notes.more')" @click.stop>
+                            <font-awesome-icon icon="ellipsis-h" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="comment">{{ $t('notes.comment') }}</el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
                 </template>
                 <template v-else>
-                    <button type="button" class="mc-act" :title="$t('notes.edit')" @click.stop="$emit('edit', note)">
-                        <font-awesome-icon icon="edit" /><span class="mc-act-text">{{ $t('notes.edit') }}</span>
-                    </button>
-                    <button type="button" class="mc-act is-danger" :title="$t('notes.delete')" @click.stop="$emit('delete', note)">
-                        <font-awesome-icon icon="trash-alt" /><span class="mc-act-text">{{ $t('notes.delete') }}</span>
-                    </button>
+                    <!--
+                        v1.1.2（需求）：右下角「删除」后面加一个「更多」（3 点省略号）按钮，
+                        把「编辑 / 删除」收进菜单，并在菜单里新增「留言」。
+                        于是这里只剩一个 ⋯ 按钮，三个动作都在菜单里。
+                    -->
+                    <el-dropdown trigger="click" placement="top-end" @command="onCommand">
+                        <button type="button" class="mc-act mc-more" :title="$t('notes.more')" @click.stop>
+                            <font-awesome-icon icon="ellipsis-h" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="edit">
+                                    <font-awesome-icon icon="edit" class="mc-menu-icon" />{{ $t('notes.edit') }}
+                                </el-dropdown-item>
+                                <el-dropdown-item command="comment">
+                                    <font-awesome-icon icon="comment-dots" class="mc-menu-icon" />{{ $t('notes.comment') }}
+                                </el-dropdown-item>
+                                <el-dropdown-item command="delete" divided>
+                                    <font-awesome-icon icon="trash-alt" class="mc-menu-icon is-danger" />{{ $t('notes.delete') }}
+                                </el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
                 </template>
             </div>
         </footer>
+
+        <!--
+            留言区（v1.1.2.3）：紧跟在「更多」⋯ 那一行下面。
+            没有留言时整块不渲染 —— 否则每条瞬间底下都拖着一行「还没有留言」，太吵。
+        -->
+        <section
+            v-if="commentList.length"
+            ref="commentBox"
+            class="mc-comments"
+            :class="{ 'is-collapsed': !commentExpanded }"
+            :style="{ '--mc-comment-max': commentMaxHeight + 'px' }"
+        >
+            <ul class="mc-comment-list">
+                <li
+                    v-for="c in commentList"
+                    :key="c.id"
+                    class="mc-comment"
+                    :class="{ 'is-reply': !!c.replyTo }"
+                    @click.stop="replyTo(c)"
+                >
+                    <span class="mc-comment-author">{{ c.author || '—' }}</span>
+                    <template v-if="c.replyTo">
+                        <span class="mc-comment-sep">{{ $t('notes.commentReplyVerb') }}</span>
+                        <span class="mc-comment-at">@{{ c.replyTo }}</span>
+                    </template>
+                    <span class="mc-comment-sep">：</span>
+                    <span class="mc-comment-text">{{ c.text }}</span>
+                    <span v-if="c.mine" class="mc-comment-del" :title="$t('notes.commentDelete')" @click.stop="removeComment(c)">
+                        <font-awesome-icon icon="times" />
+                    </span>
+                </li>
+            </ul>
+            <!--
+                超出 20% 视口高度才出现；点开铺满全部。
+                留言特别多（>100 条）时列表接口只带了前 100 条，这里顺带把剩下的补回来。
+            -->
+            <button
+                v-if="commentOverflow"
+                type="button"
+                class="mc-comment-more"
+                :disabled="commentLoading"
+                @click.stop="toggleComments"
+            >
+                {{ commentExpanded ? $t('notes.collapse') : (commentTruncated ? $t('notes.commentLoadRest', { n: commentTotal }) : $t('notes.commentMore', { n: commentTotal })) }}
+                <font-awesome-icon :icon="commentExpanded ? 'chevron-up' : 'chevron-down'" class="mc-comment-more-icon" />
+            </button>
+        </section>
+
+        <!--
+            留言输入（v1.1.2.3）：只有在「正在写 / 回复」时才展开。
+            入口有两个：⋯ 菜单里的「留言」（普通留言）与点某条留言（回复它）。
+            回收站里的瞬间不给输入框（内容已删除，只留历史留言可看）。
+        -->
+        <div v-if="composerOpen && note.status !== 'deleted'" class="mc-composer">
+            <textarea
+                ref="composer"
+                v-model="draft"
+                class="mc-composer-input"
+                rows="2"
+                :placeholder="composerPlaceholder"
+                @keydown.enter.ctrl.prevent="post"
+                @keydown.enter.meta.prevent="post"
+            ></textarea>
+            <div class="mc-composer-foot">
+                <span class="mc-composer-count" :class="{ 'is-over': charCount > commentMaxChars }">
+                    {{ charCount }} / {{ commentMaxChars }}
+                </span>
+                <div class="mc-composer-btns">
+                    <button type="button" class="mc-composer-btn" @click.stop="closeComposer">
+                        {{ $t('common.cancel') }}
+                    </button>
+                    <button
+                        type="button"
+                        class="mc-composer-btn is-primary"
+                        :disabled="posting || !canPost"
+                        @click.stop="post"
+                    >{{ $t('notes.commentPost') }}</button>
+                </div>
+            </div>
+        </div>
     </article>
 </template>
 
 <script>
 import MomentGrid from './MomentGrid.vue';
-import { MOOD_OPTIONS, WEATHER_OPTIONS, emojiOfMood, emojiOfWeather, formatMomentTime } from '@/utils/notes';
+import fetchWithAuth from '@/utils/fetchWithAuth';
+import {
+    MOOD_OPTIONS,
+    WEATHER_OPTIONS,
+    emojiOfMood,
+    emojiOfWeather,
+    formatMomentTime,
+    MOMENT_TEXT_MAX_RATIO,
+    COMMENT_BLOCK_MAX_RATIO,
+    COMMENT_MAX_CHARS,
+    countTextChars,
+    buildReplyContent,
+    parseCommentContent
+} from '@/utils/notes';
+import { noteSettings, viewportHeight } from '@/utils/noteSettings';
 
 export default {
     name: 'MomentCard',
@@ -101,22 +229,42 @@ export default {
     props: {
         note: { type: Object, required: true }
     },
-    emits: ['preview', 'edit', 'delete', 'restore', 'purge', 'tag-click'],
+    /** 留言在卡片内部完成读写，只对外广播「这条瞬间的留言数变了」 */
+    emits: ['preview', 'edit', 'delete', 'restore', 'purge', 'tag-click', 'comment-changed'],
     data() {
         return {
             // 正文是否被折叠（用户可以点「全文」展开）
             expanded: false,
             // 正文是否真的溢出（决定要不要显示「全文」按钮）
-            overflow: false
+            overflow: false,
+
+            /* ── 留言（v1.1.2.3） ── */
+            // 卡片内维护一份：新发的留言就地追加，不必整页重载
+            localComments: null,
+            // 本地留言条数（发 / 删之后以它为准，避免还拿列表接口里的旧 commentCount 判断「是否带全」）
+            localCount: null,
+            commentExpanded: false,
+            // 留言区是否超出 20% 视口高度（决定要不要显示「更多留言」）
+            commentOverflow: false,
+            composerOpen: false,
+            replyTarget: null,
+            draft: '',
+            posting: false,
+            commentLoading: false,
+            commentMaxChars: COMMENT_MAX_CHARS
         };
     },
     computed: {
         assets() {
             return (this.note && this.note.assets) || [];
         },
-        /** 有附件 → 5 行；无附件 → 10 行 */
-        maxLines() {
-            return this.assets.length ? 5 : 10;
+        /** v1.1.2.3：整块文字区最大高度 = 视口高度 x 30% */
+        maxTextHeight() {
+            return Math.max(80, Math.round(viewportHeight.value * MOMENT_TEXT_MAX_RATIO));
+        },
+        /** 内容排版样式：divider = 去外边框 + 条目之间一条分割线 */
+        isDivider() {
+            return noteSettings.moment.layoutStyle === 'divider';
         },
         timeText() {
             return formatMomentTime(this.note.publishedAt || this.note.createdAt, (k) => this.$t(k));
@@ -128,12 +276,15 @@ export default {
             return emojiOfWeather(this.note.moment && this.note.moment.weather);
         },
         moodTitle() {
-            const hit = MOOD_OPTIONS.find((m) => m.value === (this.note.moment && this.note.moment.mood));
-            return hit ? this.$t(hit.label) : '';
+            const m = this.note.moment || {};
+            const hit = MOOD_OPTIONS.find((x) => x.value === m.mood);
+            // 优先按当前语言显示；枚举值被删掉（老数据）时退回发布时记下的名称快照
+            return hit ? this.$t(hit.label) : (m.moodName || '');
         },
         weatherTitle() {
-            const hit = WEATHER_OPTIONS.find((m) => m.value === (this.note.moment && this.note.moment.weather));
-            return hit ? this.$t(hit.label) : '';
+            const m = this.note.moment || {};
+            const hit = WEATHER_OPTIONS.find((x) => x.value === m.weather);
+            return hit ? this.$t(hit.label) : (m.weatherName || '');
         },
         mediaKindText() {
             const k = (this.note.moment && this.note.moment.mediaKind) || 'text';
@@ -144,51 +295,260 @@ export default {
                 mixed: 'notes.mediaMixed'
             };
             return map[k] ? this.$t(map[k]) : '';
+        },
+
+        /* ── 留言 ── */
+        /** 服务端随列表给的原始留言（列表 / 详情接口一次批量返回） */
+        serverComments() {
+            return (this.note && this.note.comments) || [];
+        },
+        /**
+         * 渲染用的留言：把「回复 @某某：」前缀拆成 replyTo + text，
+         * 这样模板里可以给「回复 @某某」单独上色，而不是混在正文里。
+         */
+        commentList() {
+            const rows = this.localComments || this.serverComments;
+            return rows.map((c) => ({ ...c, ...parseCommentContent(c.content) }));
+        },
+        commentTotal() {
+            // 本地发 / 删过就以本地为准：列表接口返回的 commentCount 此刻已经过期
+            if (this.localCount !== null) return this.localCount;
+            return Math.max(Number(this.note && this.note.commentCount) || 0, this.commentList.length);
+        },
+        /** 列表接口单条笔记最多带 100 条留言，没带全时点「更多」先补拉 */
+        commentTruncated() {
+            return this.commentTotal > this.commentList.length;
+        },
+        /** v1.1.2.3：留言区折叠时的高度上限 = 视口高度 x 20% */
+        commentMaxHeight() {
+            return Math.max(60, Math.round(viewportHeight.value * COMMENT_BLOCK_MAX_RATIO));
+        },
+        composerPlaceholder() {
+            return this.replyTarget
+                ? this.$t('notes.commentReplyTo', { name: this.replyTarget })
+                : this.$t('notes.commentPlaceholderShort');
+        },
+        /**
+         * 真正会提交的正文。
+         * 回复时后端存的是一条带「回复 @某某：」前缀的完整留言，
+         * 所以字数也要按**带前缀**的口径算 —— 否则用户写满 500 字会突然被后端拒掉。
+         */
+        effectiveContent() {
+            return this.replyTarget ? buildReplyContent(this.replyTarget, this.draft) : this.draft;
+        },
+        charCount() {
+            return countTextChars(this.effectiveContent);
+        },
+        canPost() {
+            if (this.posting) return false;
+            if (!this.draft.trim()) return false;
+            return this.charCount <= this.commentMaxChars;
         }
     },
     watch: {
-        /** 正文或附件变化后重新判定溢出（附件数决定行数上限） */
+        /** 正文或附件变化后重新判定溢出（内容变了，超出与否也可能变） */
         'note.content'() {
             this.$nextTick(this.measure);
         },
         'assets.length'() {
             this.$nextTick(this.measure);
         },
+        /** 窗口高度变了 → 30% / 20% 的阈值跟着变，要重新判定 */
+        maxTextHeight() {
+            this.$nextTick(this.measure);
+        },
+        commentMaxHeight() {
+            this.$nextTick(this.measureComments);
+        },
         expanded(v) {
             // 展开时不必再量；收起后恢复真实状态
             if (!v) this.$nextTick(this.measure);
+        },
+        commentList: {
+            handler() {
+                this.$nextTick(this.measureComments);
+            },
+            deep: true
+        },
+        commentExpanded() {
+            this.$nextTick(this.measureComments);
+        },
+        /** 服务端数据回来（首屏先渲染缓存、后到真实留言）→ 覆盖本地副本 */
+        serverComments() {
+            this.localComments = null;
+            this.localCount = null;
+            this.$nextTick(this.measureComments);
         }
     },
     mounted() {
         // 等字体 / 布局稳定后再量，避免首屏量到错误的行高
         this.$nextTick(() => {
             this.measure();
-            window.setTimeout(this.measure, 300);
+            this.measureComments();
+            window.setTimeout(() => {
+                this.measure();
+                this.measureComments();
+            }, 300);
         });
     },
     methods: {
+        /** 「更多」菜单：把动作统一转成对外的编辑 / 留言 / 删除事件 */
+        onCommand(cmd) {
+            if (cmd === 'edit') this.$emit('edit', this.note);
+            else if (cmd === 'delete') this.$emit('delete', this.note);
+            else if (cmd === 'comment') this.openComposer(null);
+        },
         /**
-         * 量一次「不截断时的真实高度」，和「N 行的高度」比较。
-         * 直接改 DOM class 而不是先改 data，是为了避免多次渲染抖动；
-         * 量完立刻恢复，Vue 随后会按 :class 重新渲染。
+         * 量一次正文的真实高度，和「30% 页面高度」比较。
+         *
+         * 文字区用 flex + max-height 压住，被压住的正文 `scrollHeight` 仍然是
+         * **内容真实高度**（裁掉的部分也算），所以不必像 line-clamp 那样
+         * 先拆 class 再量，也就没有拆装带来的闪动。
          */
         measure() {
+            if (this.expanded) return; // 展开态下量不出「是否溢出」，跳过
             const el = this.$refs.body;
             if (!el) {
                 this.overflow = false;
                 return;
             }
-            const hadClamp = el.classList.contains('is-clamp');
-            if (hadClamp) el.classList.remove('is-clamp');
             const full = el.scrollHeight;
-            const cs = window.getComputedStyle(el);
-            let lineHeight = parseFloat(cs.lineHeight);
-            if (!Number.isFinite(lineHeight) || lineHeight <= 0) {
-                lineHeight = (parseFloat(cs.fontSize) || 14) * 1.7;
+            // +2px 容差：行高取整 / 亚像素会让「刚好到阈值」差 1px
+            this.overflow = full > el.clientHeight + 2;
+        },
+
+        /* ── 留言 ─────────────────────────────────────────────── */
+        /** 展开输入框：replyTo 为空 = 直接留言，否则回复某条 */
+        openComposer(name) {
+            this.replyTarget = name || null;
+            this.composerOpen = true;
+            this.commentExpanded = true;
+            this.$nextTick(() => {
+                const el = this.$refs.composer;
+                if (el) el.focus();
+                this.measureComments();
+            });
+        },
+        closeComposer() {
+            this.composerOpen = false;
+            this.replyTarget = null;
+            this.draft = '';
+        },
+        /** 点某条留言 = 回复它（朋友圈式：点谁回复谁） */
+        replyTo(c) {
+            if (this.note.status === 'deleted') return;
+            this.openComposer(c.author || '');
+        },
+        /** 「更多留言」：没带全就先补拉，再展开；已展开则收起 */
+        async toggleComments() {
+            if (this.commentExpanded) {
+                this.commentExpanded = false;
+                return;
             }
-            if (hadClamp) el.classList.add('is-clamp');
-            // +2px 容差：行高取整 / 亚像素会让「刚好 N 行」差 1px
-            this.overflow = full > lineHeight * this.maxLines + 2;
+            if (this.commentTruncated) await this.loadRemainingComments();
+            this.commentExpanded = true;
+        },
+        /**
+         * 补拉剩余留言。
+         * 列表接口为了控制体积只带前 100 条（LIST_COMMENT_MAX），
+         * 这里按 100 一页往后翻，最多翻 5 页（500 条）就停 —— 再多就属于异常数据了。
+         */
+        async loadRemainingComments() {
+            if (this.commentLoading) return;
+            this.commentLoading = true;
+            try {
+                let acc = (this.localComments || this.serverComments).slice();
+                for (let i = 0; i < 5; i += 1) {
+                    if (acc.length >= this.commentTotal) break;
+                    const qs = new URLSearchParams({
+                        instanceId: this.note.instanceId || '',
+                        page: String(Math.floor(acc.length / 100) + 1),
+                        pageSize: '100'
+                    });
+                    const res = await fetchWithAuth(
+                        `/api/notes/${encodeURIComponent(this.note.id)}/comments?${qs.toString()}`
+                    );
+                    const data = await res.json().catch(() => ({}));
+                    if (!res.ok || data.success === false) break;
+                    const rows = Array.isArray(data.list) ? data.list : [];
+                    if (!rows.length) break;
+                    const seen = new Set(acc.map((x) => x.id));
+                    acc = acc.concat(rows.filter((r) => !seen.has(r.id)));
+                }
+                this.localComments = acc;
+            } catch (e) {
+                /* 补拉失败不影响已渲染的留言，用户再点一次即可 */
+            } finally {
+                this.commentLoading = false;
+            }
+        },
+        /** 量留言区：折叠态下超出 20% 视口高度才显示「更多留言」 */
+        measureComments() {
+            const el = this.$refs.commentBox;
+            if (!el) {
+                this.commentOverflow = false;
+                return;
+            }
+            // 展开后内容肯定超过 20%，这里直接保持按钮可见（换成「收起」），不能再量一次把它量掉
+            if (this.commentExpanded) return;
+            // 折叠态由 CSS max-height 压住，scrollHeight 仍是完整内容高度
+            this.commentOverflow = el.scrollHeight > this.commentMaxHeight + 2;
+        },
+        async post() {
+            if (!this.canPost) return;
+            this.posting = true;
+            try {
+                const content = this.effectiveContent;
+                const res = await fetchWithAuth(`/api/notes/${encodeURIComponent(this.note.id)}/comments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content,
+                        instanceId: this.note.instanceId || ''
+                    })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
+                const created = data.comment;
+                if (created) {
+                    const base = this.localComments || this.serverComments;
+                    this.localComments = base.concat([created]);
+                    this.localCount = this.localComments.length;
+                }
+                this.draft = '';
+                this.replyTarget = null;
+                this.$message.success(this.$t('notes.commentOk'));
+                this.$nextTick(() => this.measureComments());
+                this.$emit('comment-changed', { id: this.note.id, count: this.commentList.length });
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            } finally {
+                this.posting = false;
+            }
+        },
+        async removeComment(c) {
+            try {
+                await this.$confirm(this.$t('notes.commentDeleteConfirm'), this.$t('notes.commentDelete'), {
+                    type: 'warning',
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel')
+                });
+            } catch (e) {
+                return;
+            }
+            try {
+                const res = await fetchWithAuth(`/api/notes/comments/${encodeURIComponent(c.id)}`, { method: 'DELETE' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
+                const base = this.localComments || this.serverComments;
+                this.localComments = base.filter((x) => x.id !== c.id);
+                this.localCount = this.localComments.length;
+                this.$message.success(this.$t('notes.commentDeleted'));
+                this.$nextTick(() => this.measureComments());
+                this.$emit('comment-changed', { id: this.note.id, count: this.commentList.length });
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            }
         }
     }
 };
@@ -198,7 +558,8 @@ export default {
 .mc {
     box-sizing: border-box;
     padding: 14px 16px 10px;
-    border-radius: 12px;
+    /* v1.1.2.2：外边框圆角 12px → 5px */
+    border-radius: 5px;
     background: var(--note-card-bg, var(--admin-container-bg-color, #fff));
     border: 1px solid var(--note-card-border, var(--glass-border, rgba(127, 127, 127, 0.16)));
     box-shadow: var(--note-card-shadow, 0 1px 2px rgba(0, 0, 0, 0.03));
@@ -209,8 +570,44 @@ export default {
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07);
 }
 
+/*
+ * 分割线样式：
+ *   外边框整圈隐藏，改成**下方一条**分割线，颜色与原来的边框线一致；
+ *   卡片底色也去掉，否则相邻两条之间会露出两块色块，看着不像分隔。
+ *   最后一条的分割线由列表页的 `:deep(.mc:last-child)` 去掉。
+ */
+.mc.is-divider {
+    padding-left: 0;
+    padding-right: 0;
+    border: none;
+    border-bottom: 1px solid var(--note-card-border, var(--glass-border, rgba(127, 127, 127, 0.16)));
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+}
+
+.mc.is-divider:hover {
+    box-shadow: none;
+}
+
 .mc.is-deleted {
     opacity: 0.72;
+}
+
+/*
+ * 文字区（v1.1.2.3）：标题 + 正文 + 「全文」按钮装在这个盒子里，整块最高 30% 视口高度。
+ * flex 让正文自己让位（header / 按钮 flex-shrink:0），版面不会出现「按钮被挤掉」。
+ */
+.mc-text {
+    display: flex;
+    flex-direction: column;
+    max-height: var(--mc-text-max, 240px);
+    overflow: hidden;
+}
+
+.mc-text.is-expanded {
+    max-height: none;
+    overflow: visible;
 }
 
 .mc-head {
@@ -218,6 +615,7 @@ export default {
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+    flex: 0 0 auto;
     margin-bottom: 8px;
     font-size: 12px;
     color: var(--note-muted, var(--el-text-color-secondary));
@@ -225,12 +623,17 @@ export default {
 
 .mc-time {
     font-weight: 600;
-    color: var(--el-text-color-regular);
+    /* v1.1.2.2：标题颜色改成与时间一致（时间用的是 .mc-head 的 muted 色） */
+    color: var(--note-muted, var(--el-text-color-secondary));
 }
 
+/*
+ * 时间：与标题同色（需求 v1.1.2.2「标题颜色改为和时间一样」）。
+ * 之前这里用 opacity 0.65 压暗，会让「同色」只剩名义上的同色 ——
+ * 去掉 opacity，主次完全交给字号（12px / 11px）和字重来区分。
+ */
 .mc-time-sub {
     font-size: 11px;
-    opacity: 0.65;
 }
 
 .mc-chip {
@@ -270,7 +673,14 @@ export default {
     opacity: 0.65;
 }
 
+/*
+ * 正文：flex 子项 + min-height:0 才能被压缩（默认 min-height:auto 会顶住高度），
+ * overflow:hidden 把超出的部分裁掉；是否显示「全文」由 measure() 判定。
+ */
 .mc-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
     font-size: 14.5px;
     line-height: 1.75;
     color: var(--el-text-color-primary);
@@ -279,14 +689,9 @@ export default {
     word-break: break-word;
 }
 
-.mc-body.is-clamp {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: var(--mc-lines, 10);
-    overflow: hidden;
-}
-
 .mc-toggle {
+    flex: 0 0 auto;
+    align-self: flex-start;
     margin-top: 4px;
     padding: 0;
     border: none;
@@ -369,10 +774,227 @@ export default {
     color: var(--el-color-success);
 }
 
+/* 「更多」按钮：三个点是竖向排列，宽度收窄一点更紧凑 */
+.mc-more {
+    padding: 3px 6px;
+}
+
+.mc-menu-icon {
+    margin-right: 6px;
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.mc-menu-icon.is-danger {
+    color: var(--el-color-danger);
+}
+
+/* ── 留言区（v1.1.2.3） ───────────────────────────────────── */
+
+/*
+ * 默认最高 20% 视口高度，超出部分裁掉并显示「更多留言」。
+ * 用 max-height + overflow:hidden 而不是 JS 逐条算，滚动条不出现，视觉上像朋友圈。
+ */
+.mc-comments {
+    margin-top: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--note-comment-bg, rgba(127, 127, 127, 0.06));
+    overflow: hidden;
+}
+
+.mc-comments.is-collapsed {
+    max-height: var(--mc-comment-max, 160px);
+}
+
+.mc-comment-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.mc-comment {
+    position: relative;
+    padding: 3px 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--el-text-color-primary);
+    word-break: break-word;
+    white-space: pre-wrap;
+    cursor: pointer;
+}
+
+.mc-comment:hover {
+    background: var(--note-comment-hover, rgba(127, 127, 127, 0.08));
+}
+
+.mc-comment-author {
+    color: var(--note-comment-name, #4b6bdc);
+    font-weight: 600;
+}
+
+.mc-comment-sep {
+    color: var(--note-muted, var(--el-text-color-secondary));
+}
+
+.mc-comment-at {
+    color: var(--note-comment-name, #4b6bdc);
+    font-weight: 600;
+}
+
+.mc-comment-text {
+    color: var(--el-text-color-primary);
+}
+
+/* 删除按钮只在本人留言上出现，靠右侧、默认半透明，hover 明显 */
+.mc-comment-del {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-top: -9px;
+    border-radius: 50%;
+    color: var(--note-muted, var(--el-text-color-secondary));
+    font-size: 10px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.mc-comment:hover .mc-comment-del {
+    opacity: 1;
+}
+
+.mc-comment-del:hover {
+    background: rgba(245, 108, 108, 0.16);
+    color: var(--el-color-danger);
+}
+
+/* 移动端没有 hover，删除按钮常显（否则永远点不到） */
+@media (hover: none) {
+    .mc-comment-del {
+        opacity: 0.55;
+    }
+}
+
+.mc-comment-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-top: 4px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--note-comment-name, #4b6bdc);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.mc-comment-more-icon {
+    font-size: 9px;
+}
+
+/* 正在补拉剩余留言时按钮不可点，但不要变灰到看不见（它还是「加载中」的提示） */
+.mc-comment-more:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+/* 输入区：宽度 100%（v1.1.2.3 需求「移动端留言输入框不能被挤压」） */
+.mc-composer {
+    margin-top: 8px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.mc-composer-input {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 56px;
+    padding: 8px 10px;
+    border: 1px solid var(--note-card-border, var(--glass-border, rgba(127, 127, 127, 0.2)));
+    border-radius: 6px;
+    background: var(--el-fill-color-blank, #fff);
+    color: var(--el-text-color-primary);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.6;
+    resize: vertical;
+    outline: none;
+}
+
+.mc-composer-input:focus {
+    border-color: var(--el-color-primary);
+}
+
+.mc-composer-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 6px;
+}
+
+.mc-composer-count {
+    font-size: 12px;
+    color: var(--note-muted, var(--el-text-color-secondary));
+}
+
+.mc-composer-count.is-over {
+    color: var(--el-color-danger);
+    font-weight: 600;
+}
+
+.mc-composer-btns {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.mc-composer-btn {
+    padding: 4px 12px;
+    border: 1px solid var(--note-card-border, var(--glass-border, rgba(127, 127, 127, 0.2)));
+    border-radius: 6px;
+    background: transparent;
+    color: var(--el-text-color-regular);
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.mc-composer-btn:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+}
+
+.mc-composer-btn.is-primary {
+    border-color: transparent;
+    background: var(--el-color-primary);
+    color: #fff;
+}
+
+.mc-composer-btn.is-primary:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
 @media (max-width: 768px) {
     .mc {
         padding: 12px 12px 8px;
-        border-radius: 10px;
+        /* v1.1.2.2：移动端同样收成 5px，两端观感统一 */
+        border-radius: 5px;
+    }
+
+    .mc.is-divider {
+        padding-left: 0;
+        padding-right: 0;
+        border-radius: 0;
     }
 
     .mc-body {
@@ -388,6 +1010,18 @@ export default {
     .mc-act {
         padding: 5px 7px;
         font-size: 13px;
+    }
+
+    /* 移动端留言字号略小，行距保持一致，一行能多放几个字 */
+    .mc-comment {
+        font-size: 12.5px;
+    }
+
+    /* 输入框 100% 宽 + 不因 iOS 缩放而变形（font-size >= 16px 会阻止自动放大，但这里
+       跟随设计稿用 14px，并显式 width:100%，不再被 flex 父级挤成半宽） */
+    .mc-composer-input {
+        width: 100%;
+        font-size: 14px;
     }
 }
 </style>

@@ -28,14 +28,15 @@ export type FileTypeName = 'image' | 'video' | 'audio' | 'txt' | 'pdf' | 'other'
  *   Record  —— 「登记文件」：文件本来就在别的渠道上，这里只补一条记录（v2.8.8）
  *   StoreIn —— v1.1.0：文件由「异地渠道 → 本地渠道」转存而来（详情页显示「异地存入」）
  *   StoreOut—— v1.1.0：文件由「本地渠道 → 异地渠道」转存而来（详情页显示「本地转出」）
+ *   Attachment —— v1.1.2：通过「笔记内容发布」作为附件上传（详情页显示「附件上传」）
  *
  * 说明：StoreIn / StoreOut 记录的是**最近一次成功的转存方向**，由 convertChannel 写入；
  * 一个文件被反复转存时以最后一次成功的转存为准（不会因为方向来回而回退成 Default）。
  */
-export const UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record', 'StoreIn', 'StoreOut'] as const;
+export const UPLOAD_SOURCES = ['Default', 'Upload', 'Fetch', 'WebDAV', 'API-Web', 'API-S3', 'Record', 'StoreIn', 'StoreOut', 'Attachment'] as const;
 
 /** 前端上传页允许声明的来源（其它来源只能由服务端通道自己写死，不接受外部指定） */
-export const CLIENT_UPLOAD_SOURCES = ['Upload', 'Fetch'] as const;
+export const CLIENT_UPLOAD_SOURCES = ['Upload', 'Fetch', 'Attachment'] as const;
 
 /**
  * 归一化上传渠道值：空值/未知值一律按 Default（历史数据的文件都是前端上传页传的）。
@@ -340,6 +341,17 @@ export function pickPrimaryCopy<
   );
 }
 
+/**
+ * 副本在渠道内的实际文件名（不含目录）—— remoteKey 的最后一段。
+ * remoteKey 形如 `2026/11/abc.webp` / `<dir>/<key>` / immich 的 assetId，统一取最后一段。
+ */
+function realNameOfCopy(copy?: { remoteKey?: string | null } | null): string {
+  const key = String(copy?.remoteKey || '').replace(/\\/g, '/');
+  if (!key) return '';
+  const seg = key.split('/').filter(Boolean).pop() || '';
+  return seg;
+}
+
 export function buildMetadata(
   rec: FileRecord,
   copies: CopyWithChannel[],
@@ -410,6 +422,12 @@ export function buildMetadata(
     FilePrevName: (rec as unknown as { prevName?: string }).prevName || '',
     FileType: fileTypeOf(rec.mime),
     FileExt: fileExtOf(rec.originalName, rec.mime),
+    /*
+     * v1.1.2：文件实名 —— 上传到渠道后**实际**的物理文件名（remoteKey 的最后一段）。
+     * 「文件原名」是用户上传时的名字，渠道可能按命名规则改写（哈希 / 日期前缀 / 转码后缀），
+     * 排查「渠道里到底叫什么」时只能看这个字段。没有主副本（纯外链登记）时为空。
+     */
+    FileRealName: realNameOfCopy(primary),
     FileSize: formatSize(size),
     FileSizeBytes: size,
     // 初始（压缩前）大小：与当前大小不同时前端展示成 `初始 / 当前`

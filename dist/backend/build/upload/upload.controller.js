@@ -175,7 +175,7 @@ let UploadController = class UploadController {
         const overrideMaxMB = Number(q.maxFileSizeMB || 0) || 0;
         const arrivedAt = Number(req._arrivedAt) || Date.now();
         const declaredSource = (0, file_view_1.isClientUploadSource)(q.uploadSource) ? (0, file_view_1.normalizeUploadSource)(q.uploadSource) : '';
-        const uploadSource = q.stagingId ? 'Fetch' : declaredSource || 'Default';
+        const uploadSource = declaredSource || (q.stagingId ? 'Fetch' : 'Default');
         const opts = {
             uploadChannel: q.uploadChannel,
             channelId: q.channelId ?? q.channelName,

@@ -1,17 +1,29 @@
 <template>
     <!--
-        发布 / 编辑瞬间
+        发布 / 编辑瞬间（v1.1.2 改版）
         ----------------------------------------------------------------------------
-        结构（对齐需求）：
-          标题输入框（自动填日期时间）→ 心情 / 天气 / 位置 → 纯文本正文（500 字上限）
-          → 附件九宫格预览（可删、可拖拽排序、可箭头微调）→ 标签 → 可见性 → 发布
+        结构：
+          标题（自动填「日期 + 星期」）→ 心情 / 天气 / 位置
+          → 纯文本正文（1000 字上限，只数中文 / 字母 / 数字）
+          → 附件九宫格（可删、可拖拽排序、可箭头微调）→ 标签 / 可见性 → 发布
 
-        「添加附件」两条路径：
-          ① 从图床选：打开 FilePickerDialog（走 /api/notes/files，只读）
-          ② 本地上传：选文件 → UploadTargetDialog（目标渠道/实例/目录）→ POST /upload
-             → 拿到 File_ID 直接入列（后端创建时会把它解析成 files.id 落库）
+        v1.1.2 变更点（对照需求）：
+          · 弹窗高度 = 窗口 96%，正文输入框吃掉中间多出来的空间
+          · 标题默认值去掉「时间点」，只剩 `2026-11-10 周二`
+          · 点心情 / 天气图标时在下方浮出中文名称，2 秒后自动消失；
+            同时把名称（moodName / weatherName）随发布写进数据表，供以后筛选统计
+          · 正文上限 500 → 1000（口径不变：标点 / 符号 / 数字以外的…… 都按字符计）
+          · 「位置」输入框保留，并升级成「带历史记忆的输入框」——
+            发布过的地点会记在浏览器里，下次点开输入框就能从最近的记录里挑
+          · 「从图床选择」→「图床选择」
+          · 「本地上传」后面新增「链接提取」：填直链 → 转存 → 选目标渠道 / 实例 / 目录
+          · 关闭（含 Esc / 点遮罩）后把未发布的内容留在浏览器里，下次打开自动恢复
 
-        字数：只数汉字 / 字母 / 数字，与后端 countTextChars 完全同一套规则。
+        「添加附件」三条路径，最终都落到同一个 assets 数组：
+          ① 图床选择：FilePickerDialog（走 /api/notes/files，只读）
+          ② 本地上传：选文件 → UploadTargetDialog → uploadOne()
+          ③ 链接提取：填链接 → UploadTargetDialog → importUrlToBed()
+        ／②③ 都带 `uploadSource=Attachment`，文件详情里能看到「附件上传」这个来源。
     -->
     <el-dialog
         v-model="visible"
@@ -24,7 +36,17 @@
         @closed="onClosed"
     >
         <div class="mp-body">
-            <!-- 标题：自动填日期时间（可改），下方是心情 / 天气 / 位置 -->
+            <!-- 草稿恢复提示：只在「新建 + 有草稿」时出现一次 -->
+            <div v-if="draftRestored" class="mp-draft-tip">
+                <font-awesome-icon icon="history" class="mp-draft-icon" />
+                <span class="mp-draft-text">{{ $t('notes.draftRestored') }}</span>
+                <button type="button" class="mp-draft-act" @click="discardDraft">{{ $t('notes.draftDiscard') }}</button>
+                <button type="button" class="mp-draft-close" :title="$t('common.close')" @click="draftRestored = false">
+                    <font-awesome-icon icon="times" />
+                </button>
+            </div>
+
+            <!-- 标题：自动填「日期 + 星期」（可改） -->
             <el-input
                 ref="titleInput"
                 v-model="form.title"
@@ -32,50 +54,63 @@
                 :placeholder="$t('notes.titlePlaceholder')"
                 maxlength="80"
             />
+
+            <!-- 心情 / 天气：点一下浮出名称（2 秒） -->
             <div class="mp-meta-row">
                 <div class="mp-picker">
-                    <button
-                        v-for="m in moodOptions"
-                        :key="m.value"
-                        type="button"
-                        class="mp-emoji"
-                        :class="{ 'is-active': form.mood === m.value }"
-                        :title="$t(m.label)"
-                        @click="toggleMood(m.value)"
-                    >{{ m.emoji }}</button>
+                    <span v-for="m in moodOptions" :key="m.value" class="mp-emoji-wrap">
+                        <button
+                            type="button"
+                            class="mp-emoji"
+                            :class="{ 'is-active': form.mood === m.value }"
+                            :aria-label="nameOf(m)"
+                            @click="toggleMood(m)"
+                        >{{ m.emoji }}</button>
+                        <transition name="mp-tip">
+                            <span v-if="tipKey === 'mood:' + m.value" class="mp-name-tip">{{ nameOf(m) }}</span>
+                        </transition>
+                    </span>
                 </div>
                 <div class="mp-picker">
-                    <button
-                        v-for="w in weatherOptions"
-                        :key="w.value"
-                        type="button"
-                        class="mp-emoji"
-                        :class="{ 'is-active': form.weather === w.value }"
-                        :title="$t(w.label)"
-                        @click="toggleWeather(w.value)"
-                    >{{ w.emoji }}</button>
+                    <span v-for="w in weatherOptions" :key="w.value" class="mp-emoji-wrap">
+                        <button
+                            type="button"
+                            class="mp-emoji"
+                            :class="{ 'is-active': form.weather === w.value }"
+                            :aria-label="nameOf(w)"
+                            @click="toggleWeather(w)"
+                        >{{ w.emoji }}</button>
+                        <transition name="mp-tip">
+                            <span v-if="tipKey === 'weather:' + w.value" class="mp-name-tip">{{ nameOf(w) }}</span>
+                        </transition>
+                    </span>
                 </div>
             </div>
-            <el-input
+
+            <!-- 位置：保留输入框，并记住最近输入过的地点，下次可直接挑（需求：浏览器记忆） -->
+            <el-autocomplete
                 v-model="form.location"
                 class="mp-location"
                 size="small"
+                :fetch-suggestions="queryLocation"
                 :placeholder="$t('notes.locationPlaceholder')"
+                :trigger-on-focus="true"
+                clearable
                 maxlength="80"
+                popper-class="mp-location-popper"
             >
                 <template #prefix>
                     <font-awesome-icon icon="globe" class="mp-location-icon" />
                 </template>
-            </el-input>
+            </el-autocomplete>
 
-            <!-- 正文 -->
+            <!-- 正文（吃掉剩余空间） -->
             <div class="mp-editor-wrap">
                 <textarea
                     ref="textarea"
                     v-model="form.content"
                     class="mp-textarea"
                     :placeholder="$t('notes.contentPlaceholder')"
-                    rows="6"
                 ></textarea>
                 <div class="mp-counter" :class="{ 'is-over': charCount > maxChars }">
                     {{ charCount }} / {{ maxChars }}
@@ -112,13 +147,16 @@
                 </div>
             </div>
 
-            <!-- 添加附件 -->
+            <!-- 添加附件：图床选择 / 本地上传 / 链接提取 -->
             <div class="mp-add-row">
                 <el-button size="small" :loading="uploading" @click="openPicker">
                     <font-awesome-icon icon="images" class="mp-btn-icon" />{{ $t('notes.addFromBed') }}
                 </el-button>
                 <el-button size="small" :loading="uploading" @click="pickLocalFile">
                     <font-awesome-icon icon="upload" class="mp-btn-icon" />{{ $t('notes.uploadLocal') }}
+                </el-button>
+                <el-button size="small" :loading="uploading" @click="extractLink">
+                    <font-awesome-icon icon="link" class="mp-btn-icon" />{{ $t('notes.linkExtract') }}
                 </el-button>
                 <span v-if="assets.length" class="mp-asset-count">
                     {{ $t('notes.assetCount', { n: assets.length }) }}
@@ -174,7 +212,7 @@
             </div>
         </template>
 
-        <!-- 从图床选 -->
+        <!-- 图床选择 -->
         <FilePickerDialog
             v-model="pickerVisible"
             :instance-id="instanceId"
@@ -182,38 +220,63 @@
             @confirm="onPicked"
         />
 
-        <!-- 本地上传：目标渠道 / 实例 / 目录（复用现成组件，不重写一套） -->
+        <!-- 上传目标：本地上传 / 链接提取共用同一个通用弹窗 -->
         <UploadTargetDialog
             v-model="targetVisible"
             :busy="uploading"
             :hint="uploadHint"
+            :prefill="uploadPrefill"
             @confirm="onTargetConfirm"
         />
     </el-dialog>
 </template>
 
 <script>
-import fetchWithAuth from '@/utils/fetchWithAuth';
 import thumbUrl from '@/utils/thumb';
+import fetchWithAuth from '@/utils/fetchWithAuth';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import FilePickerDialog from './FilePickerDialog.vue';
+import { defaultUploadFolder, uploadOne, importUrlToBed } from '@/utils/uploadTarget';
 import {
     MOOD_OPTIONS,
     WEATHER_OPTIONS,
     MOMENT_MAX_CHARS,
     MAX_ASSETS_PER_NOTE,
     countTextChars,
-    formatSize,
     mediaKindOfMime
 } from '@/utils/notes';
 
-/** 标题默认值：日期 + 时间（需求：进入编辑页自动填充） */
+/**
+ * 标题默认值：`2026-11-10 周二`。
+ * v1.1.2 按需求去掉了「时间点」（时分），只留日期与星期 ——
+ * 瞬间本来就是按天归档的内容，标题带时分反而更难扫。
+ */
 function defaultTitle() {
-    const d = new Date();
+    return titleOf(Date.now());
+}
+
+/** 同一个格式，按指定时间生成（草稿里记着「当时」的标题，用来判断是否需要刷新） */
+function titleOf(ts) {
+    const d = new Date(Number(ts) || Date.now());
     const pad = (v) => String(v).padStart(2, '0');
     const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} 周${week} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} 周${week}`;
 }
+
+/** 草稿键：按实例隔离，切实例不会串内容 */
+const draftKeyOf = (instanceId) => `gohub:note-draft:moment:${instanceId || 'default'}`;
+
+/**
+ * 位置记忆键（v1.1.2）：
+ * 发布成功时把地点记进浏览器，下次打开编辑页点位置输入框就能直接挑最近的记录。
+ * 同样按实例隔离 —— 不同实例往往是不同站点/不同用途，地点列表混在一起没有意义。
+ */
+const locationKeyOf = (instanceId) => `gohub:note-locations:${instanceId || 'default'}`;
+/** 最多记多少个地点（太多反而不好挑） */
+const LOCATION_MAX = 20;
+
+/** 心情 / 天气名称提示的显示时长（需求：2 秒后消失） */
+const NAME_TIP_MS = 2000;
 
 export default {
     name: 'MomentPublishDialog',
@@ -244,10 +307,21 @@ export default {
             uploading: false,
             pickerVisible: false,
             targetVisible: false,
+            /** 上传目标回填值（打开弹窗前按当前时间生成，跨月不会还填上个月） */
+            uploadPrefill: { channelId: '', instanceId: '', uploadFolder: '' },
+            /** 待上传的本地文件 */
             pendingFiles: [],
+            /** 待转存的链接（与 pendingFiles 二选一） */
+            pendingLink: '',
             dragIndex: -1,
             moodOptions: MOOD_OPTIONS,
-            weatherOptions: WEATHER_OPTIONS
+            weatherOptions: WEATHER_OPTIONS,
+            /** 当前浮出名称的图标：「mood:happy」 */
+            tipKey: '',
+            /** 最近用过的地点（位置输入框的记忆，存在浏览器里） */
+            locationHistory: [],
+            /** 本次打开是否恢复过草稿 */
+            draftRestored: false
         };
     },
     computed: {
@@ -260,7 +334,7 @@ export default {
             }
         },
         dialogWidth() {
-            return window.innerWidth < 768 ? '94%' : '620px';
+            return window.innerWidth < 768 ? '94%' : '640px';
         },
         isEdit() {
             return !!(this.note && this.note.id);
@@ -288,6 +362,7 @@ export default {
             return this.assets.map((a) => a.fileId);
         },
         uploadHint() {
+            if (this.pendingLink) return this.$t('notes.linkUploading');
             return this.pendingFiles.length > 1
                 ? this.$t('notes.uploadingFiles', { n: this.pendingFiles.length })
                 : '';
@@ -296,19 +371,55 @@ export default {
     watch: {
         visible(v) {
             if (v) this.$nextTick(() => this.$refs.textarea && this.$refs.textarea.focus());
+        },
+        /* 草稿自动保存：改什么都记一笔（防抖 400ms），关掉浏览器也不丢 */
+        'form.title': 'scheduleSave',
+        'form.content': 'scheduleSave',
+        'form.mood': 'scheduleSave',
+        'form.weather': 'scheduleSave',
+        'form.location': 'scheduleSave',
+        'form.visibility': 'scheduleSave',
+        'form.tagNames': {
+            deep: true,
+            handler: 'scheduleSave'
+        },
+        assets: {
+            deep: true,
+            handler: 'scheduleSave'
         }
     },
     methods: {
+        /** 心情 / 天气的中文（当前语言）名称 */
+        nameOf(opt) {
+            try {
+                const v = this.$t(opt.label);
+                return v && v !== opt.label ? v : opt.emoji;
+            } catch (e) {
+                return opt.emoji;
+            }
+        },
+
+        /* ── 生命周期 ───────────────────────────────────────────── */
         async onOpen() {
+            this.skipDraftSave = false;
+            this.draftRestored = false;
             this.reset();
+            this.loadLocationHistory();
             if (this.isEdit) {
                 this.fillFromNote(this.note);
+            } else {
+                this.restoreDraft();
             }
             this.loadTags();
         },
         onClosed() {
-            this.assets = [];
+            // 关闭（含 Esc / 点遮罩 / 点取消）都留草稿；只有「发布成功」才跳过
+            if (!this.skipDraftSave) this.saveDraft();
+            this.skipDraftSave = false;
             this.pendingFiles = [];
+            this.pendingLink = '';
+            this.dragIndex = -1;
+            this.clearNameTip();
         },
         reset() {
             this.form = {
@@ -322,7 +433,7 @@ export default {
             };
             this.assets = [];
         },
-        /** 编辑态回填：标题从 metas 里取（历史数据没有就按时间生成） */
+        /** 编辑态回填：标题从历史数据取（老数据没有标题就按当天生成） */
         fillFromNote(note) {
             const m = note.moment || {};
             this.form = {
@@ -345,6 +456,115 @@ export default {
                 size: a.size
             }));
         },
+
+        /* ── 草稿（浏览器记忆） ─────────────────────────────────── */
+        scheduleSave() {
+            if (!this.visible || this.isEdit || this.skipDraftSave) return;
+            clearTimeout(this._saveTimer);
+            this._saveTimer = setTimeout(() => this.saveDraft(), 400);
+        },
+        saveDraft() {
+            if (!this.visible || this.isEdit) return;
+            try {
+                const empty = !this.form.content.trim() && !this.assets.length && !this.form.tagNames.length;
+                if (empty) {
+                    window.localStorage.removeItem(draftKeyOf(this.instanceId));
+                    return;
+                }
+                const payload = {
+                    title: this.form.title,
+                    content: this.form.content,
+                    mood: this.form.mood,
+                    weather: this.form.weather,
+                    location: this.form.location,
+                    visibility: this.form.visibility,
+                    tagNames: this.form.tagNames,
+                    assets: this.assets,
+                    savedAt: Date.now()
+                };
+                window.localStorage.setItem(draftKeyOf(this.instanceId), JSON.stringify(payload));
+            } catch (e) {
+                /* 隐私模式 / 配额满：草稿是锦上添花，失败不该拦住发布 */
+            }
+        },
+        restoreDraft() {
+            let raw = '';
+            try {
+                raw = window.localStorage.getItem(draftKeyOf(this.instanceId)) || '';
+            } catch (e) {
+                raw = '';
+            }
+            if (!raw) return;
+            let d = null;
+            try {
+                d = JSON.parse(raw);
+            } catch (e) {
+                d = null;
+            }
+            if (!d || (!String(d.content || '').trim() && !(d.assets || []).length)) {
+                this.clearDraftStorage();
+                return;
+            }
+            this.form = {
+                // 标题留空或还是「草稿当时」的自动值时，按当前日期重算，避免草稿标题过期
+                title: d.title && d.title !== titleOf(d.savedAt) ? d.title : defaultTitle(),
+                content: d.content || '',
+                mood: d.mood || '',
+                weather: d.weather || '',
+                location: d.location || '',
+                visibility: d.visibility || 'private',
+                tagNames: Array.isArray(d.tagNames) ? d.tagNames : []
+            };
+            this.assets = Array.isArray(d.assets) ? d.assets : [];
+            this.draftRestored = true;
+        },
+        clearDraftStorage() {
+            try {
+                window.localStorage.removeItem(draftKeyOf(this.instanceId));
+            } catch (e) {
+                /* 忽略 */
+            }
+        },
+        /** 提示条上的「丢弃」：连内容一起清掉，等于重新写 */
+        discardDraft() {
+            this.clearDraftStorage();
+            this.reset();
+            this.draftRestored = false;
+            this.$nextTick(() => this.$refs.textarea && this.$refs.textarea.focus());
+        },
+
+        /* ── 位置记忆 ───────────────────────────────────────────── */
+        loadLocationHistory() {
+            try {
+                const raw = window.localStorage.getItem(locationKeyOf(this.instanceId)) || '[]';
+                const arr = JSON.parse(raw);
+                this.locationHistory = Array.isArray(arr)
+                    ? arr.filter((x) => typeof x === 'string' && x.trim()).slice(0, LOCATION_MAX)
+                    : [];
+            } catch (e) {
+                this.locationHistory = [];
+            }
+        },
+        /** el-autocomplete 的建议源：输入即按关键字过滤，不输入就按最近顺序全列出来 */
+        queryLocation(queryString, cb) {
+            const q = String(queryString || '').trim().toLowerCase();
+            const pool = this.locationHistory;
+            const hit = q ? pool.filter((x) => x.toLowerCase().includes(q)) : pool;
+            cb(hit.map((v) => ({ value: v })));
+        },
+        /** 发布成功后记一笔（最近的排前面、同名去重、最多 LOCATION_MAX 条） */
+        rememberLocation(v) {
+            const val = String(v || '').trim();
+            if (!val) return;
+            const next = [val, ...this.locationHistory.filter((x) => x !== val)].slice(0, LOCATION_MAX);
+            this.locationHistory = next;
+            try {
+                window.localStorage.setItem(locationKeyOf(this.instanceId), JSON.stringify(next));
+            } catch (e) {
+                /* 隐私模式 / 配额满：记不住就算了，不影响发布 */
+            }
+        },
+
         async loadTags() {
             try {
                 const res = await fetchWithAuth(`/api/notes/tags?instanceId=${encodeURIComponent(this.instanceId || '')}`);
@@ -354,11 +574,26 @@ export default {
                 this.tagOptions = [];
             }
         },
-        toggleMood(v) {
-            this.form.mood = this.form.mood === v ? '' : v;
+
+        /* ── 心情 / 天气：名称提示 ─────────────────────────────── */
+        showNameTip(kind, value) {
+            this.tipKey = `${kind}:${value}`;
+            clearTimeout(this._tipTimer);
+            this._tipTimer = setTimeout(() => {
+                this.tipKey = '';
+            }, NAME_TIP_MS);
         },
-        toggleWeather(v) {
-            this.form.weather = this.form.weather === v ? '' : v;
+        clearNameTip() {
+            clearTimeout(this._tipTimer);
+            this.tipKey = '';
+        },
+        toggleMood(opt) {
+            this.showNameTip('mood', opt.value);
+            this.form.mood = this.form.mood === opt.value ? '' : opt.value;
+        },
+        toggleWeather(opt) {
+            this.showNameTip('weather', opt.value);
+            this.form.weather = this.form.weather === opt.value ? '' : opt.value;
         },
 
         /* ── 附件：增删排序 ─────────────────────────────────────── */
@@ -373,17 +608,24 @@ export default {
             for (const f of files) {
                 if (this.assets.length >= MAX_ASSETS_PER_NOTE) break;
                 if (this.assets.some((a) => a.fileId === f.id)) continue;
-                this.assets.push({
-                    fileId: f.id,
-                    url: f.url,
-                    thumbUrl: f.thumbUrl,
-                    originalName: f.originalName,
-                    name: f.name,
-                    mime: f.mime,
-                    mediaKind: f.mediaKind,
-                    size: f.size
-                });
+                this.assets.push(this.assetFromBed(f));
             }
+        },
+        /** 图床返回项 → 附件结构（三处上传路径统一这一份映射） */
+        assetFromBed(hit, fallbackSize) {
+            const mime = hit.mime || hit.type || '';
+            const kind = hit.mediaKind || mediaKindOfMime(mime);
+            return {
+                // 注意：/upload 返回的 id 是 File_ID（name），后端创建瞬间时会自动解析成 files.id
+                fileId: hit.id,
+                url: hit.src || hit.url || '',
+                thumbUrl: kind === 'image' ? thumbUrl(hit.src || hit.url, 320) : (hit.src || hit.url || ''),
+                originalName: hit.originalName || hit.name || '',
+                name: hit.name || '',
+                mime,
+                mediaKind: kind,
+                size: Number(hit.size) || Number(fallbackSize) || 0
+            };
         },
         removeAsset(i) {
             this.assets.splice(i, 1);
@@ -418,7 +660,17 @@ export default {
             this.dragIndex = -1;
         },
 
-        /* ── 本地上传 ───────────────────────────────────────────── */
+        /* ── 上传目标（通用弹窗） ───────────────────────────────── */
+        /** 打开前重算默认目录：/瞬间/2026/11 */
+        prepareTarget() {
+            this.uploadPrefill = {
+                channelId: '',
+                instanceId: this.instanceId || '',
+                uploadFolder: defaultUploadFolder('moment')
+            };
+        },
+
+        /* ① 本地上传 */
         pickLocalFile() {
             this.$refs.fileInput && this.$refs.fileInput.click();
         },
@@ -432,12 +684,62 @@ export default {
                 this.$message.warning(this.$t('notes.assetLimit', { n: MAX_ASSETS_PER_NOTE }));
                 return;
             }
+            this.pendingLink = '';
             this.pendingFiles = files.slice(0, room);
+            this.prepareTarget();
             this.targetVisible = true;
         },
-        /** 上传目标确认后逐个上传（串行：避免同时打满带宽，也让进度可读） */
+
+        /* ② 链接提取 */
+        extractLink() {
+            if (this.assets.length >= MAX_ASSETS_PER_NOTE) {
+                this.$message.warning(this.$t('notes.assetLimit', { n: MAX_ASSETS_PER_NOTE }));
+                return;
+            }
+            this.$prompt(this.$t('notes.linkTip'), this.$t('notes.linkExtract'), {
+                confirmButtonText: this.$t('notes.linkTransfer'),
+                cancelButtonText: this.$t('common.cancel'),
+                inputPlaceholder: 'https://example.com/a.jpg',
+                inputType: 'textarea',
+                inputValidator: (v) => {
+                    const s = String(v || '').trim();
+                    if (!s) return this.$t('notes.linkEmpty');
+                    if (!/^https?:\/\//i.test(s)) return this.$t('notes.linkInvalid');
+                    return true;
+                }
+            })
+                .then(({ value }) => {
+                    this.pendingFiles = [];
+                    this.pendingLink = String(value || '').trim();
+                    this.prepareTarget();
+                    this.targetVisible = true;
+                })
+                .catch(() => {});
+        },
+
+        /** 上传目标确认后：分「本地文件」与「链接转存」两条路 */
         async onTargetConfirm(target) {
             this.targetVisible = false;
+            if (this.pendingLink) return this.transferLink(target);
+            return this.uploadLocalFiles(target);
+        },
+        async transferLink(target) {
+            const url = this.pendingLink;
+            this.pendingLink = '';
+            if (!url) return;
+            this.uploading = true;
+            try {
+                const hit = await importUrlToBed(url, target, { source: 'Attachment' });
+                this.assets.push(this.assetFromBed(hit));
+                this.$message.success(this.$t('notes.linkOk'));
+            } catch (e) {
+                this.$message.error(this.$t('notes.linkFail', { msg: e.message || '' }));
+            } finally {
+                this.uploading = false;
+            }
+        },
+        /** 本地文件串行上传：避免同时打满带宽，也让进度可读 */
+        async uploadLocalFiles(target) {
             const files = this.pendingFiles.slice();
             this.pendingFiles = [];
             if (!files.length) return;
@@ -446,33 +748,8 @@ export default {
             let fail = 0;
             for (const f of files) {
                 try {
-                    const qs = new URLSearchParams();
-                    if (target.channelId) qs.set('channelId', target.channelId);
-                    if (target.instanceId) qs.set('instanceId', target.instanceId);
-                    if (target.uploadFolder) qs.set('uploadFolder', target.uploadFolder);
-                    const fd = new FormData();
-                    fd.append('file', f);
-                    const res = await fetch(`/upload${qs.toString() ? `?${qs}` : ''}`, {
-                        method: 'POST',
-                        body: fd,
-                        credentials: 'include'
-                    });
-                    const arr = await res.json().catch(() => null);
-                    const hit = Array.isArray(arr) ? arr[0] : null;
-                    if (!res.ok || !hit || !hit.id) throw new Error('upload failed');
-                    const mime = f.type || '';
-                    const kind = mediaKindOfMime(mime);
-                    this.assets.push({
-                        // 注意：/upload 返回的 id 是 File_ID（name），后端创建瞬间时会自动解析成 files.id
-                        fileId: hit.id,
-                        url: hit.src || '',
-                        thumbUrl: kind === 'image' ? thumbUrl(hit.src, 320) : (hit.src || ''),
-                        originalName: hit.name || f.name,
-                        name: hit.name || f.name,
-                        mime,
-                        mediaKind: kind,
-                        size: f.size
-                    });
+                    const hit = await uploadOne(f, target, { source: 'Attachment' });
+                    this.assets.push(this.assetFromBed({ ...hit, mime: f.type || '' }, f.size));
                     ok += 1;
                 } catch (err) {
                     fail += 1;
@@ -488,10 +765,15 @@ export default {
             if (!this.canSubmit) return;
             this.submitting = true;
             try {
+                const moodOpt = MOOD_OPTIONS.find((m) => m.value === this.form.mood);
+                const weatherOpt = WEATHER_OPTIONS.find((w) => w.value === this.form.weather);
                 const body = {
                     content: this.form.content,
                     mood: this.form.mood,
+                    // 名称快照：枚举值以后可能增删，名称独立存一列，筛选统计都不会因为改图标而错乱
+                    moodName: moodOpt ? this.nameOf(moodOpt) : '',
                     weather: this.form.weather,
+                    weatherName: weatherOpt ? this.nameOf(weatherOpt) : '',
                     location: this.form.location,
                     visibility: this.form.visibility,
                     assetIds: this.assets.map((a) => a.fileId),
@@ -508,9 +790,15 @@ export default {
                 });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
+                // 发布成功 → 把地点记进浏览器，下次打开可直选
+                this.rememberLocation(this.form.location);
+                // 发布成功 → 草稿作废，别再恢复出「已经发过」的内容
+                this.clearDraftStorage();
+                this.skipDraftSave = true;
                 this.$message.success(this.isEdit ? this.$t('notes.saveOk') : this.$t('notes.publishOk'));
                 this.visible = false;
-                this.$emit('saved');
+                // 带上 id：调用方（比如首页「记录」页）据此把刚发布的这一条拉回来展示
+                this.$emit('saved', { id: data.id || '', edit: this.isEdit });
             } catch (e) {
                 this.$message.error(e.message || this.$t('common.failed'));
             } finally {
@@ -526,10 +814,77 @@ export default {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    max-height: 66vh;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-right: 2px;
+}
+
+/* ── 草稿提示 ─────────────────────────────────────────────── */
+.mp-draft-tip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
+    color: var(--el-color-primary);
+    font-size: 12px;
+    flex: 0 0 auto;
+}
+
+.mp-draft-icon {
+    font-size: 12px;
+}
+
+.mp-draft-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mp-draft-act {
+    padding: 2px 8px;
+    border: 1px solid currentColor;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.mp-draft-act:hover {
+    background: var(--el-color-primary-light-8, rgba(64, 158, 255, 0.2));
+}
+
+.mp-draft-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font-size: 10px;
+    opacity: 0.7;
+    cursor: pointer;
+}
+
+.mp-draft-close:hover {
+    opacity: 1;
+}
+
+/* ── 标题 ─────────────────────────────────────────────────── */
+.mp-title {
+    flex: 0 0 auto;
 }
 
 .mp-title :deep(.el-input__inner) {
@@ -537,11 +892,13 @@ export default {
     font-weight: 600;
 }
 
+/* ── 心情 / 天气 ──────────────────────────────────────────── */
 .mp-meta-row {
     display: flex;
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
+    flex: 0 0 auto;
 }
 
 .mp-picker {
@@ -551,6 +908,12 @@ export default {
     padding: 2px 4px;
     border-radius: 8px;
     background: var(--note-tabs-bg, rgba(127, 127, 127, 0.08));
+}
+
+/* 每个图标自带一个定位容器，名称提示相对它浮出 */
+.mp-emoji-wrap {
+    position: relative;
+    display: inline-flex;
 }
 
 .mp-emoji {
@@ -578,8 +941,40 @@ export default {
     transform: scale(1.06);
 }
 
+/* 名称提示：图标正下方，2 秒后淡出 */
+.mp-name-tip {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 8;
+    padding: 2px 7px;
+    border: 1px solid var(--el-border-color-light, rgba(127, 127, 127, 0.2));
+    border-radius: 6px;
+    background: var(--el-bg-color-overlay, #fff);
+    color: var(--el-text-color-primary);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+    pointer-events: none;
+}
+
+.mp-tip-enter-active,
+.mp-tip-leave-active {
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.mp-tip-enter-from,
+.mp-tip-leave-to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-3px);
+}
+
+/* ── 位置 ─────────────────────────────────────────────────── */
 .mp-location {
-    max-width: 260px;
+    max-width: 280px;
+    flex: 0 0 auto;
 }
 
 .mp-location-icon {
@@ -587,14 +982,19 @@ export default {
     opacity: 0.6;
 }
 
+/* ── 正文 ─────────────────────────────────────────────────── */
 .mp-editor-wrap {
     position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 150px;
 }
 
 .mp-textarea {
     box-sizing: border-box;
     width: 100%;
-    min-height: 120px;
+    height: 100%;
+    min-height: 150px;
     padding: 10px 12px 26px;
     border: 1px solid var(--el-border-color);
     border-radius: 8px;
@@ -603,7 +1003,7 @@ export default {
     font-family: inherit;
     font-size: 14px;
     line-height: 1.7;
-    resize: vertical;
+    resize: none;
     outline: none;
     transition: border-color 0.2s ease;
 }
@@ -626,10 +1026,12 @@ export default {
     font-weight: 600;
 }
 
+/* ── 附件 ─────────────────────────────────────────────────── */
 .mp-assets {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
+    flex: 0 0 auto;
 }
 
 .mp-asset {
@@ -739,6 +1141,7 @@ export default {
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+    flex: 0 0 auto;
 }
 
 .mp-btn-icon {
@@ -755,11 +1158,13 @@ export default {
     display: none;
 }
 
+/* ── 标签 / 可见性 ────────────────────────────────────────── */
 .mp-tags-row {
     display: flex;
     gap: 8px;
     align-items: center;
     flex-wrap: wrap;
+    flex: 0 0 auto;
 }
 
 .mp-tags {
@@ -781,6 +1186,7 @@ export default {
     font-size: 12px;
 }
 
+/* ── 底部 ─────────────────────────────────────────────────── */
 .mp-footer {
     display: flex;
     align-items: center;
@@ -801,8 +1207,9 @@ export default {
 }
 
 @media (max-width: 768px) {
-    .mp-body {
-        max-height: 60vh;
+    .mp-editor-wrap,
+    .mp-textarea {
+        min-height: 130px;
     }
 
     .mp-asset {
@@ -810,9 +1217,48 @@ export default {
         height: 72px;
     }
 
+    /* 手机上位置输入框独占一行，给足宽度方便看历史地点 */
     .mp-location {
         max-width: 100%;
         width: 100%;
     }
+}
+</style>
+
+<style>
+/*
+ * 弹窗本体样式（非 scoped）
+ * ----------------------------------------------------------------------------
+ * el-dialog 的内容节点由 Element Plus 自己的组件渲染，且通过 teleport 挂到 body，
+ * scoped 样式里的 :deep() 找不到宿主节点，所以这一段必须放到全局块里，
+ * 只用 `.el-dialog.moment-publish-dialog` 这个双重类名限定范围，不会外溢到别的弹窗。
+ *
+ * 需求：编辑页高度 = 窗口的 96%。
+ * 做法：把 dialog 变成纵向 flex，头部/底部固定，body 撑满剩余空间，
+ * 再让内部 .mp-body 与正文输入框逐级 flex:1 —— 多出来的高度全部给主输入框。
+ */
+.el-dialog.moment-publish-dialog {
+    display: flex;
+    flex-direction: column;
+    height: 96vh;
+    max-height: 96vh;
+    margin: 2vh auto;
+}
+
+.el-dialog.moment-publish-dialog .el-dialog__header {
+    flex: 0 0 auto;
+}
+
+.el-dialog.moment-publish-dialog .el-dialog__body {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+.el-dialog.moment-publish-dialog .el-dialog__footer {
+    flex: 0 0 auto;
 }
 </style>
