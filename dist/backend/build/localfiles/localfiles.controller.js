@@ -142,7 +142,7 @@ let LocalFilesController = class LocalFilesController {
     async resolveChannel(req, channelId) {
         const id = String(channelId || '').trim();
         if (!id)
-            return { error: '请选择本地文件渠道' };
+            return { error: '请选择挂载文件渠道' };
         if (id === WEBDAV_ADMIN_VIRTUAL_ID) {
             if (!(0, localfiles_util_1.localFilesAdminOnly)(this.role(req)))
                 return { error: '仅管理员可浏览该目录' };
@@ -259,13 +259,13 @@ let LocalFilesController = class LocalFilesController {
             where: { type: { in: ['localfiles', 'local'] }, OR: [{ id }, { code: id }] },
         });
         if (!ch)
-            return { error: '渠道不存在或不是「本地文件」渠道' };
+            return { error: '渠道不存在或不是「挂载文件」渠道' };
         if (!ch.enabled)
             return { error: '该渠道已停用' };
         if (!(0, localfiles_util_1.localFilesAdminOnly)(this.role(req))) {
             const me = this.userName(req);
             if (!me || !(0, channel_access_1.channelVisibleTo)(ch.authorizedUsers, ch.type, me, false)) {
-                return { error: '该本地文件渠道未授权给当前账户' };
+                return { error: '该挂载文件渠道未授权给当前账户' };
             }
         }
         let cfg = {};
@@ -278,7 +278,7 @@ let LocalFilesController = class LocalFilesController {
         if (ch.type === 'local') {
             const on = cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true';
             if (!on)
-                return { error: '该本地存储渠道未开启「同步到本地文件管理」' };
+                return { error: '该本地存储渠道未开启「同步到挂载管理」' };
         }
         let wanted = [];
         if (Array.isArray(cfg.rootPaths))

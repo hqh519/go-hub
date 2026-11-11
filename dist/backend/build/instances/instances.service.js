@@ -5,13 +5,17 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
+var InstancesService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InstancesService = void 0;
 exports.readInstanceMembers = readInstanceMembers;
+exports.readSwitchLock = readSwitchLock;
 const common_1 = require("@nestjs/common");
 const crypto_1 = require("crypto");
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
+const crypto_service_1 = require("../common/crypto.service");
+const totp_1 = require("../common/totp");
 const INVITE_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 const INVITE_CODE_LEN = 8;
 function readInstanceMembers(metas) {
@@ -26,6 +30,22 @@ function readInstanceMembers(metas) {
         return [];
     }
 }
+function readSwitchLock(metas) {
+    try {
+        const parsed = JSON.parse(metas || '{}');
+        const raw = parsed?.switchLock;
+        if (!raw || raw.enabled !== true)
+            return null;
+        const mode = raw.mode === 'account' || raw.mode === 'totp' ? raw.mode : 'custom';
+        const hash = String(raw.hash || '');
+        if (mode === 'custom' && !hash)
+            return null;
+        return { enabled: true, mode, hash, updatedAt: Number(raw.updatedAt) || 0 };
+    }
+    catch {
+        return null;
+    }
+}
 function makeInviteCode() {
     const buf = (0, crypto_1.randomBytes)(INVITE_CODE_LEN);
     let code = '';
@@ -37,6 +57,7 @@ function isUniqueConflict(err) {
     return err?.code === 'P2002';
 }
 let InstancesService = class InstancesService {
+    static { InstancesService_1 = this; }
     async ownerIdOf(username) {
         const name = String(username || '').trim();
         if (!name)
@@ -278,8 +299,202 @@ let InstancesService = class InstancesService {
         app_log_1.appLog.info('instance', `创建者 ${username} 将 ${targetName} 移出实例「${inst.name}」`, '', '');
         return {};
     }
+    static unlocked = new Map();
+    static UNLOCK_TTL_MS = 12 * 3600 * 1000;
+    grantUnlock(username, instanceId) {
+        const key = String(username || '');
+        if (!key)
+            return;
+        let bucket = InstancesService_1.unlocked.get(key);
+        if (!bucket) {
+            bucket = new Map();
+            InstancesService_1.unlocked.set(key, bucket);
+        }
+        bucket.set(String(instanceId), Date.now() + InstancesService_1.UNLOCK_TTL_MS);
+    }
+    isUnlocked(username, instanceId) {
+        const bucket = InstancesService_1.unlocked.get(String(username || ''));
+        if (!bucket)
+            return false;
+        const exp = bucket.get(String(instanceId));
+        if (!exp)
+            return false;
+        if (exp <= Date.now()) {
+            bucket.delete(String(instanceId));
+            return false;
+        }
+        return true;
+    }
+    clearUnlock(username) {
+        InstancesService_1.unlocked.delete(String(username || ''));
+    }
+    async getAttributes(id, username) {
+        const inst = await prisma_1.prisma.instance.findUnique({ where: { id } });
+        if (!inst)
+            return { error: '实例不存在' };
+        const myId = await this.ownerIdOf(username);
+        if (inst.ownerId !== myId)
+            return { error: '仅创建者可查看实例属性' };
+        const lock = readSwitchLock(inst.metas);
+        return {
+            item: {
+                id: inst.id,
+                name: inst.name,
+                note: inst.note,
+                switchLock: {
+                    enabled: !!lock,
+                    mode: lock?.mode || 'custom',
+                    hasCustomPassword: !!lock?.hash,
+                },
+            },
+        };
+    }
+    async setAttributes(id, username, body) {
+        const inst = await prisma_1.prisma.instance.findUnique({ where: { id } });
+        if (!inst)
+            return { error: '实例不存在' };
+        const myId = await this.ownerIdOf(username);
+        if (inst.ownerId !== myId)
+            return { error: '仅创建者可修改实例属性' };
+        let metas = {};
+        try {
+            metas = JSON.parse(inst.metas || '{}');
+        }
+        catch {
+            metas = {};
+        }
+        const data = {};
+        if (body.name !== undefined) {
+            const name = String(body.name || '').trim();
+            if (!name)
+                return { error: '请填写实例名称' };
+            if (name.length > 40)
+                return { error: '实例名称最多 40 个字符' };
+            if (name !== inst.name) {
+                const dup = await prisma_1.prisma.instance.findFirst({ where: { ownerId: inst.ownerId, name } });
+                if (dup && dup.id !== inst.id)
+                    return { error: '已存在同名实例' };
+                data.name = name;
+            }
+        }
+        if (body.note !== undefined)
+            data.note = String(body.note || '').slice(0, 200);
+        if (body.switchLock !== undefined) {
+            const raw = (body.switchLock || {});
+            const enabled = raw.enabled === true;
+            if (!enabled) {
+                delete metas.switchLock;
+            }
+            else {
+                const modeRaw = String(raw.mode || 'custom');
+                const mode = modeRaw === 'account' || modeRaw === 'totp' ? modeRaw : 'custom';
+                let hash = '';
+                if (mode === 'custom') {
+                    const pwd = String(raw.password || '');
+                    if (!pwd) {
+                        const prev = readSwitchLock(inst.metas);
+                        if (prev?.mode === 'custom' && prev.hash)
+                            hash = prev.hash;
+                        else
+                            return { error: '请设置自定义密码（至少 4 位）' };
+                    }
+                    else {
+                        if (pwd.length < 4)
+                            return { error: '自定义密码至少 4 位' };
+                        if (pwd.length > 64)
+                            return { error: '自定义密码最多 64 位' };
+                        hash = crypto_service_1.CryptoService.hashPassword(pwd);
+                    }
+                }
+                else {
+                    const u = await prisma_1.prisma.user.findUnique({
+                        where: { username: String(username || '') },
+                        select: { passwordHash: true, totpEnabled: true, totpSecret: true },
+                    });
+                    if (!u)
+                        return { error: '当前账户不在用户表中，请改用「自定义密码」' };
+                    if (mode === 'totp' && !(u.totpEnabled && u.totpSecret)) {
+                        return { error: '当前账户尚未开启两步验证，请改用其他方式' };
+                    }
+                }
+                metas.switchLock = { enabled: true, mode, hash, updatedAt: Date.now() };
+            }
+            data.metas = JSON.stringify(metas);
+        }
+        else if (data.name || data.note !== undefined) {
+            data.metas = inst.metas;
+        }
+        const updated = await prisma_1.prisma.instance.update({
+            where: { id },
+            data: data,
+        });
+        app_log_1.appLog.info('instance', `创建者 ${username} 更新了实例「${updated.name}」的属性`, '', '');
+        const lock = readSwitchLock(updated.metas);
+        return {
+            item: {
+                id: updated.id,
+                name: updated.name,
+                note: updated.note,
+                switchLock: { enabled: !!lock, mode: lock?.mode || 'custom', hasCustomPassword: !!lock?.hash },
+            },
+        };
+    }
+    async switchLockState(id, username) {
+        const inst = await prisma_1.prisma.instance.findUnique({ where: { id }, select: { metas: true } });
+        if (!inst)
+            return { locked: false, exists: false };
+        const lock = readSwitchLock(inst.metas);
+        if (!lock)
+            return { locked: false, exists: true };
+        if (this.isUnlocked(username, id))
+            return { locked: false, exists: true, mode: lock.mode };
+        return { locked: true, mode: lock.mode, exists: true };
+    }
+    async verifySwitch(id, username, body) {
+        const inst = await prisma_1.prisma.instance.findUnique({ where: { id }, select: { metas: true } });
+        if (!inst)
+            return { error: '实例不存在' };
+        const lock = readSwitchLock(inst.metas);
+        if (!lock)
+            return { ok: true, mode: 'none' };
+        if (lock.mode === 'custom') {
+            const pwd = String(body?.password || '');
+            if (!pwd)
+                return { error: '请输入切换密码' };
+            if (!crypto_service_1.CryptoService.verifyPassword(pwd, lock.hash))
+                return { error: '切换密码不正确' };
+        }
+        else if (lock.mode === 'totp') {
+            const code = String(body?.code || '').replace(/\s/g, '');
+            const u = await prisma_1.prisma.user.findUnique({
+                where: { username: String(username || '') },
+                select: { totpEnabled: true, totpSecret: true },
+            });
+            if (!u?.totpEnabled || !u?.totpSecret)
+                return { error: '当前账户未开启两步验证' };
+            if (!/^\d{6}$/.test(code))
+                return { error: '请输入 6 位动态码' };
+            if (!(0, totp_1.verifyTotp)(u.totpSecret, code))
+                return { error: '动态码不正确' };
+        }
+        else {
+            const pwd = String(body?.password || '');
+            if (!pwd)
+                return { error: '请输入账户密码' };
+            const u = await prisma_1.prisma.user.findUnique({
+                where: { username: String(username || '') },
+                select: { passwordHash: true },
+            });
+            if (!u?.passwordHash)
+                return { error: '当前账户不支持密码校验' };
+            if (!crypto_service_1.CryptoService.verifyPassword(pwd, u.passwordHash))
+                return { error: '账户密码不正确' };
+        }
+        this.grantUnlock(username, id);
+        return { ok: true, mode: lock.mode };
+    }
 };
 exports.InstancesService = InstancesService;
-exports.InstancesService = InstancesService = __decorate([
+exports.InstancesService = InstancesService = InstancesService_1 = __decorate([
     (0, common_1.Injectable)()
 ], InstancesService);

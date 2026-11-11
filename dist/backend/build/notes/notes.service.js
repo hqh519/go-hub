@@ -7,13 +7,34 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotesService = exports.LIST_COMMENT_MAX = void 0;
+exports.parseNoteSearch = parseNoteSearch;
 const common_1 = require("@nestjs/common");
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const tags_1 = require("../common/tags");
 const file_view_1 = require("../common/file-view");
+const file_filter_1 = require("../common/file-filter");
 const notes_util_1 = require("./notes.util");
 exports.LIST_COMMENT_MAX = 100;
+function parseNoteSearch(raw) {
+    const includeTags = [];
+    const excludeTags = [];
+    const words = [];
+    for (const token of String(raw || '').split(/\s+/)) {
+        if (!token)
+            continue;
+        if (token.startsWith('-#') && token.length > 2) {
+            excludeTags.push(token.slice(2));
+        }
+        else if (token.startsWith('#') && token.length > 1) {
+            includeTags.push(token.slice(1));
+        }
+        else {
+            words.push(token);
+        }
+    }
+    return { keyword: words.join(' '), includeTags, excludeTags };
+}
 const SORTABLE = {
     createdAt: 'createdAt',
     updatedAt: 'updatedAt',
@@ -118,13 +139,44 @@ let NotesService = class NotesService {
         where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
         if (!input.isAdmin)
             where.author = String(input.viewer || '');
-        if (input.search) {
-            const s = String(input.search);
-            where.OR = [
-                { content: { contains: s, mode: 'insensitive' } },
-                { metas: { contains: s, mode: 'insensitive' } },
-            ];
+        const parsed = parseNoteSearch(input.search);
+        const and = [];
+        for (const name of parsed.includeTags) {
+            and.push({ tags: { some: { tag: { name: { equals: name, mode: 'insensitive' } } } } });
         }
+        for (const name of parsed.excludeTags) {
+            and.push({ tags: { none: { tag: { name: { equals: name, mode: 'insensitive' } } } } });
+        }
+        if (parsed.keyword) {
+            const kw = { contains: parsed.keyword, mode: 'insensitive' };
+            const byScope = {
+                title: [{ moment: { title: kw } }],
+                content: [{ content: kw }],
+                tag: [{ tags: { some: { tag: { name: kw } } } }],
+                other: [
+                    { moment: { location: kw } },
+                    { moment: { moodName: kw } },
+                    { moment: { weatherName: kw } },
+                    { author: kw },
+                    { comments: { some: { content: kw } } },
+                ],
+                all: [
+                    { content: kw },
+                    { metas: kw },
+                    { moment: { title: kw } },
+                    { tags: { some: { tag: { name: kw } } } },
+                    { moment: { location: kw } },
+                    { moment: { moodName: kw } },
+                    { moment: { weatherName: kw } },
+                    { author: kw },
+                    { comments: { some: { content: kw } } },
+                ],
+            };
+            const scope = String(input.searchType || 'all').toLowerCase();
+            and.push({ OR: byScope[scope] || byScope.all });
+        }
+        if (and.length)
+            where.AND = and;
         if (input.mediaKind)
             where.moment = { mediaKind: String(input.mediaKind) };
         if (input.tagId)
@@ -219,7 +271,7 @@ let NotesService = class NotesService {
         return {
             id: row.id,
             kind: row.kind,
-            title: String((0, notes_util_1.safeParse)(row.metas).title || ''),
+            title: String(row.moment?.title || ''),
             content: row.content || '',
             coverFileId: row.coverFileId || '',
             visibility: row.visibility || 'private',
@@ -308,9 +360,9 @@ let NotesService = class NotesService {
                     author: viewer,
                     instanceId,
                     publishedAt: now,
-                    metas: JSON.stringify({ title: String(input.title || '').trim().slice(0, 80) }),
                     moment: {
                         create: {
+                            title: String(input.title || '').trim().slice(0, 80),
                             mediaKind,
                             assetCount: ordered.length,
                             charCount,
@@ -397,12 +449,10 @@ let NotesService = class NotesService {
                     visibility,
                     coverFileId: finalFiles.find((f) => (0, notes_util_1.mediaKindOfMime)(f.mime) === 'image')?.id || '',
                     version: { increment: 1 },
-                    ...(input.title === undefined
-                        ? {}
-                        : { metas: JSON.stringify({ ...(0, notes_util_1.safeParse)(existing.metas), title: String(input.title).trim().slice(0, 80) }) }),
                     moment: {
                         upsert: {
                             create: {
+                                title: String(input.title || '').trim().slice(0, 80),
                                 mediaKind,
                                 assetCount: finalFiles.length,
                                 charCount,
@@ -413,6 +463,7 @@ let NotesService = class NotesService {
                                 location: String(input.location || '').slice(0, 80),
                             },
                             update: {
+                                ...(input.title === undefined ? {} : { title: String(input.title).trim().slice(0, 80) }),
                                 mediaKind,
                                 assetCount: finalFiles.length,
                                 charCount,
@@ -611,11 +662,30 @@ let NotesService = class NotesService {
         };
         if (!input.isAdmin)
             where.uploader = String(input.viewer || '');
-        if (input.search) {
-            where.OR = [
-                { originalName: { contains: String(input.search), mode: 'insensitive' } },
-                { name: { contains: String(input.search), mode: 'insensitive' } },
-            ];
+        const kw = String(input.search || '').trim();
+        if (kw) {
+            const contains = { contains: kw, mode: 'insensitive' };
+            const scope = String(input.searchScope || 'all').toLowerCase();
+            const byScope = {
+                title: [{ originalName: contains }, { name: contains }],
+                tag: [{ tags: { some: { tag: { name: contains } } } }],
+                category: [{ folder: contains }],
+                user: [{ uploader: contains }],
+                note: [{ note: contains }],
+                other: [{ md5: contains }, { mime: contains }, { ip: { contains: kw } }],
+            };
+            where.OR =
+                scope !== 'all' && byScope[scope]
+                    ? byScope[scope]
+                    : [
+                        { originalName: contains },
+                        { name: contains },
+                        { md5: contains },
+                        { folder: contains },
+                        { tags: { some: { tag: { name: contains } } } },
+                        { mime: contains },
+                        { uploader: contains },
+                    ];
         }
         const type = String(input.type || '');
         if (type === 'image')
@@ -631,6 +701,29 @@ let NotesService = class NotesService {
                 { mime: { startsWith: 'audio/' } },
             ];
         }
+        const filterOpts = (0, file_filter_1.parseFileFilterQuery)(input.filterQuery || {});
+        const mmRaw = String(input.matchMode || '').toLowerCase();
+        const matchMode = mmRaw === 'any' || mmRaw === 'or' ? 'any' : 'all';
+        if (!(0, file_filter_1.isEmptyFileFilter)(filterOpts)) {
+            const rows = await prisma_1.prisma.fileRecord.findMany({
+                where: where,
+                orderBy: { createdAt: 'desc' },
+                take: 2000,
+                include: {
+                    copies: { include: { channel: true } },
+                    tags: { include: { tag: true } },
+                },
+            });
+            const filtered = rows.filter((r) => (0, file_filter_1.passesFileFilters)(r, filterOpts, matchMode));
+            const slice = filtered.slice((page - 1) * pageSize, page * pageSize);
+            return {
+                total: filtered.length,
+                page,
+                pageSize,
+                filtered: true,
+                list: slice.map((r) => this.pickFileRow(r)),
+            };
+        }
         const [total, rows] = await Promise.all([
             prisma_1.prisma.fileRecord.count({ where: where }),
             prisma_1.prisma.fileRecord.findMany({
@@ -645,21 +738,22 @@ let NotesService = class NotesService {
             total,
             page,
             pageSize,
-            list: rows.map((r) => {
-                const kind = (0, notes_util_1.mediaKindOfMime)(r.mime);
-                return {
-                    id: r.id,
-                    name: r.name,
-                    originalName: r.originalName,
-                    mime: r.mime,
-                    size: r.size,
-                    mediaKind: kind,
-                    url: (0, notes_util_1.fileUrlOf)(r.name),
-                    thumbUrl: (0, notes_util_1.fileUrlOf)(r.name, kind === 'image' ? 320 : undefined),
-                    createdAt: new Date(r.createdAt).getTime(),
-                    fileType: (0, file_view_1.fileTypeOf)(r.mime),
-                };
-            }),
+            list: rows.map((r) => this.pickFileRow(r)),
+        };
+    }
+    pickFileRow(r) {
+        const kind = (0, notes_util_1.mediaKindOfMime)(r.mime);
+        return {
+            id: r.id,
+            name: r.name,
+            originalName: r.originalName,
+            mime: r.mime,
+            size: r.size,
+            mediaKind: kind,
+            url: (0, notes_util_1.fileUrlOf)(r.name),
+            thumbUrl: (0, notes_util_1.fileUrlOf)(r.name, kind === 'image' ? 320 : undefined),
+            createdAt: new Date(r.createdAt).getTime(),
+            fileType: (0, file_view_1.fileTypeOf)(r.mime),
         };
     }
     readMetas(raw) {

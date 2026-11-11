@@ -376,7 +376,7 @@
                 <font-awesome-icon icon="info-circle" style="margin-right: 6px;"/>
                 仅被勾选的账户能在自己的上传设置里看到并使用该渠道；管理员不受限制，始终可用。
                 <template v-if="authChannel?.type === 'local'">内置本地存储渠道自 v2.7.0 起与其它渠道规则完全一致：名单为空时普通用户不可见（管理员不受限），勾选后仅名单内账户可用。</template>
-                <template v-else-if="authChannel?.type === 'localfiles'">本地文件渠道：名单为空时普通用户在左栏看不到「本地文件」入口；勾选后，名单内账户可浏览该渠道下的目录，并在「本地文件」页把文件上传到图床。</template>
+                <template v-else-if="authChannel?.type === 'localfiles'">挂载文件渠道：名单为空时普通用户在左栏看不到「挂载管理」入口；勾选后，名单内账户可浏览该渠道下的目录，并在「挂载管理」页把文件上传到图床。</template>
             </div>
             <!--
                 v1.0.6：「自动授权所有用户」开关。
@@ -442,7 +442,7 @@
                     <el-input v-model="newChannel.name" placeholder="仅支持中英文、数字、下划线、连字符"/>
                     <!-- v3.0.0（R8）：本地文件渠道的用途提示（添加页） -->
                     <div v-if="newChannel.type === 'localfiles'" class="localfiles-purpose-hint">
-                        本渠道不能存储，是用于在本地文件管理中浏览本地文件所用，请在此设置需要浏览的本地文件目录（含宿主机映射目录）
+                        本渠道不能存储，是用于在挂载管理中浏览挂载目录所用，请在此设置需要浏览的目录（含宿主机映射目录）
                     </div>
                     <template #label>
                         <span>渠道名称</span>
@@ -550,7 +550,7 @@
                     <el-input v-model="editChannel.name" placeholder="仅支持中英文、数字、下划线、连字符"/>
                     <!-- v3.0.0（R8）：本地文件渠道的用途提示（编辑页） -->
                     <div v-if="editChannel.type === 'localfiles'" class="localfiles-purpose-hint">
-                        本渠道不能存储，是用于在本地文件管理中浏览本地文件所用，请在此设置需要浏览的本地文件目录（含宿主机映射目录）
+                        本渠道不能存储，是用于在挂载管理中浏览挂载目录所用，请在此设置需要浏览的目录（含宿主机映射目录）
                     </div>
                     <div class="form-hint-bar form-hint-bar--inline">
                         <span class="hint-text">名称可以修改；保存时会校验是否与其它渠道重名，重名无法保存。</span>

@@ -709,6 +709,8 @@ export default {
             imgX: 0,
             imgY: 0,
             imgDragging: false,
+            /** v1.1.3：视频画面被放大后拖动位置时置位（拖动期间关掉 transition，否则会「追」得发飘） */
+            vidDragging: false,
             /*
              * v1.0.0：视频灯箱双指缩放状态。
              * 刻意与图片的 imgScale/imgX/imgY 分开：图片那套还牵着 fitMode（适应窗口 /
@@ -930,7 +932,7 @@ export default {
             if (this.vidScale === 1 && this.vidX === 0 && this.vidY === 0) return null
             return {
                 transform: `translate(${this.vidX}px, ${this.vidY}px) scale(${this.vidScale})`,
-                transition: this.vidPinching ? 'none' : 'transform 0.15s ease'
+                transition: this.vidPinching || this.vidDragging ? 'none' : 'transform 0.15s ease'
             }
         },
         /**
@@ -940,6 +942,15 @@ export default {
         imageEnlarged() {
             if (this.current.kind !== 'image') return false
             return this.fitMode === 'actual' || Number(this.imgScale) > 1.01
+        },
+        /**
+         * v1.1.3：视频画面是否被双指放大过。
+         * 放大后横向 / 竖向滑动都应该用来「挪画面」，而不是切上一个 / 下一个 / 随机播放——
+         * 否则用户想看画面另一部分，一滑就被翻走了（需求原文）。
+         */
+        videoEnlarged() {
+            if (this.current.kind !== 'video') return false
+            return Number(this.vidScale) > 1.01
         }
     },
     watch: {
@@ -995,6 +1006,14 @@ export default {
             }
         },
         index() {
+            /*
+             * v1.1.3：切换时顺便预取相邻的图片。
+             * 之前每翻一张都是「点下去才开始下载原图」，大图要等 1~2 秒，观感就是卡。
+             * 这里在切完之后空闲时预取前后各一张（只预取图片，视频不预取 ——
+             * 预取视频等于替用户下载几十 MB，得不偿失），用 new Image() 落浏览器缓存，
+             * 下一次翻页直接命中，不再有黑屏等待。
+             */
+            this.preloadNearbyImages()
             this.videoMenuOpen = false
             this.tocOpen = false
             // v3.0.0（R8）：切集收起大纲面板
@@ -1043,6 +1062,31 @@ export default {
         this.bindKeys(false)
     },
     methods: {
+        /**
+         * v1.1.3：预取相邻图片（前后各一张）。
+         * 只对同类型列表（imageItems）里的相邻项生效 —— 灯箱的「上一页/下一页」
+         * 本来就在同类型之间切换，预取别的类型没有意义。
+         */
+        preloadNearbyImages() {
+            if (typeof window === 'undefined') return
+            if (!this.current || this.current.kind !== 'image') return
+            // sameKindIndexes 就是「上一页 / 下一页」实际会走的那条序列
+            const list = this.sameKindIndexes || []
+            const pos = list.indexOf(this.index)
+            if (pos < 0) return
+            this._preloaded = this._preloaded || new Set()
+            for (const step of [1, -1]) {
+                const nbIndex = list[pos + step]
+                const nb = nbIndex === undefined ? null : (this.items || [])[nbIndex]
+                if (!nb || !nb.url) continue
+                if (this._preloaded.has(nb.url)) continue
+                this._preloaded.add(nb.url)
+                const img = new Image()
+                img.decoding = 'async'
+                img.src = nb.url
+            }
+        },
+
         close() {
             this.$emit('update:modelValue', false)
         },
@@ -1235,6 +1279,7 @@ export default {
             this.vidX = 0
             this.vidY = 0
             this.vidPinching = false
+            this.vidDragging = false
             this._pinch = null
         },
         /* ── v3.0.0 舞台触摸：滑动切换 / 长按 3 倍速 / 轻点与双击 ───── */
@@ -1346,6 +1391,20 @@ export default {
                 }
                 this._tLast = { x: t.clientX, y: t.clientY }
             }
+            /*
+             * v1.1.3：视频被双指放大后，滑动改为**移动视频画面**（与图片放大态同一套逻辑）——
+             * 此时不能再触发「切上一个/下一个」和「上拉随机播放」。
+             */
+            if (this.current.kind === 'video' && this.videoEnlarged && this._tLast) {
+                if (this._tMoved) {
+                    this.vidDragging = true
+                    this.vidX += t.clientX - this._tLast.x
+                    this.vidY += t.clientY - this._tLast.y
+                    this._tPanning = true
+                    if (e.cancelable) e.preventDefault()
+                }
+                this._tLast = { x: t.clientX, y: t.clientY }
+            }
             // 只有真的滑出去了才作废长按；阈值给到 16px，避免手指微抖就取消
             if (dx > LONG_PRESS_CANCEL_PX || dy > LONG_PRESS_CANCEL_PX) this.clearLongPress()
         },
@@ -1385,9 +1444,10 @@ export default {
             this._tStart = null
             this._tLast = null
             if (this._tPanning) {
-                // 拖动过图片：结束拖拽态（transition 恢复），不算轻点 / 更不翻页
+                // 拖动过图片 / 放大后的视频：结束拖拽态（transition 恢复），不算轻点 / 更不翻页
                 this._tPanning = false
                 this.imgDragging = false
+                this.vidDragging = false
                 return
             }
             if (!st) return
@@ -1403,7 +1463,7 @@ export default {
                  * 拖动看图片另一部分的，直接翻页会让用户看不到想看的地方 ——
                  * 只有「适应窗口」状态才允许滑动切换上/下一个。
                  */
-                if (this.imageEnlarged) return
+                if (this.imageEnlarged || this.videoEnlarged) return
                 this.step(dx < 0 ? 1 : -1, { silent: true })
                 return
             }
@@ -1417,6 +1477,8 @@ export default {
                 const kind = this.current.kind
                 if (kind !== 'image' && kind !== 'video' && kind !== 'audio') return
                 if (kind === 'image' && this.imageEnlarged) return
+                // v1.1.3：视频放大后，竖滑同样是在挪画面，不触发「上拉随机 / 下拉详情」
+                if (kind === 'video' && this.videoEnlarged) return
                 if (dy < 0) {
                     const sameKind = (this.items || [])
                         .map((it, i) => (it.kind === kind ? i : -1))

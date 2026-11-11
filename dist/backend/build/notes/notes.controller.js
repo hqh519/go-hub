@@ -29,12 +29,13 @@ let NotesController = class NotesController {
         }
         return { viewer, isAdmin: (0, auth_guard_1.isAdminRole)(session?.role) };
     }
-    async list(req, kind, mediaKind, search, tagId, status, from, to, sort, order, page, pageSize, instanceId) {
+    async list(req, kind, mediaKind, search, searchType, tagId, status, from, to, sort, order, page, pageSize, instanceId) {
         const { viewer, isAdmin } = this.ctx(req);
         return this.notes.list({
             kind,
             mediaKind,
             search,
+            searchType,
             tagId,
             status,
             from,
@@ -62,16 +63,19 @@ let NotesController = class NotesController {
         const data = await this.notes.saveNoteSettings(String(instanceId || ''), patch);
         return { success: true, data };
     }
-    async files(req, search, type, page, pageSize, instanceId) {
+    async files(req, q) {
         const { viewer, isAdmin } = this.ctx(req);
         return this.notes.pickFiles({
-            search,
-            type,
-            page: Number(page) || 1,
-            pageSize: Number(pageSize) || 24,
-            instanceId: instanceId || '',
+            search: q.search,
+            searchScope: q.searchType,
+            type: q.type,
+            page: Number(q.page) || 1,
+            pageSize: Number(q.pageSize) || 24,
+            instanceId: q.instanceId || '',
             viewer,
             isAdmin,
+            filterQuery: q,
+            matchMode: q.matchMode,
         });
     }
     async tagAdmin(req, instanceId, kind) {
@@ -187,17 +191,18 @@ __decorate([
     __param(1, (0, common_1.Query)('kind')),
     __param(2, (0, common_1.Query)('mediaKind')),
     __param(3, (0, common_1.Query)('search')),
-    __param(4, (0, common_1.Query)('tagId')),
-    __param(5, (0, common_1.Query)('status')),
-    __param(6, (0, common_1.Query)('from')),
-    __param(7, (0, common_1.Query)('to')),
-    __param(8, (0, common_1.Query)('sort')),
-    __param(9, (0, common_1.Query)('order')),
-    __param(10, (0, common_1.Query)('page')),
-    __param(11, (0, common_1.Query)('pageSize')),
-    __param(12, (0, common_1.Query)('instanceId')),
+    __param(4, (0, common_1.Query)('searchType')),
+    __param(5, (0, common_1.Query)('tagId')),
+    __param(6, (0, common_1.Query)('status')),
+    __param(7, (0, common_1.Query)('from')),
+    __param(8, (0, common_1.Query)('to')),
+    __param(9, (0, common_1.Query)('sort')),
+    __param(10, (0, common_1.Query)('order')),
+    __param(11, (0, common_1.Query)('page')),
+    __param(12, (0, common_1.Query)('pageSize')),
+    __param(13, (0, common_1.Query)('instanceId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, String, String, String, String, String, String, String, String, String, String, String]),
+    __metadata("design:paramtypes", [Object, String, String, String, String, String, String, String, String, String, String, String, String, String]),
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "list", null);
 __decorate([
@@ -227,13 +232,9 @@ __decorate([
 __decorate([
     (0, common_1.Get)('files'),
     __param(0, (0, common_1.Req)()),
-    __param(1, (0, common_1.Query)('search')),
-    __param(2, (0, common_1.Query)('type')),
-    __param(3, (0, common_1.Query)('page')),
-    __param(4, (0, common_1.Query)('pageSize')),
-    __param(5, (0, common_1.Query)('instanceId')),
+    __param(1, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, String, String, String, String]),
+    __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "files", null);
 __decorate([

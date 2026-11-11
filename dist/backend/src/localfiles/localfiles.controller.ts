@@ -195,7 +195,7 @@ export class LocalFilesController {
    *  旧配置只有 cfg.rootPath 单目录时自动视为一个浏览目录，完全平滑兼容。 */
   private async resolveChannel(req: Request, channelId: string) {
     const id = String(channelId || '').trim();
-    if (!id) return { error: '请选择本地文件渠道' as string };
+    if (!id) return { error: '请选择挂载文件渠道' as string };
     /*
      * v1.0.8.1：管理员专属「WebDav存储文件」——容器内 WebDAV 总根 <backend>/webdav。
      *
@@ -325,7 +325,7 @@ export class LocalFilesController {
     const ch = await prisma.channel.findFirst({
       where: { type: { in: ['localfiles', 'local'] }, OR: [{ id }, { code: id }] },
     });
-    if (!ch) return { error: '渠道不存在或不是「本地文件」渠道' };
+    if (!ch) return { error: '渠道不存在或不是「挂载文件」渠道' };
     if (!ch.enabled) return { error: '该渠道已停用' };
     /*
      * v1.0.5：渠道授权 —— 管理员直通；普通用户必须在授权名单里，
@@ -334,7 +334,7 @@ export class LocalFilesController {
     if (!localFilesAdminOnly(this.role(req))) {
       const me = this.userName(req);
       if (!me || !channelVisibleTo(ch.authorizedUsers, ch.type, me, false)) {
-        return { error: '该本地文件渠道未授权给当前账户' };
+        return { error: '该挂载文件渠道未授权给当前账户' };
       }
     }
     let cfg: Record<string, any> = {};
@@ -346,7 +346,7 @@ export class LocalFilesController {
     // 自定义本地存储渠道：只有显式开启「同步到本地文件管理」才允许浏览
     if (ch.type === 'local') {
       const on = cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true';
-      if (!on) return { error: '该本地存储渠道未开启「同步到本地文件管理」' };
+      if (!on) return { error: '该本地存储渠道未开启「同步到挂载管理」' };
     }
     // 解析浏览目录清单（rootPaths 优先，回落 rootPath）
     let wanted: string[] = [];

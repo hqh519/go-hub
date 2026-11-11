@@ -315,9 +315,11 @@
                         </button>
                     </div>
                     <el-dropdown
+                        ref="sortDropdown"
                         trigger="click"
                         class="breadcrumb-sort-dropdown"
                         @command="setSortField"
+                        @visible-change="handleSortDropdownVisible"
                     >
                         <button
                             class="breadcrumb-sort-button"
@@ -995,6 +997,8 @@ import LanguageSwitcher from '@/components/LanguageSwitcher.vue';
 // v2.8.8：登记文件弹窗（与前台共用同一组件）
 import RecordFileDialog from '@/components/upload/RecordFileDialog.vue';
 import { fileManager } from '@/utils/fileManager';
+// v1.1.3：实例切换密码守卫（三个页面共用同一份实现）
+import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
 import { thumbUrl } from '@/utils/thumb';
 import { registerLayer, unregisterLayer } from '@/utils/layerStack';
 // 文件详情通用数据构造器（与「历史记录」页共用同一套模板 + 同一套链接拼装逻辑）
@@ -1015,6 +1019,7 @@ import backgroundManager from '@/mixins/backgroundManager';
 import pageActivation from '@/mixins/pageActivation';
 import { ref, defineAsyncComponent } from 'vue';
 import { useDragSelect } from '@/utils/dashboard/useDragSelect.js';
+import { bindScrollDismiss } from '@/utils/scrollDismiss';
 
 /*
  * v3.0.0：目录属性弹窗（FolderPropsDialog.vue）由其它代理并行新建。
@@ -4252,6 +4257,9 @@ methods: {
 
     /** 下拉展开 / 收起：每次打开都回到「当前」，并清空全局搜索 */
     handleDirDropdownVisible(visible) {
+        // v1.1.3：打开期间一滚动就收起（移动端需求）
+        if (visible) this.bindDropdownScrollDismiss('dir');
+        else this.releaseDropdownScrollDismiss('dir');
         if (!visible) return;
         /*
          * v3.0.0（R12）：悬停展开与点击展开统一回到「当前」层级。
@@ -4260,6 +4268,31 @@ methods: {
          */
         this.dirScope = 'current';
         this.dirSearch = '';
+    },
+    /** v1.1.3：排序下拉打开 → 绑定「滚动即收起」 */
+    handleSortDropdownVisible(visible) {
+        if (visible) this.bindDropdownScrollDismiss('sort');
+        else this.releaseDropdownScrollDismiss('sort');
+    },
+    /**
+     * v1.1.3：下拉展开期间，页面一滚动就收起（移动端需求）。
+     * el-dropdown 有 handleClose，但滚动可能来自页内滚动容器，
+     * 统一用 utils/scrollDismiss 处理，与笔记管理页共用同一套行为。
+     */
+    bindDropdownScrollDismiss(key) {
+        const refMap = { sort: 'sortDropdown', dir: 'dirDropdown' };
+        this._ddUnbind = this._ddUnbind || {};
+        if (this._ddUnbind[key]) return;
+        this._ddUnbind[key] = bindScrollDismiss(() => {
+            const dd = this.$refs[refMap[key]];
+            if (dd && typeof dd.handleClose === 'function') dd.handleClose();
+        });
+    },
+    releaseDropdownScrollDismiss(key) {
+        if (this._ddUnbind && this._ddUnbind[key]) {
+            this._ddUnbind[key]();
+            this._ddUnbind[key] = null;
+        }
     },
     /** v3.0.0（R7）：桌面端鼠标悬停「目录导航」→ 展开下拉（默认仍是「当前」层级） */
     handleDirHoverEnter() {
@@ -4705,10 +4738,16 @@ methods: {
         }
         window.open(url, '_blank', 'noopener');
     },
-    /** v3.0.0：弹窗里选择某个实例（切换后整体重载：清筛选 / 搜索 / 回根目录 / 重拉列表与标签） */
-    switchInstanceTo(id) {
+    /**
+     * v3.0.0：弹窗里选择某个实例（切换后整体重载：清筛选 / 搜索 / 回根目录 / 重拉列表与标签）
+     * v1.1.3：目标实例若启用了切换密码，先验证再切；已在本会话验证过则直接过。
+     */
+    async switchInstanceTo(id) {
+        const next = id == null ? '' : String(id);
+        const ok = await ensureInstanceUnlocked(next);
+        if (!ok) return;
         this.showInstanceDialog = false;
-        this.applyInstance(id == null ? '' : id);
+        this.applyInstance(next);
     },
 
     /**
@@ -7065,13 +7104,11 @@ html.dark .trash-btn.is-active,
     }
 }
 
-/* 下拉背景板高度：多注入了一条「切换实例」+ 分隔线，这里补上对应高度 */
-.dashboard-page-v3 .page-switcher-sheet::before {
-    height: calc(
-        var(--page-menu-top) + (var(--page-menu-count) + 1) * var(--page-option-height) + 13px +
-            var(--page-sheet-padding)
-    ) !important;
-}
+/*
+ * v1.1.3：原来这里用 !important 手工补一段背景板高度（多注入了一条「切换实例」+ 分隔线）。
+ * 现在 DashboardTabs 自己按 --page-extra-count / --page-extra-gap 算进去了，
+ * 两页（图床管理 / 笔记管理）共用同一套口径，不再需要各页各补一份。
+ */
 
 /* D6：当前不是默认实例时，在「页面切换」按钮名称后显示实例序号（②、③…） */
 .dashboard-page-v3.has-instance-badge .page-option.is-current .page-switcher-title::after {

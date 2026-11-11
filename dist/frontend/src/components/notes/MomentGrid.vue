@@ -59,6 +59,7 @@
                 :class="{ 'is-contain': !!singleBudget }"
                 loading="lazy"
                 decoding="async"
+                :data-src="it.thumbUrl || it.url"
                 @load="onImgLoad($event, it)"
                 @error="onImgError($event, it)"
             />
@@ -363,15 +364,35 @@ export default {
             return 'file';
         },
         /**
-         * 缩略图加载失败时退回原图。
-         * 有些格式（如 svg / 超大 gif）sharp 不能缩放，后端会返回原文件 —— 但若
-         * 远端渠道本身不支持 ?thumb=，第一次请求可能失败，这里至少让原图顶上来。
+         * 缩略图加载失败的处理（v1.1.3 分三级，专治「偶尔加载失败、刷新又正常」）：
+         *   ① 先**原样重试一次**：这类偶发失败多是并发太高 / 连接被掐，不是文件坏了，
+         *      隔一帧再请求同一地址，绝大多数能成；
+         *   ② 还不行就退回原图（有些格式 sharp 缩不了，后端会直接给原文件；
+         *      远端渠道不支持 ?thumb= 时原图是唯一可用的）；
+         *   ③ 原图也失败就留空，由卡片的封面样式兜住，不再反复重试刷屏。
          */
         onImgError(e, it) {
             const el = e && e.target;
             if (!el) return;
+            const retries = Number(el.dataset.retry || '0');
+            if (retries < 1) {
+                el.dataset.retry = String(retries + 1);
+                // 隔一帧再加一个防缓存参数重试，避免命中上一次的失败结果
+                window.setTimeout(() => {
+                    const base = el.dataset.src || el.src;
+                    if (!base) return;
+                    try {
+                        const u = new URL(base, window.location.origin);
+                        u.searchParams.set('_r', String(Date.now()));
+                        el.src = u.toString();
+                    } catch (err) {
+                        el.src = base;
+                    }
+                }, 260);
+                return;
+            }
             const fallback = it.url || '';
-            if (fallback && el.src !== fallback && el.dataset.fallback !== '1') {
+            if (fallback && el.dataset.fallback !== '1') {
                 el.dataset.fallback = '1';
                 el.src = fallback;
             }

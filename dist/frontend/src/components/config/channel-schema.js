@@ -34,7 +34,7 @@ export const CHANNEL_TYPES = [
     // 排序：**必须排在「本地存储」之后**（typeCode 1000 最大）——
     // 上传设置的分组顺序直接按本数组顺序渲染，数组里放前面就会出现「本地文件在本地存储之前」。
     // 仅管理员可见/可用，不做渠道授权。
-    { value: 'localfiles', label: '本地文件', dedicated: true, typeCode: 1000, readonly: true }
+    { value: 'localfiles', label: '挂载文件', dedicated: true, typeCode: 1000, readonly: true }
 ];
 
 /** 「添加渠道」时可选类型 —— 排除系统内置渠道；
@@ -147,8 +147,8 @@ export const LOCAL_FILES_BUILTIN_FIELDS = () => [
         fixed: true,
         def: '',
         placeholder: 'uploads',
-        tip: '系统内置的本地文件渠道：浏览目录固定为 uploads（容器内路径由后端强制写入），不可修改。' +
-            '如需浏览其它目录，请用「添加渠道 → 本地文件」新建一个渠道。'
+        tip: '系统内置的挂载文件渠道：浏览目录固定为 uploads（容器内路径由后端强制写入），不可修改。' +
+            '如需浏览其它目录，请用「添加渠道 → 挂载文件」新建一个渠道。'
     }),
     f('hostPath', '宿主机映射目录（可选）', {
         // v1.0.2：与「浏览目录」保持一致的书写形态 —— 多行文本，一行对应一个容器内目录
@@ -170,7 +170,7 @@ export const LOCAL_FILES_FIELDS = () => [
         def: '',
         placeholder: '/data/share\n/mnt/photos',
         suggest: ['/data', '/mnt', '/mnt/data', '/share', '/media', '/app/uploads'],
-        tip: '容器内的绝对路径，一行一个，可填多个；本地文件管理页的根目录会把每个浏览目录显示为一级子目录。' +
+        tip: '容器内的绝对路径，一行一个，可填多个；挂载管理页的根目录会把每个浏览目录显示为一级子目录。' +
             '系统只读取这些目录，不会修改或删除里面的任何文件；' +
             '以 . 开头、以 # 开头的文件以及 node_modules / .git 等目录默认隐藏。'
     }),
@@ -206,10 +206,10 @@ export const LOCAL_CUSTOM_FIELDS = () => [
      * v1.0.1：同步到本地文件管理 —— 打开后这个存储地址会直接出现在
      * 「本地文件」页（/localFiles）的渠道选择里，可浏览、预览、批量上传到图床。
      */
-    f('syncToLocalFiles', '同步到本地文件管理', {
+    f('syncToLocalFiles', '同步到挂载管理', {
         type: 'switch',
         def: false,
-        tip: '开启后，该渠道的存储地址会自动出现在「本地文件」页（/localFiles）的渠道选择中，' +
+        tip: '开启后，该渠道的存储地址会自动出现在「挂载管理」页（/localFiles）的渠道选择中，' +
             '可直接浏览、预览、批量上传目录内的文件；关闭则从该选择列表中移除（不影响已上传的文件）。'
     }),
     f('hostPath', '宿主机映射目录（可选）', {

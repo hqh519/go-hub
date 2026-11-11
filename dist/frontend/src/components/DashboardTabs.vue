@@ -12,7 +12,11 @@
         <div
             class="page-switcher"
             :class="{ 'is-open': isPageMenuOpen }"
-            :style="{ '--page-menu-count': inactivePageOptions.length }"
+            :style="{
+                '--page-menu-count': inactivePageOptions.length,
+                '--page-extra-count': hasExtraItem ? 1 : 0,
+                '--page-extra-gap': hasExtraItem ? '13px' : '0px'
+            }"
             role="navigation"
             @click.stop
             @pointerdown.stop
@@ -71,6 +75,7 @@
 
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
+import { bindScrollDismiss } from '@/utils/scrollDismiss';
 
 export default {
     name: 'DashboardTabs',
@@ -105,6 +110,15 @@ export default {
     computed: {
         isAdminRole() {
             return this.$store.getters.isAdminRole === true;
+        },
+        /**
+         * 下拉尾部是否注入了附加条目（「切换实例」）。
+         * 背景板高度必须把它一起算进去 —— 原来只有图床管理页自己用 !important 补了一段高度，
+         * 笔记管理页没补，于是「切换实例」那一行就露出了背景板之外（需求点名的那个问题）。
+         * 这里改成组件自己数：注入一条 = 多一行选项高 + 13px（分隔线 1px + 上下外边距 12px）。
+         */
+        hasExtraItem() {
+            return !!this.$slots['extra-item'];
         },
         pageOptions() {
             // 「文件管理 / 用户管理 / 文件上传」对所有登录账户可见；
@@ -218,10 +232,26 @@ export default {
         },
         openPageMenu() {
             this.isPageMenuOpen = true;
+            this.bindMenuScrollDismiss();
+        },
+        /**
+         * v1.1.3：下拉展开期间，页面一滚动就收起（移动端需求）。
+         * 页面切换是 fixed 元素，用户往下滚内容时菜单留在原地会挡视线。
+         */
+        bindMenuScrollDismiss() {
+            if (this._menuUnbind) return;
+            this._menuUnbind = bindScrollDismiss(() => this.closePageMenu());
+        },
+        releaseMenuScrollDismiss() {
+            if (this._menuUnbind) {
+                this._menuUnbind();
+                this._menuUnbind = null;
+            }
         },
         togglePageMenu() {
             this.isPageMenuOpen = !this.isPageMenuOpen;
-            if (!this.isPageMenuOpen) this.clearHoveredPageOption();
+            if (this.isPageMenuOpen) this.bindMenuScrollDismiss();
+            else this.clearHoveredPageOption();
         },
         cancelHoverClose() {
             if (this.hoverCloseTimer) {
@@ -233,10 +263,12 @@ export default {
             this.cancelHoverClose();
             this.isPageMenuOpen = false;
             this.clearHoveredPageOption();
+            this.releaseMenuScrollDismiss();
         }
     },
     beforeUnmount() {
         this.cancelHoverClose();
+        this.releaseMenuScrollDismiss();
         document.removeEventListener('click', this.handleDocumentClick);
         document.removeEventListener('keydown', this.handleKeydown);
     }
@@ -291,7 +323,14 @@ export default {
     left: 0;
     right: 0;
     z-index: 0;
-    height: calc(var(--page-menu-top) + var(--page-menu-count) * var(--page-option-height) + var(--page-sheet-padding));
+    /*
+     * 高度 = 当前页按钮 +（其余选项 + 附加条目）* 单行高 + 附加条目的分隔线高度 + 上下内边距。
+     * --page-extra-count / --page-extra-gap 由组件按「有没有注入附加条目」写入。
+     */
+    height: calc(
+        var(--page-menu-top) + (var(--page-menu-count) + var(--page-extra-count, 0)) * var(--page-option-height) +
+            var(--page-extra-gap, 0px) + var(--page-sheet-padding)
+    );
     border: 1px solid var(--tabs-switcher-border-color);
     border-radius: 14px;
     background: var(--tabs-dropdown-popper-bg-color);

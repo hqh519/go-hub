@@ -11,6 +11,7 @@
             向右滑 = 文件模式、向左滑 = 链接模式；桌面端不绑定手势、行为不变。
         -->
         <div
+            v-if="!hideComposer"
             class="upload-card-wrapper"
             :class="{ 'swipe-fade': swipeFeedback }"
             @mousemove="handleUploadCardMouseMove"
@@ -111,8 +112,14 @@
                 @change="handleFolderSelection"
             />
         </div>
+        <!--
+            v1.1.3 修正：这个「链接」分支原本只判断 uploadMethod，没有跟随 hideComposer，
+            而它又是 .upload-card-wrapper 的兄弟节点（不在被隐藏的那个 v-if 里）——
+            于是切到「记录」页时，链接模式的多行输入框仍然整块渲染在记录面板下方，
+            页面被撑高一屏、整体上移。补上 !hideComposer 后它才真的随模式一起消失。
+        -->
         <div
-            v-if="uploadMethod === 'paste'"
+            v-if="uploadMethod === 'paste' && !hideComposer"
             class="upload-card"
             @touchstart.passive="handleMethodSwipeStart"
             @touchend.passive="handleMethodSwipeEnd"
@@ -194,7 +201,30 @@
                 </div>
             </el-card>
         </div>
-        <el-card class="upload-list-card" :class="{'upload-list-busy': fileList.length}">
+        <!--
+            v1.1.3 修正：「记录」页的操作区也放回这个位置 ——
+            与「文件 / 链接」共用同一个 .upload-card 容器（55vw/70vw + 20px 内边距），
+            内层 .record-card 与 .default-card / .paste-card 同尺寸（45vh 虚线卡片），
+            所以三模式互相切换时操作区的宽高与坐标完全一致，页面不会跳动。
+            app 图标由父组件通过 #record 插槽传入（数据与点击逻辑留在首页，组件只管容器）。
+            手势沿用另两种模式那一套：在卡片上左右滑 → 抛 cycleMethod → 首页按三模式循环。
+        -->
+        <div
+            v-if="recordMode"
+            class="upload-card record-composer"
+            @touchstart.passive="handleMethodSwipeStart"
+            @touchend.passive="handleMethodSwipeEnd"
+        >
+            <div class="record-card" :class="{ 'swipe-fade': swipeFeedback }">
+                <slot name="record"></slot>
+            </div>
+        </div>
+        <!--
+            v1.1.3 修正：noteItems 非空时也要进「展开态」——
+            原来只判断 fileList.length，于是「记录」模式发布完笔记后，
+            列表区还是 7vh 的收起条，笔记明明在里面却看不见一行。
+        -->
+        <el-card class="upload-list-card" :class="{'upload-list-busy': fileList.length || noteItems.length}">
             <div class="upload-list-container">
                 <el-scrollbar @scroll="handleScroll" ref="scrollContainer">
                     <div class="upload-list-dashboard" :class="{ 'list-scrolled': listScrolled }">
@@ -322,6 +352,18 @@
                                     </el-dropdown>
                                 </el-tooltip>
                             </div>
+                        </div>
+                    </div>
+                    <!--
+                        v1.1.3：首页「记录」模式发完的笔记并入这里 ——
+                        与上传条目共用同一个列表卡片与滚动条，不再在记录面板里另起一块列表。
+                    -->
+                    <div v-if="noteItems.length" class="upload-list-notes">
+                        <div v-for="n in noteItems" :key="'note-' + n.id" class="upload-list-note">
+                            <span class="upload-list-note-kind">{{ n.kindLabel }}</span>
+                            <span class="upload-list-note-title">{{ n.title }}</span>
+                            <span class="upload-list-note-time">{{ n.time }}</span>
+                            <p v-if="n.content" class="upload-list-note-text">{{ n.content }}</p>
                         </div>
                     </div>
                     <UploadFileItem
@@ -578,9 +620,39 @@ props: {
         type: String,
         default: '',
         required: false
+    },
+    /**
+     * v1.1.3：首页「记录」模式下只保留**文件列表加载区**，不渲染上传操作区。
+     * 这样三种模式共用同一个列表区（需求：笔记要加载到文件列表里，不另建加载区）。
+     */
+    hideComposer: {
+        type: Boolean,
+        default: false,
+        required: false
+    },
+    /**
+     * v1.1.3：要并入文件列表区的「记录」条目（仅首页「记录」模式用）。
+     * 每项：{ id, kindLabel, title, time, content }
+     */
+    noteItems: {
+        type: Array,
+        default: () => [],
+        required: false
+    },
+    /**
+     * v1.1.3 修正：「记录」模式的操作区也由本组件渲染 ——
+     * 放在与「文件 / 链接」完全相同的容器里（.upload-card > 卡片），
+     * 保证三模式切换时操作区的宽高和位置一动不动。
+     * 卡片内容（5 个 app 图标）通过 #record 插槽由首页传入。
+     */
+    recordMode: {
+        type: Boolean,
+        default: false,
+        required: false
     }
 },
-emits: ['update:autoUpload', 'update:customerCompress', 'update:convertToWebp', 'update:localAutoRetry', 'changeMethod'],
+// v1.1.3：滑动只抛 cycleMethod（三模式循环由父组件决定）；changeMethod 已无副作用，随之移除
+emits: ['update:autoUpload', 'update:customerCompress', 'update:convertToWebp', 'update:localAutoRetry', 'cycleMethod'],
 data() {
     return {
         fileList: [],
@@ -1041,8 +1113,10 @@ methods: {
          * v3.0.0（R15）：改为「轮回切换」—— 每次水平滑动都切到下一个模式，
          * 同方向连续滑动会一直循环（文件 → 链接 → 文件 …），不再因「已经是目标模式」而失效。
          * 阈值 60px；滑动期间垂直位移大于水平位移视为页面滚动，不触发切换。
-         * 切换通过 changeMethod 事件交给父组件 setUploadMethod（同步标签页/store/i18n 文案），
+         * 切换通过 cycleMethod 事件交给父组件按「文件 → 链接 → 记录」三模式循环，
          * 并给一张短促的淡入动画作视觉反馈。桌面端完全不绑定逻辑，行为不变。
+         * v1.1.3：三种模式共用这一套手势 —— 「记录」卡片也在本组件里、挂在同一个
+         * .upload-card 上，所以滑到「记录」页后继续滑同样能切走，不会卡住。
          */
         handleMethodSwipeStart(e) {
             if (!this.isTouchDevice) return
@@ -1062,9 +1136,20 @@ methods: {
             const dy = t.clientY - start.y
             // 水平位移不够、或垂直位移更大（在滚动页面）→ 不切换，避免与页面滚动冲突
             if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dy) > Math.abs(dx)) return
-            // 轮回：无论向左还是向右，都切到「另一个」模式
-            const target = this.uploadMethod === 'default' ? 'paste' : 'default'
-            this.$emit('changeMethod', target)
+            /*
+             * v1.1.3：轮回顺序交给首页统一决定 —— 「记录」也在这个循环里
+             * （文件 → 链接 → 记录 → 文件）。组件自己只知道两种模式，
+             * 写死 target 会让「记录」永远进不了循环，所以改成把方向抛出去。
+             *
+             * 修正：原来这里还有一段「没监听 cycleMethod 时退化成两模式切换」的兼容分支，
+             * 判断条件写的是 this.$attrs.onCycleMethod —— 但 cycleMethod 已经声明在 emits 里，
+             * Vue 3 会把同名的 onCycleMethod 从 $attrs 里摘掉，这个条件恒为真，
+             * 于是每次滑动都会**同时**抛 cycleMethod 和 changeMethod：
+             * 前者把页面切到「记录」，后者紧接着又把 uploadMethod 改回文件/链接，
+             * 一次滑动触发两次状态变更，「记录」也就经常切不过去。
+             * 现在只有首页一个调用方且它监听的是 cycleMethod，兼容分支直接删掉。
+             */
+            this.$emit('cycleMethod', dx > 0 ? 'prev' : 'next')
             // 轻量视觉反馈：卡片淡入一下
             this.swipeFeedback = false
             this.$nextTick(() => {
@@ -3671,6 +3756,41 @@ beforeDestroy() {
    两种模式的内容组（70% 输入/拖拽区 + 16px 间距 + 操作行）结构逐项相同，
    均由卡片 justify-content:center 垂直居中，因此高度、比例、间距、方位完全一致。
    ============================================================ */
+/* ============================================================
+   v1.1.3：「记录」模式的操作区卡片
+   ─ .upload-card        与另两种模式同一个容器（55vw/70vw + 20px 内边距）
+   ─ .record-card        与 .default-card / .paste-card 同尺寸（45vh 虚线卡片）
+   三者的外框 box-sizing:border-box + 100% 宽 + 固定 45vh，
+   所以切换模式时操作区既不位移也不变大小（需求：不能因操作区大小不一致导致页面跳动）。
+   内容只由 #record 插槽决定，组件本身不关心有几个图标。
+   ============================================================ */
+.record-card {
+    box-sizing: border-box;
+    width: 100%;
+    height: var(--upload-card-height);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 14px 20px;
+    border: var(--el-upload-dragger-border);
+    border-radius: 15px;
+    /*
+     * 底色按 70% 混透明，与 .default-card / .paste-card 的半透观感对齐 ——
+     * 但它们是用 opacity: 0.7 实现的，会把内部图标一起淡化；
+     * 「记录」页的图标是主操作，必须清晰，所以这里只淡化底色、不动内容。
+     */
+    background-color: color-mix(in srgb, var(--el-upload-dragger-bg-color) 70%, transparent);
+    gap: 14px;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease, background-color 0.3s ease;
+}
+
+/* 桌面端鼠标悬停时给一点点反馈，和虚线拖拽区的观感保持一致 */
+.record-card:hover {
+    background-color: color-mix(in srgb, var(--el-upload-dragger-bg-color) 85%, transparent);
+    box-shadow: var(--el-upload-dragger-hover-box-shadow);
+}
+
 .default-card {
     display: flex;
     flex-direction: column;
@@ -3883,6 +4003,57 @@ html.dark .el-upload__text :deep(em) {
     animation: borderRotate 2s linear infinite;
     pointer-events: none;
     z-index: 1;
+}
+
+/* ── v1.1.3：首页「记录」模式并入文件列表区的笔记条目 ───────────── */
+.upload-list-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.upload-list-note {
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: var(--glass-bg, rgba(127, 127, 127, 0.06));
+    border: 1px solid var(--glass-border, rgba(127, 127, 127, 0.12));
+}
+
+.upload-list-note-kind {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--primary-color) 14%, transparent);
+    color: var(--primary-color);
+    font-size: 11px;
+    line-height: 17px;
+}
+
+.upload-list-note-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-color, #303133);
+}
+
+.upload-list-note-time {
+    float: right;
+    font-size: 11px;
+    color: var(--text-color-secondary, #909399);
+}
+
+.upload-list-note-text {
+    margin: 4px 0 0;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-color-secondary, #606266);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    overflow: hidden;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .paste-card :deep(.el-card__body) {

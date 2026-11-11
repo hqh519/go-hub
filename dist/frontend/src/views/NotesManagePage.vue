@@ -23,127 +23,234 @@
         <header
             ref="topbarRef"
             class="nt-topbar"
-            :class="{ 'is-hidden': topbarHidden, 'is-solid': topbarSolid, 'is-search-open': isMobile && mobileSearchOpen }"
+            :class="{ 'is-hidden': topbarHidden, 'is-solid': topbarSolid }"
         >
-            <div class="nt-topbar-left">
-                <DashboardTabs active-tab="notes">
+            <!--
+                v1.1.3：把「左侧页面切换 + 右侧按钮组」包进 .nt-topbar-main。
+                顶栏本身改成纵向排列：第一行永远是这一整行，移动端展开的搜索行是它的下一个兄弟，
+                所以搜索行展开时不会参与第一行的 flex 换行计算（需求：不影响顶部行的排列结构）。
+            -->
+            <div class="nt-topbar-main">
+                <div class="nt-topbar-left">
+                    <DashboardTabs active-tab="notes">
+                        <!--
+                            实例切换收进「页面切换」下拉的底部 —— 与图床管理页（/dashboard）完全一致：
+                            下拉尾部一条分隔线 + 一条「切换实例」，切换后按钮名称后（移动端悬浮在右上角）显示序号。
+                        -->
+                        <template #extra-item="{ close }">
+                            <div class="page-option-sep" aria-hidden="true"></div>
+                            <button
+                                type="button"
+                                class="page-option admin-page-instance-option"
+                                @click.stop="openInstanceFromPageSwitch(close)"
+                            >
+                                <span v-if="instanceSeq > 0" class="admin-page-instance-seq">{{ instanceSeq }}</span>
+                                <font-awesome-icon v-else icon="server" class="admin-page-instance-icon" />
+                                <span class="admin-page-instance-text">{{ $t('instancePicker.title') }}</span>
+                            </button>
+                        </template>
+                    </DashboardTabs>
+                </div>
+
+                <div ref="topbarRightRef" class="nt-topbar-right">
                     <!--
-                        实例切换收进「页面切换」下拉的底部 —— 与图床管理页（/dashboard）完全一致：
-                        下拉尾部一条分隔线 + 一条「切换实例」，切换后按钮名称后（移动端悬浮在右上角）显示序号。
+                        v1.1.3：配色按需求重排 —— 「发布」提到最前，其后才是搜索 / 标签管理 / 刷新 / 回收站，
+                        最后是更多菜单。移动端这一组改成可以左右滑动（.nt-topbar-right 见样式），
+                        不再换行／挤成两行。
                     -->
-                    <template #extra-item="{ close }">
-                        <div class="page-option-sep" aria-hidden="true"></div>
-                        <button
-                            type="button"
-                            class="page-option admin-page-instance-option"
-                            @click.stop="openInstanceFromPageSwitch(close)"
-                        >
-                            <span v-if="instanceSeq > 0" class="admin-page-instance-seq">{{ instanceSeq }}</span>
-                            <font-awesome-icon v-else icon="server" class="admin-page-instance-icon" />
-                            <span class="admin-page-instance-text">{{ $t('instancePicker.title') }}</span>
-                        </button>
-                    </template>
-                </DashboardTabs>
-            </div>
-
-            <div class="nt-topbar-right">
-                <!-- 搜索：桌面端直接是输入框 -->
-                <el-input
-                    v-if="!isMobile"
-                    v-model="search"
-                    class="nt-search"
-                    size="small"
-                    clearable
-                    :placeholder="$t('notes.searchPlaceholder')"
-                    @keyup.enter="reload"
-                    @clear="reload"
-                >
-                    <template #suffix>
-                        <font-awesome-icon icon="search" class="nt-search-icon" @click="reload" />
-                    </template>
-                </el-input>
-                <!-- 移动端：图标 → 点开在下面展开一行搜索框 -->
-                <button
-                    v-else
-                    type="button"
-                    class="nt-icon-btn"
-                    :class="{ 'is-on': mobileSearchOpen }"
-                    :title="$t('notes.searchPlaceholder')"
-                    @click="toggleMobileSearch"
-                >
-                    <font-awesome-icon icon="search" />
-                </button>
-
-                <button
-                    type="button"
-                    class="nt-icon-btn"
-                    :class="{ 'is-on': tagMode }"
-                    :title="$t('notes.tagAdmin')"
-                    @click="toggleTagMode"
-                >
-                    <font-awesome-icon icon="tags" />
-                </button>
-                <button type="button" class="nt-icon-btn" :title="$t('notes.refresh')" @click="refreshList">
-                    <font-awesome-icon icon="sync" :class="{ 'fa-spin': loading }" />
-                </button>
-                <button
-                    type="button"
-                    class="nt-icon-btn"
-                    :class="{ 'is-on': trashMode }"
-                    :title="$t('notes.trash')"
-                    @click="toggleTrash"
-                >
-                    <font-awesome-icon icon="trash-alt" />
-                </button>
-
-                <button type="button" class="nt-publish-btn" :title="publishLabel" @click="openPublish">
-                    <font-awesome-icon icon="plus" class="nt-publish-icon" />
-                    <span class="nt-publish-text">{{ publishLabel }}</span>
-                </button>
-
-                <!-- 更多菜单：我的账户 / 系统管理 / 笔记设置 / 分隔 / 退出登录 / 配色模式切换 -->
-                <el-dropdown trigger="click" placement="bottom-end" @command="onMoreCommand">
-                    <button type="button" class="nt-icon-btn" :title="$t('notes.more')" :aria-label="$t('notes.more')">
-                        <font-awesome-icon icon="ellipsis-v" />
+                    <button type="button" class="nt-publish-btn" :title="publishLabel" @click="openPublish">
+                        <font-awesome-icon icon="plus" class="nt-publish-icon" />
+                        <span class="nt-publish-text">{{ publishLabel }}</span>
                     </button>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item command="account">
-                                <font-awesome-icon icon="user" class="nt-menu-icon" />{{ $t('dashboard.myAccount') }}
-                            </el-dropdown-item>
-                            <el-dropdown-item v-if="isAdmin" command="system">
-                                <font-awesome-icon icon="cogs" class="nt-menu-icon" />{{ $t('dashboard.systemManage') }}
-                            </el-dropdown-item>
-                            <!-- v1.1.2.1：笔记设置（按用户保存），放在「退出登录」上一行 -->
-                            <el-dropdown-item command="noteSettings">
-                                <font-awesome-icon icon="sliders-h" class="nt-menu-icon" />{{ $t('notes.settings') }}
-                            </el-dropdown-item>
-                            <el-dropdown-item command="logout" divided>
-                                <font-awesome-icon icon="sign-out-alt" class="nt-menu-icon" />{{ $t('dashboard.logout') }}
-                            </el-dropdown-item>
-                            <el-dropdown-item command="theme">
-                                <font-awesome-icon :icon="themeIcon" class="nt-menu-icon" />{{ themeText }}
-                            </el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
+
+                    <!-- 桌面端搜索：与图床管理页（/dashboard）同一套外观与交互 -->
+                    <div v-if="!isMobile" class="nt-search-card">
+                        <el-input
+                            ref="searchInput"
+                            v-model="search"
+                            size="small"
+                            :placeholder="$t('notes.searchPlaceholder')"
+                            enterkeyhint="search"
+                            @keyup.enter="reload"
+                            @clear="reload"
+                        >
+                            <template #prefix>
+                                <!-- 搜索范围：直接嵌在输入框起始位置，与输入框合成一个整体 -->
+                                <el-select
+                                    v-model="searchType"
+                                    size="small"
+                                    class="nt-search-type"
+                                    popper-class="compact-select-popper"
+                                    @change="reload"
+                                >
+                                    <el-option
+                                        v-for="opt in searchTypeOptions"
+                                        :key="opt.value"
+                                        :label="opt.label"
+                                        :value="opt.value"
+                                    />
+                                </el-select>
+                                <span class="nt-search-sep" aria-hidden="true"></span>
+                            </template>
+                            <template #suffix>
+                                <button
+                                    v-if="search.length > 0"
+                                    type="button"
+                                    class="nt-search-clear"
+                                    :aria-label="$t('dashboard.clearSearch')"
+                                    :title="$t('dashboard.clearSearch')"
+                                    @mousedown.prevent
+                                    @click.stop="clearSearch"
+                                >
+                                    <font-awesome-icon icon="times" />
+                                </button>
+                                <button
+                                    type="button"
+                                    class="nt-search-trigger"
+                                    :aria-label="$t('notes.searchPlaceholder')"
+                                    :title="$t('notes.searchPlaceholder')"
+                                    @mousedown.prevent
+                                    @click="reload"
+                                >
+                                    <font-awesome-icon icon="search" class="nt-search-icon" />
+                                </button>
+                            </template>
+                        </el-input>
+                    </div>
+                    <!-- 移动端：图标 → 点开在下面展开一行搜索框 -->
+                    <button
+                        v-else
+                        type="button"
+                        class="nt-icon-btn"
+                        :class="{ 'is-on': mobileSearchOpen }"
+                        :title="$t('notes.searchPlaceholder')"
+                        @click="toggleMobileSearch"
+                    >
+                        <font-awesome-icon icon="search" />
+                    </button>
+
+                    <button
+                        type="button"
+                        class="nt-icon-btn"
+                        :class="{ 'is-on': tagMode }"
+                        :title="$t('notes.tagAdmin')"
+                        @click="toggleTagMode"
+                    >
+                        <font-awesome-icon icon="tags" />
+                    </button>
+                    <button type="button" class="nt-icon-btn" :title="$t('notes.refresh')" @click="refreshList">
+                        <font-awesome-icon icon="sync" :class="{ 'fa-spin': loading }" />
+                    </button>
+                    <button
+                        type="button"
+                        class="nt-icon-btn"
+                        :class="{ 'is-on': trashMode }"
+                        :title="$t('notes.trash')"
+                        @click="toggleTrash"
+                    >
+                        <font-awesome-icon icon="trash-alt" />
+                    </button>
+
+                    <!--
+                        更多菜单（v1.1.3）：配色模式切换提到「我的账户」前面，
+                        其余顺序不变：配色 / 我的账户 / 系统管理 / 笔记设置 / 退出登录。
+                    -->
+                    <el-dropdown
+                        ref="moreDropdown"
+                        trigger="click"
+                        placement="bottom-end"
+                        popper-class="nt-more-popper"
+                        @command="onMoreCommand"
+                        @visible-change="onMoreVisibleChange"
+                    >
+                        <button type="button" class="nt-icon-btn" :title="$t('notes.more')" :aria-label="$t('notes.more')">
+                            <font-awesome-icon icon="ellipsis-v" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="theme">
+                                    <font-awesome-icon :icon="themeIcon" class="nt-menu-icon" />{{ themeText }}
+                                </el-dropdown-item>
+                                <el-dropdown-item command="account">
+                                    <font-awesome-icon icon="user" class="nt-menu-icon" />{{ $t('dashboard.myAccount') }}
+                                </el-dropdown-item>
+                                <el-dropdown-item v-if="isAdmin" command="system">
+                                    <font-awesome-icon icon="cogs" class="nt-menu-icon" />{{ $t('dashboard.systemManage') }}
+                                </el-dropdown-item>
+                                <!-- v1.1.2.1：笔记设置（按用户保存），放在「退出登录」上一行 -->
+                                <el-dropdown-item command="noteSettings">
+                                    <font-awesome-icon icon="sliders-h" class="nt-menu-icon" />{{ $t('notes.settings') }}
+                                </el-dropdown-item>
+                                <el-dropdown-item command="logout" divided>
+                                    <font-awesome-icon icon="sign-out-alt" class="nt-menu-icon" />{{ $t('dashboard.logout') }}
+                                </el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
+                </div>
             </div>
 
             <!-- 移动端展开的搜索行（再点一次搜索图标：清空 + 收起） -->
+            <!--
+                移动端展开的搜索行（再点一次搜索图标：清空 + 收起）
+                v1.1.3：结构与桌面端完全一致 —— 搜索类目嵌在输入框起始位置 + 细分隔线 +
+                尾部「清空 / 搜索」两个按钮。之前这里只有一个光秃秃的输入框，
+                手上没法选范围，只能回桌面端切；现在两端共用 .nt-search-card 这一套样式。
+            -->
             <div v-if="isMobile && mobileSearchOpen" class="nt-msearch">
-                <el-input
-                    ref="mobileSearchInput"
-                    v-model="search"
-                    size="small"
-                    clearable
-                    :placeholder="$t('notes.searchPlaceholder')"
-                    @keyup.enter="reload"
-                    @clear="reload"
-                >
-                    <template #prefix>
-                        <font-awesome-icon icon="search" class="nt-search-icon" />
-                    </template>
-                </el-input>
+                <div class="nt-search-card">
+                    <el-input
+                        ref="mobileSearchInput"
+                        v-model="search"
+                        size="small"
+                        enterkeyhint="search"
+                        :placeholder="$t('notes.searchPlaceholder')"
+                        @keyup.enter="reload"
+                        @clear="reload"
+                    >
+                        <template #prefix>
+                            <!-- 搜索范围：编辑的搜索框里也要能切类目 -->
+                            <el-select
+                                v-model="searchType"
+                                size="small"
+                                class="nt-search-type"
+                                popper-class="compact-select-popper"
+                                @change="reload"
+                            >
+                                <el-option
+                                    v-for="opt in searchTypeOptions"
+                                    :key="opt.value"
+                                    :label="opt.label"
+                                    :value="opt.value"
+                                />
+                            </el-select>
+                            <span class="nt-search-sep" aria-hidden="true"></span>
+                        </template>
+                        <template #suffix>
+                            <button
+                                v-if="search.length > 0"
+                                type="button"
+                                class="nt-search-clear"
+                                :aria-label="$t('dashboard.clearSearch')"
+                                :title="$t('dashboard.clearSearch')"
+                                @mousedown.prevent
+                                @click.stop="clearSearch"
+                            >
+                                <font-awesome-icon icon="times" />
+                            </button>
+                            <button
+                                type="button"
+                                class="nt-search-trigger"
+                                :aria-label="$t('notes.searchPlaceholder')"
+                                :title="$t('notes.searchPlaceholder')"
+                                @mousedown.prevent
+                                @click="reload"
+                            >
+                                <font-awesome-icon icon="search" class="nt-search-icon" />
+                            </button>
+                        </template>
+                    </el-input>
+                </div>
             </div>
         </header>
 
@@ -162,15 +269,33 @@
                 >{{ $t(t.label) }}</button>
             </div>
             <div class="nt-tools">
-                <el-select v-model="mediaKind" class="nt-media" size="small" @change="reload">
-                    <el-option :label="$t('notes.mediaAll')" value="" />
+                <el-select
+                    ref="mediaSelect"
+                    v-model="mediaKind"
+                    class="nt-media"
+                    size="small"
+                    @change="reload"
+                    @visible-change="(v) => onSelectVisible('media', v)"
+                >
+                    <!--
+                        v1.1.3：值从空串改成 'all'。Element Plus 把 '' 当成「没选」，
+                        校验 / 占位符逻辑会显示出「请选择」而不是「全部类型」。
+                    -->
+                    <el-option :label="$t('notes.mediaAll')" value="all" />
                     <el-option :label="$t('notes.mediaText')" value="text" />
                     <el-option :label="$t('notes.mediaImage')" value="image" />
                     <el-option :label="$t('notes.mediaVideo')" value="video" />
                     <el-option :label="$t('notes.mediaAudio')" value="audio" />
                     <el-option :label="$t('notes.mediaMixed')" value="mixed" />
                 </el-select>
-                <el-select v-model="sortValue" class="nt-sort" size="small" @change="reload">
+                <el-select
+                    ref="sortSelect"
+                    v-model="sortValue"
+                    class="nt-sort"
+                    size="small"
+                    @change="reload"
+                    @visible-change="(v) => onSelectVisible('sort', v)"
+                >
                     <el-option v-for="s in sortOptions" :key="s.value" :label="$t(s.label)" :value="s.value" />
                 </el-select>
                 <!-- 标签筛选态：让用户一眼看出「现在列表是按标签过滤的」，并给一个快捷清除 -->
@@ -182,10 +307,15 @@
         </div>
 
         <!-- 内容区（移动端在这里左右滑动切类型） -->
+        <!--
+            v1.1.3：touchmove 不能再是 passive —— 判明是「横滑切类型」之后要主动 preventDefault，
+            否则浏览器会一边执行边缘返回、一边画那层拉动伸缩的预览动画（需求点名的现象）。
+            touchstart / touchend 保持 passive（不需要阻止默认行为，被动监听更顺）。
+        -->
         <main
             class="nt-main"
             @touchstart.passive="onMainTouchStart"
-            @touchmove.passive="onMainTouchMove"
+            @touchmove="onMainTouchMove"
             @touchend.passive="onMainTouchEnd"
             @touchcancel.passive="onMainTouchEnd"
         >
@@ -245,6 +375,36 @@
             @saved="onSaved"
         />
 
+        <!--
+            v1.1.3：「全部」类型下点「发布笔记」→ 先选类型再进编辑页。
+            只列出五类；还没开放的直接在按钮上标「即将开放」，点下去给明确提示，
+            不做「点了没反应」或「假装能编辑」这种事。
+        -->
+        <el-dialog
+            v-model="publishTypeVisible"
+            :title="$t('notes.publishTypeTitle')"
+            :width="dialogWidth"
+            append-to-body
+            align-center
+            class="note-publish-type-dialog"
+        >
+            <p class="npt-tip">{{ $t('notes.publishTypeTip') }}</p>
+            <div class="npt-grid">
+                <button
+                    v-for="t in typeTabs.filter((x) => x.value)"
+                    :key="'pt-' + t.value"
+                    type="button"
+                    class="npt-item"
+                    :class="{ 'is-disabled': t.value !== 'moment' }"
+                    @click="choosePublishKind(t.value)"
+                >
+                    <font-awesome-icon :icon="publishKindIcon(t.value)" class="npt-icon" />
+                    <span class="npt-name">{{ $t(t.label) }}</span>
+                    <span v-if="t.value !== 'moment'" class="npt-soon">{{ $t('notes.typeNotReady') }}</span>
+                </button>
+            </div>
+        </el-dialog>
+
         <!-- 笔记设置（v1.1.2.1）：按实例保存，改完立刻作用到列表里的附件区 -->
         <NoteSettingsDialog v-model="settingsVisible" :instance-id="instanceId" />
 
@@ -261,13 +421,28 @@
             @close-detail="detailVisible = false"
         />
 
-        <!-- 文件详情（与图床文件管理页同一个组件；标签/黑白名单是文件页专属，这里关掉） -->
+        <!--
+            文件详情（v1.1.3：与「图床管理」页完全一致）
+            ------------------------------------------------------------------
+            同一个组件 FileDetailDialog，但之前只喂了 file / fileLink 两样东西：
+              · 没传 urls → 原始链接 / Markdown / HTML / BBCode 全是空的；
+              · fileLink 用的是灯箱当前预览地址，而不是详情页统一口径的 ?from=admin 预览地址；
+              · 下载 / 删除 等动作 emit 出来没人接 → 按钮点了没反应。
+            现在统一走 utils/fileDetail 的 buildFileDetail()（图床管理页用的就是它），
+            并把结果里的 file / fileLink / urls 三样一起喂进去。
+            标签管理 / 黑名单 / 白名单仍关闭（show-advanced=false）—— 那是文件管理页的批量能力，
+            笔记页没有对应的选择上下文。
+        -->
         <FileDetailDialog
             v-model="detailVisible"
             :file="detailFile"
             :file-link="detailFileLink"
+            :urls="detailUrls"
             :show-advanced="false"
+            @download="onDetailDownload"
+            @delete="onDetailDelete"
             @metadata-updated="onDetailMetadata"
+            @file-renamed="onDetailRenamed"
         />
 
         <!-- 实例切换（与 /dashboard 同一套交互） -->
@@ -330,9 +505,13 @@ import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue';
 import NoteTagPanel from '@/components/notes/NoteTagPanel.vue';
 import NoteSettingsDialog from '@/components/notes/NoteSettingsDialog.vue';
 import { extOf, formatSize } from '@/utils/notes';
+import { buildFileDetail } from '@/utils/fileDetail';
 import { loadNoteSettings, applyCachedSettings } from '@/utils/noteSettings';
 import { writeThemeCookie } from '@/utils/themeCookie';
+// v1.1.3：实例切换密码守卫（与图床管理页 / 首页同一份实现）
+import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
 import { registerLayer, unregisterLayer } from '@/utils/layerStack';
+import { bindScrollDismiss } from '@/utils/scrollDismiss';
 
 const PAGE_SIZE = 20;
 /** 桌面端：离开顶部多少像素后允许隐藏两行栏 */
@@ -365,7 +544,12 @@ export default {
     data() {
         return {
             kind: '',
-            mediaKind: '',
+            // v1.1.3：'all' 而不是 ''（见模板里的注释）
+            mediaKind: 'all',
+            // v1.1.3：搜索范围 —— all | title | content | tag | other（与图床管理页同一套口径）
+            searchType: 'all',
+            // v1.1.3：「全部」类型下点发布 → 先选类型
+            publishTypeVisible: false,
             // 标签筛选（点卡片上的 #标签 触发）
             tagId: '',
             tagName: '',
@@ -394,6 +578,8 @@ export default {
             detailVisible: false,
             detailFile: null,
             detailFileLink: '',
+            // v1.1.3：详情页各复制格式（原始链接 / Markdown / HTML / BBCode / TG / S3）
+            detailUrls: { originUrl: '', mdUrl: '', htmlUrl: '', bbUrl: '', tgId: '', S3Location: '', S3CdnFileUrl: '' },
             topbarHidden: false,
             topbarSolid: false,
             lastScrollTop: 0,
@@ -412,6 +598,16 @@ export default {
                 { value: 'nav', label: 'notes.typeNav' },
                 { value: 'article', label: 'notes.typeArticle' },
                 { value: 'collection', label: 'notes.typeCollection' }
+            ];
+        },
+        /** 搜索范围：与图床管理页同一套交互（嵌在搜索框起始位置），选项按笔记的字段重新定 */
+        searchTypeOptions() {
+            return [
+                { value: 'all', label: this.$t('notes.searchTypeAll') },
+                { value: 'title', label: this.$t('notes.searchTypeTitle') },
+                { value: 'content', label: this.$t('notes.searchTypeContent') },
+                { value: 'tag', label: this.$t('notes.searchTypeTag') },
+                { value: 'other', label: this.$t('notes.searchTypeOther') }
             ];
         },
         sortOptions() {
@@ -444,7 +640,8 @@ export default {
         /** 发布按钮文案随当前类型变化（需求原文） */
         publishLabel() {
             const map = {
-                '': 'notes.publishMoment',
+                // v1.1.3：「全部」下不再假装知道要发什么 —— 按钮叫「发布笔记」，点开先选类型
+                '': 'notes.publishNote',
                 moment: 'notes.publishMoment',
                 todo: 'notes.addTodo',
                 nav: 'notes.addNav',
@@ -465,7 +662,7 @@ export default {
         emptyTitle() {
             if (this.trashMode) return this.$t('notes.trashEmpty');
             if (this.kind && this.kind !== 'moment') return this.$t('notes.typeNotReady');
-            if (this.search || this.mediaKind) return this.$t('notes.noMatch');
+            if (this.search || (this.mediaKind && this.mediaKind !== 'all')) return this.$t('notes.noMatch');
             return this.$t('notes.emptyTitle');
         },
         emptyTip() {
@@ -512,12 +709,6 @@ export default {
             return typeof window !== 'undefined' && window.innerWidth < 768 ? '92%' : '480px';
         }
     },
-    watch: {
-        isMobile(v) {
-            if (!v) this.mobileSearchOpen = false;
-            this.$nextTick(this.syncTopHeights);
-        }
-    },
     created() {
         this.instanceId = this.readInstanceId();
         /*
@@ -527,6 +718,15 @@ export default {
         this.applyInstanceSettings();
     },
     watch: {
+        /*
+         * v1.1.3：合并两个 watch 块。原来这里和上面的 watch 是重复声明的两个键，
+         * 后写的会把先写的整个覆盖 —— isMobile 的监听其实一直没生效，
+         * 屏幕宽度变化时既没有收起移动端搜索行，也没有重新量两行栏高度。
+         */
+        isMobile(v) {
+            if (!v) this.mobileSearchOpen = false;
+            this.$nextTick(this.syncTopHeights);
+        },
         /*
          * v1.1.2：灯箱 + 详情页叠加时的「逐层关闭」。
          * 灯箱打开时已往 layerStack 登记了 'media-viewer'，详情弹窗是后开的，
@@ -567,6 +767,15 @@ export default {
             this.topRO.disconnect();
             this.topRO = null;
         }
+        this.releaseMoreDismiss();
+        if (this._mediaUnbind) {
+            this._mediaUnbind();
+            this._mediaUnbind = null;
+        }
+        if (this._sortUnbind) {
+            this._sortUnbind();
+            this._sortUnbind = null;
+        }
     },
     methods: {
         /* ── 实例 ───────────────────────────────────────────────── */
@@ -596,9 +805,13 @@ export default {
             this.showInstanceDialog = true;
             if (typeof closeFn === 'function') closeFn();
         },
-        switchInstanceTo(id) {
+        /** v1.1.3：目标实例启用了切换密码时，先验证再切（与图床管理页同一份守卫） */
+        async switchInstanceTo(id) {
+            const next = id == null ? '' : String(id);
+            const ok = await ensureInstanceUnlocked(next);
+            if (!ok) return;
             this.showInstanceDialog = false;
-            this.instanceId = id == null ? '' : id;
+            this.instanceId = next;
             this.applyInstance();
         },
         applyInstance() {
@@ -613,6 +826,11 @@ export default {
             // v1.1.2.1：笔记设置按实例隔离 —— 先同步贴上新实例的缓存尺寸，再向服务端要最新值
             this.applyInstanceSettings();
             this.$message.success(this.$t('instancePicker.switchSuccess'));
+            // 实例序号角标会改动按钮宽度 → 可能触发换行，量高要等两帧之后再取
+            this.$nextTick(() => {
+                this.syncTopHeights();
+                requestAnimationFrame(() => this.syncTopHeights());
+            });
             this.reload();
         },
         /**
@@ -652,6 +870,46 @@ export default {
                 // 收起：清空内容并重新加载（需求：再次点击会清空搜索框内容并隐藏）
                 this.search = '';
                 this.reload();
+            }
+        },
+        /** 一键清空搜索词（范围保留，用户通常还要在同一范围里再搜） */
+        clearSearch() {
+            this.search = '';
+            this.reload();
+        },
+        /**
+         * 更多菜单打开时挂一个滚动监听：滚动就跑（v1.1.3 需求：移动端下拉页在滚动时自动隐藏）。
+         * 只监听一段很短的时间窗 —— 菜单开着的时候用户本来就该操作菜单，滚动意味着「我改主意了」。
+         */
+        onMoreVisibleChange(open) {
+            if (open) {
+                if (this._moreUnbind) return;
+                this._moreUnbind = bindScrollDismiss(() => {
+                    const dd = this.$refs.moreDropdown;
+                    if (dd && typeof dd.handleClose === 'function') dd.handleClose();
+                });
+            } else {
+                this.releaseMoreDismiss();
+            }
+        },
+        releaseMoreDismiss() {
+            if (this._moreUnbind) {
+                this._moreUnbind();
+                this._moreUnbind = null;
+            }
+        },
+        /**
+         * 第二行的两个下拉（媒体类型 / 排序）：展开后一滚动就收起。
+         * el-select 没有对外暴露 close()，所以走「模拟点击外部」这条最稳的路。
+         */
+        onSelectVisible(which, open) {
+            const key = `_${which}Unbind`;
+            if (open) {
+                if (this[key]) return;
+                this[key] = bindScrollDismiss();
+            } else if (this[key]) {
+                this[key]();
+                this[key] = null;
             }
         },
         onMoreCommand(cmd) {
@@ -735,10 +993,22 @@ export default {
             if (this.swipeX === null) return;
             const t = e.touches && e.touches[0];
             if (!t) return;
-            // 明显是纵向滚动 → 直接放弃这次手势，避免滑到一半突然切了类型
             const dy = Math.abs(t.clientY - this.swipeY);
             const dx = Math.abs(t.clientX - this.swipeX);
-            if (dy > 24 && dy > dx) this.swipeX = null;
+            // 明显是纵向滚动 → 直接放弃这次手势，避免滑到一半突然切了类型
+            if (dy > 24 && dy > dx) {
+                this.swipeX = null;
+                return;
+            }
+            /*
+             * v1.1.3：确认是横滑（横向分量明显占优）就把这次手势吃掉。
+             * 不吃的话浏览器会把它当成「返回上一页」，屏幕两侧出现拉动伸缩的预览动画 ——
+             * 与「左右滑动切换笔记类型」这个功能正面冲突。
+             */
+            if (dx >= 12 && dx > dy * SWIPE_RATIO && e.cancelable) {
+                e.preventDefault();
+                this.swipeBlocking = true;
+            }
         },
         onMainTouchEnd(e) {
             if (this.swipeX === null) return;
@@ -797,8 +1067,12 @@ export default {
             qs.set('sort', this.sortKey);
             qs.set('order', this.sortOrder);
             if (this.kind) qs.set('kind', this.kind);
-            if (this.mediaKind) qs.set('mediaKind', this.mediaKind);
-            if (this.search.trim()) qs.set('search', this.search.trim());
+            if (this.mediaKind && this.mediaKind !== 'all') qs.set('mediaKind', this.mediaKind);
+            if (this.search.trim()) {
+                // 原样传：后端自己解析 #标签 / -#标签，并把剩下的词按 searchType 搜
+                qs.set('search', this.search.trim());
+                if (this.searchType && this.searchType !== 'all') qs.set('searchType', this.searchType);
+            }
             if (this.tagId) qs.set('tagId', this.tagId);
             if (this.trashMode) qs.set('status', 'deleted');
             return qs;
@@ -849,8 +1123,36 @@ export default {
             }
         },
         /* ── 发布 / 编辑 ────────────────────────────────────────── */
+        /**
+         * v1.1.3：「全部」类型下按钮是「发布笔记」，点开先让用户选类型再进编辑页。
+         * 选了还没开放的类型就照实提示，而不是假装能发。
+         */
         openPublish() {
+            if (this.kind === '') {
+                this.publishTypeVisible = true;
+                return;
+            }
             if (!this.canPublishCurrent) {
+                this.$message.warning(this.$t('notes.typeNotReadyTip'));
+                return;
+            }
+            this.editing = null;
+            this.publishVisible = true;
+        },
+        publishKindIcon(kind) {
+            const map = {
+                moment: 'bolt',
+                todo: 'list',
+                nav: 'compass',
+                article: 'file-alt',
+                collection: 'layer-group'
+            };
+            return map[kind] || 'note-sticky';
+        },
+        /** 从「发布笔记」类型选择页里选中一类 */
+        choosePublishKind(k) {
+            this.publishTypeVisible = false;
+            if (k !== 'moment') {
                 this.$message.warning(this.$t('notes.typeNotReadyTip'));
                 return;
             }
@@ -937,26 +1239,81 @@ export default {
             this.previewVisible = true;
         },
         /** 灯箱右上角「详情」/ 移动端下拉 → 打开文件详情（与图床文件管理页同一个弹窗） */
+        /** 把一条文件记录套进详情弹窗的三件套（file / fileLink / urls） */
+        applyDetailFile(file) {
+            const built = buildFileDetail(file);
+            this.detailFile = built.file;
+            this.detailFileLink = built.fileLink;
+            this.detailUrls = built.urls;
+        },
         async openFileDetail(payload) {
             const key = (payload && (payload.key || payload.name)) || '';
             if (!key) return;
-            this.detailFile = { name: key, metadata: {} };
-            this.detailFileLink = (payload && payload.url) || '';
+            // 先按「只有文件名」把弹窗开起来（不空白等接口），元数据回来再补齐一次
+            this.applyDetailFile({ name: key, metadata: {} });
             this.detailVisible = true;
             try {
                 const res = await fetchWithAuth(`/api/manage/metadata/${encodeURIComponent(key)}`);
                 const json = await res.json().catch(() => ({}));
                 const data = (json && json.data) || {};
-                if (data.metadata) {
-                    this.detailFile = { name: data.name || key, metadata: data.metadata };
-                }
+                if (data.metadata) this.applyDetailFile({ name: data.name || key, metadata: data.metadata });
             } catch (e) {
                 /* 拿不到元数据也把弹窗开着，用户点「刷新」还能再试 */
             }
         },
+        /** 详情页「下载」：与图床管理页同一口径（走对外链接，浏览器自己决定下载还是预览） */
+        onDetailDownload() {
+            const url = this.detailUrls && this.detailUrls.originUrl;
+            if (!url) return;
+            const a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        },
+        /**
+         * 详情页「删除」：与图床管理页一样调用同一个删除接口。
+         * 笔记这边不额外拦截 —— 附件是松散引用（note_assets 只存 files.id，不建外键），
+         * 文件被删掉后列表里的那一格会自动跳过，不会把整条笔记带崩。
+         */
+        async onDetailDelete() {
+            const key = this.detailFile && this.detailFile.name;
+            if (!key) return;
+            try {
+                await this.$confirm(this.$t('dashboard.deleteConfirm'), this.$t('notes.deleteTitle'), {
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                    type: 'warning'
+                });
+            } catch (e) {
+                return;
+            }
+            try {
+                const res = await fetchWithAuth(
+                    `/api/manage/delete/${encodeURIComponent(key)}?instanceId=${encodeURIComponent(this.instanceId || '')}`,
+                    { method: 'GET' }
+                );
+                if (!res.ok) throw new Error(this.$t('common.failed'));
+                this.$message.success(this.$t('dashboard.deleteSuccess'));
+                this.detailVisible = false;
+                this.refreshList();
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            }
+        },
+        /** 详情页里改了名 / 改了元数据 → 列表里的附件信息跟着刷新 */
+        onDetailRenamed() {
+            this.refreshList();
+        },
         onDetailMetadata(name, metadata) {
             if (!this.detailFile) return;
-            this.detailFile = { ...this.detailFile, metadata: { ...(this.detailFile.metadata || {}), ...(metadata || {}) } };
+            // 元数据变了（改名 / 渠道 / 标签）→ urls 要跟着重算，否则复制出来的还是旧链接
+            this.applyDetailFile({
+                name: name || this.detailFile.name,
+                metadata: { ...(this.detailFile.metadata || {}), ...(metadata || {}) }
+            });
         },
 
         /* ── 顶栏吸顶 ───────────────────────────────────────────── */
@@ -976,11 +1333,37 @@ export default {
          * 把两行固定栏的实测高度写进 --nt-topbar-h / --nt-toolbar-h。
          * 内容区留白与第二行的 top 都取这两个值，改布局就只剩一处要维护。
          */
+        /**
+         * 把两行固定栏的实测高度写进 --nt-topbar-h / --nt-toolbar-h。
+         *
+         * v1.1.3 修复「切换实例后回滚页面，两行栏之间出现一条缝」：
+         *   旧实现用 offsetHeight，它是**取整**的（60.4px → 60）。
+         *   第二行的 top 取的正是这个整数，于是第二行比第一行的真实底边高 0.4px，
+         *   露出底下页面背景 —— 一条发丝宽的缝。刷新后布局恰好落在整数高度上，
+         *   缝又「自己好了」，这也是它只在某些时刻出现的原因。
+         *   改用 getBoundingClientRect().height（带小数），并把结果保留两位小数写进 CSS 变量。
+         *
+         * 量高度这件事本身也有时机问题：切实例会改标题宽度、触发重新换行，
+         * 所以这里一律读**当前帧布局完成之后**的值（组件内调用点都包了 nextTick）。
+         */
         syncTopHeights() {
-            const root = this.$el;
+            /*
+             * 不能直接用 this.$el：本组件模板的根节点前面有一段注释块，
+             * Vue 3 因此把它当成 Fragment，$el 拿到的是**片段的起始注释节点** ——
+             * 注释节点没有 style，下面第一个 if 就会静默 return，
+             * 结果是 --nt-topbar-h / --nt-toolbar-h 从来没被写过（一直吃 60px / 44px 兜底值）。
+             * 移动端搜索行一展开，顶栏从 57px 长到 95px，工具栏却还钉在 60px，
+             * 类型标签行被顶栏盖住 —— 就是这里没生效导致的。
+             * 固定用 ref="page" 的那个真实 div。
+             */
+            const root = (this.$refs && this.$refs.page) || this.$el;
             if (!root || !root.style) return;
-            const topH = this.$refs.topbarRef ? this.$refs.topbarRef.offsetHeight : 0;
-            const toolH = this.$refs.toolbarRef ? this.$refs.toolbarRef.offsetHeight : 0;
+            const measure = (el) => {
+                if (!el || typeof el.getBoundingClientRect !== 'function') return 0;
+                return Math.round(el.getBoundingClientRect().height * 100) / 100;
+            };
+            const topH = measure(this.$refs.topbarRef);
+            const toolH = measure(this.$refs.toolbarRef);
             if (topH) root.style.setProperty('--nt-topbar-h', `${topH}px`);
             if (toolH) root.style.setProperty('--nt-toolbar-h', `${toolH}px`);
         },
@@ -1026,17 +1409,32 @@ export default {
     left: 0;
     right: 0;
     z-index: 40;
+    /*
+     * v1.1.3：纵向排列 —— 第一行永远是「页面切换 + 按钮组」这一整行，
+     * 移动端展开的搜索行是它的下一个兄弟，独立占一行。
+     * 之前两行都在同一个 flex 容器里靠 flex-wrap 换行，搜索行一展开就会重算第一行的换行，
+     * 按钮组被挤成两行、位置整体下移（需求点名的「影响顶部行的排列结构」）。
+     */
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     padding: 8px 16px;
     background: var(--glass-bg);
     border-bottom: 1px solid var(--glass-border);
     backdrop-filter: blur(var(--glass-backdrop-blur, 10px));
     -webkit-backdrop-filter: blur(var(--glass-backdrop-blur, 10px));
     transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 顶栏第一行：左侧页面切换 + 右侧按钮组，单行不换行 */
+.nt-topbar-main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+    flex-wrap: nowrap;
 }
 
 .nt-topbar.is-solid {
@@ -1085,27 +1483,180 @@ export default {
     transform: translateY(calc(-1 * var(--nt-topbar-h, 60px) - 100%));
 }
 
+.nt-page {
+    /*
+     * v1.1.3：顶栏所有控件统一高度。发布按钮、图标按钮、搜索框共用这一个变量 ——
+     * 之前是三套各自写死的值（发布 30 / 图标 30 / 搜索 32），并排看就是参差不齐。
+     */
+    --nt-ctl-h: 30px;
+}
+
 .nt-topbar-left,
 .nt-topbar-right {
     display: flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
-    flex-wrap: wrap;
-}
-
-.nt-topbar-right {
     flex-wrap: nowrap;
 }
 
-/* 移动端展开的搜索行：整行占满，顶栏高度自动变高（ResizeObserver 会重新写入 --nt-topbar-h） */
-.nt-msearch {
-    flex: 1 1 100%;
-    order: 3;
+/*
+ * 顶栏右侧按钮组：v1.1.3 起在移动端改成横向可滑动。
+ * 手机上四个图标 + 发布按钮放不下一行，旧实现是换行 → 顶栏变两行、高度一变就抖。
+ * 现在固定单行 + `overflow-x: auto`：放不下就左右滑，顶栏高度永远只由一行决定。
+ * 桌面端不需要滑动（宽度足够），但保留同样的 flex 行为。
+ */
+.nt-topbar-right {
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
-.nt-search {
-    width: 190px;
+.nt-topbar-right::-webkit-scrollbar {
+    display: none;
+}
+
+/*
+ * 移动端展开的搜索行：整行占满，顶栏高度自动变高（ResizeObserver 会重新写入 --nt-topbar-h）。
+ * 它是 .nt-topbar 的独立一行（纵向 flex 的第二个子项），不参与第一行的排列。
+ */
+.nt-msearch {
+    width: 100%;
+    min-width: 0;
+}
+
+/* 搜索行的输入框铺满整行：桌面端那套「固定 200px / 聚焦 300px」在手机上会溢出 */
+.nt-msearch .nt-search-card,
+.nt-msearch .nt-search-card :deep(.el-input),
+.nt-msearch .nt-search-card :deep(.el-input__wrapper) {
+    width: 100%;
+    min-width: 0;
+}
+
+.nt-msearch .nt-search-card :deep(.el-input__inner),
+.nt-msearch .nt-search-card:focus-within :deep(.el-input__inner) {
+    width: 100%;
+}
+
+/* ── 搜索框（v1.1.3：与图床管理页 /dashboard 同一套外观与交互） ── */
+.nt-search-card {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    flex: 0 1 auto;
+}
+
+.nt-search-card :deep(.el-input) {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.nt-search-card :deep(.el-input__wrapper) {
+    min-width: 0;
+    height: var(--nt-ctl-h);
+    padding: 0 12px;
+    border-radius: 20px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow);
+}
+
+.nt-search-card :deep(.el-input__inner) {
+    width: 200px;
+    height: calc(var(--nt-ctl-h) - 2px);
+    min-width: 0;
+    border: none;
+    background: none;
+    font-size: 13px;
+    transition: width 0.25s ease;
+}
+
+/* 点进搜索框自动变宽（需求：点击搜索框时也会自动变宽一点） */
+.nt-search-card:focus-within :deep(.el-input__inner) {
+    width: 300px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .nt-search-card :deep(.el-input__inner) {
+        transition: none;
+    }
+}
+
+/* 搜索范围下拉：透明、无描边，与输入框合成一个整体（图床管理页同款） */
+.nt-search-card :deep(.el-input__prefix),
+.nt-search-card :deep(.el-input__prefix-inner) {
+    pointer-events: auto;
+}
+
+.nt-search-type {
+    width: 68px;
+    flex: 0 0 auto;
+    margin-right: 2px;
+}
+
+.nt-search-type :deep(.el-select__wrapper) {
+    min-height: 22px;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--el-text-color-regular);
+}
+
+.nt-search-type :deep(.el-select__wrapper.is-hovering),
+.nt-search-type :deep(.el-select__wrapper.is-focused) {
+    background: transparent;
+    box-shadow: none;
+}
+
+.nt-search-type :deep(.el-select__wrapper.is-focused) :deep(.el-select__selected-item) {
+    color: var(--el-color-primary);
+}
+
+/* 范围与输入内容之间的细分隔线 */
+.nt-search-sep {
+    display: inline-block;
+    width: 1px;
+    height: 14px;
+    margin-right: 8px;
+    background: var(--el-border-color);
+    opacity: 0.7;
+}
+
+.nt-search-card :deep(.el-input__suffix) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.nt-search-clear,
+.nt-search-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    border: none;
+    background: transparent;
+    color: var(--el-text-color-placeholder);
+    font: inherit;
+    cursor: pointer;
+    outline: none;
+    touch-action: manipulation;
+    transition: color 0.2s ease;
+}
+
+.nt-search-clear:hover,
+.nt-search-trigger:hover {
+    color: var(--el-color-primary);
 }
 
 .nt-search-icon {
@@ -1113,11 +1664,18 @@ export default {
     opacity: 0.6;
 }
 
+.nt-search-trigger:hover .nt-search-icon {
+    opacity: 1;
+}
+
 .nt-publish-btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
-    padding: 7px 14px;
+    height: var(--nt-ctl-h);
+    padding: 0 14px;
+    box-sizing: border-box;
     border: none;
     border-radius: 9px;
     background: var(--el-color-primary);
@@ -1125,8 +1683,10 @@ export default {
     font-size: 13px;
     font-weight: 600;
     font-family: inherit;
+    line-height: 1;
     cursor: pointer;
     white-space: nowrap;
+    flex: 0 0 auto;
     transition: filter 0.15s ease;
 }
 
@@ -1204,8 +1764,9 @@ export default {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: var(--nt-ctl-h, 30px);
+    height: var(--nt-ctl-h, 30px);
+    box-sizing: border-box;
     border: 1px solid var(--el-border-color);
     border-radius: 8px;
     background: transparent;
@@ -1257,6 +1818,16 @@ export default {
 
 /* ── 内容 ───────────────────────────────────────────────── */
 .nt-main {
+    /*
+     * v1.1.3：内容加载区只允许纵向平移。
+     * 移动端在这个区域左右滑动是「切换笔记类型」的功能手势，浏览器若把它当成
+     * 边缘返回，屏幕两侧就会出现拉动伸缩的预览动画（需求点名的现象）。
+     * `touch-action: pan-y` 让浏览器在本区域内根本不认横向手势；
+     * 手势本身仍由 onMainTouchMove 用 JS 判定（非 passive，可 preventDefault）。
+     * 纵向滚动不受影响；该区域内没有横向滚动容器，因此不会误伤。
+     */
+    touch-action: pan-y;
+    overscroll-behavior-x: contain;
     box-sizing: border-box;
     width: 100%;
     max-width: 760px;
@@ -1418,16 +1989,20 @@ export default {
     .nt-topbar {
         padding: 6px 8px;
         gap: 6px;
-        flex-wrap: nowrap;
     }
 
-    /* 搜索行展开时必须允许换行，否则它会被挤成一条窄缝 */
-    .nt-topbar.is-search-open {
-        flex-wrap: wrap;
+    /*
+     * 顶栏第一行（v1.1.3）：左侧「页面切换」固定不压缩，右侧按钮组横向可滑动
+     * （需求：这些按钮改成可左右滑动）。搜索行展开时这一行的结构完全不变 ——
+     * 它是 .nt-topbar 纵向排列下的另一行，不再影响这里的换行计算。
+     */
+    .nt-topbar-main {
+        flex-wrap: nowrap;
+        gap: 6px;
     }
 
     .nt-topbar-left {
-        flex: 1 1 auto;
+        flex: 0 0 auto;
         flex-wrap: nowrap;
         /* 之前这里是 hidden —— 下拉菜单一展开就被裁掉，看起来像被下面的栏目盖住了 */
         overflow: visible;
@@ -1435,8 +2010,12 @@ export default {
     }
 
     .nt-topbar-right {
-        flex: 0 0 auto;
-        gap: 4px;
+        flex: 1 1 auto;
+        justify-content: flex-start;
+        gap: 6px;
+        padding-bottom: 2px;
+        overflow-x: auto;
+        scroll-snap-type: none;
     }
 
     /* 手机上发布按钮只留图标，避免把顶栏撑爆 */
@@ -1445,7 +2024,7 @@ export default {
     }
 
     .nt-publish-btn {
-        padding: 7px 10px;
+        padding: 0 10px;
     }
 
     .nt-toolbar {
@@ -1498,12 +2077,18 @@ export default {
         content: none;
     }
 
+    /*
+     * 实例序号角标：移动端按钮很窄，序号跟在名称后面会把按钮撑爆 ——
+     * 改成悬浮在**图标左上方**的小角标（v1.1.3 需求：从右上改到左上）。
+     * 定位基准：按钮 padding-left 10px，图标从 x=10 起、宽 15px，
+     * 角标压在图标左上角（left 6px / top -2px），既不挡图标主体也不占标题宽度。
+     */
     .nt-page.has-instance-badge :deep(.page-option.is-current::after) {
         content: var(--instance-seq, "");
         position: absolute;
         z-index: 2;
-        top: 1px;
-        right: 18px;
+        top: -2px;
+        left: 6px;
         min-width: 14px;
         padding: 0 3px;
         border-radius: 999px;
@@ -1620,5 +2205,76 @@ export default {
 
 .instance-switch-manage:hover {
     text-decoration: underline;
+}
+</style>
+
+<!--
+    v1.1.3：发布类型选择弹窗的样式。
+    必须放在**非 scoped** 块里：el-dialog 的 append-to-body 会把内容 teleport 到
+    body 下，scoped 的 [data-v-*] 属性选不到（这是本项目踩过多次的坑）。
+-->
+<style>
+.note-publish-type-dialog .npt-tip {
+    margin: 0 0 12px;
+    color: var(--el-text-color-secondary);
+    font-size: 13px;
+}
+
+.note-publish-type-dialog .npt-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 10px;
+}
+
+.note-publish-type-dialog .npt-item {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 18px 8px 16px;
+    border: 1px solid var(--el-border-color);
+    border-radius: 12px;
+    background: var(--el-fill-color-blank, #fff);
+    color: var(--el-text-color-primary);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+}
+
+.note-publish-type-dialog .npt-item:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+    transform: translateY(-1px);
+}
+
+.note-publish-type-dialog .npt-item.is-disabled {
+    opacity: 0.55;
+}
+
+.note-publish-type-dialog .npt-item.is-disabled:hover {
+    border-color: var(--el-border-color);
+    color: var(--el-text-color-primary);
+    transform: none;
+}
+
+.note-publish-type-dialog .npt-icon {
+    font-size: 20px;
+}
+
+.note-publish-type-dialog .npt-soon {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--el-fill-color, #f0f2f5);
+    color: var(--el-text-color-secondary);
+    font-size: 10px;
+    font-weight: 500;
+    line-height: 16px;
 }
 </style>

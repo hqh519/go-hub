@@ -59,6 +59,7 @@ export class NotesController {
     @Query('kind') kind?: string,
     @Query('mediaKind') mediaKind?: string,
     @Query('search') search?: string,
+    @Query('searchType') searchType?: string,
     @Query('tagId') tagId?: string,
     @Query('status') status?: string,
     @Query('from') from?: string,
@@ -74,6 +75,7 @@ export class NotesController {
       kind,
       mediaKind,
       search,
+      searchType,
       tagId,
       status,
       from,
@@ -117,25 +119,26 @@ export class NotesController {
     return { success: true, data };
   }
 
-  /** 图床选文件器：分页 + 搜索 + 类型过滤，只读不写 */
+  /**
+   * 图床选文件器：分页 + 搜索 + 类型过滤，只读不写
+   * v1.1.3：额外接受与 /api/files/list 同名的筛选参数（fileType / accessStatus / filterTags /
+   * dateFrom / sizeMin / channel / uploadSource / filterUsers …），
+   * 求值实现与图床管理页共用 common/file-filter.ts，保证「筛选范围完全一致」。
+   */
   @Get('files')
-  async files(
-    @Req() req: Request,
-    @Query('search') search?: string,
-    @Query('type') type?: string,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-    @Query('instanceId') instanceId?: string,
-  ) {
+  async files(@Req() req: Request, @Query() q: Record<string, string>) {
     const { viewer, isAdmin } = this.ctx(req);
     return this.notes.pickFiles({
-      search,
-      type,
-      page: Number(page) || 1,
-      pageSize: Number(pageSize) || 24,
-      instanceId: instanceId || '',
+      search: q.search,
+      searchScope: q.searchType,
+      type: q.type,
+      page: Number(q.page) || 1,
+      pageSize: Number(q.pageSize) || 24,
+      instanceId: q.instanceId || '',
       viewer,
       isAdmin,
+      filterQuery: q,
+      matchMode: q.matchMode,
     });
   }
 

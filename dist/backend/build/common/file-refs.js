@@ -6,7 +6,6 @@ exports.countBySource = countBySource;
 exports.fileReferenceBlockMessage = fileReferenceBlockMessage;
 exports.batchReferenceBlockMessage = batchReferenceBlockMessage;
 const prisma_1 = require("./prisma");
-const notes_util_1 = require("../notes/notes.util");
 function normPath(p) {
     return String(p || '').replace(/^\/+|\/+$/g, '');
 }
@@ -25,7 +24,14 @@ async function noteRefsOf(ids, map) {
         select: {
             fileId: true,
             note: {
-                select: { id: true, kind: true, status: true, createdAt: true, author: true, metas: true },
+                select: {
+                    id: true,
+                    kind: true,
+                    status: true,
+                    createdAt: true,
+                    author: true,
+                    moment: { select: { title: true } },
+                },
             },
         },
     });
@@ -37,7 +43,7 @@ async function noteRefsOf(ids, map) {
         list.push({
             source: 'note',
             id: note.id,
-            title: String((0, notes_util_1.safeParse)(note.metas).title || ''),
+            title: String(note.moment?.title || ''),
             kind: note.kind,
             status: note.status,
             createdAt: note.createdAt ? new Date(note.createdAt).getTime() : 0,

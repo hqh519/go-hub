@@ -36,6 +36,12 @@ import { SettingsService } from '../settings/settings.service';
 import { SysConfigService } from '../settings/sysconfig.service';
 import { AdminGuard, ManageAuthGuard, SESSION_COOKIE, currentSession, isAdminRole, parseSession } from '../auth/auth.guard';
 import { buildDirectoryTree, CHANNEL_LABEL, CopyWithChannel, fileExtOf, fileTypeOf, formatSize, isRecordFile, normalizeDir, normalizeUploadSource, pickPrimaryCopy, safeParse, serializeFile } from '../common/file-view';
+/*
+ * v1.1.3：筛选求值抽到 common/file-filter.ts ——
+ * 「瞬间编辑页 → 选择文件 → 图床文件」模式要复刻与图床管理完全一致的筛选范围，
+ * 两边各写一份必然漂移，故统一为同一份实现（本文件只保留薄委托方法）。
+ */
+import { FileFilterOpts, fileFilterGroups, matchDimPreset } from '../common/file-filter';
 // v1.1.2：文件被引用时禁止删除 / 详情页「文件引用」明细
 // v1.1.2.1：引用范围由「笔记」扩到全类型（笔记 + 分享链接），见 common/file-refs.ts
 import { batchReferenceBlockMessage, fileReferenceBlockMessage, refsOfFile, countBySource } from '../common/file-refs';
@@ -53,6 +59,7 @@ import {
 import { probeVideoCodecFile } from '../common/compress';
 import { appLog } from '../common/app-log';
 import { frontendAppDir } from '../common/project-paths';
+import { withThumbCache, thumbCacheKey, sourceFingerprint, readThumb, writeThumb } from '../common/thumb-cache';
 import { qqwryStatus, saveQqwry } from '../common/qqwry';
 import { ipDisplayBatch, ipDisplayOf } from '../common/ip-query';
 import { CryptoService } from '../common/crypto.service';
@@ -444,19 +451,34 @@ export class LinkController {
         try {
           const n = Number(thumbRaw);
           const w = Number.isFinite(n) && n > 0 ? Math.min(640, Math.max(64, Math.round(n))) : 320;
-          const out = await sharp(abs).resize({ width: w, fit: 'cover' }).toBuffer({ resolveWithObject: true });
+          /*
+           * v1.1.3：缩略图落磁盘缓存（src/common/thumb-cache.ts）。
+           * 之前每次请求都对着原图跑一遍 sharp，一屏几十张同时进来就是几十次全图解码，
+           * 表现为「有的图加载失败、刷新一下又好了」。现在同一张图只解一次。
+           */
+          const key = thumbCacheKey({
+            source: abs,
+            version: sourceFingerprint(abs),
+            width: w,
+            fit: 'cover',
+          });
           const types: Record<string, string> = {
             jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', avif: 'image/avif',
           };
-          res.setHeader('Content-Type', types[out.info.format] || 'application/octet-stream');
-          res.setHeader('Content-Length', String(out.data.length));
+          const data = await withThumbCache(key, types[ext === 'jpg' ? 'jpeg' : ext] || 'image/jpeg', async () => {
+            const out = await sharp(abs).resize({ width: w, fit: 'cover' }).toBuffer({ resolveWithObject: true });
+            return out.data;
+          });
+          const outType = types[ext === 'jpg' ? 'jpeg' : ext] || 'image/jpeg';
+          res.setHeader('Content-Type', outType);
+          res.setHeader('Content-Length', String(data.length));
           // v1.0.4：管理员预览（?from=admin）已在 checkAccess 里声明 private，
           // 这里不能再无脑覆盖成 public —— 否则「仅登录可见」的图片被标成公开可缓存。
           if (!res.getHeader('Cache-Control')) {
             res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
           }
           res.setHeader('X-Imgbed-Transformed', '1');
-          return res.end(out.data);
+          return res.end(data);
         } catch {
           // 解码失败（损坏/特殊色彩空间）→ 退回原文件，不阻断访问
         }
@@ -700,6 +722,32 @@ export class LinkController {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       try {
+        /*
+         * v1.1.3：只有「缩略图」（longCache=true）才走磁盘缓存。
+         * 普通访客自定义尺寸的 ?width=/?height= 参数组合无穷多，缓存它们只会把磁盘占满。
+         */
+        const cacheKey = longCache
+          ? thumbCacheKey({
+              source: cand.url,
+              // 远端文件拿不到 mtime，用「尺寸参数」参与键即可：
+              // 同名 URL 的内容在对象存储里是不可变的（本项目上传即定名）
+              version: 'remote',
+              width: t.width,
+              height: t.height,
+              fit: t.fit || 'cover',
+            })
+          : '';
+        if (cacheKey) {
+          const hit = readThumb(cacheKey);
+          if (hit) {
+            res.setHeader('Content-Type', hit.type);
+            res.setHeader('Content-Length', String(hit.data.length));
+            res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+            res.setHeader('X-Imgbed-Transformed', '1');
+            res.setHeader('X-Imgbed-Cache', 'hit');
+            return res.end(hit.data);
+          }
+        }
         const upstream = await fetch(cand.url, {
           headers: { 'User-Agent': 'GoHub-proxy' },
           signal: ctrl.signal,
@@ -732,6 +780,7 @@ export class LinkController {
           longCache ? 'public, max-age=2592000, immutable' : 'public, max-age=3600',
         );
         res.setHeader('X-Imgbed-Transformed', '1');
+        if (cacheKey) writeThumb(cacheKey, out.data, types[out.info.format] || 'image/jpeg');
         return res.end(out.data);
       } catch (err) {
         lastErr = `${cand.label} → ${(err as Error).message}`;
@@ -1789,211 +1838,18 @@ export class ManageController {
    *   · matchMode = any（任意）：保持旧行为，分区内命中任一值即算（OR）。
    * 互斥维度（如 图片+视频）在「同时」模式下交集为空属预期行为（与前端提示一致）。
    */
-  private filterGroups(
-    r: any,
-    f: {
-      hasTags: string;
-      filterTags: string[];
-      tagMode: string;
-      listType: string[];
-      label: string[];
-      fileType: string[];
-      channel: string[];
-      channelName: string[];
-      uploadSource: string[];
-      backup: string[];
-      redirect: string[];
-      access: string[];
-      validity: string[];
-      nameChanged: string[];
-      users: string[];
-      fromMs: number;
-      toMs: number;
-      sizeMin: number;
-      sizeMax: number;
-      sizeMode: string;
-      /** v3.0.0（R8）：评级筛选（评分 0-5 半星步进 / 等级 0-5）—— absent = 不限 */
-      ratingMin: number | null;
-      ratingMax: number | null;
-      levelMin: number | null;
-      levelMax: number | null;
-      dimPreset: string[];
-      widthMin: number;
-      widthMax: number;
-      heightMin: number;
-      heightMax: number;
-    },
-    matchMode: 'all' | 'any' = 'all',
-  ): boolean[] {
-    const groups: boolean[] = [];
-    /**
-     * 多值分区的统一出口：
-     *   同时(all) → 逐值独立成条件（每个值都必须命中，AND）；
-     *   任意(any) → 分区一个条件，命中任一值即可（OR，旧行为）。
-     */
-    const pushGroup = (values: string[], pred: (v: string) => boolean) => {
-      if (matchMode === 'all') values.forEach((v) => groups.push(pred(v)));
-      else groups.push(values.some((v) => pred(v)));
-    };
-
-    const tagNames: string[] = Array.isArray(r.tags) ? r.tags.map((t: any) => t?.tag?.name).filter(Boolean) : [];
-    if (f.hasTags === 'yes') groups.push(tagNames.length > 0);
-    else if (f.hasTags === 'no') groups.push(tagNames.length === 0);
-    // 标签筛选有自己的「或/且」开关（tagMode），不参与这里的逐值拆分
-    if (f.filterTags.length) {
-      groups.push(
-        f.tagMode === 'or'
-          ? f.filterTags.some((t) => tagNames.includes(t))
-          : f.filterTags.every((t) => tagNames.includes(t)),
-      );
-    }
-
-    const metas = safeParse(r.metas);
-    const listType = (metas.ListType as string) || 'None';
-    const label = (metas.Label as string) || 'None';
-    pushGroup(f.listType, (v) => v === listType);
-    pushGroup(f.label, (v) => v === label);
-    pushGroup(f.fileType, (v) => v === fileTypeOf(r.mime));
-
-    const copies: any[] = Array.isArray(r.copies) ? r.copies : [];
-    // v1.0.4：统一口径 —— 先认 fileCopy.isPrimary（转存后指向新渠道），再回退渠道 isMain
-    const primary = pickPrimaryCopy(copies);
-    const chType = primary?.channel?.type || '';
-    const chLabel = chType ? CHANNEL_LABEL[chType] || chType : '';
-    const chName = String(primary?.channel?.name || '');
-    pushGroup(f.channel, (v) => v === chLabel);
-    pushGroup(f.channelName, (v) => v === chName);
-    // v3.0.0：上传渠道筛选新增「登记文件 (Record)」—— normalizeUploadSource 本就把
-    // 'Record' 规范化为合法值（UPLOAD_SOURCES 白名单含 Record），这里无需特判
-    pushGroup(f.uploadSource, (v) => v === normalizeUploadSource(r.uploadSource));
-    pushGroup(f.users, (v) => v === String(r.uploader || ''));
-
-    if (f.backup.length) {
-      // v1.0.9：与取源口径保持一致 —— 只有 objectPath 的副本同样是「有备份」
-      const hasBackup = copies.some(
-        (c) => c !== primary && c?.status === 'active' && (c?.remoteKey || c?.remoteUrl || c?.objectPath),
-      );
-      pushGroup(f.backup, (v) => (v === 'backedup' ? hasBackup : !hasBackup));
-    }
-
-    if (f.redirect.length) {
-      const has = !!r.redirectUrl;
-      pushGroup(f.redirect, (v) => (v === 'yes' ? has : !has));
-    }
-
-    if (f.access.length) {
-      // v2.9.0：已删除（回收站）—— 列表接口按 status='deleted' 取数后同样走这里判定
-      const deleted = String(r.status || 'active') === 'deleted';
-      /*
-       * v3.0.0：已加密 —— metas.AccessPasswordHash 必须是「非空字符串」才算，
-       * 库级粗筛只会命中出现该键的行，"AccessPasswordHash":"" 在这一步被排除。
-       */
-      const encrypted = !!String(metas.AccessPasswordHash || '').trim();
-      pushGroup(f.access, (v) =>
-        (v === 'encrypted' && encrypted) ||
-        (v === 'deleted' && deleted) ||
-        (!deleted && v === 'normal' && listType === 'None') ||
-        (!deleted && v === 'block' && listType === 'Block') ||
-        (!deleted && v === 'white' && listType === 'White'),
-      );
-    }
-
-    if (f.fromMs || f.toMs) {
-      const t = r.createdAt ? new Date(r.createdAt).getTime() : 0;
-      groups.push(!!t && (!f.fromMs || t >= f.fromMs) && (!f.toMs || t <= f.toMs));
-    }
-
-    if (f.sizeMin > 0 || f.sizeMax > 0 || f.sizeMode === 'original') {
-      const cmpSize =
-        f.sizeMode === 'original' ? Number(r.originalSize) || r.size || 0 : r.size || 0;
-      groups.push(
-        (!f.sizeMin || cmpSize >= f.sizeMin) && (!f.sizeMax || cmpSize <= f.sizeMax),
-      );
-    }
-
-    /*
-     * v3.0.0（R8）：评级筛选 ——
-     *   ratingMin/Max：null = 该侧不限；「未评分」= 0/0（评分必须等于 0）。
-     *   levelMin/Max 同理（「未设等级」= 0/0）。
-     */
-    if (f.ratingMin !== null || f.ratingMax !== null || f.levelMin !== null || f.levelMax !== null) {
-      const rating = Number((r as unknown as { rating?: number }).rating) || 0;
-      const level = Number((r as unknown as { level?: number }).level) || 0;
-      groups.push(
-        (f.ratingMin === null || rating >= f.ratingMin) &&
-        (f.ratingMax === null || rating <= f.ratingMax) &&
-        (f.levelMin === null || level >= f.levelMin) &&
-        (f.levelMax === null || level <= f.levelMax),
-      );
-    }
-
-    if (f.validity.length) {
-      const exp = r.linkExpiresAt as Date | null | undefined;
-      const expMs = exp ? new Date(exp).getTime() : 0;
-      const now = Date.now();
-      pushGroup(f.validity, (v) =>
-        (v === 'limited' && expMs > now) ||
-        (v === 'expired' && expMs > 0 && expMs <= now) ||
-        (v === 'permanent' && !expMs),
-      );
-    }
-
-    if (f.nameChanged.length) {
-      const renamed = !!String(r.prevName || '');
-      pushGroup(f.nameChanged, (v) => (v === 'changed' ? renamed : !renamed));
-    }
-
-    if (f.dimPreset.length || f.widthMin || f.widthMax || f.heightMin || f.heightMax) {
-      const w = Number((metas.Width as number) || 0);
-      const h = Number((metas.Height as number) || 0);
-      if (!w || !h) {
-        groups.push(false);
-      } else {
-        const okRange =
-          (!f.widthMin || w >= f.widthMin) && (!f.widthMax || w <= f.widthMax) &&
-          (!f.heightMin || h >= f.heightMin) && (!f.heightMax || h <= f.heightMax);
-        const okPreset = !f.dimPreset.length || f.dimPreset.some((p) => this.matchDimPreset(w, h, p));
-        groups.push(okRange && okPreset);
-      }
-    }
-
-    return groups;
+  /*
+   * v1.1.3：筛选求值整体搬到 common/file-filter.ts（fileFilterGroups）——
+   * 「瞬间编辑页 → 选择文件 → 图床文件」模式要复刻同一套筛选范围，
+   * 留两份实现迟早漂移。这里保留同名方法做薄委托，调用点一行都不用改。
+   */
+  private filterGroups(r: any, f: FileFilterOpts, matchMode: 'all' | 'any' = 'all'): boolean[] {
+    return fileFilterGroups(r, f, matchMode);
   }
 
-  /** 尺寸快捷选项匹配：宽高不分横竖（横屏/竖屏都能命中），分辨率档位按「短边」分桶 */
+  /** 尺寸快捷选项匹配（v1.1.3 起实现位于 common/file-filter.ts） */
   private matchDimPreset(w: number, h: number, preset: string): boolean {
-    if (!w || !h) return false;
-    const short = Math.min(w, h);
-    const long = Math.max(w, h);
-    const ratio = long / Math.max(1, short);
-    switch (preset) {
-      case 'landscape':
-        return w > h;
-      case 'portrait':
-        return h > w;
-      case 'square':
-        return Math.abs(w - h) <= Math.max(2, Math.round(long * 0.01));
-      case 'ratio-4-3':
-        return Math.abs(ratio - 4 / 3) <= 0.06;
-      case 'ratio-16-9':
-        return Math.abs(ratio - 16 / 9) <= 0.08;
-      case '360p':
-        return short >= 300 && short < 420;
-      case '480p':
-        return short >= 420 && short < 600;
-      case '720p':
-        return short >= 600 && short < 840;
-      case '1080p':
-        return short >= 840 && short < 1300;
-      case '2k':
-        return short >= 1300 && short < 1800;
-      case '4k':
-        return short >= 1800 && short < 2600;
-      case '8k':
-        return short >= 4000;
-      default:
-        return false;
-    }
+    return matchDimPreset(w, h, preset);
   }
 
   @Get('list')
@@ -4489,7 +4345,7 @@ export class ManageController {
           // 笔记用 noteId；分享用 shareId —— 前端两种都可能用到，所以两个字段都给上
           noteId: r.source === 'note' ? r.id : '',
           shareId: r.source === 'share' ? r.id : '',
-          // 瞬间的标题存在 metas.title；没填时前端按创建时间显示，这里给空串
+          // 瞬间的标题（v1.1.3 起来自 note_moments.title 独立列）；没填时前端按创建时间显示，这里给空串
           title: r.title,
           kind: r.kind,
           status: r.status,

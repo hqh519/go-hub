@@ -55,8 +55,49 @@
                 maxlength="80"
             />
 
-            <!-- 心情 / 天气：点一下浮出名称（2 秒） -->
-            <div class="mp-meta-row">
+            <!--
+                心情 / 天气（v1.1.3）
+                ------------------------------------------------------------------
+                桌面端 / 平板：一行图标，点一下在**图标上方**浮出名称（2 秒后淡出）；
+                手机端（< 768px，不含平板）：换成两个下拉页 —— 心情在左、天气在右，
+                未选时的占位文字分别是「设置心情」「设置天气」，展开后每一项都是「图标 + 名称」。
+                两套控件的值都绑定 form.mood / form.weather，提交时一并把中文名称
+                （moodName / weatherName）写进数据表，做筛选统计时不用再翻译枚举值。
+            -->
+            <div class="mp-meta-mobile">
+                <el-select
+                    v-model="form.mood"
+                    class="mp-meta-select"
+                    size="small"
+                    clearable
+                    :placeholder="$t('notes.setMood')"
+                    popper-class="mp-meta-popper"
+                >
+                    <el-option v-for="m in moodOptions" :key="'mm-' + m.value" :label="nameOf(m)" :value="m.value">
+                        <span class="mp-opt">
+                            <span class="mp-opt-emoji">{{ m.emoji }}</span>
+                            <span class="mp-opt-name">{{ nameOf(m) }}</span>
+                        </span>
+                    </el-option>
+                </el-select>
+                <el-select
+                    v-model="form.weather"
+                    class="mp-meta-select"
+                    size="small"
+                    clearable
+                    :placeholder="$t('notes.setWeather')"
+                    popper-class="mp-meta-popper"
+                >
+                    <el-option v-for="w in weatherOptions" :key="'mw-' + w.value" :label="nameOf(w)" :value="w.value">
+                        <span class="mp-opt">
+                            <span class="mp-opt-emoji">{{ w.emoji }}</span>
+                            <span class="mp-opt-name">{{ nameOf(w) }}</span>
+                        </span>
+                    </el-option>
+                </el-select>
+            </div>
+
+            <div class="mp-meta-row mp-meta-desktop">
                 <div class="mp-picker">
                     <span v-for="m in moodOptions" :key="m.value" class="mp-emoji-wrap">
                         <button
@@ -123,12 +164,17 @@
                     v-for="(a, i) in assets"
                     :key="a.fileId + '-' + i"
                     class="mp-asset"
-                    :class="{ 'is-dragging': dragIndex === i }"
+                    :class="{ 'is-dragging': dragIndex === i, 'is-pressable': longPressDragging }"
+                    :data-asset-index="i"
                     draggable="true"
                     @dragstart="onDragStart(i, $event)"
                     @dragover.prevent="onDragOver(i)"
                     @dragend="onDragEnd"
                     @drop.prevent="onDrop(i)"
+                    @pointerdown="onAssetPointerDown(i, $event)"
+                    @pointermove="onAssetPointerMove($event)"
+                    @pointerup="onAssetPointerUp"
+                    @pointercancel="onAssetPointerUp"
                 >
                     <img v-if="a.mediaKind === 'image'" :src="a.thumbUrl || a.url" class="mp-asset-img" alt="" />
                     <span v-else class="mp-asset-cover">
@@ -144,6 +190,10 @@
                         <button type="button" :disabled="i === assets.length - 1" :title="$t('notes.moveRight')" @click.stop="moveAsset(i, 1)">▶</button>
                     </span>
                     <span v-if="i === 0 && assets.length > 1" class="mp-asset-cover-tag">{{ $t('notes.coverBadge') }}</span>
+                    <!-- v1.1.3：触屏用户可以长按任意附件拖动换位（桌面端直接拖） -->
+                    <span v-if="longPressDragging && dragIndex === i" class="mp-asset-drag-hint">
+                        <font-awesome-icon icon="arrows-alt" />
+                    </span>
                 </div>
             </div>
 
@@ -316,6 +366,8 @@ export default {
             dragIndex: -1,
             moodOptions: MOOD_OPTIONS,
             weatherOptions: WEATHER_OPTIONS,
+            // v1.1.3：触屏长按拖动排序
+            longPressDragging: false,
             /** 当前浮出名称的图标：「mood:happy」 */
             tipKey: '',
             /** 最近用过的地点（位置输入框的记忆，存在浏览器里） */
@@ -386,6 +438,13 @@ export default {
         assets: {
             deep: true,
             handler: 'scheduleSave'
+        }
+    },
+    beforeUnmount() {
+        // v1.1.3：长按计时器必须清掉，否则弹窗关了还会在 320ms 后改一次状态
+        if (this._pressTimer) {
+            window.clearTimeout(this._pressTimer);
+            this._pressTimer = null;
         }
     },
     methods: {
@@ -657,6 +716,62 @@ export default {
             this.dragIndex = -1;
         },
         onDragEnd() {
+            this.dragIndex = -1;
+        },
+
+        /* ── 触屏长按拖动排序（v1.1.3） ─────────────────────────
+         * 桌面端用原生 HTML5 拖拽（上面那三个方法）；
+         * 触屏没有 dragstart，改成「按住 320ms → 跟随手指 → 经过谁就换到谁的位置」。
+         * 移动超过 8px 视为「用户在滚动」，立刻取消计时，不会误触。
+         */
+        onAssetPointerDown(i, e) {
+            // 鼠标走原生拖拽，不重复处理
+            if (e.pointerType === 'mouse') return;
+            const el = e.currentTarget;
+            this._pressStart = { x: e.clientX, y: e.clientY };
+            this._pressTarget = el;
+            this._pressTimer = window.setTimeout(() => {
+                this._pressTimer = null;
+                this.longPressDragging = true;
+                this.dragIndex = i;
+                // 轻微振动反馈（支持才震，iOS 不支持就静默）
+                if (navigator.vibrate) navigator.vibrate(8);
+                try {
+                    el.setPointerCapture(e.pointerId);
+                } catch (err) {
+                    /* 老浏览器忽略 */
+                }
+                // 长按之后要阻止页面跟着滚
+                if (el.style) el.style.touchAction = 'none';
+            }, 320);
+        },
+        onAssetPointerMove(e) {
+            if (this._pressTimer && this._pressStart) {
+                const dx = Math.abs(e.clientX - this._pressStart.x);
+                const dy = Math.abs(e.clientY - this._pressStart.y);
+                if (dx > 8 || dy > 8) {
+                    window.clearTimeout(this._pressTimer);
+                    this._pressTimer = null;
+                }
+            }
+            if (!this.longPressDragging || this.dragIndex < 0) return;
+            // 手指下的元素 → 是哪一个附件格
+            const hit = document.elementFromPoint(e.clientX, e.clientY);
+            const target = hit && hit.closest ? hit.closest('.mp-asset') : null;
+            if (!target) return;
+            const to = Number(target.getAttribute('data-asset-index'));
+            if (!Number.isFinite(to) || to === this.dragIndex) return;
+            this.moveAsset(this.dragIndex, to - this.dragIndex);
+            this.dragIndex = to;
+        },
+        onAssetPointerUp() {
+            if (this._pressTimer) {
+                window.clearTimeout(this._pressTimer);
+                this._pressTimer = null;
+            }
+            if (this._pressTarget && this._pressTarget.style) this._pressTarget.style.touchAction = '';
+            this._pressTarget = null;
+            this.longPressDragging = false;
             this.dragIndex = -1;
         },
 
@@ -934,17 +1049,26 @@ export default {
     filter: none;
 }
 
+/*
+ * 选中态（v1.1.3）：底色明显加深 + 描边 + 轻微投影。
+ * 原来只有 16% 透明度的蓝底，在深色 / 浅色主题下都太淡，用户点完看不出选没选中。
+ */
 .mp-emoji.is-active {
-    background: var(--note-emoji-active, rgba(64, 158, 255, 0.16));
+    background: var(--note-emoji-active, rgba(64, 158, 255, 0.34));
+    box-shadow: inset 0 0 0 1.5px var(--el-color-primary), 0 1px 4px rgba(64, 158, 255, 0.28);
     opacity: 1;
     filter: none;
-    transform: scale(1.06);
+    transform: scale(1.1);
 }
 
-/* 名称提示：图标正下方，2 秒后淡出 */
+/*
+ * 名称提示（v1.1.3）：从「图标正下方」改到**图标正上方**（需求原文）。
+ * 位置用 bottom: calc(100% + 4px) —— 直接用负 top 在图标高低不一时会飘。
+ */
 .mp-name-tip {
     position: absolute;
-    top: calc(100% + 4px);
+    bottom: calc(100% + 4px);
+    top: auto;
     left: 50%;
     transform: translateX(-50%);
     z-index: 8;
@@ -1204,6 +1328,97 @@ export default {
     display: flex;
     gap: 8px;
     margin-left: auto;
+}
+
+/* ── 心情 / 天气的手机版下拉（v1.1.3） ───────────────────────── */
+.mp-meta-mobile {
+    display: none;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.mp-meta-select {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+.mp-opt {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.mp-opt-emoji {
+    font-size: 16px;
+    line-height: 1;
+}
+
+.mp-opt-name {
+    font-size: 13px;
+}
+
+/* 长按拖动时的「抓手」角标 */
+.mp-asset-drag-hint {
+    position: absolute;
+    inset: auto 0 0 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 16px;
+    border-radius: 0 0 8px 8px;
+    background: rgba(0, 0, 0, 0.45);
+    color: #fff;
+    font-size: 10px;
+    pointer-events: none;
+}
+
+.mp-asset.is-pressable {
+    /* 长按后不再让浏览器滚动页面，手指才能稳定拖动 */
+    touch-action: none;
+}
+
+@media (max-width: 767.98px) {
+    /*
+     * 手机（不含平板）：心情 / 天气改成两个下拉页，一行两个 —— 左边心情、右边天气。
+     * 图标行在手机上隐藏（20 个图标挤成两行，指头点不准）。
+     */
+    .mp-meta-mobile {
+        display: flex;
+    }
+
+    .mp-meta-desktop {
+        display: none;
+    }
+
+    /*
+     * 「选择文件 / 本地上传 / 链接提取」三个按钮：左右外边距收小 + 横向可滑动，
+     * 保证在窄屏上仍然是**一行**（需求原文）。
+     */
+    .mp-add-row {
+        flex-wrap: nowrap;
+        gap: 6px;
+        overflow-x: auto;
+        margin: 2px -4px;
+        padding: 2px 4px;
+        scrollbar-width: none;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .mp-add-row::-webkit-scrollbar {
+        display: none;
+    }
+
+    .mp-add-row :deep(.el-button) {
+        margin-left: 0 !important;
+        flex: 0 0 auto;
+        padding: 6px 9px;
+        font-size: 12px;
+    }
+
+    .mp-asset-count {
+        flex: 0 0 auto;
+        white-space: nowrap;
+    }
 }
 
 @media (max-width: 768px) {

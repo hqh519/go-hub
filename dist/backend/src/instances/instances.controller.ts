@@ -85,6 +85,58 @@ export class InstancesController {
     return res.json(r.item);
   }
 
+  /**
+   * 实例属性（v1.1.3）—— 仅创建者。
+   * 「改名」功能已按需求并入属性页，这里一并读回名称 / 备注 / 切换密码配置。
+   */
+  @Get(':id/attributes')
+  async attributes(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {
+    const r = await this.svc.getAttributes(id, this.me(req));
+    if (r.error) return this.fail(res, r.error);
+    return res.json(r.item);
+  }
+
+  /** 写入实例属性（名称 / 备注 / 切换密码）—— 仅创建者 */
+  @Patch(':id/attributes')
+  async setAttributes(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      note?: string;
+      switchLock?: { enabled?: boolean; mode?: string; password?: string } | null;
+    },
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const r = await this.svc.setAttributes(id, this.me(req), body || {});
+    if (r.error) return this.fail(res, r.error);
+    return res.json(r.item);
+  }
+
+  /**
+   * 切换前的状态查询（v1.1.3）—— 任何登录用户都能查，只回「要不要拦」。
+   * 已在本会话验证过 → locked=false，前端就不再弹框（其他页面刷新也不问）。
+   */
+  @Get(':id/switch-lock')
+  async switchLock(@Param('id') id: string, @Req() req: Request) {
+    return this.svc.switchLockState(id, this.me(req));
+  }
+
+  /** 校验切换密码 / 动态码；通过后 12 小时内免再次验证 */
+  @Post(':id/verify-switch')
+  @HttpCode(200)
+  async verifySwitch(
+    @Param('id') id: string,
+    @Body() body: { password?: string; code?: string },
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const r = await this.svc.verifySwitch(id, this.me(req), body || {});
+    if (r.error) return this.fail(res, r.error, 403);
+    return res.json(r);
+  }
+
   /** 删除实例 —— 仅创建者；实例下仍有文件（含回收站）时 400 拒绝 */
   @Delete(':id')
   async remove(@Param('id') id: string, @Req() req: Request, @Res() res: Response) {

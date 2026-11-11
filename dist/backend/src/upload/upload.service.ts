@@ -3563,7 +3563,7 @@ export class UploadService {
     const srcLocal = isLocalType(sourceCh.type);
     const dstLocal = isLocalType(targetCh.type);
     if (targetCh.type === 'localfiles') {
-      return { ok: false, message: '「本地文件」是浏览入口，不能作为转存目标，请选择本地存储渠道' };
+      return { ok: false, message: '「挂载文件」是浏览入口，不能作为转存目标，请选择本地存储渠道' };
     }
     if (srcLocal && dstLocal) return { ok: false, message: '源渠道与目标渠道都是本地存储，无需转存' };
     if (!srcLocal && !dstLocal) {

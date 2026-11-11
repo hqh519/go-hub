@@ -304,10 +304,14 @@
             <el-table-column :label="$t('userEdit.instanceMembers')" width="90" align="center">
               <template #default="{ row }">{{ Number(row.memberCount ?? 1) }}</template>
             </el-table-column>
-            <el-table-column :label="$t('userEdit.instanceActions')" width="190">
+            <!--
+              v1.1.3：在「邀请」后面新增「属性」按钮 —— 实例名称 / 备注 / 切换密码都在属性页里改，
+              原来的「改名」按钮按需求移除（功能没丢，只是搬进属性页）。
+            -->
+            <el-table-column :label="$t('userEdit.instanceActions')" width="200">
               <template #default="{ row }">
                 <el-button link type="primary" size="small" @click="openInviteDialog(row)">{{ $t('userEdit.instanceInvite') }}</el-button>
-                <el-button link type="primary" size="small" @click="openRenameInstance(row)">{{ $t('userEdit.instanceRename') }}</el-button>
+                <el-button link type="primary" size="small" @click="openAttrDialog(row)">{{ $t('userEdit.instanceAttributes') }}</el-button>
                 <el-button link type="danger" size="small" @click="deleteInstance(row)">{{ $t('userEdit.instanceDelete') }}</el-button>
               </template>
             </el-table-column>
@@ -618,6 +622,50 @@
       </template>
     </el-dialog>
 
+    <!--
+      v1.1.3：实例属性页。
+      名称 / 备注 / 切换密码三块都在这里 —— 原「改名」按钮已按需求移入本页。
+      切换密码三选一：账户密码 / 两步验证动态码 / 自定义独立密码。
+    -->
+    <el-dialog v-model="showAttrDialog" :title="$t('userEdit.attrTitle')" :width="dialogWidth" append-to-body>
+      <el-form label-position="top" class="attr-form">
+        <el-form-item :label="$t('userEdit.attrName')">
+          <el-input v-model="attrForm.name" maxlength="40" show-word-limit />
+        </el-form-item>
+        <el-form-item :label="$t('userEdit.attrNote')">
+          <el-input v-model="attrForm.note" type="textarea" :rows="2" maxlength="200" show-word-limit />
+        </el-form-item>
+        <el-divider />
+        <el-form-item :label="$t('userEdit.attrSwitchLock')">
+          <el-switch v-model="attrForm.lockEnabled" />
+        </el-form-item>
+        <template v-if="attrForm.lockEnabled">
+          <el-form-item :label="$t('userEdit.attrMode')">
+            <el-radio-group v-model="attrForm.mode">
+              <el-radio value="account">{{ $t('userEdit.attrModeAccount') }}</el-radio>
+              <el-radio value="totp">{{ $t('userEdit.attrModeTotp') }}</el-radio>
+              <el-radio value="custom">{{ $t('userEdit.attrModeCustom') }}</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="attrForm.mode === 'custom'" :label="$t('userEdit.attrCustomPassword')">
+            <el-input
+              v-model="attrForm.password"
+              type="password"
+              show-password
+              autocomplete="new-password"
+              :placeholder="$t('userEdit.attrCustomPasswordPlaceholder')"
+            />
+            <p v-if="attrHasPassword" class="hint attr-hint">{{ $t('userEdit.attrCustomPasswordSet') }}</p>
+          </el-form-item>
+        </template>
+        <p class="hint attr-hint">{{ $t('userEdit.attrSwitchLockHint') }}</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAttrDialog = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="instanceBusy" @click="saveAttr">{{ $t('userEdit.attrSave') }}</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 恢复码：只在启用 / 重新生成后显示这一次，库里只留摘要 -->
     <el-dialog v-model="showRecoveryDialog" :title="$t('userEdit.recoveryTitle')" :width="dialogWidth" append-to-body>
       <el-alert :title="$t('userEdit.recoveryOnce')" type="warning" :closable="false" show-icon class="recovery-alert" />
@@ -724,6 +772,12 @@ export default {
             showInviteDialog: false,
             inviteTarget: null,
             inviteCode: '',
+            /* v1.1.3：实例属性页（名称 / 备注 / 切换密码） */
+            showAttrDialog: false,
+            attrTarget: null,
+            attrForm: { name: '', note: '', lockEnabled: false, mode: 'custom', password: '' },
+            /** 该实例是否已经设置过自定义密码（只用于提示，不回显明文/哈希） */
+            attrHasPassword: false,
             instanceBusy: false,
             // v1.0.6：WebDAV 管理（全局开关 + 该账户的渠道列表 + 新建/编辑弹窗）
             webdavGlobalEnabled: false,
@@ -1359,6 +1413,88 @@ export default {
                 );
                 this.inviteCode = '';
                 this.$message.success(this.$t('userEdit.inviteClosedOk'));
+            } catch (e) {
+                this.$message.error(this.instanceErr(e, this.$t('common.failed')));
+            } finally {
+                this.instanceBusy = false;
+            }
+        },
+        /* ── v1.1.3：实例属性页 ─────────────────────────────────── */
+        async openAttrDialog(row) {
+            this.attrTarget = row;
+            this.attrHasPassword = false;
+            this.attrForm = {
+                name: row.name || '',
+                note: row.note || '',
+                lockEnabled: false,
+                mode: 'custom',
+                password: ''
+            };
+            this.showAttrDialog = true;
+            try {
+                const res = await axios.get(
+                    this.instanceUrl(`/api/instances/${encodeURIComponent(row.id)}/attributes`),
+                    { withCredentials: true },
+                );
+                const it = res.data || {};
+                this.attrForm = {
+                    name: it.name || row.name || '',
+                    note: it.note || '',
+                    lockEnabled: !!it.switchLock?.enabled,
+                    mode: it.switchLock?.mode || 'custom',
+                    password: ''
+                };
+                this.attrHasPassword = !!it.switchLock?.hasCustomPassword;
+            } catch (e) {
+                // 读不到就按「未启用」展示，保存时后端仍会校验权限
+            }
+        },
+        async saveAttr() {
+            const row = this.attrTarget;
+            if (!row) return;
+            const name = String(this.attrForm.name || '').trim();
+            if (!name) {
+                this.$message.error(this.$t('userEdit.instanceNameRequired'));
+                return;
+            }
+            if (this.attrForm.lockEnabled && this.attrForm.mode === 'custom') {
+                const pwd = String(this.attrForm.password || '');
+                // 已经设过密码时允许留空 = 不修改；从未设过则必须给一个
+                if (!pwd && !this.attrHasPassword) {
+                    this.$message.error(this.$t('userEdit.attrCustomPasswordPlaceholder'));
+                    return;
+                }
+                if (pwd && pwd.length < 4) {
+                    this.$message.error(this.$t('userEdit.attrCustomPasswordPlaceholder'));
+                    return;
+                }
+            }
+            const switchLock = this.attrForm.lockEnabled
+                ? {
+                    enabled: true,
+                    mode: this.attrForm.mode,
+                    ...(this.attrForm.mode === 'custom' && this.attrForm.password
+                        ? { password: String(this.attrForm.password) }
+                        : {}),
+                }
+                : { enabled: false };
+            /*
+             * 自定义模式且留空（= 不修改）时，后端要求必须带新密码才肯改配置。
+             * 这种情况把 password 补成占位不可行，所以直接不传 switchLock 的 password，
+             * 由后端保留原哈希 —— 见 setAttributes 的注释。
+             */
+            this.instanceBusy = true;
+            try {
+                const res = await axios.patch(
+                    this.instanceUrl(`/api/instances/${encodeURIComponent(row.id)}/attributes`),
+                    { name, note: String(this.attrForm.note || ''), switchLock },
+                    { withCredentials: true },
+                );
+                const it = res.data || {};
+                const idx = this.instances.findIndex((i) => i.id === row.id);
+                if (idx > -1 && it.id) this.instances.splice(idx, 1, { ...this.instances[idx], ...it });
+                this.showAttrDialog = false;
+                this.$message.success(this.$t('userEdit.attrSaved'));
             } catch (e) {
                 this.$message.error(this.instanceErr(e, this.$t('common.failed')));
             } finally {

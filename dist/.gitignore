@@ -23,6 +23,9 @@ uploads/
 # 依赖与构建缓存（各机自装）
 node_modules/
 *.tsbuildinfo
+# 缩略图磁盘缓存（运行期生成，v1.1.3 加入）
+.cache/
+**/.cache/
 
 # 镜像包体积过大，走发布包分发
 *.tar

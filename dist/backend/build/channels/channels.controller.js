@@ -239,6 +239,12 @@ let ChannelsService = class ChannelsService {
             const wantCode = channelTypeCode('localfiles');
             if (existing.typeCode !== wantCode)
                 patch.typeCode = wantCode;
+            const BUILTIN_DEFAULT_NAME = '挂载文件-默认';
+            const LEGACY_NAMES = ['本地文件', '本地文件-系统', '本地文件_系统'];
+            if (LEGACY_NAMES.includes(String(existing.name || ''))) {
+                const taken = await prisma_1.prisma.channel.findUnique({ where: { name: BUILTIN_DEFAULT_NAME } });
+                patch.name = taken && taken.id !== existing.id ? '挂载文件-系统' : BUILTIN_DEFAULT_NAME;
+            }
             if (current.length !== 1 || String(current[0]) !== root) {
                 patch.config = JSON.stringify({ ...cfg, rootPaths: [root] });
             }
@@ -247,11 +253,11 @@ let ChannelsService = class ChannelsService {
             }
             return;
         }
-        let name = '本地文件';
+        let name = '挂载文件-默认';
         if (await prisma_1.prisma.channel.findUnique({ where: { name } }))
-            name = '本地文件-系统';
+            name = '挂载文件-系统';
         if (await prisma_1.prisma.channel.findUnique({ where: { name } }))
-            name = '本地文件_系统';
+            name = '挂载文件_系统';
         await prisma_1.prisma.channel.create({
             data: {
                 code: exports.LOCAL_FILES_CHANNEL_CODE,
@@ -559,7 +565,7 @@ let ChannelManageController = class ChannelManageController {
         }
         list = list.filter(Boolean);
         if (!list.length) {
-            return { ok: false, message: '本地文件渠道必须填写「浏览目录」（容器内绝对路径，一行一个）' };
+            return { ok: false, message: '挂载文件渠道必须填写「浏览目录」（容器内绝对路径，一行一个）' };
         }
         const bad = list.find((p) => p.includes('..'));
         if (bad)
@@ -580,7 +586,7 @@ let ChannelManageController = class ChannelManageController {
         if (dup)
             return { success: false, message: `渠道名称「${body.name}」已存在` };
         if (body.type === 'localfiles' && (body.isMain || body.isBackup)) {
-            return { success: false, message: '本地文件渠道只用于浏览本地目录，不能设为主渠道或备份渠道' };
+            return { success: false, message: '挂载文件渠道只用于浏览目录，不能设为主渠道或备份渠道' };
         }
         const raw = (0, channel_domain_1.normalizeBucketDomain)(body.type, body.config || {});
         let rootPath = '';
@@ -634,7 +640,7 @@ let ChannelManageController = class ChannelManageController {
             return { success: false, message: '同一条渠道不能同时作为主渠道和备份渠道' };
         }
         if (ch.type === 'localfiles' && (body.isMain || body.isBackup)) {
-            return { success: false, message: '本地文件渠道只用于浏览本地目录，不能设为主渠道或备份渠道' };
+            return { success: false, message: '挂载文件渠道只用于浏览目录，不能设为主渠道或备份渠道' };
         }
         if (body.name !== undefined && String(body.name).trim() !== ch.name) {
             const name = String(body.name).trim();
@@ -735,7 +741,7 @@ let ChannelManageController = class ChannelManageController {
             return { success: false, message: `不支持的渠道类型: ${type || '(空)'}` };
         }
         if (type === 'localfiles') {
-            return { success: false, message: '本地文件渠道只用于浏览本地目录，不支持上传测试' };
+            return { success: false, message: '挂载文件渠道只用于浏览目录，不支持上传测试' };
         }
         cfg = (0, channel_domain_1.normalizeBucketDomain)(type, cfg);
         const info = { id: body.id || 'channel-test', name: '连接测试', type, config: cfg, metas: {} };
@@ -819,7 +825,7 @@ let ChannelManageController = class ChannelManageController {
             return { success: false, message: '内置本地存储是系统渠道，不能删除（可以禁用以停用）' };
         }
         if (target && target.code === exports.LOCAL_FILES_CHANNEL_CODE) {
-            return { success: false, message: '内置本地文件浏览渠道是系统渠道，不能删除' };
+            return { success: false, message: '内置挂载文件浏览渠道是系统渠道，不能删除' };
         }
         const copies = await prisma_1.prisma.fileCopy.count({ where: { channelId: id } });
         if (copies > 0) {

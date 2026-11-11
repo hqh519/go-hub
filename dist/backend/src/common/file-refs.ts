@@ -22,7 +22,6 @@
  * 明细页展示时两类都要给出来；FileRefCount 是两类之和。
  */
 import { prisma } from './prisma';
-import { safeParse } from '../notes/notes.util';
 
 export type FileRefSource = 'note' | 'share';
 
@@ -64,7 +63,15 @@ async function noteRefsOf(ids: string[], map: Map<string, FileRef[]>) {
     select: {
       fileId: true,
       note: {
-        select: { id: true, kind: true, status: true, createdAt: true, author: true, metas: true },
+        // v1.1.3：标题独立成 note_moments.title 列，不再从 notes.metas 的 JSON 里抠
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          createdAt: true,
+          author: true,
+          moment: { select: { title: true } },
+        },
       },
     },
   });
@@ -75,7 +82,7 @@ async function noteRefsOf(ids: string[], map: Map<string, FileRef[]>) {
     list.push({
       source: 'note',
       id: note.id,
-      title: String(safeParse(note.metas).title || ''),
+      title: String(note.moment?.title || ''),
       kind: note.kind,
       status: note.status,
       createdAt: note.createdAt ? new Date(note.createdAt).getTime() : 0,

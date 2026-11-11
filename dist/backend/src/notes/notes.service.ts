@@ -23,6 +23,8 @@ import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
 import { findOrCreateTag } from '../common/tags';
 import { fileTypeOf } from '../common/file-view';
+// v1.1.3：「图床文件」模式的筛选与图床管理共用同一份求值实现（见 common/file-filter.ts）
+import { isEmptyFileFilter, parseFileFilterQuery, passesFileFilters } from '../common/file-filter';
 import {
   DEFAULT_MOMENT_MAX_CHARS,
   MAX_ASSETS_PER_NOTE,
@@ -57,7 +59,7 @@ export interface NoteAssetView {
 export interface NoteListItem {
   id: string;
   kind: string;
-  /** 瞬间的「标题」（存 metas.title；进入编辑页自动填日期时间，用户可改） */
+  /** 瞬间的「标题」（存 note_moments.title，独立成列；进入编辑页自动填日期时间，用户可改） */
   title: string;
   content: string;
   coverFileId: string;
@@ -108,6 +110,8 @@ export interface ListInput {
   kind?: string;
   mediaKind?: string;
   search?: string;
+  /** v1.1.3：搜索范围 —— all（默认）| title 标题 | content 正文 | tag 标签 | other 其他 */
+  searchType?: string;
   tagId?: string;
   status?: string;
   from?: string;
@@ -122,8 +126,35 @@ export interface ListInput {
   isAdmin: boolean;
 }
 
+/**
+ * v1.1.3：把搜索词拆成「关键词 + 必须包含的标签 + 必须排除的标签」。
+ *
+ * 规则与图床管理页完全一致（同一个用户的心智模型，不要造第二套语法）：
+ *   · `#标签`  → 必须带这个标签
+ *   · `-#标签` → 不能带这个标签
+ *   · 其余词   → 普通关键词，按 searchType 决定搜索哪几列
+ *
+ * 例：`海边 #旅行 -#工作` → keyword='海边'，include=['旅行']，exclude=['工作']
+ */
+export function parseNoteSearch(raw?: string): { keyword: string; includeTags: string[]; excludeTags: string[] } {
+  const includeTags: string[] = [];
+  const excludeTags: string[] = [];
+  const words: string[] = [];
+  for (const token of String(raw || '').split(/\s+/)) {
+    if (!token) continue;
+    if (token.startsWith('-#') && token.length > 2) {
+      excludeTags.push(token.slice(2));
+    } else if (token.startsWith('#') && token.length > 1) {
+      includeTags.push(token.slice(1));
+    } else {
+      words.push(token);
+    }
+  }
+  return { keyword: words.join(' '), includeTags, excludeTags };
+}
+
 export interface MomentInput {
-  /** 标题（进入编辑页自动填日期时间；存进 metas.title，瞬间不单独占列） */
+  /** 标题（进入编辑页自动填日期时间；v1.1.3 起存进 note_moments.title 独立列） */
   title?: string;
   content?: string;
   mood?: string;
@@ -272,15 +303,53 @@ export class NotesService {
     where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
     // 普通用户只能看自己的；管理员在实例内看全部
     if (!input.isAdmin) where.author = String(input.viewer || '');
-    // 搜索：正文 + 标题（标题存在 metas JSON 里，直接对整段 JSON 做 LIKE 即可命中 title 值；
-    // 不用额外加 title 列，保持「瞬间不单独占列」的瘦表设计）
-    if (input.search) {
-      const s = String(input.search);
-      where.OR = [
-        { content: { contains: s, mode: 'insensitive' } },
-        { metas: { contains: s, mode: 'insensitive' } },
-      ];
+    /*
+     * 搜索（v1.1.3）：从「一句 LIKE 打天下」升级成「关键词 + 范围 + 标签语法」。
+     *   · `#标签` / `-#标签` 从搜索词里解析出来，走关系过滤（tagId 用等值，名称用模糊）；
+     *   · 剩下的关键词按 searchType 决定搜哪几列 —— 默认 all 仍然是「全部列都试一遍」，
+     *     所以老书签 / 老前端不传 searchType 时行为与升级前一致；
+     *   · 标题自 v1.1.3 起独立成 note_moments.title 列，按标题搜不再对 metas 整段 JSON 做
+     *     LIKE（那样既搜不准，也用不上索引）；metas 仍保留在 all 里，兜住老数据与其它类型
+     *     将来可能塞进 JSON 的可搜文本。
+     */
+    const parsed = parseNoteSearch(input.search);
+    const and: Record<string, unknown>[] = [];
+    for (const name of parsed.includeTags) {
+      and.push({ tags: { some: { tag: { name: { equals: name, mode: 'insensitive' } } } } });
     }
+    for (const name of parsed.excludeTags) {
+      and.push({ tags: { none: { tag: { name: { equals: name, mode: 'insensitive' } } } } });
+    }
+    if (parsed.keyword) {
+      const kw = { contains: parsed.keyword, mode: 'insensitive' };
+      const byScope: Record<string, Record<string, unknown>[]> = {
+        title: [{ moment: { title: kw } }],
+        content: [{ content: kw }],
+        tag: [{ tags: { some: { tag: { name: kw } } } }],
+        // 其他 = 除标题 / 正文 / 标签之外能被用户记住的东西：地点、心情、天气、作者、留言
+        other: [
+          { moment: { location: kw } },
+          { moment: { moodName: kw } },
+          { moment: { weatherName: kw } },
+          { author: kw },
+          { comments: { some: { content: kw } } },
+        ],
+        all: [
+          { content: kw },
+          { metas: kw },
+          { moment: { title: kw } },
+          { tags: { some: { tag: { name: kw } } } },
+          { moment: { location: kw } },
+          { moment: { moodName: kw } },
+          { moment: { weatherName: kw } },
+          { author: kw },
+          { comments: { some: { content: kw } } },
+        ],
+      };
+      const scope = String(input.searchType || 'all').toLowerCase();
+      and.push({ OR: byScope[scope] || byScope.all });
+    }
+    if (and.length) where.AND = and;
     if (input.mediaKind) where.moment = { mediaKind: String(input.mediaKind) };
     if (input.tagId) where.tags = { some: { tagId: String(input.tagId) } };
     if (input.from || input.to) {
@@ -383,7 +452,9 @@ export class NotesService {
     return {
       id: row.id,
       kind: row.kind,
-      title: String(safeParse(row.metas).title || ''),
+      // 标题只认独立列（v1.1.3 起）；metas 里不再写 title，也不做兜底 ——
+      // 兜底会让「清空标题」失效（列已空、旧 JSON 里还留着上一版的值）
+      title: String(row.moment?.title || ''),
       content: row.content || '',
       coverFileId: row.coverFileId || '',
       visibility: row.visibility || 'private',
@@ -490,9 +561,10 @@ export class NotesService {
           author: viewer,
           instanceId,
           publishedAt: now,
-          metas: JSON.stringify({ title: String(input.title || '').trim().slice(0, 80) }),
+          // metas 不再写 title（v1.1.3：标题独立成 note_moments.title 列）
           moment: {
             create: {
+              title: String(input.title || '').trim().slice(0, 80),
               mediaKind,
               assetCount: ordered.length,
               charCount,
@@ -593,14 +665,11 @@ export class NotesService {
           // 封面：保持/更新为第一张图
           coverFileId: finalFiles.find((f) => mediaKindOfMime(f.mime) === 'image')?.id || '',
           version: { increment: 1 },
-          // 标题存 metas.title（瞬间不单独占列；后续文章版本才有 title 列）
-          ...(input.title === undefined
-            ? {}
-            : { metas: JSON.stringify({ ...safeParse(existing.metas), title: String(input.title).trim().slice(0, 80) }) }),
           moment: {
             // 老数据可能没有扩展行（极端情况）→ upsert 兜住
             upsert: {
               create: {
+                title: String(input.title || '').trim().slice(0, 80),
                 mediaKind,
                 assetCount: finalFiles.length,
                 charCount,
@@ -611,6 +680,8 @@ export class NotesService {
                 location: String(input.location || '').slice(0, 80),
               },
               update: {
+                // 标题：v1.1.3 起写独立列（此前写 metas.title，改完还要整段重写 JSON）
+                ...(input.title === undefined ? {} : { title: String(input.title).trim().slice(0, 80) }),
                 mediaKind,
                 assetCount: finalFiles.length,
                 charCount,
@@ -834,12 +905,21 @@ export class NotesService {
    * ====================================================================== */
   async pickFiles(input: {
     search?: string;
+    /** 搜索范围（all / title / tag / category / user / note / other），语义同图床管理 */
+    searchScope?: string;
     type?: string;
     page?: number;
     pageSize?: number;
     instanceId?: string;
     viewer: string;
     isAdmin: boolean;
+    /**
+     * v1.1.3：「图床文件」模式的筛选参数 —— 与 /api/files/list 同名同义，
+     * 由 common/file-filter.ts 统一求值，保证「一样的筛选范围」不是两套实现。
+     */
+    filterQuery?: Record<string, string | undefined>;
+    /** 同时(all) / 任意(any)，语义同图床管理 */
+    matchMode?: string;
   }) {
     const page = Math.max(1, Math.floor(Number(input.page) || 1));
     const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 24)));
@@ -849,11 +929,37 @@ export class NotesService {
     };
     // 与「文件管理」同一口径：普通用户只看到自己的上传
     if (!input.isAdmin) where.uploader = String(input.viewer || '');
-    if (input.search) {
-      where.OR = [
-        { originalName: { contains: String(input.search), mode: 'insensitive' } },
-        { name: { contains: String(input.search), mode: 'insensitive' } },
-      ];
+    /*
+     * 搜索范围（v1.1.3）—— 与 /api/files/list 的 searchType 完全同义：
+     *   all（默认，兼容老请求） = 文件名 / 文件ID / MD5 / 分类 / 标签 / MIME / 上传者
+     *   title = 文件名；tag = 标签名；category = 分类（folder）；
+     *   user = 上传者；note = 备注；other = MD5 / MIME / IP
+     * 不传 searchType 时仍按 all 处理，老调用方行为不变。
+     */
+    const kw = String(input.search || '').trim();
+    if (kw) {
+      const contains = { contains: kw, mode: 'insensitive' as const };
+      const scope = String(input.searchScope || 'all').toLowerCase();
+      const byScope: Record<string, unknown[]> = {
+        title: [{ originalName: contains }, { name: contains }],
+        tag: [{ tags: { some: { tag: { name: contains } } } }],
+        category: [{ folder: contains }],
+        user: [{ uploader: contains }],
+        note: [{ note: contains }],
+        other: [{ md5: contains }, { mime: contains }, { ip: { contains: kw } }],
+      };
+      where.OR =
+        scope !== 'all' && byScope[scope]
+          ? byScope[scope]
+          : [
+              { originalName: contains },
+              { name: contains },
+              { md5: contains },
+              { folder: contains },
+              { tags: { some: { tag: { name: contains } } } },
+              { mime: contains },
+              { uploader: contains },
+            ];
     }
     const type = String(input.type || '');
     if (type === 'image') where.mime = { startsWith: 'image/' };
@@ -871,6 +977,39 @@ export class NotesService {
       ];
     }
 
+    /*
+     * ── v1.1.3：把筛选参数接进来 ────────────────────────────────────────
+     * 有筛选值时才走「内存求值」这条路（和回收站同一套办法）：
+     *   筛选条件里有一半是 metas JSON / 关联表（标签、渠道副本、备份、重定向…），
+     *   用 Prisma where 表达既啰嗦又容易和 filterGroups 的口径对不上。
+     *   统一取回（上限 2000，选文件器这种场景足够）→ filterGroups 求值 → 内存分页，
+     *   保证和图床管理页「勾出来的结果完全一致」。
+     * 没有筛选值时仍然走原来的库级分页，性能不受影响。
+     */
+    const filterOpts = parseFileFilterQuery(input.filterQuery || {});
+    const mmRaw = String(input.matchMode || '').toLowerCase();
+    const matchMode: 'all' | 'any' = mmRaw === 'any' || mmRaw === 'or' ? 'any' : 'all';
+    if (!isEmptyFileFilter(filterOpts)) {
+      const rows = await prisma.fileRecord.findMany({
+        where: where as any,
+        orderBy: { createdAt: 'desc' },
+        take: 2000,
+        include: {
+          copies: { include: { channel: true } },
+          tags: { include: { tag: true } },
+        },
+      });
+      const filtered = rows.filter((r) => passesFileFilters(r, filterOpts, matchMode));
+      const slice = filtered.slice((page - 1) * pageSize, page * pageSize);
+      return {
+        total: filtered.length,
+        page,
+        pageSize,
+        filtered: true,
+        list: slice.map((r) => this.pickFileRow(r)),
+      };
+    }
+
     const [total, rows] = await Promise.all([
       prisma.fileRecord.count({ where: where as any }),
       prisma.fileRecord.findMany({
@@ -885,22 +1024,36 @@ export class NotesService {
       total,
       page,
       pageSize,
-      list: rows.map((r) => {
-        const kind = mediaKindOfMime(r.mime);
-        return {
-          id: r.id,
-          name: r.name,
-          originalName: r.originalName,
-          mime: r.mime,
-          size: r.size,
-          mediaKind: kind,
-          url: fileUrlOf(r.name),
-          thumbUrl: fileUrlOf(r.name, kind === 'image' ? 320 : undefined),
-          createdAt: new Date(r.createdAt).getTime(),
-          // 供前端显示类型角标（image / video / audio / txt / pdf / other）
-          fileType: fileTypeOf(r.mime),
-        };
-      }),
+      list: rows.map((r) => this.pickFileRow(r)),
+    };
+  }
+
+  /**
+   * 选文件器单行 → 前端网格单元格。
+   * 抽成一个方法，是因为「库级分页」和「内存筛选」两条路径必须返回**完全一样**的结构，
+   * 否则前端会出现「筛了就少字段」这种鬼问题。
+   */
+  private pickFileRow(r: {
+    id: string;
+    name: string;
+    originalName: string;
+    mime: string;
+    size: number;
+    createdAt: Date | string;
+  }) {
+    const kind = mediaKindOfMime(r.mime);
+    return {
+      id: r.id,
+      name: r.name,
+      originalName: r.originalName,
+      mime: r.mime,
+      size: r.size,
+      mediaKind: kind,
+      url: fileUrlOf(r.name),
+      thumbUrl: fileUrlOf(r.name, kind === 'image' ? 320 : undefined),
+      createdAt: new Date(r.createdAt).getTime(),
+      // 供前端显示类型角标（image / video / audio / txt / pdf / other）
+      fileType: fileTypeOf(r.mime),
     };
   }
 

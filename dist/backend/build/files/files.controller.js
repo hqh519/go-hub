@@ -35,11 +35,13 @@ const settings_service_1 = require("../settings/settings.service");
 const sysconfig_service_1 = require("../settings/sysconfig.service");
 const auth_guard_1 = require("../auth/auth.guard");
 const file_view_1 = require("../common/file-view");
+const file_filter_1 = require("../common/file-filter");
 const file_refs_1 = require("../common/file-refs");
 const media_edit_1 = require("./media-edit");
 const compress_1 = require("../common/compress");
 const app_log_1 = require("../common/app-log");
 const project_paths_1 = require("../common/project-paths");
+const thumb_cache_1 = require("../common/thumb-cache");
 const qqwry_1 = require("../common/qqwry");
 const ip_query_1 = require("../common/ip-query");
 const crypto_service_1 = require("../common/crypto.service");
@@ -284,17 +286,27 @@ let LinkController = class LinkController {
                 try {
                     const n = Number(thumbRaw);
                     const w = Number.isFinite(n) && n > 0 ? Math.min(640, Math.max(64, Math.round(n))) : 320;
-                    const out = await (0, sharp_1.default)(abs).resize({ width: w, fit: 'cover' }).toBuffer({ resolveWithObject: true });
+                    const key = (0, thumb_cache_1.thumbCacheKey)({
+                        source: abs,
+                        version: (0, thumb_cache_1.sourceFingerprint)(abs),
+                        width: w,
+                        fit: 'cover',
+                    });
                     const types = {
                         jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', avif: 'image/avif',
                     };
-                    res.setHeader('Content-Type', types[out.info.format] || 'application/octet-stream');
-                    res.setHeader('Content-Length', String(out.data.length));
+                    const data = await (0, thumb_cache_1.withThumbCache)(key, types[ext === 'jpg' ? 'jpeg' : ext] || 'image/jpeg', async () => {
+                        const out = await (0, sharp_1.default)(abs).resize({ width: w, fit: 'cover' }).toBuffer({ resolveWithObject: true });
+                        return out.data;
+                    });
+                    const outType = types[ext === 'jpg' ? 'jpeg' : ext] || 'image/jpeg';
+                    res.setHeader('Content-Type', outType);
+                    res.setHeader('Content-Length', String(data.length));
                     if (!res.getHeader('Cache-Control')) {
                         res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
                     }
                     res.setHeader('X-Imgbed-Transformed', '1');
-                    return res.end(out.data);
+                    return res.end(data);
                 }
                 catch {
                 }
@@ -489,6 +501,26 @@ let LinkController = class LinkController {
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), timeoutMs);
             try {
+                const cacheKey = longCache
+                    ? (0, thumb_cache_1.thumbCacheKey)({
+                        source: cand.url,
+                        version: 'remote',
+                        width: t.width,
+                        height: t.height,
+                        fit: t.fit || 'cover',
+                    })
+                    : '';
+                if (cacheKey) {
+                    const hit = (0, thumb_cache_1.readThumb)(cacheKey);
+                    if (hit) {
+                        res.setHeader('Content-Type', hit.type);
+                        res.setHeader('Content-Length', String(hit.data.length));
+                        res.setHeader('Cache-Control', 'public, max-age=2592000, immutable');
+                        res.setHeader('X-Imgbed-Transformed', '1');
+                        res.setHeader('X-Imgbed-Cache', 'hit');
+                        return res.end(hit.data);
+                    }
+                }
                 const upstream = await fetch(cand.url, {
                     headers: { 'User-Agent': 'GoHub-proxy' },
                     signal: ctrl.signal,
@@ -515,6 +547,8 @@ let LinkController = class LinkController {
                 res.setHeader('Content-Length', String(out.data.length));
                 res.setHeader('Cache-Control', longCache ? 'public, max-age=2592000, immutable' : 'public, max-age=3600');
                 res.setHeader('X-Imgbed-Transformed', '1');
+                if (cacheKey)
+                    (0, thumb_cache_1.writeThumb)(cacheKey, out.data, types[out.info.format] || 'image/jpeg');
                 return res.end(out.data);
             }
             catch (err) {
@@ -1320,132 +1354,10 @@ let ManageController = ManageController_1 = class ManageController {
         return out.sort((a, b) => a.path.localeCompare(b.path));
     }
     filterGroups(r, f, matchMode = 'all') {
-        const groups = [];
-        const pushGroup = (values, pred) => {
-            if (matchMode === 'all')
-                values.forEach((v) => groups.push(pred(v)));
-            else
-                groups.push(values.some((v) => pred(v)));
-        };
-        const tagNames = Array.isArray(r.tags) ? r.tags.map((t) => t?.tag?.name).filter(Boolean) : [];
-        if (f.hasTags === 'yes')
-            groups.push(tagNames.length > 0);
-        else if (f.hasTags === 'no')
-            groups.push(tagNames.length === 0);
-        if (f.filterTags.length) {
-            groups.push(f.tagMode === 'or'
-                ? f.filterTags.some((t) => tagNames.includes(t))
-                : f.filterTags.every((t) => tagNames.includes(t)));
-        }
-        const metas = (0, file_view_1.safeParse)(r.metas);
-        const listType = metas.ListType || 'None';
-        const label = metas.Label || 'None';
-        pushGroup(f.listType, (v) => v === listType);
-        pushGroup(f.label, (v) => v === label);
-        pushGroup(f.fileType, (v) => v === (0, file_view_1.fileTypeOf)(r.mime));
-        const copies = Array.isArray(r.copies) ? r.copies : [];
-        const primary = (0, file_view_1.pickPrimaryCopy)(copies);
-        const chType = primary?.channel?.type || '';
-        const chLabel = chType ? file_view_1.CHANNEL_LABEL[chType] || chType : '';
-        const chName = String(primary?.channel?.name || '');
-        pushGroup(f.channel, (v) => v === chLabel);
-        pushGroup(f.channelName, (v) => v === chName);
-        pushGroup(f.uploadSource, (v) => v === (0, file_view_1.normalizeUploadSource)(r.uploadSource));
-        pushGroup(f.users, (v) => v === String(r.uploader || ''));
-        if (f.backup.length) {
-            const hasBackup = copies.some((c) => c !== primary && c?.status === 'active' && (c?.remoteKey || c?.remoteUrl || c?.objectPath));
-            pushGroup(f.backup, (v) => (v === 'backedup' ? hasBackup : !hasBackup));
-        }
-        if (f.redirect.length) {
-            const has = !!r.redirectUrl;
-            pushGroup(f.redirect, (v) => (v === 'yes' ? has : !has));
-        }
-        if (f.access.length) {
-            const deleted = String(r.status || 'active') === 'deleted';
-            const encrypted = !!String(metas.AccessPasswordHash || '').trim();
-            pushGroup(f.access, (v) => (v === 'encrypted' && encrypted) ||
-                (v === 'deleted' && deleted) ||
-                (!deleted && v === 'normal' && listType === 'None') ||
-                (!deleted && v === 'block' && listType === 'Block') ||
-                (!deleted && v === 'white' && listType === 'White'));
-        }
-        if (f.fromMs || f.toMs) {
-            const t = r.createdAt ? new Date(r.createdAt).getTime() : 0;
-            groups.push(!!t && (!f.fromMs || t >= f.fromMs) && (!f.toMs || t <= f.toMs));
-        }
-        if (f.sizeMin > 0 || f.sizeMax > 0 || f.sizeMode === 'original') {
-            const cmpSize = f.sizeMode === 'original' ? Number(r.originalSize) || r.size || 0 : r.size || 0;
-            groups.push((!f.sizeMin || cmpSize >= f.sizeMin) && (!f.sizeMax || cmpSize <= f.sizeMax));
-        }
-        if (f.ratingMin !== null || f.ratingMax !== null || f.levelMin !== null || f.levelMax !== null) {
-            const rating = Number(r.rating) || 0;
-            const level = Number(r.level) || 0;
-            groups.push((f.ratingMin === null || rating >= f.ratingMin) &&
-                (f.ratingMax === null || rating <= f.ratingMax) &&
-                (f.levelMin === null || level >= f.levelMin) &&
-                (f.levelMax === null || level <= f.levelMax));
-        }
-        if (f.validity.length) {
-            const exp = r.linkExpiresAt;
-            const expMs = exp ? new Date(exp).getTime() : 0;
-            const now = Date.now();
-            pushGroup(f.validity, (v) => (v === 'limited' && expMs > now) ||
-                (v === 'expired' && expMs > 0 && expMs <= now) ||
-                (v === 'permanent' && !expMs));
-        }
-        if (f.nameChanged.length) {
-            const renamed = !!String(r.prevName || '');
-            pushGroup(f.nameChanged, (v) => (v === 'changed' ? renamed : !renamed));
-        }
-        if (f.dimPreset.length || f.widthMin || f.widthMax || f.heightMin || f.heightMax) {
-            const w = Number(metas.Width || 0);
-            const h = Number(metas.Height || 0);
-            if (!w || !h) {
-                groups.push(false);
-            }
-            else {
-                const okRange = (!f.widthMin || w >= f.widthMin) && (!f.widthMax || w <= f.widthMax) &&
-                    (!f.heightMin || h >= f.heightMin) && (!f.heightMax || h <= f.heightMax);
-                const okPreset = !f.dimPreset.length || f.dimPreset.some((p) => this.matchDimPreset(w, h, p));
-                groups.push(okRange && okPreset);
-            }
-        }
-        return groups;
+        return (0, file_filter_1.fileFilterGroups)(r, f, matchMode);
     }
     matchDimPreset(w, h, preset) {
-        if (!w || !h)
-            return false;
-        const short = Math.min(w, h);
-        const long = Math.max(w, h);
-        const ratio = long / Math.max(1, short);
-        switch (preset) {
-            case 'landscape':
-                return w > h;
-            case 'portrait':
-                return h > w;
-            case 'square':
-                return Math.abs(w - h) <= Math.max(2, Math.round(long * 0.01));
-            case 'ratio-4-3':
-                return Math.abs(ratio - 4 / 3) <= 0.06;
-            case 'ratio-16-9':
-                return Math.abs(ratio - 16 / 9) <= 0.08;
-            case '360p':
-                return short >= 300 && short < 420;
-            case '480p':
-                return short >= 420 && short < 600;
-            case '720p':
-                return short >= 600 && short < 840;
-            case '1080p':
-                return short >= 840 && short < 1300;
-            case '2k':
-                return short >= 1300 && short < 1800;
-            case '4k':
-                return short >= 1800 && short < 2600;
-            case '8k':
-                return short >= 4000;
-            default:
-                return false;
-        }
+        return (0, file_filter_1.matchDimPreset)(w, h, preset);
     }
     async list(req, q) {
         if (q.action === 'info') {

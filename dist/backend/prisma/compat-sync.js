@@ -193,6 +193,66 @@ async function main() {
     }
 
     // ------------------------------------------------------------
+    // 规则 4：note_moments.title 独立成列（v1.1.3）
+    //   之前瞬间标题存在 notes.metas 的 JSON 里（{"title":"…"}）。
+    //   db push 会补出 title 列，但**不会**把老数据搬过去 ——
+    //   所以在 db push 之前先建列 + 回填，避免升级后所有老瞬间标题变空。
+    //   幂等：列已存在就只补「title 为空、metas 里有值」的行，重复跑无副作用。
+    // ------------------------------------------------------------
+    if ((await tableExists('note_moments')) && (await tableExists('notes'))) {
+      const hasTitle = await columnExists('note_moments', 'title');
+      if (!hasTitle) {
+        log('note_moments：缺少 title 列，先建列（db push 随后会确认结构一致）');
+        if (!CHECK_ONLY) {
+          await prisma.$executeRawUnsafe(
+            `ALTER TABLE note_moments ADD COLUMN IF NOT EXISTS title text NOT NULL DEFAULT ''`,
+          );
+        }
+      }
+      // 只在能读到 notes 表时回填；metas 用 JS 解析（不用 SQL 的 ::jsonb，
+      // 历史上存在过手工写入的非法 JSON，一条坏数据不该让整条 UPDATE 失败）
+      let rows = [];
+      if (!hasTitle && CHECK_ONLY) {
+        // --check 模式下不建列，此时列还不存在，查询必然报错 —— 直接跳过统计
+        log('note_moments：title 列尚未创建（--check 模式，跳过回填统计）');
+      } else try {
+        rows = await q(
+          `SELECT m."noteId", n.metas
+             FROM note_moments m
+             JOIN notes n ON n.id = m."noteId"
+            WHERE m.title = '' AND n.metas LIKE '%title%'`,
+        );
+      } catch (e) {
+        log(`note_moments：读取待回填数据失败（${e && e.message ? String(e.message).split('\n')[0] : e}）`);
+      }
+      if (!rows.length) {
+        log('note_moments：无需回填标题');
+      } else {
+        log(`note_moments：${rows.length} 条瞬间的标题待回填${CHECK_ONLY ? '（--check 模式，不改数据）' : ''}`);
+        if (!CHECK_ONLY) {
+          let filled = 0;
+          let bad = 0;
+          for (const r of rows) {
+            let title = '';
+            try {
+              const meta = JSON.parse(r.metas || '{}');
+              title = String((meta && meta.title) || '').trim().slice(0, 80);
+            } catch (e) {
+              bad += 1;
+              continue;
+            }
+            if (!title) continue;
+            await prisma.$executeRawUnsafe('UPDATE note_moments SET title = $1 WHERE "noteId" = $2', title, r.noteId);
+            filled += 1;
+          }
+          log(`note_moments：回填完成 ${filled} 条${bad ? `，跳过 ${bad} 条非法 JSON` : ''}`);
+        }
+      }
+    } else {
+      log('note_moments：表不存在（首次安装，跳过）');
+    }
+
+    // ------------------------------------------------------------
     // 规则 3：users.username 重复（主键/唯一约束级别的老问题）
     //   username 一直是唯一键，正常不会重复；这里只做报告，不动数据。
     // ------------------------------------------------------------

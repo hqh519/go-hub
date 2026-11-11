@@ -299,43 +299,17 @@
             </button>
         </div>
         <!--
-            v1.1.2：「记录」页的虚线操作区 —— 尺寸与「文件 / 链接」两页的虚线卡片保持一致，
-            区内是 5 个 1:1 的 app 图标，点一下直接开对应的编辑页。
-            发布成功的内容会追加到下方列表（只存在内存里，刷新即清零，与另两页一致）。
+            v1.1.3 修正：「记录」页的操作区不再自己铺一块 .record-panel ——
+            那样它和 UploadForm 里的卡片是两套尺寸（宽 42px、高 42px 都不等），
+            而且多出来的一块把整页撑高，切模式时三个切换按钮会整体上移。
+            现在把 5 个 app 图标通过 #record 插槽交给 UploadForm，
+            由它渲染在和「文件 / 链接」完全相同的容器里，尺寸与位置天然一致。
         -->
-        <div v-if="recordTab" class="record-panel">
-            <div class="record-apps" role="group" :aria-label="$t('notes.record')">
-                <button
-                    v-for="app in recordApps"
-                    :key="app.kind"
-                    type="button"
-                    class="record-app"
-                    :class="{ 'is-ready': app.ready }"
-                    :title="app.ready ? app.label : `${app.label} · ${$t('notes.typeNotReady')}`"
-                    @click="openRecordApp(app)"
-                >
-                    <span class="record-app-icon" :style="{ '--app-color': app.color }">
-                        <font-awesome-icon :icon="app.icon" />
-                    </span>
-                    <span class="record-app-label">{{ app.label }}</span>
-                </button>
-            </div>
-
-            <p v-if="!recordResults.length" class="record-tip">{{ $t('notes.recordTip') }}</p>
-            <ul v-else class="record-list">
-                <li v-for="n in recordResults" :key="n.id" class="record-item">
-                    <span class="record-item-kind">{{ kindLabelOf(n.kind) }}</span>
-                    <span class="record-item-title">{{ n.title || formatRecordTime(n.publishedAt || n.createdAt) }}</span>
-                    <span class="record-item-time">{{ formatRecordTime(n.publishedAt || n.createdAt) }}</span>
-                    <p v-if="n.content" class="record-item-text">{{ n.content }}</p>
-                </li>
-            </ul>
-        </div>
-
-        <!-- v2.8.9：convertToWebp 改用 v-model —— 原先只传 prop 未监听 update 事件，顶栏「转为WebP」开关点不动 -->
         <UploadForm
-            v-else
             ref="uploadForm"
+            :hide-composer="recordTab"
+            :record-mode="recordTab"
+            :note-items="recordNoteItems"
             :selectedUrlForm="selectedUrlForm"
             v-model:customerCompress="customerCompress"
             :compressBar="compressBar"
@@ -363,9 +337,35 @@
             :uploadConcurrency="uploadConcurrency"
             :localAutoRetry="localAutoRetry"
             @update:localAutoRetry="localAutoRetry = $event"
-            @changeMethod="setUploadMethod"
+            @cycleMethod="cycleUploadTab"
             class="upload"
-        />
+        >
+            <!--
+                「记录」页的虚线操作区内容：5 个 app 图标（瞬间 / 待办 / 导航 / 文章 / 收集）。
+                外框尺寸由 UploadForm 的 .record-card 统一负责，这里只管图标网格本身，
+                图标尺寸随卡片宽度自适应（见 .record-apps / .record-app-icon）。
+                发布成功的内容并入下方「文件列表加载区」，这里不再另开列表。
+            -->
+            <template #record>
+                <div class="record-apps" role="group" :aria-label="$t('notes.record')">
+                    <button
+                        v-for="app in recordApps"
+                        :key="app.kind"
+                        type="button"
+                        class="record-app"
+                        :class="{ 'is-ready': app.ready }"
+                        :title="app.ready ? app.label : `${app.label} · ${$t('notes.typeNotReady')}`"
+                        @click="openRecordApp(app)"
+                    >
+                        <span class="record-app-icon" :style="{ '--app-color': app.color }">
+                            <font-awesome-icon :icon="app.icon" />
+                        </span>
+                        <span class="record-app-label">{{ app.label }}</span>
+                    </button>
+                </div>
+                <p v-if="!recordResults.length" class="record-tip">{{ $t('notes.recordTip') }}</p>
+            </template>
+        </UploadForm>
         </div>
         <!-- v1.1.2：「记录」页点「瞬间」直接开编辑页，发布完成后把这一条追加到上方列表 -->
         <MomentPublishDialog
@@ -522,6 +522,8 @@ import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue'
 import fetchWithAuth from '@/utils/fetchWithAuth'
 import { formatMomentTime } from '@/utils/notes'
 import backgroundManager from '@/mixins/backgroundManager'
+// v1.1.3：实例切换密码守卫（首页 / 图床管理 / 笔记管理共用）
+import { ensureInstanceUnlocked } from '@/utils/instanceSwitch'
 import pageActivation from '@/mixins/pageActivation'
 import axios from '@/utils/axios'
 import { ref } from 'vue'
@@ -683,6 +685,42 @@ export default {
                 { kind: 'article', icon: 'book', color: '#909399', ready: false, label: this.$t('notes.typeArticle') },
                 { kind: 'collection', icon: 'images', color: '#f56c6c', ready: false, label: this.$t('notes.typeCollection') }
             ];
+        },
+        /**
+         * v1.1.3：三种模式的循环顺序（文件 → 链接 → 记录 → 文件）。
+         * 左右滑动时按这个数组走，不再是「只有两个模式互相切」。
+         *
+         * 注意：这两个**必须是 computed**。上一版它们被写进了 methods，
+         * 于是 this.uploadTabOrder 拿到的是函数而不是数组，
+         * cycleUploadTab 里 order.indexOf(...) 直接抛 TypeError，
+         * 整段滑动切换逻辑静默失败 —— 而当时还并着一条 changeMethod 的兼容分支，
+         * 那条分支只会在「文件 / 链接」之间来回切，所以表现出来就是
+         * 「能切两个、切不到记录」。别再挪回 methods。
+         */
+        uploadTabOrder() {
+            return ['default', 'paste', 'record'];
+        },
+        currentTabKey() {
+            return this.recordTab ? 'record' : this.uploadMethod;
+        },
+        /**
+         * v1.1.3：把「记录」模式发完的笔记整理成文件列表区的行数据。
+         * 列表区在 UploadForm 里（与上传条目共用同一块卡片与滚动条），
+         * 这里只负责把字段拍平成渲染需要的样子，样式留在组件内。
+         *
+         * 同样必须是 computed：它是作为 prop 传给 UploadForm 的，
+         * 写成 method 会变成「把一个函数当数组传」，控制台报
+         * Invalid prop: type check failed for prop "noteItems"，
+         * 并且列表永远是空的（笔记发完看不到）。
+         */
+        recordNoteItems() {
+            return (this.recordResults || []).map((n) => ({
+                id: n.id,
+                kindLabel: this.kindLabelOf(n.kind),
+                title: n.title || this.formatRecordTime(n.publishedAt || n.createdAt),
+                time: this.formatRecordTime(n.publishedAt || n.createdAt),
+                content: n.content || ''
+            }))
         },
         ownerName() {
             return this.userConfig?.ownerName || 'GoHub'
@@ -1220,6 +1258,14 @@ export default {
             this.recordTab = false
             this.setUploadMethod(method)
         },
+        /** dir: 'next' = 向左滑（下一个）、'prev' = 向右滑（上一个） */
+        cycleUploadTab(dir) {
+            const order = this.uploadTabOrder;
+            const cur = order.indexOf(this.currentTabKey);
+            const step = dir === 'prev' ? -1 : 1;
+            const next = order[(cur + step + order.length) % order.length];
+            this.switchUploadTab(next);
+        },
         /** 点 app 图标：瞬间直接开编辑页，其余类型还没实装 */
         openRecordApp(app) {
             if (!app.ready) {
@@ -1429,12 +1475,15 @@ export default {
          * 切换实例：写入 localStorage（gohub_instance_id，'' = 默认），
          * 提示后刷新页面，让文件列表 / 标签等所有与实例相关的数据按新实例重新加载。
          */
-        switchInstance(id) {
+        async switchInstance(id) {
             const val = id == null ? '' : String(id)
             if (val === this.currentInstanceId) {
                 this.showInstanceDialog = false
                 return
             }
+            // v1.1.3：目标实例启用了切换密码时，先验证再切（与后台两个页面同一份守卫）
+            const unlocked = await ensureInstanceUnlocked(val)
+            if (!unlocked) return
             try { localStorage.setItem('gohub_instance_id', val) } catch (e) { /* 隐私模式忽略 */ }
             this.currentInstanceId = val
             this.showInstanceDialog = false
@@ -2480,30 +2529,35 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
 .upload-method-tab-icon {
     font-size: 14px;
 }
-/* ── v1.1.2「记录」页 ───────────────────────────────────────
-   虚线操作区：宽高与「文件 / 链接」两页的虚线卡片保持一致（55vw / 45vh，移动端 70vw），
-   区内放 5 个 1:1 的 app 图标，点一下直接开对应编辑页。 */
-.record-panel {
-    box-sizing: border-box;
-    width: 55vw;
-    min-height: var(--upload-card-height, 45vh);
-    margin: 0 auto;
-    padding: 18px;
-    border: 1px dashed var(--el-border-color, rgba(127, 127, 127, 0.45));
-    border-radius: 15px;
-    background-color: var(--el-upload-dragger-bg-color, rgba(127, 127, 127, 0.04));
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-}
+/* ── 「记录」页的操作区内容 ─────────────────────────────────
+   v1.1.3 修正：外框（虚线卡片）已交给 UploadForm 的 .record-card 统一渲染，
+   这里只负责里面的图标网格。所以本文件里不再有 .record-panel 的尺寸/边框定义 ——
+   一旦在这里再画一层框，就会和另两种模式的操作区错开（上一版就是这么跳的）。
 
+   图标尺寸口径（需求：图标改小一点、随操作区宽度自适应）：
+   ─ 网格按卡片宽度等分（桌面 4 列 / 移动 3 列），列宽本身随操作区宽度变化；
+   ─ 单颗图标再用 min(100%, 上限) 封顶 —— 卡片宽了不会无限变大，
+     卡片窄了（小屏）就退化成撑满列宽，永远不会溢出。
+   ─ 按钮整体也封顶，避免宽屏下 4 个图标被拉得过开、标签离图标太远。 */
 .record-apps {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: 12px;
+    /* 一行几个、间距多少，都收敛成两个变量，媒体查询里只改这两个值 */
+    --app-cols: 4;
+    --app-gap: 18px;
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    /* 用 flex 而不是 grid：5 个图标排成 4+1 / 3+2 时，最后一行能居中，
+       不会像 grid 那样留一个空洞在右边 */
+    justify-content: center;
+    gap: 16px var(--app-gap);
 }
 
 .record-app {
+    /* 等分一行：宽度随操作区宽度变化（自适应），
+       flex-grow:0 保证每颗按钮宽度一致 —— 不满的最后一行会居中，
+       而不是被拉宽到整行。图标本身再由 min(100%, 56px) 封顶（改小）。 */
+    flex: 0 1 calc((100% - (var(--app-cols) - 1) * var(--app-gap)) / var(--app-cols));
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -2515,12 +2569,17 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     cursor: pointer;
 }
 
-/* 图标本体：1:1 正方形，圆角 + 淡色底，视觉上就是一排 app */
+/* 图标本体：1:1 正方形，圆角 + 淡色底，视觉上就是一排 app。
+   min(100%, 56px) = 列宽更窄时撑满（自适应），列宽富余时封顶不变大（改小）。 */
 .record-app-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
+    /*
+     * min(100%, 68px)：列宽更窄时自动缩到列宽（自适应），
+     * 列宽富余时封顶 68px（上一版是撑满整格，桌面端被拉到 160+ px，太大）。
+     */
+    width: min(100%, 68px);
     aspect-ratio: 1 / 1;
     border-radius: 20%;
     background: color-mix(in srgb, var(--app-color, #409eff) 14%, transparent);
@@ -2559,77 +2618,26 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     color: var(--text-color-secondary, #888);
 }
 
-.record-list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 26vh;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-}
-
-.record-item {
-    padding: 8px 10px;
-    border-radius: 9px;
-    background: var(--glass-bg, rgba(127, 127, 127, 0.06));
-    border: 1px solid var(--glass-border, rgba(127, 127, 127, 0.12));
-}
-
-.record-item-kind {
-    display: inline-block;
-    margin-right: 6px;
-    padding: 0 6px;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--primary-color) 14%, transparent);
-    color: var(--primary-color);
-    font-size: 11px;
-    line-height: 17px;
-}
-
-.record-item-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-color, #303133);
-}
-
-.record-item-time {
-    float: right;
-    font-size: 11px;
-    color: var(--text-color-secondary, #909399);
-}
-
-.record-item-text {
-    margin: 4px 0 0;
-    font-size: 12.5px;
-    line-height: 1.6;
-    color: var(--text-color-secondary, #606266);
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    overflow: hidden;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-
 @media (max-width: 768px) {
-    .record-panel {
-        width: 70vw;
-        padding: 12px;
+    .record-apps {
+        /* 移动端：一行 3 个，单元格更窄（≈70px）→ 图标跟着列宽走 */
+        --app-cols: 3;
+        --app-gap: 12px;
+        gap: 14px var(--app-gap);
     }
 
-    .record-apps {
-        gap: 8px;
+    .record-app {
+        /* 移动端每颗按钮的宽度完全由 --app-cols 决定，这里不再单独封顶 */
+        min-width: 0;
     }
 
     .record-app-icon {
+        width: min(100%, 56px);
         font-size: 18px;
     }
 
     .record-app-label {
-        font-size: 11px;
+        font-size: 12px;
     }
 }
 @media (max-width: 768px) {

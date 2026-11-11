@@ -412,20 +412,49 @@ export default {
                 this.overflow = false;
                 return;
             }
+            /*
+             * v1.1.3：量不到布局时（元素还在渲染 / 被 display:none 掉 / 卡片刚挂载）
+             * clientHeight 会是 0，此时 `scrollHeight > 2` 恒成立 —— 于是「全文」按钮
+             * 在内容其实放得下时也冒出来。反过来如果一个元素临时没有高度，
+             * 也不能据此把已有的 overflow 判成 false（那会让被裁掉的正文再也没法展开）。
+             * 所以：没有布局宽度就直接不动结论，等下一次有效测量。
+             */
+            if (!el.clientWidth && !el.clientHeight) return;
             const full = el.scrollHeight;
             // +2px 容差：行高取整 / 亚像素会让「刚好到阈值」差 1px
             this.overflow = full > el.clientHeight + 2;
         },
 
         /* ── 留言 ─────────────────────────────────────────────── */
-        /** 展开输入框：replyTo 为空 = 直接留言，否则回复某条 */
+        /**
+         * 展开输入框：replyTo 为空 = 直接留言，否则回复某条。
+         *
+         * v1.1.3 修复「点留言之后整条内容像不见了」：
+         *   旧实现做了两件会动版面的事 ——
+         *     ① `commentExpanded = true`：把留言区从 20% 视口高度「啪」地展开，卡片高度突变；
+         *     ② `el.focus()`：不带参数时浏览器会把输入框**滚动到视口内**，
+         *        卡片正文正好被滚出屏幕上方，看起来就像「内容消失了」。
+         *   现在：不再强制展开留言区（要展开点「更多留言」），并把 focus 改成
+         *   `preventScroll` —— 只给焦点、不搬页面；随后用 `scrollIntoView({block:'nearest'})`
+         *   在**必要时**做最小幅度的滚动，保证输入框可见但不把正文顶走。
+         */
         openComposer(name) {
             this.replyTarget = name || null;
             this.composerOpen = true;
-            this.commentExpanded = true;
             this.$nextTick(() => {
                 const el = this.$refs.composer;
-                if (el) el.focus();
+                if (el && typeof el.focus === 'function') {
+                    try {
+                        el.focus({ preventScroll: true });
+                    } catch (e) {
+                        el.focus();
+                    }
+                    if (typeof el.scrollIntoView === 'function') {
+                        el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                    }
+                }
+                // 版面变了（多出一个输入框）→ 正文的「全文 / 收起」判定要重算一次
+                this.measure();
                 this.measureComments();
             });
         },

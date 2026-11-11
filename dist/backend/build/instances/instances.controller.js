@@ -50,6 +50,27 @@ let InstancesController = class InstancesController {
             return this.fail(res, r.error);
         return res.json(r.item);
     }
+    async attributes(id, req, res) {
+        const r = await this.svc.getAttributes(id, this.me(req));
+        if (r.error)
+            return this.fail(res, r.error);
+        return res.json(r.item);
+    }
+    async setAttributes(id, body, req, res) {
+        const r = await this.svc.setAttributes(id, this.me(req), body || {});
+        if (r.error)
+            return this.fail(res, r.error);
+        return res.json(r.item);
+    }
+    async switchLock(id, req) {
+        return this.svc.switchLockState(id, this.me(req));
+    }
+    async verifySwitch(id, body, req, res) {
+        const r = await this.svc.verifySwitch(id, this.me(req), body || {});
+        if (r.error)
+            return this.fail(res, r.error, 403);
+        return res.json(r);
+    }
     async remove(id, req, res) {
         const r = await this.svc.remove(id, this.me(req));
         if (r.error)
@@ -122,6 +143,44 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, Object, Object]),
     __metadata("design:returntype", Promise)
 ], InstancesController.prototype, "patch", null);
+__decorate([
+    (0, common_1.Get)(':id/attributes'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Req)()),
+    __param(2, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object]),
+    __metadata("design:returntype", Promise)
+], InstancesController.prototype, "attributes", null);
+__decorate([
+    (0, common_1.Patch)(':id/attributes'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Req)()),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], InstancesController.prototype, "setAttributes", null);
+__decorate([
+    (0, common_1.Get)(':id/switch-lock'),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], InstancesController.prototype, "switchLock", null);
+__decorate([
+    (0, common_1.Post)(':id/verify-switch'),
+    (0, common_1.HttpCode)(200),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Body)()),
+    __param(2, (0, common_1.Req)()),
+    __param(3, (0, common_1.Res)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object, Object, Object]),
+    __metadata("design:returntype", Promise)
+], InstancesController.prototype, "verifySwitch", null);
 __decorate([
     (0, common_1.Delete)(':id'),
     __param(0, (0, common_1.Param)('id')),

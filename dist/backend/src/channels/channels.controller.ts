@@ -261,13 +261,17 @@ export class ChannelsService {
   }
 
   /**
-   * v3.0.0（R10）：确保「本地文件」内置浏览渠道存在（幂等，每次启动都跑）。
+   * v3.0.0（R10）：确保「挂载文件」内置浏览渠道存在（幂等，每次启动都跑）。
    *
    * 与 999999（本地存储）的区别：
    *   · 只浏览、不接受上传（type=localfiles，只读）；
    *   · 浏览目录固定为「本地存储」的内置根（<backend>/uploads），不允许改；
    *   · code=999990 固定，不可删除 —— 管理员额外创建的 localfiles 渠道是随机 6 位 code，
    *     两者互不影响（本条只保证 999990 这一条存在且配置不被改坏）。
+   *
+   * v1.1.3：渠道名称统一改为「挂载文件-默认」。老部署里这条记录还叫「本地文件」，
+   * 这里做一次**改名但不覆盖自定义名**的兼容：只有当名称仍是历史默认值时才改成新名，
+   * 管理员自己改过的名字原样保留（不替用户改名）。
    */
   async ensureBuiltinLocalFilesChannel(): Promise<void> {
     const root = LocalAdapter.root();
@@ -285,6 +289,14 @@ export class ChannelsService {
       if (!existing.enabled) patch.enabled = true;
       const wantCode = channelTypeCode('localfiles');
       if (existing.typeCode !== wantCode) patch.typeCode = wantCode;
+      // v1.1.3：历史默认名（本地文件 / 本地文件-系统 / 本地文件_系统）→ 挂载文件-默认
+      const BUILTIN_DEFAULT_NAME = '挂载文件-默认';
+      const LEGACY_NAMES = ['本地文件', '本地文件-系统', '本地文件_系统'];
+      if (LEGACY_NAMES.includes(String(existing.name || ''))) {
+        // 新名若被别的渠道占用，就退到「挂载文件-系统」，避免唯一约束冲突导致启动失败
+        const taken = await prisma.channel.findUnique({ where: { name: BUILTIN_DEFAULT_NAME } });
+        patch.name = taken && taken.id !== existing.id ? '挂载文件-系统' : BUILTIN_DEFAULT_NAME;
+      }
       // 浏览目录固定为内置 uploads（被改过就纠正回来）
       if (current.length !== 1 || String(current[0]) !== root) {
         patch.config = JSON.stringify({ ...cfg, rootPaths: [root] });
@@ -294,9 +306,9 @@ export class ChannelsService {
       }
       return;
     }
-    let name = '本地文件';
-    if (await prisma.channel.findUnique({ where: { name } })) name = '本地文件-系统';
-    if (await prisma.channel.findUnique({ where: { name } })) name = '本地文件_系统';
+    let name = '挂载文件-默认';
+    if (await prisma.channel.findUnique({ where: { name } })) name = '挂载文件-系统';
+    if (await prisma.channel.findUnique({ where: { name } })) name = '挂载文件_系统';
     await prisma.channel.create({
       data: {
         code: LOCAL_FILES_CHANNEL_CODE,
@@ -660,7 +672,7 @@ export class ChannelManageController {
     }
     list = list.filter(Boolean);
     if (!list.length) {
-      return { ok: false, message: '本地文件渠道必须填写「浏览目录」（容器内绝对路径，一行一个）' };
+      return { ok: false, message: '挂载文件渠道必须填写「浏览目录」（容器内绝对路径，一行一个）' };
     }
     const bad = list.find((p) => p.includes('..'));
     if (bad) return { ok: false, message: `浏览目录禁止包含 ".."：${bad}` };
@@ -684,7 +696,7 @@ export class ChannelManageController {
     // v3.0.0：MinIO 的域名只填域名即可 —— 老配置里残留的 /bucket 在这里剥离，桶名由适配器拼接
     // v3.0.0：本地文件渠道是「只读浏览」渠道，不能作为主渠道 / 备份渠道参与上传
     if (body.type === 'localfiles' && (body.isMain || body.isBackup)) {
-      return { success: false, message: '本地文件渠道只用于浏览本地目录，不能设为主渠道或备份渠道' };
+      return { success: false, message: '挂载文件渠道只用于浏览目录，不能设为主渠道或备份渠道' };
     }
     const raw = normalizeBucketDomain(body.type, body.config || {});
     // v3.0.0：自定义本地渠道 —— rootPath 必填且拒绝 '..'
@@ -754,7 +766,7 @@ export class ChannelManageController {
     }
     // v3.0.0：本地文件渠道不参与上传，禁止被设为主渠道 / 备份渠道
     if (ch.type === 'localfiles' && (body.isMain || body.isBackup)) {
-      return { success: false, message: '本地文件渠道只用于浏览本地目录，不能设为主渠道或备份渠道' };
+      return { success: false, message: '挂载文件渠道只用于浏览目录，不能设为主渠道或备份渠道' };
     }
     // 渠道名可修改，但不允许与其它渠道重名
     if (body.name !== undefined && String(body.name).trim() !== ch.name) {
@@ -899,7 +911,7 @@ export class ChannelManageController {
     }
     // v3.0.0：本地文件渠道是只读浏览渠道，不参与上传，因此没有「连接测试」的概念
     if (type === 'localfiles') {
-      return { success: false, message: '本地文件渠道只用于浏览本地目录，不支持上传测试' };
+      return { success: false, message: '挂载文件渠道只用于浏览目录，不支持上传测试' };
     }
 
     // v3.0.0：连接测试同样按「域名只填域名」处理（剥离历史 /bucket），保证测出来的外链与正式上传一致
@@ -1034,7 +1046,7 @@ export class ChannelManageController {
       return { success: false, message: '内置本地存储是系统渠道，不能删除（可以禁用以停用）' };
     }
     if (target && target.code === LOCAL_FILES_CHANNEL_CODE) {
-      return { success: false, message: '内置本地文件浏览渠道是系统渠道，不能删除' };
+      return { success: false, message: '内置挂载文件浏览渠道是系统渠道，不能删除' };
     }
     /*
      * v3.0.0（R10）：只要库里还有该渠道的文件副本就禁止删除 ——
