@@ -2236,7 +2236,10 @@
     "snapshotUploadedTitle": "Snapshot uploaded",
     "snapshotUploaded": "Uploaded",
     "snapshotView": "View",
-    "more": "More"
+    "more": "More",
+    "resumeTip": "Last watched at {time}",
+    "resumeJump": "Jump",
+    "resumeDismiss": "Dismiss"
   },
   "localFiles": {
     "title": "Mount Management",

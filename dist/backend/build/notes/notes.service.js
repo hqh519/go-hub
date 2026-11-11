@@ -137,8 +137,7 @@ let NotesService = class NotesService {
         if (input.kind)
             where.kind = String(input.kind);
         where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
-        if (!input.isAdmin)
-            where.author = String(input.viewer || '');
+        where.author = String(input.viewer || '');
         const parsed = parseNoteSearch(input.search);
         const and = [];
         for (const name of parsed.includeTags) {
@@ -302,12 +301,12 @@ let NotesService = class NotesService {
             commentCount: Number(commentCount) || 0,
         };
     }
-    async detail(id, viewer, isAdmin, instanceId) {
+    async detail(id, viewer, _isAdmin, instanceId) {
         const row = await prisma_1.prisma.note.findFirst({
             where: {
                 id: String(id || ''),
                 instanceId: String(instanceId || ''),
-                ...(isAdmin ? {} : { author: String(viewer || '') }),
+                author: String(viewer || ''),
             },
             include: {
                 moment: true,
@@ -399,7 +398,7 @@ let NotesService = class NotesService {
             return { error: '瞬间不存在' };
         if (existing.status === 'deleted')
             return { error: '该瞬间在回收站里，请先恢复再编辑' };
-        if (!isAdmin && existing.author !== viewer)
+        if (existing.author !== viewer)
             return { error: '无权编辑他人的瞬间' };
         if (String(input.instanceId || '') !== String(existing.instanceId || '')) {
             return { error: '实例不匹配，请刷新后重试' };
@@ -501,11 +500,11 @@ let NotesService = class NotesService {
             return { error: `保存失败：${err.message}` };
         }
     }
-    async findOwned(id, viewer, isAdmin) {
+    async findOwned(id, viewer, _isAdmin) {
         const row = await prisma_1.prisma.note.findUnique({ where: { id: String(id || '') } });
         if (!row)
             return { error: '瞬间不存在' };
-        if (!isAdmin && row.author !== viewer)
+        if (row.author !== viewer)
             return { error: '无权操作他人的瞬间' };
         return { row };
     }
@@ -539,24 +538,36 @@ let NotesService = class NotesService {
         app_log_1.appLog.info('note', `彻底删除瞬间：${hit.row.id}`, `作者=${hit.row.author}`, ip);
         return { ok: true };
     }
-    async tagCandidates(instanceId) {
+    async tagCandidates(instanceId, viewer) {
         const rows = await prisma_1.prisma.tag.findMany({
-            where: { instanceId: String(instanceId || ''), type: 'note' },
-            select: { id: true, name: true, _count: { select: { noteTags: true } } },
+            where: {
+                instanceId: String(instanceId || ''),
+                type: 'note',
+                noteTags: { some: { note: { author: String(viewer || '') } } },
+            },
+            select: {
+                id: true,
+                name: true,
+                noteTags: { select: { noteId: true }, where: { note: { author: String(viewer || '') } } },
+            },
             orderBy: { createdAt: 'desc' },
             take: 200,
         });
         return rows
-            .map((r) => ({ id: r.id, name: r.name, count: r._count.noteTags }))
+            .map((r) => ({ id: r.id, name: r.name, count: (r.noteTags || []).length }))
+            .filter((r) => r.count > 0)
             .sort((a, b) => b.count - a.count);
     }
-    async tagAdmin(instanceId, kind) {
+    async tagAdmin(instanceId, kind, viewer) {
         const where = { instanceId: String(instanceId || ''), type: 'note' };
         const tags = await prisma_1.prisma.tag.findMany({ where: where, orderBy: { createdAt: 'asc' } });
         if (!tags.length)
             return [];
         const links = await prisma_1.prisma.noteTag.findMany({
-            where: { tagId: { in: tags.map((t) => t.id) } },
+            where: {
+                tagId: { in: tags.map((t) => t.id) },
+                note: { author: String(viewer || '') },
+            },
             select: { tagId: true, note: { select: { kind: true } } },
         });
         const byTag = new Map();
@@ -580,19 +591,20 @@ let NotesService = class NotesService {
                 creator: t.owner || '',
                 createdAt: new Date(t.createdAt).getTime(),
             };
-        });
+        })
+            .filter((t) => t.count > 0);
         if (!kind)
             return out;
         return out
             .filter((t) => (t.kindCounts[kind] || 0) > 0)
             .map((t) => ({ ...t, count: t.kindCounts[kind] }));
     }
-    async accessibleNote(id, viewer, isAdmin, instanceId) {
+    async accessibleNote(id, viewer, _isAdmin, instanceId) {
         return prisma_1.prisma.note.findFirst({
             where: {
                 id: String(id || ''),
                 instanceId: String(instanceId || ''),
-                ...(isAdmin ? {} : { author: String(viewer || '') }),
+                author: String(viewer || ''),
             },
             select: { id: true, author: true, status: true, instanceId: true, metas: true },
         });
@@ -643,11 +655,11 @@ let NotesService = class NotesService {
         const [view] = this.shapeComments([created], input.viewer);
         return { id: created.id, comment: view };
     }
-    async deleteComment(id, viewer, isAdmin, ip) {
+    async deleteComment(id, viewer, _isAdmin, ip) {
         const row = await prisma_1.prisma.noteComment.findUnique({ where: { id: String(id || '') } });
         if (!row)
             return { error: '留言不存在' };
-        if (!isAdmin && row.author !== viewer)
+        if (row.author !== viewer)
             return { error: '无权删除他人的留言' };
         await prisma_1.prisma.noteComment.delete({ where: { id: row.id } });
         app_log_1.appLog.info('note', `删除瞬间留言：${row.noteId}`, `留言人=${row.author}`, ip);

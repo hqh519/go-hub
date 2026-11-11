@@ -267,18 +267,53 @@ class LocalAdapter {
             },
         };
     }
+    static existsSyncSafe(abs) {
+        try {
+            return (0, fs_1.existsSync)(abs);
+        }
+        catch {
+            return false;
+        }
+    }
+    static uniqueRelKey(rel) {
+        const p = String(rel || '').replace(/\\/g, '/');
+        const slash = p.lastIndexOf('/');
+        const dir = slash >= 0 ? p.slice(0, slash + 1) : '';
+        const base = slash >= 0 ? p.slice(slash + 1) : p;
+        const dot = base.lastIndexOf('.');
+        const stem = dot > 0 ? base.slice(0, dot) : base;
+        const ext = dot > 0 ? base.slice(dot) : '';
+        const tail = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        return `${dir}${stem}-${tail}${ext}`;
+    }
     async uploadFile(path, _size, file, key, channel, ctx) {
         const base = this.baseRoot(channel);
         await this.enforceSizeLimit(base, channel);
-        const relKey = await this.buildRelKey(key, { originalName: file.originalName }, channel, ctx);
-        const abs = LocalAdapter.safeJoin(base, relKey);
+        let relKey = await this.buildRelKey(key, { originalName: file.originalName }, channel, ctx);
+        let abs = LocalAdapter.safeJoin(base, relKey);
         try {
             await fs_1.promises.mkdir((0, path_1.dirname)(abs), { recursive: true });
+            if (LocalAdapter.existsSyncSafe(abs)) {
+                relKey = LocalAdapter.uniqueRelKey(relKey);
+                abs = LocalAdapter.safeJoin(base, relKey);
+            }
             try {
                 await fs_1.promises.link(path, abs);
             }
-            catch {
-                await fs_1.promises.copyFile(path, abs);
+            catch (err) {
+                if (err?.code === 'EEXIST') {
+                    relKey = LocalAdapter.uniqueRelKey(relKey);
+                    abs = LocalAdapter.safeJoin(base, relKey);
+                    try {
+                        await fs_1.promises.link(path, abs);
+                    }
+                    catch {
+                        await fs_1.promises.copyFile(path, abs);
+                    }
+                }
+                else {
+                    await fs_1.promises.copyFile(path, abs);
+                }
             }
         }
         catch (err) {

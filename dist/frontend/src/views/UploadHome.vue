@@ -147,21 +147,9 @@
                             <font-awesome-icon icon="link" class="quick-toolbar-icon"/>
                         </el-button>
                     </el-tooltip>
-                    <!--
-                        v3.0.0（R12）：移动端「拍摄」按钮移进这个隐藏区（点击右下角箭头才展开），
-                        不再常驻悬浮栏上，避免误触；桌面端本来就不显示（快捷栏里没有相机入口）。
-                    -->
-                    <el-tooltip :disabled="disableTooltip || !isQuickToolbarOpen" :content="$t('upload.takePhoto')" placement="left" :hide-after="0" :show-after="1000">
-                        <el-button class="quick-toolbar-button quick-toolbar-camera" @click="openCamera">
-                            <font-awesome-icon icon="camera" class="quick-toolbar-icon"/>
-                        </el-button>
-                    </el-tooltip>
                 </div>
             </div>
-            <!--
-                v3.0.0（R8）：移动端「拍照」按钮 —— 点击调起相机拍照。
-                v3.0.0（R12）：已移入上面的快捷栏隐藏区（点箭头展开时才显示）。
-            -->
+            <!-- v1.1.4：原「拍摄 / 拍照」按钮与拍照弹窗整体下线（需求：移除首页左下角拍照按钮及相关功能） -->
             <!-- v2.8.8：「登记文件」入口，位于「上传设置」正上方（同一快捷栏，同一按钮样式） -->
             <el-tooltip :disabled="disableTooltip" :content="$t('upload.recordFile')" placement="left" :hide-after="0" :show-after="1000">
                 <el-button class="quick-toolbar-button" @click="openRecordDialog">
@@ -187,55 +175,6 @@
                 </el-button>
             </el-tooltip>
         </div>
-        <!-- v3.0.0（R8）：拍照用的隐藏 input（capture 调起系统相机；视觉上不可见、不占位） -->
-        <input
-            ref="cameraInput"
-            type="file"
-            accept="image/*"
-            capture="environment"
-            class="camera-input-hidden"
-            @change="handleCameraCapture"
-        />
-        <!--
-            v3.0.0（R8.1）：拍照弹窗 —— 用 getUserMedia 做实时预览后拍照。
-            桌面浏览器会忽略 input 的 capture 属性（直接弹文件选择），所以不能只靠
-            <input capture>；这里优先真实摄像头，失败/不可用时再退回系统相机。
-        -->
-        <el-dialog
-            v-model="showCameraDialog"
-            :title="$t('upload.cameraTitle')"
-            class="camera-dialog"
-            width="min(560px, 94vw)"
-            append-to-body
-            destroy-on-close
-            :close-on-click-modal="false"
-            @closed="stopCamera"
-        >
-            <div class="camera-stage" @click="toggleCameraUi">
-                <video ref="cameraVideo" class="camera-video" autoplay playsinline muted></video>
-                <div v-if="cameraStarting" class="camera-mask">{{ $t('upload.cameraStarting') }}</div>
-                <div v-else-if="cameraError" class="camera-mask is-error">{{ cameraError }}</div>
-            </div>
-            <!--
-                v3.0.0（R9）：移动端「拍摄」等操作按钮放进隐藏区域 —— 默认收起，
-                点击画面显示 / 再点收起（沉浸式取景，避免误触）；桌面端不受影响始终显示。
-            -->
-            <div class="camera-actions" :class="{ 'is-ui-hidden': !cameraUiVisible }">
-                <el-button @click="openSystemCamera">
-                    <font-awesome-icon icon="camera" class="camera-action-icon"/>{{ $t('upload.cameraSystem') }}
-                </el-button>
-                <el-button :disabled="!cameraReady" @click="switchCamera">
-                    <font-awesome-icon icon="sync-alt" class="camera-action-icon"/>{{ $t('upload.cameraSwitch') }}
-                </el-button>
-                <el-button type="primary" :disabled="!cameraReady" @click="capturePhoto">
-                    <font-awesome-icon icon="camera" class="camera-action-icon"/>{{ $t('upload.cameraCapture') }}
-                </el-button>
-                <!-- v3.0.0（R14）：支持连拍 —— 拍完不再自动关窗，点「完成」才关闭摄像头 -->
-                <el-button @click="closeCameraDialog">
-                    <font-awesome-icon icon="check" class="camera-action-icon"/>{{ $t('upload.cameraDone') }}
-                </el-button>
-            </div>
-        </el-dialog>
         <!--
             v3.0.0：左上角头像 logo —— 点击弹出「切换实例」弹窗（不再直接跳转用户管理）；
             右上角序号角标 = 按实例创建时间升序的序号（默认实例不显示，第一个创建的实例 = 1）。
@@ -530,7 +469,6 @@ import { ref } from 'vue'
 import { mapGetters } from 'vuex'
 import { validateFolderPath } from '@/utils/pathValidator'
 import { getLinkPrefix } from '@/utils/fileLink'
-import { filesToUploadEntries } from '@/utils/upload/directoryTraversal'
 
 export default {
     name: 'UploadHome',
@@ -548,14 +486,6 @@ export default {
             channelName: '', //指定的存储渠道 ID（'' = 默认，跟随全局）
             backupChannel: '', //备份渠道 ID（'' = 跟随全局；'none' = 不备份）
             uploadInstanceId: '', // v3.0.0（R8）归属实例（'' = 跟随当前实例；'__default__' = 默认实例；其它 = 实例 ID），仅本次会话生效
-            // v3.0.0（R8.1）：拍照弹窗状态 —— 优先用 getUserMedia 实时预览，失败才回退系统相机 input
-            showCameraDialog: false,
-            cameraStream: null,
-            cameraFacing: 'environment', // environment=后置 / user=前置
-            cameraUiVisible: true, // v3.0.0（R9）：拍摄界面操作按钮可见性（移动端默认收起，点击画面唤出）
-            cameraReady: false,
-            cameraStarting: false,
-            cameraError: '',
             uploadNameType: '', //上传文件命名方式
             customUrlPrefix: '', //自定义链接前缀
             useCustomUrl: 'false', //是否启用自定义链接格式
@@ -807,10 +737,6 @@ export default {
             return Math.min(10, Math.max(1, Math.floor(n)))
         }
     },
-    beforeUnmount() {
-        // 离开上传页时释放摄像头，避免指示灯常亮
-        this.stopCamera()
-    },
     mounted() {
         // 初始化背景图，启用自动创建元素
         this.initializeBackground('uploadBkImg', '.container', true, true)
@@ -958,219 +884,6 @@ export default {
         },
         changeUrlForm() {
             this.$store.commit('setUploadCopyUrlForm', this.selectedUrlForm)
-        },
-        /**
-         * v3.0.0（R8.1）：拍照 ——
-         * 桌面浏览器会忽略 <input capture>（直接弹文件选择、根本不开相机），
-         * 因此优先用 getUserMedia 打开真实摄像头做预览；
-         * 仅当浏览器不支持 / 非 HTTPS 时，才回退到系统相机（移动端会直接开相机）。
-         */
-        openCamera() {
-            const md = window.navigator?.mediaDevices
-            const secure = window.isSecureContext
-                || ['localhost', '127.0.0.1'].includes(window.location.hostname)
-            // v3.0.0（R9）：每次打开拍照弹窗都回到后置摄像头（刷新 / 重开都从 environment 起步），
-            // 操作按钮回到隐藏态（移动端点击画面唤出）
-            this.cameraFacing = 'environment'
-            this.cameraUiVisible = false
-            if (!md || typeof md.getUserMedia !== 'function' || !secure) {
-                this.cameraReady = false
-                this.cameraError = this.$t('upload.cameraInsecure')
-                this.showCameraDialog = true
-                return
-            }
-            this.cameraError = ''
-            this.cameraReady = false
-            this.showCameraDialog = true
-            this.startCamera()
-        },
-        /** v3.0.0（R9）：移动端点击取景画面 → 显示 / 收起底部操作按钮 */
-        toggleCameraUi() {
-            this.cameraUiVisible = !this.cameraUiVisible
-        },
-        /**
-         * 启动（或重启）摄像头流，绑到弹窗里的 video 上。
-         * v3.0.0（R14）三处修正：
-         *  1) 手机竖屏改按 3:4（宽<高）申请画面，取景框与成片都是 4:3 竖屏；
-         *  2) 显式把 zoom 复位到 1 倍、focusMode 用 continuous —— 部分安卓机型
-         *     默认带数字变焦，画面会被拉近（用户反馈「焦距不对」）；
-         *  3) 停止旧流后等一小会儿再申请，并对 NotAllowed/NotReadable 自动重试一次 ——
-         *     原来切换镜头/二次拍摄时立刻重新申请，会被浏览器判定为并发占用而报
-         *     「权限不被允许」（实际是设备忙）。
-         */
-        async startCamera() {
-            this.stopCamera()
-            this.cameraStarting = true
-            // 竖屏（窄屏）申请 3:4，桌面宽屏保持 16:9
-            const portrait = window.innerWidth <= 768
-            const base = {
-                facingMode: { ideal: this.cameraFacing },
-                width: { ideal: portrait ? 1080 : 1920 },
-                height: { ideal: portrait ? 1440 : 1080 },
-            }
-            const full = {
-                ...base,
-                aspectRatio: { ideal: portrait ? 3 / 4 : 16 / 9 },
-                // 非标准约束：不支持的浏览器会忽略（ideal 不会抛错）
-                zoom: { ideal: 1 },
-                focusMode: { ideal: 'continuous' },
-            }
-            const open = async (constraints) =>
-                navigator.mediaDevices.getUserMedia({ video: constraints, audio: false })
-            try {
-                // 旧流释放需要一点时间，立刻申请容易被判定为设备忙
-                await new Promise((r) => setTimeout(r, 240))
-                let stream
-                try {
-                    stream = await open(full)
-                } catch (first) {
-                    const name = String(first?.name || '')
-                    if (name === 'OverconstrainedError' || name === 'TypeError') {
-                        // 机型不支持 zoom / focusMode / aspectRatio → 退回基础约束
-                        stream = await open(base)
-                    } else if (name === 'NotAllowedError' || name === 'NotReadableError' || name === 'AbortError') {
-                        // 设备还没释放（切镜头最常见）→ 再等 700ms 重试一次
-                        await new Promise((r) => setTimeout(r, 700))
-                        stream = await open(base)
-                    } else {
-                        throw first
-                    }
-                }
-                this.cameraStream = stream
-                /*
-                 * v3.0.0（R17）：强制回到 1 倍焦距。
-                 * 上面只写了 zoom: { ideal: 1 } —— 按规范 ideal 只是「偏好」，
-                 * 不少安卓机型 / 浏览器会直接忽略，默认停在 2x / 3x 的数字变焦上
-                 * （用户看到的就是「打开摄像头画面被拉得特别近」）。
-                 * 这里读一次 track 的 capabilities.zoom，再用 applyConstraints 把
-                 * zoom 落到最小档（= 1 倍光学视角）—— 支持 zoom 的设备一定生效。
-                 */
-                await this.applyOneXZoom(stream)
-                // el-dialog 首次打开时内容刚渲染，等一帧再取 ref
-                await this.$nextTick()
-                await new Promise((r) => requestAnimationFrame(() => r()))
-                const el = this.$refs.cameraVideo
-                if (!el) {
-                    this.cameraError = this.$t('upload.cameraFailed')
-                    this.stopCamera()
-                    return
-                }
-                el.srcObject = stream
-                try { await el.play() } catch (e) { /* 自动播放被拦时用户点一下画面即可 */ }
-                this.cameraReady = true
-            } catch (err) {
-                this.cameraError = this.cameraErrorText(err)
-            } finally {
-                this.cameraStarting = false
-            }
-        },
-        /**
-         * v3.0.0（R17）：把摄像头强制拉回 1 倍焦距。
-         * capabilities.zoom 在部分实现里是数字（旧规范），多数是 { min, max, step }。
-         * 取「1 倍」时不能直接用 1 —— 有的设备最小档不是 1（少数从 0.5 起），
-         * 这里以 1 为基准夹到 [min, max] 区间，保证既不会大于 1 倍、也不会越界报错。
-         */
-        async applyOneXZoom(stream) {
-            try {
-                const track = stream && stream.getVideoTracks ? stream.getVideoTracks()[0] : null
-                if (!track || typeof track.getCapabilities !== 'function') return
-                const caps = track.getCapabilities()
-                const zoom = caps && caps.zoom
-                if (zoom === undefined || zoom === null) return
-                const min = typeof zoom === 'number' ? zoom : Number(zoom.min)
-                const max = typeof zoom === 'number' ? zoom : Number(zoom.max)
-                if (!Number.isFinite(min) || !Number.isFinite(max)) return
-                const target = Math.min(Math.max(1, min), max)
-                await track.applyConstraints({ advanced: [{ zoom: target }] })
-            } catch (e) {
-                // 设备不支持 advanced zoom / 已被其它页面占用：保持当前画面即可
-            }
-        },
-        /** 摄像头错误 → 人话 */
-        cameraErrorText(err) {            const name = String(err?.name || '')
-            if (name === 'NotAllowedError' || name === 'SecurityError') return this.$t('upload.cameraDenied')
-            if (name === 'NotFoundError' || name === 'OverconstrainedError') return this.$t('upload.cameraNotFound')
-            return this.$t('upload.cameraFailed')
-        },
-        /** v3.0.0（R14）：关闭拍照弹窗（连拍结束后点「完成」） */
-        closeCameraDialog() {
-            this.showCameraDialog = false
-            this.stopCamera()
-        },
-        /** 停止流并释放摄像头（弹窗关闭 / 组件卸载 / 切换镜头前调用） */
-        stopCamera() {
-            const s = this.cameraStream
-            if (s) {
-                try { s.getTracks().forEach((t) => t.stop()) } catch (e) { /* 忽略 */ }
-            }
-            this.cameraStream = null
-            this.cameraReady = false
-        },
-        /** 前置 / 后置切换 */
-        switchCamera() {
-            this.cameraFacing = this.cameraFacing === 'environment' ? 'user' : 'environment'
-            this.startCamera()
-        },
-        /** 回退到系统相机 / 文件选择（移动端会直接打开相机） */
-        openSystemCamera() {
-            this.showCameraDialog = false
-            this.$refs.cameraInput?.click()
-        },
-        /**
-         * 把当前画面截成 JPEG，走统一上传管线。
-         * v3.0.0（R14）：
-         *  · 按取景框可见比例（手机 3:4 竖屏）居中裁剪，成片 = 所见即所得；
-         *  · 拍完不关窗（连拍），用户点「完成」再关闭 —— 之前每次拍完都关闭弹窗，
-         *    再拍又要重新申请摄像头，手机上就会报「权限不被允许」。
-         */
-        async capturePhoto() {
-            const el = this.$refs.cameraVideo
-            if (!el || !el.videoWidth) {
-                this.$message.warning(this.$t('upload.cameraNotReady'))
-                return
-            }
-            const vw = el.videoWidth
-            const vh = el.videoHeight
-            const portrait = window.innerWidth <= 768
-            const targetRatio = portrait ? 3 / 4 : el.clientWidth && el.clientHeight ? el.clientWidth / el.clientHeight : 4 / 3
-            let sw = vw
-            let sh = Math.round(vw / targetRatio)
-            if (sh > vh) {
-                sh = vh
-                sw = Math.round(vh * targetRatio)
-            }
-            const sx = Math.round((vw - sw) / 2)
-            const sy = Math.round((vh - sh) / 2)
-            const canvas = document.createElement('canvas')
-            canvas.width = sw
-            canvas.height = sh
-            const ctx = canvas.getContext('2d')
-            ctx.drawImage(el, sx, sy, sw, sh, 0, 0, sw, sh)
-            const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92))
-            if (!blob) {
-                this.$message.error(this.$t('upload.cameraFailed'))
-                return
-            }
-            const d = new Date()
-            const pad = (n) => String(n).padStart(2, '0')
-            const name = `photo-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}.jpg`
-            const file = new File([blob], name, { type: 'image/jpeg', lastModified: Date.now() })
-            // v3.0.0（R14）：保持摄像头开着，可连续拍照；关闭交给「完成」/右上角 ×
-            this.$message.success(this.$t('upload.cameraCaptured'))
-            // 与「选文件 / 系统相机」完全同一条管线：自动模式立即上传、手动模式进等待区
-            await this.$refs.uploadForm?.uploadLocalEntries(filesToUploadEntries([file]))
-        },
-        /**
-         * v3.0.0（R8）：拍照完成 ——
-         * 把相机返回的图片按标准本地文件管线送进待上传区
-         * （走 UploadForm.uploadLocalEntries：压缩/WebP/重命名等规则全部一致；
-         * 自动模式立即上传，手动模式进列表等待用户点「上传」）。
-         */
-        async handleCameraCapture(event) {
-            const entries = filesToUploadEntries(event.target.files || [])
-            event.target.value = ''
-            if (!entries.length) return
-            await this.$refs.uploadForm?.uploadLocalEntries(entries)
         },
         /**
          * 登记文件（v2.8.8）
@@ -2018,28 +1731,6 @@ html.dark .upload-folder :deep(.el-input__wrapper:hover) {
 .quick-toolbar-button:hover {
     transform: none;
 }
-/*
- * v3.0.0（R8）：移动端「拍照」按钮 ——
- *   · 桌面隐藏（display:none），≤768px 才显示（登记文件上方、同款圆形按钮）；
- *   · 隐藏的相机 input 视觉不可见且不占位，只作为 capture 调起系统相机的载体。
- */
-.quick-toolbar-camera {
-    display: none;
-}
-.camera-input-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    opacity: 0;
-    pointer-events: none;
-}
-/* v3.0.0（R8.1）：拍照弹窗 —— 实时预览 + 快门
-   v3.0.0（R12）：整块迁到 styles/global.css（含移动端整屏与快门隐藏区）*/
-/* v3.0.0（R12）：移动端整屏 / 快门隐藏区已统一搬到 styles/global.css ——
-   这里的选择器会被 Vue 加上 [data-v-x]，命中不了 Element Plus 自己渲染的
-   .el-dialog__body / .el-dialog__header，原先写在这里等于没生效。 */
 .toggle-dark-button:hover,
 .upload-method-button:hover {
     transform: scale(1.05);
@@ -2078,10 +1769,6 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     }
     .quick-toolbar-icon {
         font-size: 14px;
-    }
-    /* 移动端显示「拍照」按钮（登记文件上方） */
-    .quick-toolbar-camera {
-        display: inline-flex;
     }
 }
 

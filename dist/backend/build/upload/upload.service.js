@@ -727,6 +727,25 @@ let UploadService = class UploadService {
         const sw = await this.settings.get('backupEnabled', 'true');
         return sw === 'true';
     }
+    sameObjectKey(a, b) {
+        const norm = (v) => String(v || '')
+            .replace(/\\/g, '/')
+            .replace(/^\/+|\/+$/g, '');
+        const x = norm(a);
+        const y = norm(b);
+        return !!x && x === y;
+    }
+    uniqueObjectKey(key) {
+        const k = String(key || '');
+        const slash = k.lastIndexOf('/');
+        const dir = slash >= 0 ? k.slice(0, slash + 1) : '';
+        const base = slash >= 0 ? k.slice(slash + 1) : k;
+        const dot = base.lastIndexOf('.');
+        const stem = dot > 0 ? base.slice(0, dot) : base;
+        const ext = dot > 0 ? base.slice(dot) : '';
+        const tail = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        return `${dir}${stem}-${tail}${ext}`;
+    }
     makeKeyFor(channel, originalName, nameType, md5, uploader) {
         const dot = originalName.lastIndexOf('.');
         const ext = dot > 0 ? originalName.slice(dot + 1).toLowerCase() : '';
@@ -957,13 +976,17 @@ let UploadService = class UploadService {
                 return;
             const info = this.toChannelInfo(ch);
             const newName = r.ext ? rec.originalName.replace(/\.[^.]+$/, '') + r.ext : rec.originalName;
-            const key = this.makeKeyFor({ id: ch.id, code: ch.code, name: ch.name, type: ch.type, config: ch.config }, newName, job.nameType, rec.md5 || '', job.uploader);
-            const adapter = (0, adapter_factory_1.createAdapter)(info);
-            const up = await this.uploadToAdapter(adapter, { buffer: Buffer.alloc(0), path: r.path, size: r.size, mime: r.mime || job.mime, originalName: newName }, key, info, job.uploader, rec.instanceId || '');
             const copy = await prisma_1.prisma.fileCopy.findFirst({
                 where: { fileId: job.recordId, channelId: ch.id },
                 select: { id: true, remoteKey: true, remoteUrl: true, metas: true },
             });
+            let key = this.makeKeyFor({ id: ch.id, code: ch.code, name: ch.name, type: ch.type, config: ch.config }, newName, job.nameType, rec.md5 || '', job.uploader);
+            if (copy?.remoteKey && this.sameObjectKey(key, copy.remoteKey)) {
+                key = this.uniqueObjectKey(key);
+                app_log_1.appLog.info('compress', `产物与旧对象同 key，已改用新 key：${key}`, `旧 key=${copy.remoteKey} ｜ ${rec.originalName}`, job.ip);
+            }
+            const adapter = (0, adapter_factory_1.createAdapter)(info);
+            const up = await this.uploadToAdapter(adapter, { buffer: Buffer.alloc(0), path: r.path, size: r.size, mime: r.mime || job.mime, originalName: newName }, key, info, job.uploader, rec.instanceId || '');
             let prevMetas = {};
             try {
                 const parsed = copy?.metas ? JSON.parse(copy.metas) : null;
@@ -982,7 +1005,7 @@ let UploadService = class UploadService {
                 where: { id: job.recordId },
                 data: { size: r.size, mime: r.mime || job.mime, originalName: newName },
             });
-            if (copy && (copy.remoteKey || copy.remoteUrl)) {
+            if (copy && (copy.remoteKey || copy.remoteUrl) && !this.sameObjectKey(up.remoteKey, copy.remoteKey)) {
                 try {
                     await adapter.delete((0, adapter_factory_1.toCopyInfo)(copy), info);
                 }

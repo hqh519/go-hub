@@ -44,17 +44,28 @@
                 </span>
             </header>
 
-            <!-- 正文（纯文本，不做 md 渲染；Vue 插值天然转义，不存在 XSS） -->
-            <div v-if="note.content" ref="body" class="mc-body">{{ note.content }}</div>
+            <!--
+                正文（纯文本，不做 md 渲染；Vue 插值天然转义，不存在 XSS）
+                v1.1.4：「全文」按钮不再独立成行 —— 折叠态把它绝对定位到正文**最后一行末尾**，
+                正文里额外插一个等宽占位块，让最后一行提前让出按钮的位置，文字不会被压住。
+            -->
+            <div v-if="note.content" class="mc-body-wrap">
+                <div ref="body" class="mc-body">{{ note.content }}<span v-if="overflow && !expanded" class="mc-toggle-space" aria-hidden="true"></span></div>
+                <button
+                    v-if="overflow && !expanded"
+                    type="button"
+                    class="mc-toggle is-floating"
+                    @click.stop="expanded = true"
+                >{{ $t('notes.showFull') }}</button>
+            </div>
 
+            <!-- 展开态：按钮回到正文后面（此时正文不再限高，跟在文末最自然） -->
             <button
-                v-if="overflow"
+                v-if="overflow && expanded"
                 type="button"
                 class="mc-toggle"
-                @click.stop="expanded = !expanded"
-            >
-                {{ expanded ? $t('notes.collapse') : $t('notes.showFull') }}
-            </button>
+                @click.stop="expanded = false"
+            >{{ $t('notes.collapse') }}</button>
         </div>
 
         <!-- 附件九宫格：超过「加载几行」的部分只显示 +N，点开灯箱看全部 -->
@@ -706,6 +717,14 @@ export default {
  * 正文：flex 子项 + min-height:0 才能被压缩（默认 min-height:auto 会顶住高度），
  * overflow:hidden 把超出的部分裁掉；是否显示「全文」由 measure() 判定。
  */
+/* v1.1.4：正文外层负责 flex 与相对定位（「全文」按钮要贴在这一块右下角） */
+.mc-body-wrap {
+    position: relative;
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
 .mc-body {
     flex: 1 1 auto;
     min-height: 0;
@@ -716,6 +735,13 @@ export default {
     /* 纯文本：保留用户输入的换行与连续空格 */
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+/* 折叠态给「全文」按钮预留的行内占位 —— 让最后一行提前换行，按钮才有落脚处不压字 */
+.mc-toggle-space {
+    display: inline-block;
+    width: 3.6em;
+    height: 1px;
 }
 
 .mc-toggle {
@@ -729,6 +755,21 @@ export default {
     font-size: 13px;
     font-family: inherit;
     cursor: pointer;
+}
+
+/*
+ * v1.1.4：折叠态的按钮贴正文最后一行末尾。
+ * 用绝对定位 + 行内占位（.mc-toggle-space）实现：占位块让最后一行提前让出宽度，
+ * 按钮正好落在留白处，既不会压住文字，也不会掉到下一行开头。
+ */
+.mc-toggle.is-floating {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    margin-top: 0;
+    padding-left: 2px;
+    line-height: 1.75;
+    font-size: 13px;
 }
 
 .mc-toggle:hover {

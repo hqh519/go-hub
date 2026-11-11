@@ -540,6 +540,19 @@ export default {
     color: var(--note-cover-color, #6b7280);
 }
 
+/*
+ * v1.1.4：抽到首帧的视频格 —— 去掉封面卡的 6px 内边距与灰色底，
+ * 否则缩略图四周会露出一圈「边框 / 背景框」（需求：视频不要边框）。
+ */
+.mg-cover.is-video.has-poster {
+    padding: 0;
+    background: transparent;
+}
+
+.mg-cover.is-video.has-poster .mg-img {
+    object-fit: cover;
+}
+
 .mg-cover.is-audio {
     background: var(--note-audio-bg, rgba(99, 132, 255, 0.12));
     color: var(--note-audio-color, #4b6bdc);

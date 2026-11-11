@@ -900,13 +900,20 @@ export default {
         },
         /**
          * 第二行的两个下拉（媒体类型 / 排序）：展开后一滚动就收起。
-         * el-select 没有对外暴露 close()，所以走「模拟点击外部」这条最稳的路。
+         *
+         * v1.1.4：不再走「模拟点击外部」—— Element Plus 2.4+ 的点击外判判定改成了
+         * pointerdown，派发 mousedown 已经收不起来。el-select 实例上有 blur()，
+         * 它走的就是「失焦即收起」的官方路径，直接调最稳。
          */
         onSelectVisible(which, open) {
             const key = `_${which}Unbind`;
             if (open) {
                 if (this[key]) return;
-                this[key] = bindScrollDismiss();
+                const refName = which === 'media' ? 'mediaSelect' : 'sortSelect';
+                this[key] = bindScrollDismiss(() => {
+                    const sel = this.$refs[refName];
+                    if (sel && typeof sel.blur === 'function') sel.blur();
+                });
             } else if (this[key]) {
                 this[key]();
                 this[key] = null;

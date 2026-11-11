@@ -354,6 +354,7 @@ import { CHANNEL_TYPES } from '@/components/config/channel-schema';
 import { fetchStorageChannels } from '@/utils/storageChannels';
 import FilterDialog from '@/components/dashboard/FilterDialog.vue';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
+import { defaultUploadFolder } from '@/utils/uploadTarget';
 
 /** 预览浮层最长边 */
 const PREVIEW_MAX = 300;
@@ -886,7 +887,8 @@ export default {
             this.uploadPrefill = {
                 channelId: '',
                 instanceId: this.instanceId || '',
-                uploadFolder: ''
+                // v1.1.4：默认目录改成 /notes/瞬间/{年}/{月}（与发布瞬间的本地上传同一口径）
+                uploadFolder: defaultUploadFolder('moment')
             };
             this.uploadTargetVisible = true;
         },
@@ -1012,9 +1014,14 @@ export default {
         },
         async openPreview(f, e) {
             if (!this.previewable(f)) return;
+            /*
+             * v1.1.4：图片优先用**缩略图**（该格子刚在网格里加载过，命中浏览器缓存，按住即出）；
+             * 原图即便已缓存，元件也要重新 decode 一遍大图，手机上是肉眼可见的延迟。
+             * 小眼睛只是「看一眼」的快速预览，用缩略图完全够。
+             */
             const src = f.mediaKind === 'audio'
                 ? (f.url || this.mountPreviewUrl(f))
-                : (this.source === 'mount' ? this.mountPreviewUrl(f) : (f.url || f.thumbUrl || ''));
+                : (this.source === 'mount' ? this.mountPreviewUrl(f) : (f.thumbUrl || f.url || ''));
             if (!src) return;
             // 锚点：眼睛按钮自身的矩形（不是鼠标位置），浮层贴着眼睛弹出
             const rect = e && e.currentTarget && e.currentTarget.getBoundingClientRect

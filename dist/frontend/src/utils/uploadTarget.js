@@ -7,7 +7,7 @@
  * 拆成两层：
  *   1) 选择页本身 = components/upload/UploadTargetDialog.vue（同一个组件，各处共用）；
  *   2) 这一层负责「默认值 + 真正发请求」：
- *        · defaultUploadFolder(kind)  → /瞬间/2026/11（按传入模板生成，打开弹窗时自动填）
+ *        · defaultUploadFolder(kind)  → /notes/瞬间/2026/11（按传入模板生成，打开弹窗时自动填）
  *        · uploadOne(file, target)    → POST /upload（带渠道 / 实例 / 目录 / 来源）
  *        · importUrlToBed(url, target)→ 链接提取：先让服务端拉取（/api/fetchRes），
  *          拿到字节流或服务端暂存 id 后再走 /upload 落库，最终返回与 uploadOne 相同的结构
@@ -16,19 +16,23 @@
  * 也不会像按日分那样把目录树拉得很长。
  */
 
-/** 各板块的默认目录前缀（以后文章/待办要用时，在这里加一行即可） */
+/**
+ * 各板块的默认目录前缀（以后文章/待办要用时，在这里加一行即可）。
+ * v1.1.4：统一收进 `/notes` 之下 —— 笔记类内容与图床其它文件分开存放，
+ * 目录形如 `/notes/瞬间/2026/11`。
+ */
 const FOLDER_PREFIX = {
-    moment: '/瞬间',
-    article: '/文章',
-    todo: '/待办',
-    nav: '/导航',
-    collection: '/收集'
+    moment: '/notes/瞬间',
+    article: '/notes/文章',
+    todo: '/notes/待办',
+    nav: '/notes/导航',
+    collection: '/notes/收集'
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
 /**
- * 生成默认上传目录：`/瞬间/2026/11`。
+ * 生成默认上传目录：`/notes/瞬间/2026/11`。
  * @param {string} kindP reset 板块标识（moment / article …），未知板块回退到 /瞬间
  * @param {Date} [now] 便于测试注入时间
  */

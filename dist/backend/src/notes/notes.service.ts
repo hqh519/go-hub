@@ -13,10 +13,12 @@
  *  3) mediaKind / assetCount / charCount 是冗余列：保存时算一次写死，
  *     列表筛选与「要不要显示全文」直接读，避免每次翻页都聚合附件表。
  *
- *  4) 权限口径：
+ *  4) 权限口径（v1.1.4 收紧）：
  *       · 必须登录（笔记是个人内容，匿名不可用）
  *       · 一律按 instanceId 收窄（与文件体系同一套实例隔离）
- *       · 普通用户只能看/改自己的；管理员在实例内可看全部（与文件管理一致）
+ *       · 笔记只对作者本人可见：列表 / 详情 / 编辑 / 删除 / 留言一律 `author = viewer`，
+ *         管理员也不再在笔记里「看全部」—— 笔记属于私人内容，角色不应该扩大可读范围。
+ *         实例隔离与用户隔离是两层独立的过滤，两层都必须命中，杜绝跨用户、跨实例串位。
  */
 import { Injectable } from '@nestjs/common';
 import { prisma } from '../common/prisma';
@@ -301,8 +303,12 @@ export class NotesService {
     if (input.kind) where.kind = String(input.kind);
     // 回收站：status=deleted 才看回收站，否则只看正常内容
     where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
-    // 普通用户只能看自己的；管理员在实例内看全部
-    if (!input.isAdmin) where.author = String(input.viewer || '');
+    /*
+     * v1.1.4：笔记只属于作者本人 —— 无论角色都按 author 收窄。
+     * 原来是「管理员在实例内看全部」，会让管理员在笔记管理里看到别人的私人记录；
+     * 现在管理员与普通用户同一口径：谁的笔记谁自己看。
+     */
+    where.author = String(input.viewer || '');
     /*
      * 搜索（v1.1.3）：从「一句 LIKE 打天下」升级成「关键词 + 范围 + 标签语法」。
      *   · `#标签` / `-#标签` 从搜索词里解析出来，走关系过滤（tagId 用等值，名称用模糊）；
@@ -489,12 +495,13 @@ export class NotesService {
   /* ========================================================================
    *  详情
    * ====================================================================== */
-  async detail(id: string, viewer: string, isAdmin: boolean, instanceId: string) {
+  async detail(id: string, viewer: string, _isAdmin: boolean, instanceId: string) {
     const row = await prisma.note.findFirst({
       where: {
         id: String(id || ''),
         instanceId: String(instanceId || ''),
-        ...(isAdmin ? {} : { author: String(viewer || '') }),
+        // v1.1.4：详情也只认作者本人（isAdmin 不再扩大可见范围）
+        author: String(viewer || ''),
       },
       include: {
         moment: true,
@@ -607,7 +614,8 @@ export class NotesService {
     });
     if (!existing || existing.kind !== 'moment') return { error: '瞬间不存在' };
     if (existing.status === 'deleted') return { error: '该瞬间在回收站里，请先恢复再编辑' };
-    if (!isAdmin && existing.author !== viewer) return { error: '无权编辑他人的瞬间' };
+    // v1.1.4：笔记私有 —— 管理员也不能编辑他人的瞬间
+    if (existing.author !== viewer) return { error: '无权编辑他人的瞬间' };
     if (String(input.instanceId || '') !== String(existing.instanceId || '')) {
       return { error: '实例不匹配，请刷新后重试' };
     }
@@ -723,10 +731,11 @@ export class NotesService {
   /* ========================================================================
    *  软删 / 恢复 / 彻底删除
    * ====================================================================== */
-  private async findOwned(id: string, viewer: string, isAdmin: boolean) {
+  private async findOwned(id: string, viewer: string, _isAdmin: boolean) {
     const row = await prisma.note.findUnique({ where: { id: String(id || '') } });
     if (!row) return { error: '瞬间不存在' as string };
-    if (!isAdmin && row.author !== viewer) return { error: '无权操作他人的瞬间' as string };
+    // v1.1.4：笔记私有 —— 恢复 / 彻底删除同样只允许作者本人
+    if (row.author !== viewer) return { error: '无权操作他人的瞬间' as string };
     return { row };
   }
 
@@ -768,15 +777,29 @@ export class NotesService {
   /* ========================================================================
    *  标签候选（type='note'，与文件标签天然隔离）
    * ====================================================================== */
-  async tagCandidates(instanceId: string) {
+  /**
+   * 标签候选（v1.1.4：按用户隔离）。
+   * 笔记私有之后，标签候选也不能把别人笔记上用过的标签名漏出来 ——
+   * 只统计「当前用户自己的笔记」关联到的标签，计数同样只算自己的笔记。
+   */
+  async tagCandidates(instanceId: string, viewer: string) {
     const rows = await prisma.tag.findMany({
-      where: { instanceId: String(instanceId || ''), type: 'note' },
-      select: { id: true, name: true, _count: { select: { noteTags: true } } },
+      where: {
+        instanceId: String(instanceId || ''),
+        type: 'note',
+        noteTags: { some: { note: { author: String(viewer || '') } } },
+      },
+      select: {
+        id: true,
+        name: true,
+        noteTags: { select: { noteId: true }, where: { note: { author: String(viewer || '') } } },
+      },
       orderBy: { createdAt: 'desc' },
       take: 200,
     });
     return rows
-      .map((r) => ({ id: r.id, name: r.name, count: r._count.noteTags }))
+      .map((r) => ({ id: r.id, name: r.name, count: (r.noteTags || []).length }))
+      .filter((r) => r.count > 0)
       .sort((a, b) => b.count - a.count);
   }
 
@@ -789,12 +812,20 @@ export class NotesService {
    *   · 用法派生出来的口径永远与列表一致，不会出现「标签说属于瞬间，但瞬间里筛不到」）。
    * 合并 / 拆分 / 改名 / 备注直接复用图床已有的 /api/tags/* 接口（已支持 type='note'）。
    * ====================================================================== */
-  async tagAdmin(instanceId: string, kind: string) {
+  async tagAdmin(instanceId: string, kind: string, viewer: string) {
     const where: Record<string, unknown> = { instanceId: String(instanceId || ''), type: 'note' };
     const tags = await prisma.tag.findMany({ where: where as any, orderBy: { createdAt: 'asc' } });
     if (!tags.length) return [];
+    /*
+     * v1.1.4：使用次数只统计当前用户自己的笔记 ——
+     * 笔记私有后，「这个标签被用了 12 次」不能把别人的 12 次算进来，
+     * 否则标签管理页会间接泄露别人有多少条笔记、用了哪些标签。
+     */
     const links = await prisma.noteTag.findMany({
-      where: { tagId: { in: tags.map((t) => t.id) } },
+      where: {
+        tagId: { in: tags.map((t) => t.id) },
+        note: { author: String(viewer || '') },
+      },
       select: { tagId: true, note: { select: { kind: true } } },
     });
     const byTag = new Map<string, Map<string, number>>();
@@ -819,7 +850,9 @@ export class NotesService {
         creator: t.owner || '',
         createdAt: new Date(t.createdAt).getTime(),
       };
-    });
+    })
+      // 只保留自己用过的标签（计数为 0 = 从没在自己笔记里出现）
+      .filter((t) => t.count > 0);
     if (!kind) return out;
     return out
       .filter((t) => (t.kindCounts[kind] || 0) > 0)
@@ -832,12 +865,13 @@ export class NotesService {
    * 每条上限 500 字（同样只数汉字/字母/数字）；空留言拒绝。
    * 权限：能看见这条瞬间就能看见留言；留言只能由作者本人或管理员删除。
    * ====================================================================== */
-  private async accessibleNote(id: string, viewer: string, isAdmin: boolean, instanceId: string) {
+  private async accessibleNote(id: string, viewer: string, _isAdmin: boolean, instanceId: string) {
     return prisma.note.findFirst({
       where: {
         id: String(id || ''),
         instanceId: String(instanceId || ''),
-        ...(isAdmin ? {} : { author: String(viewer || '') }),
+        // v1.1.4：留言也只跟随作者本人（笔记私有的直接推论）
+        author: String(viewer || ''),
       },
       select: { id: true, author: true, status: true, instanceId: true, metas: true },
     });
@@ -891,10 +925,11 @@ export class NotesService {
     return { id: created.id, comment: view };
   }
 
-  async deleteComment(id: string, viewer: string, isAdmin: boolean, ip: string) {
+  async deleteComment(id: string, viewer: string, _isAdmin: boolean, ip: string) {
     const row = await prisma.noteComment.findUnique({ where: { id: String(id || '') } });
     if (!row) return { error: '留言不存在' };
-    if (!isAdmin && row.author !== viewer) return { error: '无权删除他人的留言' };
+    // v1.1.4：只能删自己的留言（笔记私有后，管理员也无权代删他人留言）
+    if (row.author !== viewer) return { error: '无权删除他人的留言' };
     await prisma.noteComment.delete({ where: { id: row.id } });
     appLog.info('note', `删除瞬间留言：${row.noteId}`, `留言人=${row.author}`, ip);
     return { ok: true };

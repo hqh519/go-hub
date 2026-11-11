@@ -15,7 +15,8 @@
  * 命名空间刻意避开 `api/manage`（文件管理已占满）与 `api` 根（compat 控制器兜底），
  * 避免与图床既有接口产生任何路由冲突。
  *
- * 权限：必须登录；一律按 instanceId 收窄；普通用户只看自己的，管理员在实例内看全部。
+ * 权限（v1.1.4 收紧）：必须登录；一律按 instanceId + author 双层收窄 ——
+ * 笔记只对作者本人可见，管理员在笔记管理里也看不到他人的笔记。
  */
 import {
   Body,
@@ -93,8 +94,9 @@ export class NotesController {
   /** 标签候选（笔记标签） */
   @Get('tags')
   async tags(@Req() req: Request, @Query('instanceId') instanceId?: string) {
-    this.ctx(req);
-    return this.notes.tagCandidates(instanceId || '');
+    // v1.1.4：标签候选按用户隔离（笔记私有的直接推论）
+    const { viewer } = this.ctx(req);
+    return this.notes.tagCandidates(instanceId || '', viewer);
   }
 
   /**
@@ -154,8 +156,9 @@ export class NotesController {
     @Query('instanceId') instanceId?: string,
     @Query('kind') kind?: string,
   ) {
-    this.ctx(req);
-    return this.notes.tagAdmin(instanceId || '', kind || '');
+    // v1.1.4：标签管理的使用次数只算自己的笔记
+    const { viewer } = this.ctx(req);
+    return this.notes.tagAdmin(instanceId || '', kind || '', viewer);
   }
 
   /** 某条瞬间的留言列表 */

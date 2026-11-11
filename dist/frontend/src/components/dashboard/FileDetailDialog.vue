@@ -241,7 +241,7 @@
                     只换渠道与跟随变化的数据，文件名 / 类型 / 分类 / 标签 / 外链全部不变。
                 -->
                 <el-button
-                    v-if="!isEditing && !trashMode"
+                    v-if="!isEditing && !trashMode && isFileOwner"
                     class="preview-toolbar-convert"
                     size="small"
                     plain
@@ -254,8 +254,9 @@
                     v1.0.5：原位媒体编辑（仅本地存储渠道的主副本可用，后端 media/info 探测后才显示）。
                     原位 = 磁盘路径、文件名、扩展名都不变，因此已经发出去的外链全部继续有效。
                     图片 → 裁剪 / 压缩 / 转WebP；视频 → 转码 / 压缩；音频 → 压缩。
+                    v1.1.4：这些操作会改动实体文件，只给文件拥有者看 —— 共享接收方一律不渲染。
                 -->
-                <template v-if="mediaReady && !isEditing && canEditAction && !trashMode">
+                <template v-if="mediaReady && isFileOwner && !isEditing && canEditAction && !trashMode">
                     <el-button
                         v-if="mediaInfo.canCrop"
                         class="preview-toolbar-media"
@@ -981,10 +982,13 @@ export default {
                  * 并让两个探测请求挪到图片之后，看图不再被接口挤占带宽。
                  */
                 this.prefetchPreview();
-                // v1.0.3：打开详情即确认「转本地 / 转异地」按钮该显示哪个（一次轻量查询）
-                this.loadConvertOptions();
-                // v1.0.5：探测能否原位编辑（裁剪 / 压缩 / 转WebP / 转码）
-                this.loadMediaInfo();
+                // v1.1.4：共享接收方不渲染转存 / 媒体编辑按钮，这两个探测请求一并跳过
+                if (this.isFileOwner) {
+                    // v1.0.3：打开详情即确认「转本地 / 转异地」按钮该显示哪个（一次轻量查询）
+                    this.loadConvertOptions();
+                    // v1.0.5：探测能否原位编辑（裁剪 / 压缩 / 转WebP / 转码）
+                    this.loadMediaInfo();
+                }
             }
             if (!val) {
                 // v3.0.0：关闭弹窗时退出编辑状态
@@ -1250,6 +1254,16 @@ export default {
             if (f.shared && !f.sharedSelf) return false;
             if (this.isAdminRole) return true;
             return this.$store?.getters?.canDelete !== false;
+        },
+        /**
+         * v1.1.4：是否为「文件拥有者」。
+         * 共享接收方（shared && !sharedSelf，含管理员账号）只能查看与下载，
+         * 凡是会改动实体文件的能力 —— 裁剪 / 压缩 / 转 WebP / 转码 / 转本地 / 转异地 ——
+         * 一律只对拥有者渲染（后端这些接口本来就只认 uploader，前端不再露出按钮）。
+         */
+        isFileOwner() {
+            const f = this.file || {};
+            return !(f.shared && !f.sharedSelf);
         },
         /**
          * 详情里所有「加载值」的文本。

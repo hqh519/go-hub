@@ -206,10 +206,6 @@
                     placeholder="按渠道类型筛选"
                     width="180px"
                 />
-                <el-button type="primary" @click="openAddDialog" class="add-btn">
-                    <font-awesome-icon icon="plus" style="margin-right: 6px;"/>
-                    添加渠道
-                </el-button>
             </div>
         </div>
         <el-divider class="channel-section-divider"/>
@@ -586,6 +582,23 @@
                 <el-button type="primary" :loading="saving" @click="confirmEditChannel">保存修改</el-button>
             </template>
         </el-dialog>
+
+        <!--
+            v1.1.4：「添加渠道」从页头按钮改成右下角圆形悬浮按钮（固定定位，不随页面滚动）。
+            默认只显示「+」号；桌面端鼠标移上去自动展开文字（移动端保持圆形，避免误触）。
+        -->
+        <div class="channel-fab-wrap">
+            <button
+                type="button"
+                class="channel-fab"
+                :title="'添加渠道'"
+                :aria-label="'添加渠道'"
+                @click="openAddDialog"
+            >
+                <font-awesome-icon icon="plus" class="channel-fab-icon"/>
+                <span class="channel-fab-text">添加渠道</span>
+            </button>
+        </div>
     </div>
 </template>
 
@@ -1274,6 +1287,82 @@ export default {
 .upload-settings {
     min-height: 500px;
     overflow-x: hidden;
+}
+
+/*
+ * v1.1.4：右下角「添加渠道」悬浮按钮。
+ * 默认圆形只露 + 号；桌面（有精确指针）hover 时向右展开成胶囊并显示文字。
+ * 因为锚在 right，宽度变大时向左生长，不会顶到屏幕外。
+ */
+.channel-fab-wrap {
+    position: fixed;
+    right: 28px;
+    bottom: 28px;
+    z-index: 30;
+}
+
+.channel-fab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 52px;
+    min-width: 52px;
+    padding: 0 15px;
+    border: none;
+    border-radius: 26px;
+    background: var(--el-color-primary);
+    color: #fff;
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.2);
+    transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.channel-fab:hover {
+    background: var(--el-color-primary-light-3);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+}
+
+.channel-fab:active {
+    transform: scale(0.96);
+}
+
+.channel-fab-icon {
+    font-size: 16px;
+}
+
+/* 文字默认收起（宽 0 + 透明），桌面 hover 才展开 */
+.channel-fab-text {
+    display: inline-block;
+    max-width: 0;
+    margin-left: 0;
+    opacity: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    transition: max-width 0.22s ease, opacity 0.18s ease, margin-left 0.22s ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .channel-fab:hover .channel-fab-text {
+        max-width: 6em;
+        margin-left: 8px;
+        opacity: 1;
+    }
+}
+
+@media (max-width: 768px) {
+    .channel-fab-wrap {
+        right: 16px;
+        bottom: calc(18px + env(safe-area-inset-bottom));
+    }
+
+    .channel-fab {
+        height: 48px;
+        min-width: 48px;
+        border-radius: 24px;
+        padding: 0 14px;
+    }
 }
 
 /* 页面头部 */

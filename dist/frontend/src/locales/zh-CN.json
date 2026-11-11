@@ -2234,7 +2234,10 @@
     "snapshotUploadedTitle": "抓拍图已上传",
     "snapshotUploaded": "已上传",
     "snapshotView": "查看",
-    "more": "更多"
+    "more": "更多",
+    "resumeTip": "上次播放记忆在 {time}",
+    "resumeJump": "跳转",
+    "resumeDismiss": "忽略"
   },
   "localFiles": {
     "title": "挂载管理",

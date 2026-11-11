@@ -211,12 +211,16 @@
                 <span v-if="assets.length" class="mp-asset-count">
                     {{ $t('notes.assetCount', { n: assets.length }) }}
                 </span>
+                <!--
+                    v1.1.4：不再限制 accept —— 手机相册 / 文件管理器只会按 accept 过滤，
+                    填 image/*,video/*,audio/* 时很多机型干脆只列出图片，视频与其它文件
+                    根本选不到。瞬间附件本来就支持任意文件类型，这里直接放开。
+                -->
                 <input
                     ref="fileInput"
                     type="file"
                     class="mp-file-input"
                     multiple
-                    accept="image/*,video/*,audio/*"
                     @change="onLocalFilesChosen"
                 />
             </div>
@@ -933,6 +937,9 @@ export default {
     min-height: 0;
     height: 100%;
     overflow-y: auto;
+    /* v1.1.4：只有「图床选择 / 本地上传 / 链接提取」那一行可以左右滑 ——
+       body 一律禁止横向滚动，避免整页跟着手指左右晃 */
+    overflow-x: hidden;
     overscroll-behavior: contain;
     padding-right: 2px;
 }
@@ -1469,6 +1476,8 @@ export default {
     flex-direction: column;
     flex: 1 1 auto;
     min-height: 0;
+    /* v1.1.4：弹窗内容区禁止横向滚动 —— 页面上只允许三个按钮那一行左右滑 */
+    overflow-x: hidden;
     padding-top: 6px;
     padding-bottom: 6px;
 }

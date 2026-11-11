@@ -236,6 +236,7 @@
                 <!-- v3.0.0 自动播放改为脚本控制（muted 起播 → 尝试取消静音），不再用 autoplay 属性 -->
                 <video
                     ref="videoEl"
+                    @timeupdate="onVideoTimeUpdate"
                     :src="current.url"
                     class="mv-video"
                     :style="videoStyle"
@@ -527,6 +528,20 @@
             </div>
 
             <!--
+                v1.1.4：上次播放进度提示。
+                关闭视频灯箱时把播放时间点写进 localStorage；下次打开同一个视频，
+                在左下「目录」与右下「设置」之间显示一行提示 + 「跳转」按钮。
+            -->
+            <div v-if="current.kind === 'video' && resumeAt > 0" class="mv-resume-tip" @click.stop>
+                <font-awesome-icon icon="history" class="mv-resume-icon"/>
+                <span class="mv-resume-text">{{ $t('mediaViewer.resumeTip', { time: resumeAtText }) }}</span>
+                <button type="button" class="mv-resume-jump" @click.stop="jumpToResume">{{ $t('mediaViewer.resumeJump') }}</button>
+                <button type="button" class="mv-resume-close" :title="$t('mediaViewer.resumeDismiss')" :aria-label="$t('mediaViewer.resumeDismiss')" @click.stop="dismissResume">
+                    <font-awesome-icon icon="times"/>
+                </button>
+            </div>
+
+            <!--
                 左右切换（图片 / 视频 / 其它；音频用列表点播）
                 v1.0.0：只在「同类型」文件之间循环 —— 图片灯箱只切图片、视频灯箱只切视频，
                 PDF / 文本 / 音频各自独立，不再跨类型乱跳。当前类型只有 1 个时不显示箭头。
@@ -666,6 +681,14 @@ const LONG_PRESS_MS = 500
 const LONG_PRESS_RATE = 3
 /* 手指抖动阈值：超过它才算「滑动了」，长按作废（滑动切换仍按 60px 判定） */
 const LONG_PRESS_CANCEL_PX = 16
+/*
+ * v1.1.4：屏幕两侧「边缘退出」手势。
+ * 起手落在左右各 EDGE_BACK_PX 内、且横向朝屏幕内侧滑动超过 EDGE_BACK_TRIGGER_PX，
+ * 就由灯箱自己退出（先关详情、再关灯箱）—— 同时全程 preventDefault，
+ * 浏览器不会再执行「返回上一页」，页面也不会跟着后退。
+ */
+const EDGE_BACK_PX = 26
+const EDGE_BACK_TRIGGER_PX = 64
 
 export default {
     name: 'MediaPreviewOverlay',
@@ -746,6 +769,8 @@ export default {
             longPress3x: false,
             // v3.0.0 左下角视频目录
             tocOpen: false,
+            // v1.1.4：上次播放进度（秒；0 = 没有记忆，不显示提示行）
+            resumeAt: 0,
             // v3.0.0（R9-F）：本次会话已用过的抓拍文件名（重名自动加序号）
             snapshotNames: {},
             // v3.0.0（R9-F）：抓拍图上传中标记
@@ -780,6 +805,15 @@ export default {
         /** v3.0.0：音频播放模式（与视频同一套四档语义） */
         audioModes() {
             return this.videoModes
+        },
+        /* v1.1.4：记忆时间点的「分:秒」文本 */
+        resumeAtText() {
+            const total = Math.max(0, Math.floor(Number(this.resumeAt) || 0));
+            const h = Math.floor(total / 3600);
+            const m = Math.floor((total % 3600) / 60);
+            const s = total % 60;
+            const pad = (n) => String(n).padStart(2, '0');
+            return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
         },
         /* ── v3.0.0（R8）：Markdown 目录大纲 ──────────────────── */
         /** 当前文本是否为 Markdown（md / markdown 扩展名） */
@@ -983,6 +1017,10 @@ export default {
                 })
                 this.bumpControls()
                 this.bindKeys(true)
+                // v1.1.4：接管屏幕两侧边缘的退出手势（滑动 = 关灯箱，不后退页面）
+                this.bindEdgeBack(true)
+                // v1.1.4：视频进入即读一次上次播放点（提示行只在有记忆时出现）
+                this.refreshResumeAt()
                 // v3.0.0 打开时压一条历史哨兵：移动端返回键只关灯箱，不退出页面
                 this.pushHistorySentinel()
             } else {
@@ -993,6 +1031,7 @@ export default {
                 this.endLongPress3x()
                 this.endImgDrag()
                 this.bindKeys(false)
+                this.bindEdgeBack(false)
                 this.pauseAll()
                 // v3.0.0（R16）：关闭时退出横屏 / 全屏，清掉抓拍面板
                 this.resetVideoLandscape()
@@ -1013,6 +1052,8 @@ export default {
              * 预取视频等于替用户下载几十 MB，得不偿失），用 new Image() 落浏览器缓存，
              * 下一次翻页直接命中，不再有黑屏等待。
              */
+            // v1.1.4：切集前把上一条视频的播放点落地，再读这一条的记忆
+            this.flushResume()
             this.preloadNearbyImages()
             this.videoMenuOpen = false
             this.tocOpen = false
@@ -1022,6 +1063,8 @@ export default {
             this.endLongPress3x()
             // v3.0.0（R16）：切走视频 / 关闭横屏状态
             if (this.current.kind !== 'video') this.resetVideoLandscape()
+            // v1.1.4：切集后重读当前这条视频的记忆点
+            this.$nextTick(() => this.refreshResumeAt())
             this.resetImageZoom()
             // v1.0.4：切集重新走「缩略图占位 → 原图淡入」
             this.imageLoaded = false
@@ -1060,6 +1103,8 @@ export default {
         // v3.0.0 卸载只摘监听，不回退历史（避免在路由切换过程中再触发一次导航）
         this.detachHistoryGuard()
         this.bindKeys(false)
+        // v1.1.4：卸载时摘掉边缘退出手势监听
+        this.bindEdgeBack(false)
     },
     methods: {
         /**
@@ -1102,6 +1147,77 @@ export default {
         },
         detachHistoryGuard() {
             unregisterLayer('media-viewer');
+        },
+        /* ── v1.1.4：屏幕两侧边缘退出 ────────────────────────────────────────
+         * 需求：移动端打开灯箱后，从屏幕左右边缘往里滑（系统的「返回」手势）时，
+         * 应该退出灯箱，而不是让页面后退。做法：
+         *   1) 灯箱打开时在 window 捕获阶段挂 touchstart / touchmove / touchend；
+         *   2) 起手在左右 EDGE_BACK_PX 内 → 记为一次候选；横向朝内移动即 preventDefault，
+         *      浏览器不再画返回动画、也不会真的导航；
+         *   3) 朝内位移达到 EDGE_BACK_TRIGGER_PX → 抬手时退出：详情开着先关详情，
+         *      否则关灯箱（与 layerStack「一次只关最上面一层」的口径一致）。
+         * 只在打开期间挂载，关闭 / 卸载即摘除，不影响其它页面。 */
+        bindEdgeBack(on) {
+            if (on) {
+                if (this._edgeBackStart) return;
+                this._edgeBackStart = (e) => this.onEdgeBackStart(e);
+                this._edgeBackMove = (e) => this.onEdgeBackMove(e);
+                this._edgeBackEnd = () => this.onEdgeBackEnd();
+                window.addEventListener('touchstart', this._edgeBackStart, { capture: true, passive: true });
+                // touchmove 必须非 passive —— 要靠 preventDefault 吃掉浏览器的返回手势
+                window.addEventListener('touchmove', this._edgeBackMove, { capture: true, passive: false });
+                window.addEventListener('touchend', this._edgeBackEnd, { capture: true, passive: true });
+                window.addEventListener('touchcancel', this._edgeBackEnd, { capture: true, passive: true });
+            } else {
+                if (this._edgeBackStart) window.removeEventListener('touchstart', this._edgeBackStart, { capture: true });
+                if (this._edgeBackMove) window.removeEventListener('touchmove', this._edgeBackMove, { capture: true });
+                if (this._edgeBackEnd) {
+                    window.removeEventListener('touchend', this._edgeBackEnd, { capture: true });
+                    window.removeEventListener('touchcancel', this._edgeBackEnd, { capture: true });
+                }
+                this._edgeBackStart = null;
+                this._edgeBackMove = null;
+                this._edgeBackEnd = null;
+                this._edgeBack = null;
+            }
+        },
+        onEdgeBackStart(e) {
+            this._edgeBack = null;
+            if (!this.modelValue) return;
+            if (!e.touches || e.touches.length !== 1) return;
+            // 只对触屏（手指）生效；桌面鼠标不会产生 touch 事件，这里不用再判设备
+            const t = e.touches[0];
+            const w = window.innerWidth;
+            const fromLeft = t.clientX <= EDGE_BACK_PX;
+            const fromRight = t.clientX >= w - EDGE_BACK_PX;
+            if (!fromLeft && !fromRight) return;
+            this._edgeBack = { x: t.clientX, y: t.clientY, fromLeft, fired: false };
+        },
+        onEdgeBackMove(e) {
+            const g = this._edgeBack;
+            if (!g || !e.touches || e.touches.length !== 1) return;
+            const t = e.touches[0];
+            const dx = t.clientX - g.x;
+            const dy = t.clientY - g.y;
+            // 纵向占主导 = 用户在滚动内容，不当作退出
+            if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) {
+                this._edgeBack = null;
+                return;
+            }
+            // 朝内方向：左侧边缘往右滑 / 右侧边缘往左滑
+            const inward = g.fromLeft ? dx : -dx;
+            if (inward < 0) return;
+            // 一确认是边缘横滑就吃掉浏览器默认手势（返回动画 + 导航）
+            if (inward >= 6 && e.cancelable) e.preventDefault();
+            if (inward >= EDGE_BACK_TRIGGER_PX) g.fired = true;
+        },
+        onEdgeBackEnd() {
+            const g = this._edgeBack;
+            this._edgeBack = null;
+            if (!g || !g.fired) return;
+            // 逐层关闭：详情页开着先关详情，否则关灯箱
+            if (this.detailOpen) this.$emit('close-detail');
+            else this.close();
         },
         releaseHistorySentinel() {
             this.detachHistoryGuard();
@@ -1284,6 +1400,11 @@ export default {
         },
         /* ── v3.0.0 舞台触摸：滑动切换 / 长按 3 倍速 / 轻点与双击 ───── */
         onStageTouchStart(e) {
+            // v1.1.4：这次触摸是屏幕边缘的「退出」手势 —— 舞台不接管（否则会顺手翻页）
+            if (this._edgeBack) {
+                this._tStart = null
+                return
+            }
             const t = e.touches && e.touches[0]
             if (!t) return
             // 按钮与菜单上的触摸不走手势逻辑
@@ -2254,7 +2375,77 @@ export default {
                 el.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' })
             }
         },
+        /* ── v1.1.4：视频播放进度记忆 ────────────────────────────────────────
+         * 需求：关闭视频灯箱时记住播放到哪了（存浏览器），下次打开同一个视频，
+         * 在下方「目录」「设置」之间提示「上次播放记忆在 x:xx」并可一键跳转。
+         * 存储键用当前项稳定的 key（没有就退化为 url），只存秒数，不存任何用户信息。 */
+        resumeStorageKey(item) {
+            const it = item || this.current || {};
+            const id = String(it.key || it.url || '');
+            return id ? `gohub:videoResume:${id}` : '';
+        },
+        /**
+         * 播放中持续记录「当前是哪条视频、播到哪」（timeupdate，约 4 次/秒）。
+         * 之所以不直接在暂停时读 video 元素：切集时 index 先变、src 随后换掉，
+         * 等在 watcher 里再读就已经是下一条视频了，会把进度写到别人名下。
+         */
+        onVideoTimeUpdate() {
+            const v = this.$refs.videoEl;
+            if (!v || !v.duration) return;
+            this._lastVideoPoint = {
+                key: this.resumeStorageKey(),
+                t: Number(v.currentTime) || 0,
+                dur: Number(v.duration) || 0,
+            };
+        },
+        /** 关闭 / 切集时落地快照；靠片头（<3s）或已到结尾（<3s）就清掉记忆 */
+        flushResume() {
+            const p = this._lastVideoPoint;
+            if (!p || !p.key) return;
+            try {
+                if (p.t < 3 || (p.dur && p.t > p.dur - 3)) window.localStorage.removeItem(p.key);
+                else window.localStorage.setItem(p.key, String(Math.floor(p.t)));
+            } catch (e) {
+                /* 隐私模式 / 存储被禁用：静默忽略，不影响播放 */
+            }
+            this._lastVideoPoint = null;
+        },
+        /** 读取当前视频的记忆点（0 = 没有） */
+        readResumeAt() {
+            try {
+                const key = this.resumeStorageKey();
+                if (!key) return 0;
+                const n = Number(window.localStorage.getItem(key));
+                return Number.isFinite(n) && n > 0 ? n : 0;
+            } catch (e) {
+                return 0;
+            }
+        },
+        /** 打开 / 切到视频时刷新提示行 */
+        refreshResumeAt() {
+            this.resumeAt = this.current && this.current.kind === 'video' ? this.readResumeAt() : 0;
+        },
+        /** 跳到记忆的时间点 */
+        jumpToResume() {
+            const v = this.$refs.videoEl;
+            const t = Number(this.resumeAt) || 0;
+            if (v && t > 0) {
+                try {
+                    v.currentTime = t;
+                    const p = v.play();
+                    if (p && typeof p.catch === 'function') p.catch(() => undefined);
+                } catch (e) { /* 忽略 */ }
+            }
+            this.resumeAt = 0;
+            this.bumpControls();
+        },
+        /** 忽略这次记忆（只藏提示，不删记录 —— 下次关闭时会重新写入） */
+        dismissResume() {
+            this.resumeAt = 0;
+        },
         pauseAll() {
+            // v1.1.4：暂停前先把当前播放点落地（关闭 / 切集 / 打开详情都会走这里）
+            this.flushResume()
             const v = this.$refs.videoEl
             if (v) { try { v.pause() } catch (e) { /* 忽略 */ } }
             const a = this.$refs.audioEl
@@ -2813,6 +3004,94 @@ export default {
 .media-viewer.is-idle .mv-video-toc {
     opacity: 0;
     pointer-events: none;
+}
+
+/*
+ * v1.1.4：上次播放进度提示 —— 在左下「目录」与右下「设置」之间居中，
+ * 竖直位置与两个按钮齐平（bottom: 20vh），高度也对齐按钮，视觉上是一条提示条。
+ */
+.mv-resume-tip {
+    position: absolute;
+    left: 50%;
+    bottom: calc(20vh + 2px);
+    transform: translateX(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(72vw, 560px);
+    padding: 6px 10px 6px 12px;
+    border-radius: 999px;
+    background: rgba(30, 32, 36, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #eef1f5;
+    font-size: 12px;
+    line-height: 1.4;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    z-index: 4;
+    transition: opacity 0.25s ease;
+}
+
+.media-viewer.is-idle .mv-resume-tip {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.mv-resume-icon {
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.mv-resume-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mv-resume-jump {
+    flex: 0 0 auto;
+    padding: 2px 10px;
+    border: none;
+    border-radius: 999px;
+    background: var(--el-color-primary);
+    color: #fff;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.mv-resume-jump:hover {
+    background: var(--el-color-primary-light-3);
+}
+
+.mv-resume-close {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 11px;
+    cursor: pointer;
+}
+
+.mv-resume-close:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+}
+
+@media (max-width: 768px) {
+    .mv-resume-tip {
+        max-width: 88vw;
+        font-size: 11px;
+        padding: 5px 8px 5px 10px;
+        gap: 6px;
+    }
 }
 .mv-toc-menu {
     position: absolute;

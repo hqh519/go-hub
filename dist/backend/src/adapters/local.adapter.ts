@@ -389,6 +389,28 @@ export class LocalAdapter implements StorageAdapter {
     };
   }
 
+  /** v1.1.4：存在性探测（异常按不存在处理，交给后续写入报错） */
+  private static existsSyncSafe(abs: string): boolean {
+    try {
+      return existsSync(abs);
+    } catch {
+      return false;
+    }
+  }
+
+  /** v1.1.4：给相对路径加一个唯一后缀（插在扩展名前），用于避让已存在的对象 */
+  private static uniqueRelKey(rel: string): string {
+    const p = String(rel || '').replace(/\\/g, '/');
+    const slash = p.lastIndexOf('/');
+    const dir = slash >= 0 ? p.slice(0, slash + 1) : '';
+    const base = slash >= 0 ? p.slice(slash + 1) : p;
+    const dot = base.lastIndexOf('.');
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    const ext = dot > 0 ? base.slice(dot) : '';
+    const tail = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    return `${dir}${stem}-${tail}${ext}`;
+  }
+
   /**
    * v2.8.3：磁盘路径直接落盘（大文件流式）。
    * 优先硬链接（同分区零拷贝），失败再 copyFile（跨分区/文件系统不支持硬链接）。
@@ -403,14 +425,36 @@ export class LocalAdapter implements StorageAdapter {
   ): Promise<UploadResult> {
     const base = this.baseRoot(channel);
     await this.enforceSizeLimit(base, channel);
-    const relKey = await this.buildRelKey(key, { originalName: file.originalName }, channel, ctx);
-    const abs = LocalAdapter.safeJoin(base, relKey);
+    let relKey = await this.buildRelKey(key, { originalName: file.originalName }, channel, ctx);
+    let abs = LocalAdapter.safeJoin(base, relKey);
     try {
       await fsp.mkdir(dirname(abs), { recursive: true });
+      /*
+       * v1.1.4（关键防御）：目标已存在时**绝不就地覆盖**。
+       * 本地渠道落盘用的是硬链接（同分区零拷贝），一旦目标与某个源文件共享 inode，
+       * 「覆盖写入」会把源文件一起改掉；而且上游若把「新对象」写到了旧 key 上，
+       * 随后删除旧对象的动作就会把刚写好的文件删掉（表现为「上传成功但打不开」）。
+       * 这里先探测一次，撞名就换一个唯一后缀，保证每次写入都是独立对象。
+       */
+      if (LocalAdapter.existsSyncSafe(abs)) {
+        relKey = LocalAdapter.uniqueRelKey(relKey);
+        abs = LocalAdapter.safeJoin(base, relKey);
+      }
       try {
         await fsp.link(path, abs);
-      } catch {
-        await fsp.copyFile(path, abs);
+      } catch (err) {
+        // 并发写入撞名（link 抛 EEXIST）：换唯一名再试一次，仍失败才走复制
+        if ((err as NodeJS.ErrnoException)?.code === 'EEXIST') {
+          relKey = LocalAdapter.uniqueRelKey(relKey);
+          abs = LocalAdapter.safeJoin(base, relKey);
+          try {
+            await fsp.link(path, abs);
+          } catch {
+            await fsp.copyFile(path, abs);
+          }
+        } else {
+          await fsp.copyFile(path, abs);
+        }
       }
     } catch (err) {
       throw new AdapterError(`写入本地文件失败：${(err as Error).message}`, 'local');

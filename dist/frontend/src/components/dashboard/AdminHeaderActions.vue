@@ -2,7 +2,14 @@
     <div class="admin-header-actions">
         <!-- v2.6.0 #302：移动端收纳为单个「更多菜单」（白天黑夜 / 语言 / 链接格式 / 退出登录） -->
         <template v-if="isMobile">
-            <el-dropdown trigger="click" popper-class="admin-more-menu-popper" @command="handleMoreCommand">
+            <!-- v1.1.4：移动端展开后「页面一滚动就自动收起」（见 utils/scrollDismiss.js） -->
+            <el-dropdown
+                ref="mobileMore"
+                trigger="click"
+                popper-class="admin-more-menu-popper"
+                @command="handleMoreCommand"
+                @visible-change="(v) => onMoreVisibleChange(v, 'mobile')"
+            >
                 <button class="admin-header-control" type="button" :aria-label="$t('login.moreMenu')">
                     <font-awesome-icon icon="ellipsis-v" />
                 </button>
@@ -55,7 +62,13 @@
                 v3.0.0（R5）：桌面端末尾新增「更多菜单」（复刻首页右上角同款）——
                 「语言切换」「退出登录」以文字条目收进菜单，工具栏不再各占一个图标位。
             -->
-            <el-dropdown trigger="click" popper-class="admin-more-menu-popper" @command="handleMoreCommand">
+            <el-dropdown
+                ref="desktopMore"
+                trigger="click"
+                popper-class="admin-more-menu-popper"
+                @command="handleMoreCommand"
+                @visible-change="(v) => onMoreVisibleChange(v, 'desktop')"
+            >
                 <button class="admin-header-control" type="button" :aria-label="$t('login.moreMenu')">
                     <font-awesome-icon icon="ellipsis-v" />
                 </button>
@@ -85,6 +98,7 @@
 import AdminToggleDark from './AdminToggleDark.vue';
 import { setLocale } from '@/locales';
 import { writeThemeCookie } from '@/utils/themeCookie';
+import { bindScrollDismiss } from '@/utils/scrollDismiss';
 
 export default {
     name: 'AdminHeaderActions',
@@ -126,6 +140,27 @@ export default {
         /* v3.0.0（R14）：声音开关迁到文件详情页（下载按钮后面），移动端更多菜单不再提供该项 */
     },
     methods: {
+        /**
+         * v1.1.4：右上角「更多菜单」展开后，页面一滚动（含手指拖动）就收起。
+         * 移动端与桌面端是两个 el-dropdown 实例，各自绑定、各自解绑。
+         */
+        onMoreVisibleChange(open, which) {
+            if (open) {
+                if (this._moreUnbind) return;
+                this._moreUnbind = bindScrollDismiss(() => {
+                    const dd = this.$refs[which === 'mobile' ? 'mobileMore' : 'desktopMore'];
+                    if (dd && typeof dd.handleClose === 'function') dd.handleClose();
+                });
+            } else {
+                this.releaseMoreDismiss();
+            }
+        },
+        releaseMoreDismiss() {
+            if (this._moreUnbind) {
+                this._moreUnbind();
+                this._moreUnbind = null;
+            }
+        },
         handleMoreCommand(cmd) {
             if (cmd === 'theme') {
                 // 与 AdminToggleDark 相同的三态循环：亮色 -> 暗色 -> 跟随系统
@@ -172,6 +207,10 @@ export default {
                 this.$emit('logout');
             }
         }
+    },
+    beforeUnmount() {
+        // v1.1.4：卸载时一定要解绑，否则滚动监听会留在 window 上越积越多
+        this.releaseMoreDismiss();
     }
 };
 </script>

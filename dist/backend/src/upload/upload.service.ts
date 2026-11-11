@@ -1170,6 +1170,37 @@ export class UploadService {
    *   B. 其它渠道（easyimages / lsky / immich / custom）：沿用历史 `YYYYMM/随机名`，
    *      本地存储据此识别「首段 6 位数字」再叠加用户目录，不能随意改格式。
    */
+  /**
+   * v1.1.4：判断两个对象 key 是否指向同一个对象。
+   * 统一分隔符 / 去首尾斜杠后比较 —— 本地渠道存的是相对路径，远端渠道存的是
+   * `bucket|objectKey` 这类复合 key，两边都能落在同一条字符串比较上。
+   */
+  private sameObjectKey(a?: string, b?: string): boolean {
+    const norm = (v?: string) =>
+      String(v || '')
+        .replace(/\\/g, '/')
+        .replace(/^\/+|\/+$/g, '');
+    const x = norm(a);
+    const y = norm(b);
+    return !!x && x === y;
+  }
+
+  /**
+   * v1.1.4：给 key 追加一个不会与旧对象冲突的后缀（插在扩展名前）。
+   * 形如 `alice/2026/11/abc123.mp4` → `alice/2026/11/abc123-m1x2y3.mp4`。
+   */
+  private uniqueObjectKey(key: string): string {
+    const k = String(key || '');
+    const slash = k.lastIndexOf('/');
+    const dir = slash >= 0 ? k.slice(0, slash + 1) : '';
+    const base = slash >= 0 ? k.slice(slash + 1) : k;
+    const dot = base.lastIndexOf('.');
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    const ext = dot > 0 ? base.slice(dot) : '';
+    const tail = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    return `${dir}${stem}-${tail}${ext}`;
+  }
+
   private makeKeyFor(
     channel: StorageChannelInfo,
     originalName: string,
@@ -1493,13 +1524,38 @@ export class UploadService {
 
       const info = this.toChannelInfo(ch);
       const newName = r.ext ? rec.originalName.replace(/\.[^.]+$/, '') + r.ext : rec.originalName;
-      const key = this.makeKeyFor(
+      /*
+       * v1.1.4：先把「当前主副本」读出来 —— 压缩/转码产物必须落到一个**新 key**，
+       * 后面删旧对象时也要靠它判断「新旧是不是同一个对象」。
+       */
+      const copy = await prisma.fileCopy.findFirst({
+        where: { fileId: job.recordId, channelId: ch.id },
+        select: { id: true, remoteKey: true, remoteUrl: true, metas: true },
+      });
+      let key = this.makeKeyFor(
         { id: ch.id, code: ch.code, name: ch.name, type: ch.type, config: ch.config },
         newName,
         job.nameType,
         rec.md5 || '',
         job.uploader,
       );
+      /*
+       * v1.1.4（关键修复）：命名策略留空时默认是 `{hash}` = 原文件 MD5 前 16 位。
+       * 压缩 / 转码不改变 rec.md5，所以第二次算出来的 key 与旧对象**完全一致**：
+       *   ① 新产物就地覆盖了旧对象（本地渠道甚至是硬链接，直接把源文件也一起改掉）；
+       *   ② 紧接着「删除旧对象」删掉的就是刚写好的那个文件；
+       *   结果：记录指向一个已不存在的文件 —— 前端表现就是「上传成功但视频打不开 / 404」。
+       * 只要新旧 key 撞上，就补一个唯一后缀，保证产物是独立对象，删旧对象不会误伤。
+       */
+      if (copy?.remoteKey && this.sameObjectKey(key, copy.remoteKey)) {
+        key = this.uniqueObjectKey(key);
+        appLog.info(
+          'compress',
+          `产物与旧对象同 key，已改用新 key：${key}`,
+          `旧 key=${copy.remoteKey} ｜ ${rec.originalName}`,
+          job.ip,
+        );
+      }
       const adapter = createAdapter(info);
       const up = await this.uploadToAdapter(
         adapter,
@@ -1509,11 +1565,6 @@ export class UploadService {
         job.uploader,
         rec.instanceId || '',
       );
-
-      const copy = await prisma.fileCopy.findFirst({
-        where: { fileId: job.recordId, channelId: ch.id },
-        select: { id: true, remoteKey: true, remoteUrl: true, metas: true },
-      });
       /*
        * v3.0.0（R10）：压缩/转码会换文件名 —— 固化地址必须同步更新，
        * 否则 objectPath 还指向旧对象（404）。旧 metas 保留（owner/instanceId 等）。
@@ -1535,8 +1586,11 @@ export class UploadService {
         data: { size: r.size, mime: r.mime || job.mime, originalName: newName },
       });
 
-      // 旧对象删除是 best-effort：失败只会在渠道上留一个孤儿对象，不影响外链
-      if (copy && (copy.remoteKey || copy.remoteUrl)) {
+      /*
+       * 旧对象删除是 best-effort：失败只会在渠道上留一个孤儿对象，不影响外链。
+       * v1.1.4：新旧指向同一个对象时**绝不能删** —— 那正是刚写好的产物。
+       */
+      if (copy && (copy.remoteKey || copy.remoteUrl) && !this.sameObjectKey(up.remoteKey, copy.remoteKey)) {
         try {
           await adapter.delete(toCopyInfo(copy), info);
         } catch (err) {

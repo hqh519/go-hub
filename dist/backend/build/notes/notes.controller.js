@@ -50,8 +50,8 @@ let NotesController = class NotesController {
         });
     }
     async tags(req, instanceId) {
-        this.ctx(req);
-        return this.notes.tagCandidates(instanceId || '');
+        const { viewer } = this.ctx(req);
+        return this.notes.tagCandidates(instanceId || '', viewer);
     }
     async getSettings(req, instanceId) {
         this.ctx(req);
@@ -79,8 +79,8 @@ let NotesController = class NotesController {
         });
     }
     async tagAdmin(req, instanceId, kind) {
-        this.ctx(req);
-        return this.notes.tagAdmin(instanceId || '', kind || '');
+        const { viewer } = this.ctx(req);
+        return this.notes.tagAdmin(instanceId || '', kind || '', viewer);
     }
     async comments(req, id, instanceId, page, pageSize) {
         const { viewer, isAdmin } = this.ctx(req);

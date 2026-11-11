@@ -4922,12 +4922,46 @@ html.dark .el-upload__text :deep(em) {
 }
 
 /* ── v3.0.0：移动端滑动切换模式后的轻量视觉反馈（淡入一次） ── */
+/*
+ * v1.1.4：切换模式时的「淡入」反馈。
+ * 原来用 opacity 0.35→1 做动画，而卡片本身基础透明度就是 0.7（--el-upload-dragger-bg-color
+ * 叠一层半透明），动画会把 opacity 一路顶到 1、结束后又跳回 0.7 ——
+ * 肉眼看就是「切到文件模式时虚线框底色闪一下」。
+ * 改成 filter: opacity() 做过渡：与基础 opacity 相乘，起点更淡、终点回到原样，
+ * 全程没有突跳，也不需要知道各模式的基础透明度是多少。
+ */
 .swipe-fade {
     animation: swipeFadeIn 0.45s ease;
 }
 @keyframes swipeFadeIn {
-    from { opacity: 0.35; }
-    to { opacity: 1; }
+    from { filter: opacity(0.45); }
+    to { filter: opacity(1); }
+}
+
+/* ============================================================================
+   v1.1.4：白天模式下「文件 / 记录」操作区（虚线框）的底色透明度
+   ----------------------------------------------------------------------------
+   现象：三个模式的操作区通透感不一致 ——
+     · 「链接」.paste-card 是 el-card，吃全局规则 `.el-card { background: var(--glass-bg) }`
+       （白天 --glass-bg = rgba(255,255,255,.45)），再叠自身 opacity .7 → 实际约 31% 白；
+     · 「文件」.default-card / 「记录」.record-card 是普通 div，底色走
+       --el-upload-dragger-bg-color（白天 #FAFAFB 实色），叠加后约 70% 灰，明显更「实」。
+   需求：把这两页底色调透一点点，跟「链接」模式一致。
+
+   做法：白天模式下让两者也走 --glass-bg ——
+     · .default-card 自带 opacity .7，换底色即可（.45 × .7 ≈ .31）；
+     · .record-card 没有整体 opacity（它的图标是主操作，必须清晰），
+       用 color-mix 自己乘一次 70%，得到同样的 .31。
+   夜间模式不动：--glass-bg 在暗色下是另一套值，保持原样更稳。
+   ============================================================================ */
+html:not(.dark) .default-card {
+    background-color: var(--glass-bg);
+}
+html:not(.dark) .record-card {
+    background-color: color-mix(in srgb, var(--glass-bg) 70%, transparent);
+}
+html:not(.dark) .record-card:hover {
+    background-color: color-mix(in srgb, var(--glass-bg) 85%, transparent);
 }
 
 </style>
