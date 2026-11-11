@@ -19,6 +19,7 @@ const path_1 = require("path");
 const stream_1 = require("stream");
 const promises_1 = require("stream/promises");
 const prisma_1 = require("../common/prisma");
+const file_share_stats_1 = require("../common/file-share-stats");
 const tags_1 = require("../common/tags");
 const crypto_service_1 = require("../common/crypto.service");
 const settings_service_1 = require("../settings/settings.service");
@@ -1076,6 +1077,9 @@ let UploadService = class UploadService {
             if (!exists)
                 return candidate;
             if (exists.status === 'deleted') {
+                const st = await (0, file_share_stats_1.syncFileStats)([exists.id]);
+                if ((st.get(exists.id)?.ref || 0) > 0)
+                    return this.makeFileId();
                 await this.removeFile(exists.id, exists.name);
                 continue;
             }
@@ -1321,11 +1325,12 @@ let UploadService = class UploadService {
                 select: {
                     name: true,
                     originalName: true,
+                    instanceId: true,
                     copies: { select: { channelId: true, status: true, isPrimary: true, channel: { select: { name: true, type: true } } } },
                 },
             });
             const primaryCopyOf = (d) => d.copies.find((c) => c.isPrimary) || d.copies[0];
-            const hit = dups.find((d) => {
+            const scopeHit = (d) => {
                 if (scope === 'all')
                     return true;
                 const pc = primaryCopyOf(d);
@@ -1334,11 +1339,19 @@ let UploadService = class UploadService {
                 return scope === 'channel'
                     ? (pc.channel?.name || '') === main.name
                     : (pc.channel?.type || '') === main.type;
-            }) || null;
+            };
+            const targetInst = String(opts.instanceId || '');
+            const sameHit = dups.find((d) => String(d.instanceId || '') === targetInst && scopeHit(d)) || null;
+            const crossHit = dups.find((d) => String(d.instanceId || '') !== targetInst && scopeHit(d)) || null;
+            const hit = sameHit || crossHit;
             if (!hit && dups.length) {
                 const d0 = dups[0];
                 const pc = primaryCopyOf(d0);
                 app_log_1.appLog.info('upload', `去重跳过：${originalName} 与已有文件 ${d0.name} 内容相同，但渠道${scope === 'channel' ? '名称' : '类型'}不同（去重范围为「${scope === 'channel' ? '同一渠道名称内' : '同一渠道类型内'}」）`, `目标渠道=${main.name}（类型=${main.type}） ｜ 已有文件渠道=${pc?.channel?.name || '未知'}（类型=${pc?.channel?.type || '未知'}）`, uploadIp);
+            }
+            if (hit && sameHit) {
+                app_log_1.appLog.info('upload', `命中去重（同实例）：${originalName} 与 ${sameHit.originalName}（${sameHit.name}）内容相同，直接复用原记录`, `md5=${md5} ｜ 原始大小=${originalSize}B ｜ 实例=${targetInst || '默认'}`, uploadIp);
+                return { id: sameHit.name, dedup: true, finalName: originalName };
             }
             if (hit) {
                 const cloned = await this.cloneDedupRecord(hit.name, {
@@ -1349,7 +1362,13 @@ let UploadService = class UploadService {
                     mime,
                     channelType: main.type,
                 }, uploadIp);
-                app_log_1.appLog.info('upload', `命中去重：${originalName} 与已有文件 ${hit.originalName}（${hit.name}）内容相同，已为本次上传克隆记录 ${cloned}`, `md5=${md5} ｜ 原始大小=${originalSize}B ｜ 范围=${scope === 'channel' ? `同一渠道名称内（${main.name}）` : scope === 'channelType' ? `同一渠道类型内（${main.type}）` : '全部渠道'}`, uploadIp);
+                try {
+                    await (0, file_share_stats_1.syncFileStats)([cloned, hit.name]);
+                }
+                catch (err) {
+                    app_log_1.appLog.warn('upload', `去重后统计写入失败（不影响上传结果）`, err.message, uploadIp);
+                }
+                app_log_1.appLog.info('upload', `命中去重（跨实例）：${originalName} 与已有文件 ${hit.originalName}（${hit.name}）内容相同，已为本次上传克隆记录 ${cloned}`, `md5=${md5} ｜ 原始大小=${originalSize}B ｜ 范围=${scope === 'channel' ? `同一渠道名称内（${main.name}）` : scope === 'channelType' ? `同一渠道类型内（${main.type}）` : '全部渠道'}`, uploadIp);
                 return { id: cloned, dedup: true, finalName: originalName };
             }
         }
@@ -2166,6 +2185,7 @@ let UploadService = class UploadService {
                     uploadSource: opts.uploadSource || 'Default',
                     ip,
                     instanceId,
+                    cloneOf: src.id,
                     metas,
                     uploadStartedAt: now,
                     uploadFinishedAt: now,
@@ -2189,6 +2209,93 @@ let UploadService = class UploadService {
             app_log_1.appLog.warn('upload', `去重克隆失败，回退复用原外链`, `${err.message} ｜ 源=${sourceName}`, ip);
             return sourceName;
         }
+    }
+    async copyRecordTo(sourceId, opts) {
+        const src = await prisma_1.prisma.fileRecord.findUnique({
+            where: { id: String(sourceId || '') },
+            include: { copies: true, tags: { include: { tag: true } } },
+        });
+        if (!src)
+            return null;
+        const instanceId = String(opts.instanceId || '');
+        const fileId = this.makeFileId();
+        const copies = src.copies.map((c) => ({
+            channelId: c.channelId,
+            remoteKey: c.remoteKey,
+            remoteUrl: c.remoteUrl,
+            objectPath: c.objectPath,
+            urlQuery: c.urlQuery,
+            metas: c.metas,
+            status: c.status === 'failed' ? 'failed' : 'active',
+            isPrimary: c.isPrimary,
+        }));
+        const sameInstance = String(src.instanceId || '') === instanceId;
+        const tagIds = [];
+        for (const t of src.tags) {
+            if (sameInstance) {
+                tagIds.push(t.tagId);
+                continue;
+            }
+            try {
+                const row = await (0, tags_1.findOrCreateTag)(t.tag.name, instanceId, opts.uploader || src.uploader || '', tags_1.TAG_TYPE_FILE);
+                if (row?.id)
+                    tagIds.push(row.id);
+            }
+            catch {
+            }
+        }
+        let metas = src.metas;
+        try {
+            const obj = (JSON.parse(src.metas || '{}') || {});
+            const prev = (obj.ProcessEvent && typeof obj.ProcessEvent === 'object' ? obj.ProcessEvent : {});
+            obj.ProcessEvent = {
+                ...prev,
+                Copied: {
+                    SourceFileId: src.name,
+                    SourceOriginalName: src.originalName,
+                    SourceUserId: src.uploader || '',
+                    CopiedAt: new Date().toISOString(),
+                },
+            };
+            metas = JSON.stringify(obj);
+        }
+        catch {
+            metas = src.metas;
+        }
+        const now = new Date();
+        const created = await prisma_1.prisma.fileRecord.create({
+            data: {
+                name: fileId,
+                firstName: fileId,
+                prevName: '',
+                originalName: src.originalName,
+                size: src.size,
+                originalSize: src.originalSize,
+                mime: src.mime,
+                hash: src.hash,
+                md5: src.md5,
+                folder: opts.folder !== undefined ? String(opts.folder) : src.folder,
+                uploader: opts.uploader || src.uploader || '',
+                uploadSource: src.uploadSource || 'Default',
+                ip: opts.ip || src.ip || '',
+                instanceId,
+                cloneOf: src.id,
+                metas,
+                uploadStartedAt: now,
+                uploadFinishedAt: now,
+                copies: { create: copies },
+                ...(tagIds.length ? { tags: { create: Array.from(new Set(tagIds)).map((tagId) => ({ tagId })) } } : {}),
+            },
+            select: { id: true, name: true },
+        });
+        try {
+            await (0, file_share_stats_1.syncFileStats)([created.id, src.id]);
+        }
+        catch (err) {
+            app_log_1.appLog.warn('upload', `复制后共用统计写入失败（不影响复制结果）`, err.message, opts.ip || '');
+        }
+        app_log_1.appLog.info('upload', `复制文件：${src.originalName}（${src.name}）→ ${created.name}`, `目标实例=${instanceId || '默认'} ｜ 目录=${opts.folder !== undefined ? String(opts.folder) || '(根)' : src.folder || '(根)'} ｜ 副本 ${copies.length} 个（共用同一实体）`, opts.ip || '');
+        return { name: created.name, id: created.id };
     }
     copyWriteData(result, channel) {
         const snap = {
@@ -2238,6 +2345,7 @@ let UploadService = class UploadService {
         const registered = (0, file_view_1.normalizeUploadSource)(rec?.uploadSource) === 'Record';
         const copies = await prisma_1.prisma.fileCopy.findMany({ where: { fileId: id } });
         let sharedSkipped = 0;
+        const siblingIds = new Set();
         for (const copy of copies) {
             if (registered)
                 continue;
@@ -2249,15 +2357,19 @@ let UploadService = class UploadService {
             if (copy.objectPath)
                 refKeys.push({ objectPath: copy.objectPath });
             if (refKeys.length) {
-                const shared = await prisma_1.prisma.fileCopy.count({
+                const holders = await prisma_1.prisma.fileCopy.findMany({
                     where: {
                         channelId: copy.channelId,
                         fileId: { not: id },
-                        file: { status: 'active' },
                         OR: refKeys,
                     },
+                    select: { fileId: true, remoteKey: true, objectPath: true },
                 });
-                if (shared > 0) {
+                const real = holders.filter((h) => (copy.remoteKey && h.remoteKey === copy.remoteKey) ||
+                    (copy.objectPath && h.objectPath === copy.objectPath));
+                if (real.length) {
+                    for (const h of real)
+                        siblingIds.add(h.fileId);
                     sharedSkipped += 1;
                     continue;
                 }
@@ -2280,6 +2392,14 @@ let UploadService = class UploadService {
             }
         }
         await prisma_1.prisma.fileRecord.delete({ where: { id } });
+        if (siblingIds.size) {
+            try {
+                await (0, file_share_stats_1.syncFileStats)(Array.from(siblingIds));
+            }
+            catch (err) {
+                app_log_1.appLog.warn('upload', `共用统计回写失败（不影响删除结果）`, err.message);
+            }
+        }
         app_log_1.appLog.info('upload', `删除文件：${name || id}`, registered
             ? '登记文件：只删库记录，不动源站对象'
             : `远端副本 ${copies.length} 个${sharedSkipped ? `（其中 ${sharedSkipped} 个仍被其他记录/实例复用，仅删库）` : ''}`);

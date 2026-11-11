@@ -49,13 +49,60 @@
                             />
                         </button>
                     </div>
+
+                    <!--
+                        v1.1.5：在「选择接收实例」下方增加「移动 / 复制」二选一。
+                        · 默认**不选**（moveMode = ''），必须选一个才能点「下一步」；
+                        · 移动 = 沿用原有语义，源实例不再保留这份数据；
+                        · 复制 = 源记录留在原处，目标实例里多出一份（新外链，共用同一个实体文件），
+                          于是两边互为「删除统计」，最后一份删掉时才真正删远端文件。
+                    -->
+                    <div class="move-mode-block">
+                        <div class="move-mode-title">
+                            <span>{{ $t('fileManager.moveModeTitle') }}</span>
+                            <span class="move-mode-required">*</span>
+                        </div>
+                        <div class="move-mode-list">
+                            <button
+                                type="button"
+                                class="move-mode-item"
+                                :class="{ 'is-active': moveMode === 'move' }"
+                                @click="pickMode('move')"
+                            >
+                                <font-awesome-icon icon="arrows-alt" class="move-mode-icon" />
+                                <span class="move-mode-name">{{ $t('dashboard.move') }}</span>
+                                <span class="move-mode-desc">{{ $t('fileManager.moveModeMoveHint') }}</span>
+                                <font-awesome-icon v-if="moveMode === 'move'" icon="check" class="move-instance-check" />
+                            </button>
+                            <button
+                                type="button"
+                                class="move-mode-item"
+                                :class="{ 'is-active': moveMode === 'copy' }"
+                                @click="pickMode('copy')"
+                            >
+                                <font-awesome-icon icon="copy" class="move-mode-icon" />
+                                <span class="move-mode-name">{{ $t('dashboard.copy') }}</span>
+                                <span class="move-mode-desc">{{ $t('fileManager.moveModeCopyHint') }}</span>
+                                <font-awesome-icon v-if="moveMode === 'copy'" icon="check" class="move-instance-check" />
+                            </button>
+                        </div>
+                        <!-- 未选择时的内联提示（按钮同时禁用，避免出现「点了没反应」） -->
+                        <p v-if="!moveMode" class="move-mode-tip">{{ $t('fileManager.moveModeRequired') }}</p>
+                        <p v-else class="move-mode-tip is-chosen">
+                            {{ moveMode === 'copy' ? $t('fileManager.moveModeCopyChosen') : $t('fileManager.moveModeMoveChosen') }}
+                        </p>
+                    </div>
                 </div>
 
                 <!-- 第二步：选择目标目录 -->
                 <template v-else>
-                    <div v-if="showInstancePicker && instances.length" class="move-instance-current">
+                    <div v-if="showInstancePicker" class="move-instance-current">
                         <span class="move-instance-current-label">{{ $t('fileManager.movePickInstance') }}</span>
                         <span class="move-instance-current-name">{{ currentInstanceLabel }}</span>
+                        <!-- v1.1.5：把上一步选的「移动 / 复制」也带到这里，避免用户忘了自己在做什么 -->
+                        <span class="move-mode-badge" :class="moveMode === 'copy' ? 'is-copy' : 'is-move'">
+                            {{ moveMode === 'copy' ? $t('dashboard.copy') : $t('dashboard.move') }}
+                        </span>
                         <el-button text size="small" class="move-step-back" @click="step = 'instance'">
                             {{ $t('fileManager.movePickInstanceChange') }}
                         </el-button>
@@ -134,7 +181,7 @@
                     <el-button
                         v-if="step === 'instance'"
                         type="primary"
-                        :disabled="instancesLoading"
+                        :disabled="instancesLoading || !moveMode"
                         @click="goDirectoryStep"
                     >{{ $t('fileManager.moveNextStep') }}</el-button>
                     <el-button
@@ -200,6 +247,12 @@ export default {
             instances: [],
             instancesLoading: false,
             targetInstanceId: '',
+            /**
+             * v1.1.5：「移动 / 复制」二选一。
+             * 空串 = 还没选（默认态，必须选一个才能进入下一步），
+             * 'move' = 沿用原语义（源实例不再保留），'copy' = 目标实例多一份（源记录留着）。
+             */
+            moveMode: '',
             // 内嵌树相关
             showTreePicker: false,
             treeData: [],
@@ -229,6 +282,10 @@ export default {
         },
         dialogTitle() {
             if (this.step === 'instance') return this.$t('fileManager.movePickInstance');
+            // v1.1.5：选了「复制」时标题同步换成复制，别让弹窗标题和实际操作不一致
+            if (this.moveMode === 'copy') {
+                return this.isBatchMove ? this.$t('moveFile.batchCopyTitle') : this.$t('moveFile.copyTitle');
+            }
             return this.isBatchMove ? this.$t('moveFile.batchTitle') : this.$t('moveFile.title');
         },
         /** 移动端或跨实例流程都走内嵌树（桌面端的 DirectoryTreePicker 不支持指定实例） */
@@ -251,6 +308,8 @@ export default {
                 this.treeData = [];
                 this.treeError = '';
                 this.targetInstanceId = String(this.instanceId || '');
+                // v1.1.5：每次打开都回到「未选择」态，强制用户重新确认走移动还是复制
+                this.moveMode = '';
                 if (this.showInstancePicker) {
                     // 先停在「选择接收实例」，拉回列表后若只有默认实例会自动跳到目录步骤
                     this.step = 'instance';
@@ -301,14 +360,24 @@ export default {
                 this.instances = [];
             } finally {
                 this.instancesLoading = false;
-                // 没有其它实例时不需要选接收实例，直接进目录选择
-                this.step = this.instances.length ? 'instance' : 'directory';
+                /*
+                 * v1.1.5：不再「只有默认实例时自动跳目录」——
+                 * 因为这一步现在还要选「移动 / 复制」，跳过就等于替用户做了决定。
+                 * 没有其它实例时列表里仍有「默认实例」一项可选，行为不受影响。
+                 */
+                this.step = this.showInstancePicker ? 'instance' : 'directory';
             }
         },
         pickInstance(id) {
             this.targetInstanceId = String(id || '');
         },
+        /** v1.1.5：选择操作方式（'move' | 'copy'），再点一次可取消回到未选态 */
+        pickMode(mode) {
+            this.moveMode = this.moveMode === mode ? '' : mode;
+        },
         goDirectoryStep() {
+            // 双保险：按钮本身已禁用，这里再挡一次「未选操作方式」
+            if (!this.moveMode) return;
             this.step = 'directory';
             this.treeData = [];
             this.treeError = '';
@@ -322,9 +391,13 @@ export default {
             this.targetPath = path;
         },
         handleConfirm() {
-            // v3.0.0：第二个参数为目标实例 id（旧调用点只接收第一个参数，不受影响）
+            /*
+             * v1.1.5：第三个参数 = 操作方式（'move' | 'copy'）。
+             * 旧调用点只声明两个参数，多传一个不会破坏它们（JS 直接忽略）。
+             */
             const instance = this.showInstancePicker ? String(this.targetInstanceId || '') : String(this.instanceId || '');
-            this.$emit('confirm', this.targetPath, instance);
+            const mode = this.showInstancePicker ? (this.moveMode || 'move') : 'move';
+            this.$emit('confirm', this.targetPath, instance, mode);
         },
         handleClose() {
             this.$emit('update:modelValue', false);
@@ -474,6 +547,121 @@ export default {
 .move-instance-check {
     width: 12px;
     flex: 0 0 auto;
+}
+
+/* v1.1.5：「移动 / 复制」二选一 */
+.move-mode-block {
+    margin-top: 4px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--el-border-color-lighter);
+}
+
+.move-mode-title {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.move-mode-required {
+    color: var(--el-color-danger);
+    font-weight: 700;
+}
+
+.move-mode-list {
+    display: flex;
+    gap: 8px;
+}
+
+.move-mode-item {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas:
+        'icon name check'
+        '.    desc desc';
+    align-items: center;
+    gap: 2px 6px;
+    flex: 1 1 0;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 9px 12px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    transition: border-color 0.18s ease, background-color 0.18s ease;
+}
+
+.move-mode-item:hover {
+    border-color: var(--el-border-color);
+}
+
+.move-mode-item.is-active {
+    border-color: var(--primary-color-accent, var(--el-color-primary));
+    background: color-mix(in srgb, var(--primary-color, var(--el-color-primary)) 10%, transparent);
+    color: var(--primary-color-accent, var(--el-color-primary));
+}
+
+.move-mode-icon {
+    grid-area: icon;
+    width: 12px;
+    opacity: 0.75;
+}
+
+.move-mode-name {
+    grid-area: name;
+    font-weight: 600;
+}
+
+.move-mode-item .move-instance-check {
+    grid-area: check;
+}
+
+.move-mode-desc {
+    grid-area: desc;
+    /* 描述文字跟随主题色会显得太抢眼，这里降到次要色，白色卡片上依然清晰 */
+    opacity: 0.7;
+    font-size: 11px;
+    line-height: 1.45;
+    white-space: normal;
+    word-break: break-word;
+}
+
+.move-mode-tip {
+    margin: 8px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--el-color-danger);
+}
+
+.move-mode-tip.is-chosen {
+    color: var(--el-text-color-secondary);
+}
+
+/* 第二步顶部的小徽标：标明本次是移动还是复制 */
+.move-mode-badge {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.5;
+    font-weight: 600;
+}
+
+.move-mode-badge.is-move {
+    color: var(--el-color-warning);
+    background: color-mix(in srgb, var(--el-color-warning) 14%, transparent);
+}
+
+.move-mode-badge.is-copy {
+    color: var(--el-color-success);
+    background: color-mix(in srgb, var(--el-color-success) 14%, transparent);
 }
 
 /* 第二步顶部：当前选择的接收实例 + 「重新选择」 */

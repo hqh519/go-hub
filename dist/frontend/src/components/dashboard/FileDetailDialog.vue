@@ -364,14 +364,30 @@
                 v1.1.2：文件引用 —— 该文件被哪些对象使用。
                 v1.1.2.1：统计口径扩到全类型（笔记 + 分享），数量后面补一行来源小计，
                           只有一种来源时不显示小计，避免啰嗦。
+                v1.1.5：输出两个值 —— 引用统计 | 删除统计（共用）：
+                  · 引用(xx) = 被笔记 / 目录共享引用的次数，> 0 时这条数据一律不可删；
+                  · 共用(xx) = 同一个实体文件被几条记录共用（也就是删除统计），
+                    > 0 时彻底删除只删自己的数据行，最后一份才真正删远端文件。
                 数量后面跟「查看」，新标签页打开引用明细（不影响当前详情页）。
             -->
             <el-descriptions-item :label="$t('fileDetail.fileRef')">
                 <span class="detail-ref">
-                    <span :class="{ 'is-zero': !file?.metadata?.FileRefCount }">{{ file?.metadata?.FileRefCount || 0 }}</span>
+                    <span class="detail-ref-pair">
+                        <el-tooltip placement="top" :content="$t('fileDetail.fileRefRefHint')" :show-after="300">
+                            <span class="detail-ref-item" :class="{ 'is-zero': !refCount }">
+                                {{ $t('fileDetail.fileRefRef') }}({{ refCount }})
+                            </span>
+                        </el-tooltip>
+                        <span class="detail-ref-divider">|</span>
+                        <el-tooltip placement="top" :content="$t('fileDetail.fileRefShareHint')" :show-after="300">
+                            <span class="detail-ref-item" :class="{ 'is-zero': !shareCount }">
+                                {{ $t('fileDetail.fileRefShare') }}({{ shareCount }})
+                            </span>
+                        </el-tooltip>
+                    </span>
                     <span v-if="refBreakdown" class="detail-ref-sub">{{ refBreakdown }}</span>
                     <button
-                        v-if="file?.metadata?.FileRefCount"
+                        v-if="refCount || shareCount"
                         type="button"
                         class="detail-ref-link"
                         @click.prevent="openFileRefs"
@@ -1146,6 +1162,18 @@ export default {
             const share = Number(this.file?.metadata?.FileRefShareCount || 0);
             if (!note || !share) return '';
             return this.$t('fileDetail.fileRefBreakdown', { note, share });
+        },
+        /**
+         * v1.1.5：详情页「文件引用」的两个数字。
+         * 引用统计（FileRefCount）= 笔记附件 + 目录共享接收人，> 0 时这条数据连软删除都不允许；
+         * 删除统计 / 共用（FileShareCount）= 同一个实体文件被几条记录共用，
+         * 表示「还能删几次远端文件」—— 为 0（最后一份）且无引用时才真正删实体。
+         */
+        refCount() {
+            return Number(this.file?.metadata?.FileRefCount || 0);
+        },
+        shareCount() {
+            return Number(this.file?.metadata?.FileShareCount || 0);
         },
         /** v1.0.5：媒体编辑按钮的显示总闸 —— 只有后端确认「可原位编辑」才整组出现 */
         mediaReady() {
@@ -2315,6 +2343,22 @@ export default {
                 if (data.Note !== undefined) {
                     this.noteVisible = true;
                     this.noteText = String(data.Note || '');
+                }
+                /*
+                 * v1.1.5：把「引用统计 / 删除统计」回写到 file.metadata。
+                 *
+                 * 这两个值**只有详情接口（getMeta）才算**，列表接口不带 ——
+                 * 弹窗的 file 来自列表行，不回写的话 `引用(xx) | 共用(xx)` 会恒为 0
+                 * （看起来像「引用统计没生效」）。同理把来源拆分一起补上，
+                 * 免得小计与总数对不上。
+                 */
+                if (this.file) {
+                    if (!this.file.metadata) this.file.metadata = {};
+                    const md = data?.metadata || {};
+                    if (md.FileRefCount !== undefined) this.file.metadata.FileRefCount = Number(md.FileRefCount) || 0;
+                    if (md.FileShareCount !== undefined) this.file.metadata.FileShareCount = Number(md.FileShareCount) || 0;
+                    if (md.FileRefNoteCount !== undefined) this.file.metadata.FileRefNoteCount = Number(md.FileRefNoteCount) || 0;
+                    if (md.FileRefShareCount !== undefined) this.file.metadata.FileRefShareCount = Number(md.FileRefShareCount) || 0;
                 }
             } catch {
                 /* 拉取失败不影响详情展示 */
@@ -3606,6 +3650,22 @@ export default {
 
 .detail-ref .is-zero {
     color: var(--el-text-color-secondary);
+}
+
+/* v1.1.5：「引用(xx) | 共用(xx)」两个数字并排，等宽数字避免跳动 */
+.detail-ref-pair {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.detail-ref-item {
+    font-variant-numeric: tabular-nums;
+    cursor: help;
+}
+
+.detail-ref-divider {
+    color: var(--el-text-color-placeholder);
 }
 
 /* v1.1.2.1：引用来源小计（笔记 N / 分享 M），弱化显示 */

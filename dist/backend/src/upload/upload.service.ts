@@ -7,6 +7,7 @@ import { join } from 'path';
 import { Readable, Transform } from 'stream';
 import { pipeline } from 'stream/promises';
 import { prisma } from '../common/prisma';
+import { syncFileStats } from '../common/file-share-stats';
 import { TAG_TYPE_FILE, findOrCreateTag } from '../common/tags';
 import { CryptoService } from '../common/crypto.service';
 import { SettingsService } from '../settings/settings.service';
@@ -1687,6 +1688,12 @@ export class UploadService {
        * 回收站那条的远端副本一并清理，不会留孤儿资源。
        */
       if (exists.status === 'deleted') {
+        /*
+         * v1.1.5：回收站里那条如果还被引用（笔记 / 共享），就不能为了让名字而静默删掉它 ——
+         * 引用统计 > 0 时数据一律不可删，这里直接放弃复用名字，改为生成新 File_ID。
+         */
+        const st = await syncFileStats([exists.id]);
+        if ((st.get(exists.id)?.ref || 0) > 0) return this.makeFileId();
         await this.removeFile(exists.id, exists.name);
         continue;
       }
@@ -2051,6 +2058,8 @@ export class UploadService {
         select: {
           name: true,
           originalName: true,
+          // v1.1.5：同实例 / 跨实例走两套规则，必须知道候选记录归属哪个实例
+          instanceId: true,
           // v2.8.7b：附带渠道信息 —— 「同一渠道名称内 / 同一渠道类型内」两种范围都需要比对渠道属性
           copies: { select: { channelId: true, status: true, isPrimary: true, channel: { select: { name: true, type: true } } } },
         },
@@ -2058,15 +2067,24 @@ export class UploadService {
       /** 取某条记录的「主渠道」副本（没有 isPrimary 标记时退化为第一份副本） */
       const primaryCopyOf = (d: (typeof dups)[number]) =>
         d.copies.find((c) => c.isPrimary) || d.copies[0];
-      const hit =
-        dups.find((d) => {
-          if (scope === 'all') return true;
-          const pc = primaryCopyOf(d);
-          if (!pc) return false;
-          return scope === 'channel'
-            ? (pc.channel?.name || '') === main.name
-            : (pc.channel?.type || '') === main.type;
-        }) || null;
+      /** 渠道范围是否命中（all 恒命中；channel / channelType 比主渠道属性） */
+      const scopeHit = (d: (typeof dups)[number]) => {
+        if (scope === 'all') return true;
+        const pc = primaryCopyOf(d);
+        if (!pc) return false;
+        return scope === 'channel'
+          ? (pc.channel?.name || '') === main.name
+          : (pc.channel?.type || '') === main.type;
+      };
+      /*
+       * v1.1.5：优先同实例命中 —— 同一实例里已经有这份内容时**不克隆**，
+       * 直接把原记录的 File_ID / 外链返回给调用方（需求表格第一张）。
+       * 只有「本实例里没有、别的实例里有」才克隆一条新记录并计入删除统计。
+       */
+      const targetInst = String(opts.instanceId || '');
+      const sameHit = dups.find((d) => String(d.instanceId || '') === targetInst && scopeHit(d)) || null;
+      const crossHit = dups.find((d) => String(d.instanceId || '') !== targetInst && scopeHit(d)) || null;
+      const hit = sameHit || crossHit;
       if (!hit && dups.length) {
         const d0 = dups[0];
         const pc = primaryCopyOf(d0);
@@ -2076,6 +2094,16 @@ export class UploadService {
           `目标渠道=${main.name}（类型=${main.type}） ｜ 已有文件渠道=${pc?.channel?.name || '未知'}（类型=${pc?.channel?.type || '未知'}）`,
           uploadIp,
         );
+      }
+      if (hit && sameHit) {
+        // 同实例重复：不克隆、不计删除统计 —— 同一份数据被同一个实例重复上传，本来就该是同一条
+        appLog.info(
+          'upload',
+          `命中去重（同实例）：${originalName} 与 ${sameHit.originalName}（${sameHit.name}）内容相同，直接复用原记录`,
+          `md5=${md5} ｜ 原始大小=${originalSize}B ｜ 实例=${targetInst || '默认'}`,
+          uploadIp,
+        );
+        return { id: sameHit.name, dedup: true, finalName: originalName };
       }
       if (hit) {
         /*
@@ -2101,9 +2129,18 @@ export class UploadService {
           },
           uploadIp,
         );
+        /*
+         * v1.1.5：跨实例克隆要计入「删除统计」—— 两条记录从此共用同一个实体对象，
+         * 谁的删除统计 > 0，谁就只允许删自己的数据、不能动远端文件。
+         */
+        try {
+          await syncFileStats([cloned, hit.name]);
+        } catch (err) {
+          appLog.warn('upload', `去重后统计写入失败（不影响上传结果）`, (err as Error).message, uploadIp);
+        }
         appLog.info(
           'upload',
-          `命中去重：${originalName} 与已有文件 ${hit.originalName}（${hit.name}）内容相同，已为本次上传克隆记录 ${cloned}`,
+          `命中去重（跨实例）：${originalName} 与已有文件 ${hit.originalName}（${hit.name}）内容相同，已为本次上传克隆记录 ${cloned}`,
           `md5=${md5} ｜ 原始大小=${originalSize}B ｜ 范围=${scope === 'channel' ? `同一渠道名称内（${main.name}）` : scope === 'channelType' ? `同一渠道类型内（${main.type}）` : '全部渠道'}`,
           uploadIp,
         );
@@ -3265,6 +3302,8 @@ export class UploadService {
           uploadSource: opts.uploadSource || 'Default',
           ip,
           instanceId,
+          // v1.1.5：记下来源记录，删除统计 / 共用清单靠它说明「这条是克隆出来的」
+          cloneOf: src.id,
           metas,
           uploadStartedAt: now,
           uploadFinishedAt: now,
@@ -3301,8 +3340,121 @@ export class UploadService {
   }
 
   /**
-   * v3.0.0（R10）：副本落库数据。
+   * v1.1.5：把一个文件记录「复制」到另一个实例（或同实例的另一处目录）。
    *
+   * 复制的是什么：
+   *   · 一条新的 files 记录（新 File_ID ⇒ 新外链、独立的备注/评分/重命名历史）；
+   *   · 完全相同的 file_copies 行 —— 指向**同一个远端对象**，零字节冗余；
+   *   · 标签按目标实例重新确权（跨实例不能直接搬 tagId，否则会挂到别的实例的标签行上）。
+   *
+   * 复制完之后两条记录共用同一个实体对象 → 双向计入「删除统计」，
+   * 任何一方彻底删除时都不会动远端文件，只有最后一份才真正删。
+   */
+  async copyRecordTo(
+    sourceId: string,
+    opts: { instanceId: string; folder?: string; uploader?: string; ip?: string },
+  ): Promise<{ name: string; id: string } | null> {
+    const src = await prisma.fileRecord.findUnique({
+      where: { id: String(sourceId || '') },
+      include: { copies: true, tags: { include: { tag: true } } },
+    });
+    if (!src) return null;
+    const instanceId = String(opts.instanceId || '');
+    const fileId = this.makeFileId();
+    const copies = src.copies.map((c) => ({
+      channelId: c.channelId,
+      remoteKey: c.remoteKey,
+      remoteUrl: c.remoteUrl,
+      objectPath: c.objectPath,
+      urlQuery: c.urlQuery,
+      metas: c.metas,
+      status: c.status === 'failed' ? 'failed' : 'active',
+      isPrimary: c.isPrimary,
+    }));
+    /*
+     * 标签：同实例直接复用 tagId；跨实例按「名字」在目标实例里取或建。
+     * 之所以不用 tagId —— Tag 的唯一身份是「实例 + 类型 + 名称」，
+     * 把 A 实例的 tagId 挂到 B 实例的文件上，B 实例的标签云里根本查不到。
+     */
+    const sameInstance = String(src.instanceId || '') === instanceId;
+    const tagIds: string[] = [];
+    for (const t of src.tags) {
+      if (sameInstance) {
+        tagIds.push(t.tagId);
+        continue;
+      }
+      try {
+        const row = await findOrCreateTag(t.tag.name, instanceId, opts.uploader || src.uploader || '', TAG_TYPE_FILE);
+        if (row?.id) tagIds.push(row.id);
+      } catch {
+        /* 单个标签失败不影响复制 */
+      }
+    }
+    // 处理记录：标明来源，详情页「处理记录」里能看出这是复制出来的一份
+    let metas = src.metas;
+    try {
+      const obj = (JSON.parse(src.metas || '{}') || {}) as Record<string, unknown>;
+      const prev = (obj.ProcessEvent && typeof obj.ProcessEvent === 'object' ? obj.ProcessEvent : {}) as Record<string, unknown>;
+      obj.ProcessEvent = {
+        ...prev,
+        Copied: {
+          SourceFileId: src.name,
+          SourceOriginalName: src.originalName,
+          SourceUserId: src.uploader || '',
+          CopiedAt: new Date().toISOString(),
+        },
+      };
+      metas = JSON.stringify(obj);
+    } catch {
+      metas = src.metas;
+    }
+    const now = new Date();
+    const created = await prisma.fileRecord.create({
+      data: {
+        name: fileId,
+        firstName: fileId,
+        prevName: '',
+        originalName: src.originalName,
+        size: src.size,
+        originalSize: src.originalSize,
+        mime: src.mime,
+        hash: src.hash,
+        md5: src.md5,
+        // 未指定目录时留在原目录（同实例内复制 = 同目录下多一份）
+        folder: opts.folder !== undefined ? String(opts.folder) : src.folder,
+        uploader: opts.uploader || src.uploader || '',
+        uploadSource: src.uploadSource || 'Default',
+        ip: opts.ip || src.ip || '',
+        instanceId,
+        cloneOf: src.id,
+        metas,
+        uploadStartedAt: now,
+        uploadFinishedAt: now,
+        copies: { create: copies },
+        ...(tagIds.length ? { tags: { create: Array.from(new Set(tagIds)).map((tagId) => ({ tagId })) } } : {}),
+      },
+      select: { id: true, name: true },
+    });
+    /*
+     * 复制完成后立刻把两边的删除统计刷新一遍 —— 共用数从这一刻起就是 1，
+     * 谁先彻底删除都不会把远端文件带走。
+     */
+    try {
+      await syncFileStats([created.id, src.id]);
+    } catch (err) {
+      appLog.warn('upload', `复制后共用统计写入失败（不影响复制结果）`, (err as Error).message, opts.ip || '');
+    }
+    appLog.info(
+      'upload',
+      `复制文件：${src.originalName}（${src.name}）→ ${created.name}`,
+      `目标实例=${instanceId || '默认'} ｜ 目录=${opts.folder !== undefined ? String(opts.folder) || '(根)' : src.folder || '(根)'} ｜ 副本 ${copies.length} 个（共用同一实体）`,
+      opts.ip || '',
+    );
+    return { name: created.name, id: created.id };
+  }
+
+  /**
+   * v3.0.0（R10）：副本落库数据。
    * 只写四样东西：
    *   · remoteKey —— 渠道内标识（删除/移动用）
    *   · objectPath / urlQuery —— 固化寻址地址（域名永不落库）
@@ -3363,6 +3515,8 @@ export class UploadService {
     const registered = normalizeUploadSource(rec?.uploadSource) === 'Record';
     const copies = await prisma.fileCopy.findMany({ where: { fileId: id } });
     let sharedSkipped = 0;
+    /** v1.1.5：本次删除后，共用同一个实体的其它记录 —— 删完要把它们的删除统计重算一遍 */
+    const siblingIds = new Set<string>();
     for (const copy of copies) {
       if (registered) continue;
       // 没有 key 也没有 URL 的副本无从删起（例如历史脏数据），跳过避免误删渠道根目录
@@ -3371,20 +3525,31 @@ export class UploadService {
        * v3.0.0（R10）：引用计数删除 —— 去重克隆出的多条记录共用同一个远端对象，
        * 只要还有任意一个「未在回收站」的记录引用它，就只删库不删远端。
        * 判定键：同渠道下 remoteKey 或 objectPath 相同（两者之一即可覆盖新老数据）。
+       *
+       * v1.1.5 修正：不再排除回收站里的记录 —— 别人把共用那份丢进回收站时，数据行还在、
+       * 随时可以恢复，恢复后要读的还是这个远端对象。旧写法只统计 status='active'，
+       * 于是「A 克隆自 B，B 进回收站，A 彻底删除」会把实体文件删掉，B 恢复后直接 404。
+       * 现在按「还有几条别的记录指向它」算，与删除统计 shareCount 同一口径。
        */
       const refKeys: Array<Record<string, string>> = [];
       if (copy.remoteKey) refKeys.push({ remoteKey: copy.remoteKey });
       if (copy.objectPath) refKeys.push({ objectPath: copy.objectPath });
       if (refKeys.length) {
-        const shared = await prisma.fileCopy.count({
+        const holders = await prisma.fileCopy.findMany({
           where: {
             channelId: copy.channelId,
             fileId: { not: id },
-            file: { status: 'active' },
             OR: refKeys,
           },
+          select: { fileId: true, remoteKey: true, objectPath: true },
         });
-        if (shared > 0) {
+        // OR 是「任一键命中」，这里再核一次是否真的同一个对象
+        const real = holders.filter((h) =>
+          (copy.remoteKey && h.remoteKey === copy.remoteKey) ||
+          (copy.objectPath && h.objectPath === copy.objectPath),
+        );
+        if (real.length) {
+          for (const h of real) siblingIds.add(h.fileId);
           sharedSkipped += 1;
           continue;
         }
@@ -3405,6 +3570,17 @@ export class UploadService {
       }
     }
     await prisma.fileRecord.delete({ where: { id } });
+    /*
+     * v1.1.5：本行删掉后，共用同一实体的其它记录「删除统计」少 1 —— 立刻重算并落库，
+     * 免得别人详情页上还显示着一个已经过时的共用数。
+     */
+    if (siblingIds.size) {
+      try {
+        await syncFileStats(Array.from(siblingIds));
+      } catch (err) {
+        appLog.warn('upload', `共用统计回写失败（不影响删除结果）`, (err as Error).message);
+      }
+    }
     appLog.info(
       'upload',
       `删除文件：${name || id}`,

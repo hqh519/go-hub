@@ -44,7 +44,12 @@ import { buildDirectoryTree, CHANNEL_LABEL, CopyWithChannel, fileExtOf, fileType
 import { FileFilterOpts, fileFilterGroups, matchDimPreset } from '../common/file-filter';
 // v1.1.2：文件被引用时禁止删除 / 详情页「文件引用」明细
 // v1.1.2.1：引用范围由「笔记」扩到全类型（笔记 + 分享链接），见 common/file-refs.ts
-import { batchReferenceBlockMessage, fileReferenceBlockMessage, refsOfFile, countBySource } from '../common/file-refs';
+import { batchReferenceBlockMessage, refsOfFile, countBySource } from '../common/file-refs';
+/*
+ * v1.1.5：引用统计（refCount）/ 删除统计（shareCount）——
+ * 删除闸门与详情页、引用明细页共用同一份口径，见 common/file-share-stats.ts。
+ */
+import { fileStats, sharedMembers, syncFileStats } from '../common/file-share-stats';
 
 // v1.0.5：详情页「原位媒体编辑」（裁剪 / 压缩 / 转 WebP / 视频转码）
 import {
@@ -2726,8 +2731,9 @@ export class ManageController {
           OR: [{ folder: prefix }, { folder: { startsWith: `${prefix}/` } }],
         },
       });
-      // v1.1.2：目录里只要有一个文件被笔记引用，整批拒绝（列出引用它的笔记标题）
-      const batchMsg = await batchReferenceBlockMessage(rows.map((r) => r.id));
+      // v1.1.2：目录里只要有一个文件被引用，整批拒绝（列出引用它的笔记标题）
+      // v1.1.5：引用口径扩到「笔记附件 + 目录共享接收人」，见 refBlockMessage
+      const batchMsg = await this.refBlockMessage(rows.map((r) => r.id));
       if (batchMsg) return { success: false, message: batchMsg };
       for (const r of rows) await this.trashRecord(r.id, r.name);
       /*
@@ -2814,11 +2820,41 @@ export class ManageController {
      * 若允许删，笔记里的附件会变成空洞（列表按「文件不存在」跳过该格），
      * 用户只会觉得「图莫名不见了」。这里直接把引用它的笔记标题抛出来，
      * 让用户先去处理笔记，而不是事后猜。
+     * v1.1.5：口径扩到「引用统计」—— 笔记附件 + 所在目录共享给他人，两者都算引用。
      */
-    const refMsg = await fileReferenceBlockMessage(record.id);
+    const refMsg = await this.refBlockMessage([record.id]);
     if (refMsg) return { success: false, message: refMsg };
     await this.trashRecord(record.id, record.name);
     return { success: true, deleted: 1 };
+  }
+
+  /**
+   * v1.1.5：引用统计闸门 —— 只要 refCount > 0，这条数据就不许删（连进回收站都不行）。
+   *
+   * 为什么连软删除也拦：软删除只是把行标成 deleted，文件还在库里、外链也还指得到，
+   * 但列表里看不到了 —— 引用它的笔记 / 共享接收方会以为「文件没了」。
+   * 需求原文也明确写了「不可删除，软删除也不行」。
+   *
+   * 提示分两种：有笔记附件时给「哪几篇笔记」（用户能直接去处理），
+   * 只有目录共享时给「取消共享」的指引。
+   */
+  private async refBlockMessage(fileIds: string[]): Promise<string> {
+    const ids = Array.from(new Set((fileIds || []).map((x) => String(x || '')).filter(Boolean)));
+    if (!ids.length) return '';
+    const rows = await prisma.fileRecord.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, originalName: true },
+    });
+    const map = await syncFileStats(rows.map((r) => r.id));
+    const blocked = rows.filter((r) => (map.get(r.id)?.ref || 0) > 0);
+    if (!blocked.length) return '';
+    // 优先给「笔记」这种可以立刻处理的引用
+    const noteMsg = await batchReferenceBlockMessage(blocked.map((r) => r.id));
+    if (noteMsg) return noteMsg;
+    const first = blocked[0];
+    const ref = map.get(first.id)?.ref || 0;
+    const who = blocked.length > 1 ? `等 ${blocked.length} 个文件` : `「${first.originalName || first.name}」`;
+    return `${who}正在被共享（引用统计 ${ref}），无法删除，也不能移入回收站。请先在「文件夹属性」里取消共享后再试。`;
   }
 
   /** 移入回收站（软删除，不动远端副本） */
@@ -3115,8 +3151,13 @@ export class ManageController {
       if (hit) {
         const gate = await this.verifyTrashTotp(req, totpCode);
         if (gate) return gate;
-        const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
-        return { success: true, folder: true, purged: n };
+        try {
+          const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
+          return { success: true, folder: true, purged: n };
+        } catch (err) {
+          // v1.1.5：目录内有被引用的文件 → 整批拒绝（purgeFolderEntry 抛出原因）
+          return { success: false, message: (err as Error).message };
+        }
       }
       // v1.0.3：隐式目录（目录本身没删，只删了里面的文件）→ 逐条彻底删除该前缀下的软删文件
       const rows = await prisma.fileRecord.findMany({
@@ -3130,6 +3171,9 @@ export class ManageController {
       if (!rows.length) return { success: false, message: '回收站中不存在该目录' };
       const gate2 = await this.verifyTrashTotp(req, totpCode);
       if (gate2) return gate2;
+      // v1.1.5：隐式目录逐条彻底删除前同样过引用统计
+      const blockedMsg = await this.refBlockMessage(rows.map((r) => r.id));
+      if (blockedMsg) return { success: false, message: blockedMsg };
       for (const r of rows) {
         await this.uploadSvc.removeFile(r.id, r.name);
         await this.cleanupEmptiedFolderChain(r.uploader || owner, r.folder || '', r.instanceId || '');
@@ -3142,6 +3186,9 @@ export class ManageController {
     if (!record) return { success: false, message: '回收站中不存在该文件' };
     const gate = await this.verifyTrashTotp(req, totpCode);
     if (gate) return gate;
+    // v1.1.5：被引用的文件不允许彻底删除（提示里会列出占用它的笔记 / 共享）
+    const purgeBlocked = await this.refBlockMessage([record.id]);
+    if (purgeBlocked) return { success: false, message: purgeBlocked };
     await this.uploadSvc.removeFile(record.id, record.name);
     // v1.0.2：删完若该目录已空，登记与属性一起清掉（否则文件管理里留一个空条目）
     await this.cleanupEmptiedFolderChain(record.uploader || owner, record.folder || '', record.instanceId || '');
@@ -3171,6 +3218,11 @@ export class ManageController {
       where: { id: { in: ids }, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
     });
     const found = new Set(rows.map((r) => r.id));
+    /*
+     * v1.1.5：彻底删除前统一取一次引用统计 —— 被引用的文件一行都不许删。
+     * 一次性把本批的统计算好（两条查询），避免在循环里逐个查库。
+     */
+    const statsMap = action === 'purge' ? await syncFileStats(rows.map((r) => r.id)) : null;
     const results: { id: string; ok: boolean; message?: string }[] = [];
     for (const id of ids) {
       // 文件夹条目：id 形如 folder:<路径>
@@ -3193,6 +3245,14 @@ export class ManageController {
             if (!under.length) {
               results.push({ id, ok: false, message: '目录不存在或无权限' });
               continue;
+            }
+            // v1.1.5：目录里只要有一条被引用，整批拒绝（与目录软删除同口径）
+            if (action === 'purge') {
+              const blocked = await this.refBlockMessage(under.map((r) => r.id));
+              if (blocked) {
+                results.push({ id, ok: false, message: blocked });
+                continue;
+              }
             }
             for (const r of under) {
               if (action === 'purge') {
@@ -3232,6 +3292,13 @@ export class ManageController {
       try {
         const rec = rows.find((r) => r.id === id)!;
         if (action === 'purge') {
+          // v1.1.5：引用统计 > 0 → 这条数据不许删（提示与目录/单条删除一致）
+          const ref = statsMap?.get(rec.id)?.ref || 0;
+          if (ref > 0) {
+            const blocked = await this.refBlockMessage([rec.id]);
+            results.push({ id, ok: false, message: blocked || `该文件存在 ${ref} 条引用，无法彻底删除` });
+            continue;
+          }
           await this.uploadSvc.removeFile(rec.id, rec.name);
           // v1.0.2：同单条彻底删除 —— 目录因此变空则清理登记与属性
           await this.cleanupEmptiedFolderChain(rec.uploader || owner, rec.folder || '', rec.instanceId || '');
@@ -3467,7 +3534,6 @@ export class ManageController {
 
   /** 彻底删除回收站里的文件夹：清登记 + 连带清掉该前缀下所有软删文件记录 */
   private async purgeFolderEntry(owner: string, path: string, instanceId = ''): Promise<number> {
-    await this.removeDeletedFolder(owner, path);
     const rows = await prisma.fileRecord.findMany({
       where: {
         status: 'deleted',
@@ -3476,6 +3542,17 @@ export class ManageController {
       },
       select: { id: true, name: true },
     });
+    /*
+     * v1.1.5：目录彻底删除前先过引用统计 —— 只要有一条被引用，整批拒绝，
+     * 连「回收站目录登记」都不能清掉（清了目录就再也恢复不回来了）。
+     */
+    const stats = await syncFileStats(rows.map((r) => r.id));
+    if (rows.some((r) => (stats.get(r.id)?.ref || 0) > 0)) {
+      const msg = (await this.refBlockMessage(rows.map((r) => r.id))) || '目录内存在被引用的文件，无法彻底删除';
+      appLog.warn('file', `回收站目录彻底删除被拒绝：${path}`, msg);
+      throw new Error(msg);
+    }
+    await this.removeDeletedFolder(owner, path);
     let n = 0;
     for (const r of rows) {
       try {
@@ -4028,9 +4105,119 @@ export class ManageController {
   }
 
   /**
-   * v1.0.1：实例归属校验（管理端控制器用）。
-   * 与标签控制器那个同名方法走同一套判定（common/instance-access），避免两处漂移。
+   * v1.1.5：POST /api/manage/batch/copy —— 「移动 / 复制」里的复制。
+   *
+   * 与 batch/move 的参数完全一致（ids / folders / folder / instanceId / fromInstanceId），
+   * 区别只在于语义：**源记录留在原处不动**，在目标实例里多出一份新记录（新外链），
+   * 实体文件仍然是同一个（file_copies 直接复用 remoteKey / objectPath）。
+   *
+   * 于是「复制」天然产生「删除统计」：两条记录共用同一个实体对象，
+   * 任何一方彻底删除都只删自己的数据行，远端对象要等最后一份才真正删掉。
+   *
+   * 目录复制：按目录在源实例里取全部文件，逐个落到目标目录下的同名子路径，
+   * 空目录（只有登记、没有文件）不会复制 —— 目录本身没有实体，无从复制内容。
    */
+  @Post('batch/copy')
+  async batchCopy(
+    @Req() req: Request,
+    @Body() body: { ids?: string[]; folders?: string[]; folder?: string; instanceId?: string; fromInstanceId?: string },
+  ) {
+    if (!(await this.userPerm(req, 'edit'))) return { success: false, message: '没有编辑权限' };
+    const ids = this.bodyIds(body);
+    const folders = (Array.isArray(body?.folders) ? body.folders : [])
+      .map((f) => normalizeFolderPath(String(f || '')))
+      .filter(Boolean);
+    if (!ids.length && !folders.length) return { success: false, message: '缺少 ids' };
+    const targetInstance = String(body?.instanceId ?? '');
+    if (targetInstance) {
+      const inst = await prisma.instance.findUnique({ where: { id: targetInstance }, select: { id: true } });
+      if (!inst) throw new BadRequestException('目标实例不存在');
+      if (!(await this.canAccessInstance(req, targetInstance))) {
+        return { success: false, message: '无权复制到该实例' };
+      }
+    }
+    const fromInstance = body?.fromInstanceId !== undefined ? String(body.fromInstanceId ?? '') : undefined;
+    const distBase = normalizeFolderPath(String(body?.folder ?? ''));
+    const me = currentSession(req)?.user || '';
+    const ip = this.clientIpOf(req);
+    const failed: { id: string; error: string }[] = [];
+    let copied = 0;
+    let copiedFolders = 0;
+
+    /** 单条复制：校验归属 → 交给 UploadService 落一条新记录（含复用副本、标签、共用统计） */
+    const copyOne = async (recId: string, folder: string | undefined) => {
+      const rec = await prisma.fileRecord.findFirst({
+        where: {
+          // ids 兼容主键 id 与 File_ID（与 batch/move 的 loadOwned 同口径）
+          OR: [{ id: recId }, { name: recId }],
+          ...(this.admin(req) || !me ? {} : { uploader: me }),
+          ...(fromInstance !== undefined ? { instanceId: fromInstance } : {}),
+        },
+        select: { id: true, name: true, folder: true, instanceId: true },
+      });
+      if (!rec) throw new Error('文件不存在或无权复制');
+      // 只读共享目录里的文件不允许复制出去（与移动保持同一套限制）
+      if (!this.admin(req) && me) {
+        const info = await folderSharedPermission(rec.folder || '', String(rec.instanceId || ''), me);
+        if (info.shared && info.perm === 'readonly') throw new Error('只读共享目录，不允许复制');
+      }
+      return this.uploadSvc.copyRecordTo(rec.id, {
+        instanceId: targetInstance,
+        ...(folder !== undefined ? { folder } : {}),
+        uploader: me || undefined,
+        ip,
+      });
+    };
+
+    // ---------- 文件 ----------
+    for (const id of ids) {
+      try {
+        const r = await copyOne(id, distBase);
+        if (r) copied += 1;
+      } catch (err) {
+        failed.push({ id, error: (err as Error).message });
+      }
+    }
+
+    // ---------- 目录 ----------
+    for (const f of folders) {
+      const leaf = f.split('/').filter(Boolean).pop() || '';
+      const newRoot = [distBase, leaf].filter(Boolean).join('/');
+      const rows = await prisma.fileRecord.findMany({
+        where: {
+          ...(this.admin(req) || !me ? {} : { uploader: me }),
+          ...(fromInstance !== undefined ? { instanceId: fromInstance } : {}),
+          status: 'active',
+          OR: [{ folder: f }, { folder: { startsWith: `${f}/` } }],
+        },
+        select: { id: true, folder: true },
+      });
+      if (!rows.length) {
+        failed.push({ id: `folder:${f}`, error: '目录为空或不存在可复制的文件（空目录没有实体，无法复制）' });
+        continue;
+      }
+      for (const r of rows) {
+        const suffix = String(r.folder || '').slice(f.length).replace(/^\/+/, '');
+        try {
+          const out = await copyOne(r.id, suffix ? `${newRoot}/${suffix}` : newRoot);
+          if (out) copied += 1;
+        } catch (err) {
+          failed.push({ id: r.id, error: (err as Error).message });
+        }
+      }
+      copiedFolders += 1;
+    }
+
+    appLog.info(
+      'manage',
+      `批量复制 ${ids.length} 个文件 / ${folders.length} 个目录 → 实例 ${targetInstance || 'default'}`,
+      `成功 ${copied} 条记录${copiedFolders ? `（含目录 ${copiedFolders} 个）` : ''}，失败 ${failed.length} 个 ｜ 目标目录=${distBase || '(根)'}`,
+      ip,
+    );
+    return { success: true, copied, copiedFolders, updated: copied, failed };
+  }
+
+
   private async canAccessInstance(req: Request, instanceId: string): Promise<boolean> {
     if (this.admin(req)) return true;
     return userInInstance(currentSession(req)?.user || '', instanceId);
@@ -4284,7 +4471,15 @@ export class ManageController {
      */
     const refs = await refsOfFile(rec.id);
     const bySource = countBySource(refs);
-    metadata.FileRefCount = refs.length;
+    /*
+     * v1.1.5：「引用统计 / 删除统计」两个闸门值 —— 详情页显示成 `引用(xx) | 共用(xx)`。
+     *   refCount   = 笔记附件 + 所在目录共享出去的接收人数（>0 数据不可删，软删除也不行）
+     *   shareCount = 同一个实体对象还被几条别的记录用着（跨实例克隆 / 复制产生）
+     * 明细（被哪篇笔记、哪个分享链接引用）仍走 refs / /api/file-refs。
+     */
+    const stats = await fileStats(rec.id);
+    metadata.FileRefCount = stats.ref;
+    metadata.FileShareCount = stats.share;
     metadata.FileRefNoteCount = bySource.note;
     metadata.FileRefShareCount = bySource.share;
     metadata.FileRefNotes = refs
@@ -4331,15 +4526,32 @@ export class ManageController {
     if (!rec) return { success: false, message: '文件不存在或无权查看' };
     const refs = await refsOfFile(rec.id);
     const bySource = countBySource(refs);
+    // v1.1.5：引用统计 / 共用统计 + 共用明细（被哪个用户的哪个实例用着）
+    const stats = await fileStats(rec.id);
+    const members = await sharedMembers(rec.id);
     return {
       success: true,
       data: {
         fileId: rec.id,
         name: rec.name,
         originalName: rec.originalName,
-        count: refs.length,
+        count: stats.ref,
         noteCount: bySource.note,
         shareCount: bySource.share,
+        /** v1.1.5：删除统计（共用数） */
+        sharedCount: stats.share,
+        /** v1.1.5：共用清单 —— 同实体对象还被哪些记录 / 实例用着 */
+        shared: members.map((m) => ({
+          fileId: m.fileId,
+          name: m.name,
+          originalName: m.originalName,
+          uploader: m.uploader,
+          instanceId: m.instanceId,
+          instanceName: m.instanceName,
+          status: m.status,
+          createdAt: m.createdAt,
+          clonedFromMe: m.clonedFromMe,
+        })),
         list: refs.map((r) => ({
           source: r.source,
           // 笔记用 noteId；分享用 shareId —— 前端两种都可能用到，所以两个字段都给上

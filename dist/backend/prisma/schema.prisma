@@ -242,6 +242,21 @@ model FileRecord {
   //   uploadFinishedAt 文件记录落库的时刻
   uploadStartedAt  DateTime?
   uploadFinishedAt DateTime?
+  // v1.1.5：引用统计 / 删除统计（共用计数）—— 删除判定的两个「闸门」。
+  //
+  //   refCount   引用统计：文件被「笔记附件」或「目录共享给他人」引用的次数。
+  //              只要 > 0，数据（本行）不可删除，**软删除（进回收站）也不行**。
+  //   shareCount 删除统计（共用）：同一个实体对象还被多少个「别的记录」用着
+  //              （跨实例去重克隆 / 跨实例复制产生）。> 0 时允许删数据，但实体文件必须留着。
+  //   cloneOf    克隆来源的 File_ID（跨实例去重 / 复制时写入），仅用于追溯与共用清单展示。
+  //
+  // 两列都是「按需重算并落库」的缓存值：见 common/file-share-stats.ts。
+  // 之所以不靠上传/共享时增量加减，是因为增量维护点太多（笔记增删、目录共享变更、
+  // 目录移动、回收站恢复…），任何一处漏改都会漂移；而重算一次只有两条查询，
+  // 在「打开详情 / 查看引用 / 执行删除」这几个真正要用到它的时刻算一遍即可。
+  refCount         Int       @default(0)
+  shareCount       Int       @default(0)
+  cloneOf          String    @default("")
   metas        String    @default("{}") // 标签、备注等扩展
   createdAt    DateTime  @default(now())
 

@@ -7,6 +7,7 @@ import { faVolumeMute } from '@fortawesome/free-solid-svg-icons/faVolumeMute';
 import { faVolumeUp } from '@fortawesome/free-solid-svg-icons/faVolumeUp';
 import { faAngleDoubleRight } from '@fortawesome/free-solid-svg-icons/faAngleDoubleRight';
 import { faArrowDown } from '@fortawesome/free-solid-svg-icons/faArrowDown';
+import { faArrowsAlt } from '@fortawesome/free-solid-svg-icons/faArrowsAlt';
 import { faArrowLeft } from '@fortawesome/free-solid-svg-icons/faArrowLeft';
 import { faArrowUp } from '@fortawesome/free-solid-svg-icons/faArrowUp';
 import { faBan } from '@fortawesome/free-solid-svg-icons/faBan';
@@ -139,6 +140,7 @@ export default [
     faAngleDoubleLeft,
     faAngleDoubleRight,
     faArrowDown,
+    faArrowsAlt,
     faArrowLeft,
     faArrowUp,
     faAws,

@@ -37,6 +37,7 @@ const auth_guard_1 = require("../auth/auth.guard");
 const file_view_1 = require("../common/file-view");
 const file_filter_1 = require("../common/file-filter");
 const file_refs_1 = require("../common/file-refs");
+const file_share_stats_1 = require("../common/file-share-stats");
 const media_edit_1 = require("./media-edit");
 const compress_1 = require("../common/compress");
 const app_log_1 = require("../common/app-log");
@@ -2012,7 +2013,7 @@ let ManageController = ManageController_1 = class ManageController {
                     OR: [{ folder: prefix }, { folder: { startsWith: `${prefix}/` } }],
                 },
             });
-            const batchMsg = await (0, file_refs_1.batchReferenceBlockMessage)(rows.map((r) => r.id));
+            const batchMsg = await this.refBlockMessage(rows.map((r) => r.id));
             if (batchMsg)
                 return { success: false, message: batchMsg };
             for (const r of rows)
@@ -2072,11 +2073,31 @@ let ManageController = ManageController_1 = class ManageController {
         if (sharedHit) {
             return { success: false, message: `该文件位于 ${sharedHit.owner} 共享给你的「${sharedHit.path}」内，不允许删除` };
         }
-        const refMsg = await (0, file_refs_1.fileReferenceBlockMessage)(record.id);
+        const refMsg = await this.refBlockMessage([record.id]);
         if (refMsg)
             return { success: false, message: refMsg };
         await this.trashRecord(record.id, record.name);
         return { success: true, deleted: 1 };
+    }
+    async refBlockMessage(fileIds) {
+        const ids = Array.from(new Set((fileIds || []).map((x) => String(x || '')).filter(Boolean)));
+        if (!ids.length)
+            return '';
+        const rows = await prisma_1.prisma.fileRecord.findMany({
+            where: { id: { in: ids } },
+            select: { id: true, name: true, originalName: true },
+        });
+        const map = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id));
+        const blocked = rows.filter((r) => (map.get(r.id)?.ref || 0) > 0);
+        if (!blocked.length)
+            return '';
+        const noteMsg = await (0, file_refs_1.batchReferenceBlockMessage)(blocked.map((r) => r.id));
+        if (noteMsg)
+            return noteMsg;
+        const first = blocked[0];
+        const ref = map.get(first.id)?.ref || 0;
+        const who = blocked.length > 1 ? `等 ${blocked.length} 个文件` : `「${first.originalName || first.name}」`;
+        return `${who}正在被共享（引用统计 ${ref}），无法删除，也不能移入回收站。请先在「文件夹属性」里取消共享后再试。`;
     }
     async trashRecord(id, name) {
         await this.uploadSvc.softDeleteFile(id, name);
@@ -2312,8 +2333,13 @@ let ManageController = ManageController_1 = class ManageController {
                 const gate = await this.verifyTrashTotp(req, totpCode);
                 if (gate)
                     return gate;
-                const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
-                return { success: true, folder: true, purged: n };
+                try {
+                    const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
+                    return { success: true, folder: true, purged: n };
+                }
+                catch (err) {
+                    return { success: false, message: err.message };
+                }
             }
             const rows = await prisma_1.prisma.fileRecord.findMany({
                 where: {
@@ -2328,6 +2354,9 @@ let ManageController = ManageController_1 = class ManageController {
             const gate2 = await this.verifyTrashTotp(req, totpCode);
             if (gate2)
                 return gate2;
+            const blockedMsg = await this.refBlockMessage(rows.map((r) => r.id));
+            if (blockedMsg)
+                return { success: false, message: blockedMsg };
             for (const r of rows) {
                 await this.uploadSvc.removeFile(r.id, r.name);
                 await this.cleanupEmptiedFolderChain(r.uploader || owner, r.folder || '', r.instanceId || '');
@@ -2342,6 +2371,9 @@ let ManageController = ManageController_1 = class ManageController {
         const gate = await this.verifyTrashTotp(req, totpCode);
         if (gate)
             return gate;
+        const purgeBlocked = await this.refBlockMessage([record.id]);
+        if (purgeBlocked)
+            return { success: false, message: purgeBlocked };
         await this.uploadSvc.removeFile(record.id, record.name);
         await this.cleanupEmptiedFolderChain(record.uploader || owner, record.folder || '', record.instanceId || '');
         return { success: true };
@@ -2364,6 +2396,7 @@ let ManageController = ManageController_1 = class ManageController {
             where: { id: { in: ids }, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
         });
         const found = new Set(rows.map((r) => r.id));
+        const statsMap = action === 'purge' ? await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id)) : null;
         const results = [];
         for (const id of ids) {
             if (id.startsWith('folder:')) {
@@ -2381,6 +2414,13 @@ let ManageController = ManageController_1 = class ManageController {
                         if (!under.length) {
                             results.push({ id, ok: false, message: '目录不存在或无权限' });
                             continue;
+                        }
+                        if (action === 'purge') {
+                            const blocked = await this.refBlockMessage(under.map((r) => r.id));
+                            if (blocked) {
+                                results.push({ id, ok: false, message: blocked });
+                                continue;
+                            }
                         }
                         for (const r of under) {
                             if (action === 'purge') {
@@ -2422,6 +2462,12 @@ let ManageController = ManageController_1 = class ManageController {
             try {
                 const rec = rows.find((r) => r.id === id);
                 if (action === 'purge') {
+                    const ref = statsMap?.get(rec.id)?.ref || 0;
+                    if (ref > 0) {
+                        const blocked = await this.refBlockMessage([rec.id]);
+                        results.push({ id, ok: false, message: blocked || `该文件存在 ${ref} 条引用，无法彻底删除` });
+                        continue;
+                    }
                     await this.uploadSvc.removeFile(rec.id, rec.name);
                     await this.cleanupEmptiedFolderChain(rec.uploader || owner, rec.folder || '', rec.instanceId || '');
                 }
@@ -2598,7 +2644,6 @@ let ManageController = ManageController_1 = class ManageController {
         return cleaned;
     }
     async purgeFolderEntry(owner, path, instanceId = '') {
-        await this.removeDeletedFolder(owner, path);
         const rows = await prisma_1.prisma.fileRecord.findMany({
             where: {
                 status: 'deleted',
@@ -2607,6 +2652,13 @@ let ManageController = ManageController_1 = class ManageController {
             },
             select: { id: true, name: true },
         });
+        const stats = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id));
+        if (rows.some((r) => (stats.get(r.id)?.ref || 0) > 0)) {
+            const msg = (await this.refBlockMessage(rows.map((r) => r.id))) || '目录内存在被引用的文件，无法彻底删除';
+            app_log_1.appLog.warn('file', `回收站目录彻底删除被拒绝：${path}`, msg);
+            throw new Error(msg);
+        }
+        await this.removeDeletedFolder(owner, path);
         let n = 0;
         for (const r of rows) {
             try {
@@ -3039,6 +3091,96 @@ let ManageController = ManageController_1 = class ManageController {
             failed,
         };
     }
+    async batchCopy(req, body) {
+        if (!(await this.userPerm(req, 'edit')))
+            return { success: false, message: '没有编辑权限' };
+        const ids = this.bodyIds(body);
+        const folders = (Array.isArray(body?.folders) ? body.folders : [])
+            .map((f) => (0, folder_meta_service_1.normalizeFolderPath)(String(f || '')))
+            .filter(Boolean);
+        if (!ids.length && !folders.length)
+            return { success: false, message: '缺少 ids' };
+        const targetInstance = String(body?.instanceId ?? '');
+        if (targetInstance) {
+            const inst = await prisma_1.prisma.instance.findUnique({ where: { id: targetInstance }, select: { id: true } });
+            if (!inst)
+                throw new common_1.BadRequestException('目标实例不存在');
+            if (!(await this.canAccessInstance(req, targetInstance))) {
+                return { success: false, message: '无权复制到该实例' };
+            }
+        }
+        const fromInstance = body?.fromInstanceId !== undefined ? String(body.fromInstanceId ?? '') : undefined;
+        const distBase = (0, folder_meta_service_1.normalizeFolderPath)(String(body?.folder ?? ''));
+        const me = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const ip = this.clientIpOf(req);
+        const failed = [];
+        let copied = 0;
+        let copiedFolders = 0;
+        const copyOne = async (recId, folder) => {
+            const rec = await prisma_1.prisma.fileRecord.findFirst({
+                where: {
+                    OR: [{ id: recId }, { name: recId }],
+                    ...(this.admin(req) || !me ? {} : { uploader: me }),
+                    ...(fromInstance !== undefined ? { instanceId: fromInstance } : {}),
+                },
+                select: { id: true, name: true, folder: true, instanceId: true },
+            });
+            if (!rec)
+                throw new Error('文件不存在或无权复制');
+            if (!this.admin(req) && me) {
+                const info = await (0, folder_meta_service_1.folderSharedPermission)(rec.folder || '', String(rec.instanceId || ''), me);
+                if (info.shared && info.perm === 'readonly')
+                    throw new Error('只读共享目录，不允许复制');
+            }
+            return this.uploadSvc.copyRecordTo(rec.id, {
+                instanceId: targetInstance,
+                ...(folder !== undefined ? { folder } : {}),
+                uploader: me || undefined,
+                ip,
+            });
+        };
+        for (const id of ids) {
+            try {
+                const r = await copyOne(id, distBase);
+                if (r)
+                    copied += 1;
+            }
+            catch (err) {
+                failed.push({ id, error: err.message });
+            }
+        }
+        for (const f of folders) {
+            const leaf = f.split('/').filter(Boolean).pop() || '';
+            const newRoot = [distBase, leaf].filter(Boolean).join('/');
+            const rows = await prisma_1.prisma.fileRecord.findMany({
+                where: {
+                    ...(this.admin(req) || !me ? {} : { uploader: me }),
+                    ...(fromInstance !== undefined ? { instanceId: fromInstance } : {}),
+                    status: 'active',
+                    OR: [{ folder: f }, { folder: { startsWith: `${f}/` } }],
+                },
+                select: { id: true, folder: true },
+            });
+            if (!rows.length) {
+                failed.push({ id: `folder:${f}`, error: '目录为空或不存在可复制的文件（空目录没有实体，无法复制）' });
+                continue;
+            }
+            for (const r of rows) {
+                const suffix = String(r.folder || '').slice(f.length).replace(/^\/+/, '');
+                try {
+                    const out = await copyOne(r.id, suffix ? `${newRoot}/${suffix}` : newRoot);
+                    if (out)
+                        copied += 1;
+                }
+                catch (err) {
+                    failed.push({ id: r.id, error: err.message });
+                }
+            }
+            copiedFolders += 1;
+        }
+        app_log_1.appLog.info('manage', `批量复制 ${ids.length} 个文件 / ${folders.length} 个目录 → 实例 ${targetInstance || 'default'}`, `成功 ${copied} 条记录${copiedFolders ? `（含目录 ${copiedFolders} 个）` : ''}，失败 ${failed.length} 个 ｜ 目标目录=${distBase || '(根)'}`, ip);
+        return { success: true, copied, copiedFolders, updated: copied, failed };
+    }
     async canAccessInstance(req, instanceId) {
         if (this.admin(req))
             return true;
@@ -3194,7 +3336,9 @@ let ManageController = ManageController_1 = class ManageController {
         metadata.LinkExpiresAt = rec.linkExpiresAt ? rec.linkExpiresAt.getTime() : 0;
         const refs = await (0, file_refs_1.refsOfFile)(rec.id);
         const bySource = (0, file_refs_1.countBySource)(refs);
-        metadata.FileRefCount = refs.length;
+        const stats = await (0, file_share_stats_1.fileStats)(rec.id);
+        metadata.FileRefCount = stats.ref;
+        metadata.FileShareCount = stats.share;
         metadata.FileRefNoteCount = bySource.note;
         metadata.FileRefShareCount = bySource.share;
         metadata.FileRefNotes = refs
@@ -3231,15 +3375,29 @@ let ManageController = ManageController_1 = class ManageController {
             return { success: false, message: '文件不存在或无权查看' };
         const refs = await (0, file_refs_1.refsOfFile)(rec.id);
         const bySource = (0, file_refs_1.countBySource)(refs);
+        const stats = await (0, file_share_stats_1.fileStats)(rec.id);
+        const members = await (0, file_share_stats_1.sharedMembers)(rec.id);
         return {
             success: true,
             data: {
                 fileId: rec.id,
                 name: rec.name,
                 originalName: rec.originalName,
-                count: refs.length,
+                count: stats.ref,
                 noteCount: bySource.note,
                 shareCount: bySource.share,
+                sharedCount: stats.share,
+                shared: members.map((m) => ({
+                    fileId: m.fileId,
+                    name: m.name,
+                    originalName: m.originalName,
+                    uploader: m.uploader,
+                    instanceId: m.instanceId,
+                    instanceName: m.instanceName,
+                    status: m.status,
+                    createdAt: m.createdAt,
+                    clonedFromMe: m.clonedFromMe,
+                })),
                 list: refs.map((r) => ({
                     source: r.source,
                     noteId: r.source === 'note' ? r.id : '',
@@ -4216,6 +4374,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], ManageController.prototype, "batchMove", null);
+__decorate([
+    (0, common_1.Post)('batch/copy'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "batchCopy", null);
 __decorate([
     (0, common_1.Post)('rename/*'),
     __param(0, (0, common_1.Req)()),

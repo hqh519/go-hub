@@ -108,7 +108,14 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3619',
       '/upload': 'http://localhost:3619',
-      '/file': 'http://localhost:3619',
+      /*
+       * v1.1.5：'/file' → '/file/'。
+       * 代理键是**前缀匹配**，原来的 '/file' 会把前端路由 '/file-refs'
+       * （文件引用明细页，v1.1.2 新增）一起转发给后端，
+       * 后端 SPA 兜底回的是构建产物 index.html → 开发期打开该页白屏 + 资源 404。
+       * 带上斜杠后只匹配真正的文件访问路径（/file/xxx），前端路由不受影响。
+       */
+      '/file/': 'http://localhost:3619',
       '/random': 'http://localhost:3619',
       '/dav': 'http://localhost:3619',
     },

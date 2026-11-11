@@ -3334,8 +3334,8 @@ methods: {
         this.moveTargetPath = '/';
         this.showMoveDialog = true;
     },
-    // 确认移动操作（v3.0.0：第二个参数 = 目标实例 id，由 MoveFileDialog 两步流程给出）
-    confirmMove(targetPath, targetInstanceId) {
+    // 确认移动/复制（v3.0.0：第二个参数 = 目标实例 id；v1.1.5：第三个参数 = 操作方式）
+    confirmMove(targetPath, targetInstanceId, moveMode = 'move') {
         let value = String(targetPath || '').trim();
         /*
          * v3.0.0（R12）：目录名容错 —— 校验器要求路径以 / 开头，
@@ -3354,8 +3354,13 @@ methods: {
         // 去掉开头的 /，结尾若没有 /，则加上
         const newPath = value.replace(/^\/+/, '') + (value.endsWith('/') ? '' : value === '' ? '' : '/');
         const instanceForMove = String(targetInstanceId ?? this.instanceId ?? '');
+        /*
+         * v1.1.5：复制允许「原地复制」——目标就是当前目录时，等于在同目录下多一份，
+         * 这是合理用法（例如要一份同目录副本换成新外链），所以同一目标校验只拦移动。
+         */
+        const isCopy = String(moveMode || 'move') === 'copy';
         // 判断目标文件夹是否是当前文件夹（跨实例移动不受此限制）
-        if (newPath === this.currentPath && instanceForMove === String(this.instanceId || '')) {
+        if (!isCopy && newPath === this.currentPath && instanceForMove === String(this.instanceId || '')) {
             this.$message.warning(this.$t('dashboard.moveTargetSameAsCurrent'));
             return;
         }
@@ -3364,11 +3369,16 @@ methods: {
         this.showMoveDialog = false;
         
         if (this.isBatchMove) {
-            // 批量移动（v3.0.0：带上目标实例）
-            this.executeBatchMove(newPath, instanceForMove);
+            // 批量移动 / 批量复制（v3.0.0：带上目标实例）
+            if (isCopy) this.executeCopy(newPath, instanceForMove, '');
+            else this.executeBatchMove(newPath, instanceForMove);
         } else {
-            // 单个文件/目录移动（v1.0.2：把目标实例一起传下去，跨实例移动才真的生效）
-            this.executeSingleMove(newPath, instanceForMove);
+            /*
+             * 单个文件 / 目录（v1.0.2：把目标实例一起传下去，跨实例移动才真的生效）
+             * v1.1.5：第三个参数 = 选中的那一条，非空即「单条模式」。
+             */
+            if (isCopy) this.executeCopy(newPath, instanceForMove, String(this.moveFileKey || ''));
+            else this.executeSingleMove(newPath, instanceForMove);
         }
     },
     /**
@@ -3377,9 +3387,11 @@ methods: {
      * 与回收站彻底删除的写法保持一致：$loading({ lock: true }) 锁定交互，
      * 返回的关闭函数做成**幂等**（内部 closed 标志位），
      * 这样 finally / catch / 早退分支里重复调用都不会报 "close of undefined"。
+     *
+     * v1.1.5：加一个 text 参数，复制流程复用同一套遮罩（只是文案不同）。
      */
-    beginMoving() {
-        const loading = this.$loading({ lock: true, text: this.$t('dashboard.movingHint') });
+    beginMoving(text) {
+        const loading = this.$loading({ lock: true, text: text || this.$t('dashboard.movingHint') });
         let closed = false;
         return () => {
             if (closed) return;
@@ -3496,6 +3508,75 @@ methods: {
             this.$message.error(this.$t('dashboard.moveFailed'));
         } finally {
             closeMoving();
+        }
+    },
+    /**
+     * v1.1.5：复制（单个 / 批量共用一套）。
+     *
+     * 与移动的差别只有两点：
+     *   ① 走 POST /api/manage/batch/copy，源记录留在原处，目标实例多一份（后端共用同一个实体文件）；
+     *   ② 成功后**不从列表里摘掉任何一条**，只刷新列表 —— 同实例复制时要能立刻看到多出来的那份。
+     *
+     * 参数 singleKey 为空 = 批量（取当前选中项）；非空 = 单条（文件名 / File_ID）。
+     * 后端返回 { success, copied, copiedFolders, failed[] }。
+     */
+    async executeCopy(newPath, targetInstanceId = this.instanceId, singleKey = '') {
+        const isSingle = !!String(singleKey || '');
+        let fileIds = [];
+        let folderIds = [];
+        if (isSingle) {
+            const item = this.tableData.find((f) => f.name === singleKey);
+            if (item?.isFolder) folderIds = [String(singleKey)];
+            else fileIds = [String(singleKey)];
+        } else {
+            fileIds = this.selectedFiles.filter((f) => !f.isFolder).map((f) => f.name);
+            folderIds = this.selectedFiles.filter((f) => f.isFolder).map((f) => f.name);
+        }
+        if (!fileIds.length && !folderIds.length) {
+            this.$message.warning(this.$t('dashboard.copyNothingCopied'));
+            return;
+        }
+        const targetFolder = String(newPath || '').replace(/^\/+/, '').replace(/\/+$/, '');
+        // 复制是写操作，遮罩文案换成「正在复制…」，避免用户误以为在移动
+        const closeLoading = this.beginMoving(this.$t('dashboard.copyingHint'));
+        try {
+            const resp = await fetchWithAuth('/api/manage/batch/copy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids: fileIds,
+                    folders: folderIds,
+                    folder: targetFolder,
+                    instanceId: String(targetInstanceId || ''),
+                    // 源实例：跨实例复制时后端据此定位要复制的数据
+                    fromInstanceId: String(this.instanceId || '')
+                })
+            });
+            const body = await resp.json().catch(() => ({}));
+            if (!resp.ok || body?.success === false) throw new Error(body?.message || 'failed');
+            const copied = Number(body?.copied ?? body?.updated ?? 0);
+            const copiedFolders = Number(body?.copiedFolders || 0);
+            const failed = Array.isArray(body?.failed) ? body.failed : [];
+            if (!copied && !copiedFolders) {
+                // 空目录没有实体可复制，后端会给 failed[0].error，优先用它说明原因
+                this.$message.warning(failed[0]?.error || this.$t('dashboard.copyNothingCopied'));
+                return;
+            }
+            if (failed.length) {
+                this.$message.warning(this.$t('dashboard.copyFilePartial', { ok: copied, fail: failed.length }));
+            } else {
+                this.$message.success(this.$t('dashboard.copyFileSuccess'));
+            }
+            if (!isSingle) this.clearSelection();
+            // 复制不会让当前列表变少，只需要重新拉一遍（同实例复制会看到新增的那份）
+            await this.loadListWindow({ page: this.currentPage || 1 });
+            if (typeof this.refreshLocalFileList === 'function') this.refreshLocalFileList();
+            if (typeof this.loadAllFolders === 'function') this.loadAllFolders().catch(() => undefined);
+        } catch (e) {
+            const msg = String(e?.message || '');
+            this.$message.error(msg && msg !== 'failed' ? msg : this.$t('dashboard.copyFileFailed'));
+        } finally {
+            closeLoading();
         }
     },
     handleBatchBlock(){
