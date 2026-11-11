@@ -3812,15 +3812,18 @@ methods: {
         this.updateBreadcrumbStuck();
     },
     /**
-     * 吸顶时工具栏应有的 top：顶栏静止位置底部 + 2px。
+     * 吸顶时工具栏应有的 top：顶栏静止位置底部。
      * v1.0.8：吸附态与常态统一成 2px（原先两处都是 8px，用户要求贴紧顶栏）。
+     * v1.1.4.1：移动端常态已改为「第二行上边贴死第一行下边」（见文件末尾
+     *           的 ≤768px 全局块，margin-top 归零），吸附态这里也去掉那 2px ——
+     *           否则一滚动就整行往下跳 2px，来回滚会看到抖动。
      * 用 offsetTop/offsetHeight 而不是 getBoundingClientRect —— 顶栏显隐靠 transform 位移，
      * rect 会随动画/隐藏状态变化；offset 只反映布局位置，任何时刻都是「顶栏展开时」的底部。
      */
     breadcrumbStickyTop() {
         const header = document.querySelector('.admin-header-content');
-        if (!header) return 52;
-        return Math.round(header.offsetTop + header.offsetHeight + 2);
+        if (!header) return 50;
+        return Math.round(header.offsetTop + header.offsetHeight);
     },
     /** 吸顶中：按顶栏显隐状态同步 fixed 的 top（顶栏隐藏时贴 0，让 -100% 位移能整行滑出屏幕） */
     syncBreadcrumbStuckTop() {
@@ -3897,6 +3900,9 @@ methods: {
             // v3.0.0（R11）：fixed 化时清掉的上下外边距要还原（文档流里仍靠它们撑 10px 间距）
             bar.style.marginTop = '';
             bar.style.marginBottom = '';
+            // v1.1.4.1：左右外边距同理（常态靠 -10px 通栏贴边，吸附态由下面的固定定位接管）
+            bar.style.marginLeft = '';
+            bar.style.marginRight = '';
             bar.style.removeProperty('--breadcrumb-hide-y');
             this.breadcrumbStuck = false;
             return;
@@ -3917,9 +3923,14 @@ methods: {
          * v3.0.0（R11c）：吸附态的背框宽度与常态完全一致 ——
          * 常态是主内容区宽度（左右各 10px 内边距，即 100% - 20px，left 10px）；
          * 之前固定成「顶栏同宽」（left 4px / 100% - 8px），吸附瞬间会变宽，视觉上跳一下。
+         * v1.1.4.1：常态已改为「通栏贴边」（左右各 -10px，100% 视口宽），
+         * 吸附态同步改为 left 0 / width 100%，并把左右外边距清零 ——
+         * fixed 元素的 margin 依然生效，留着 -10px 会把整行推出屏幕左边缘。
          */
-        bar.style.left = '10px';
-        bar.style.width = 'calc(100% - 20px)';
+        bar.style.left = '0px';
+        bar.style.width = '100%';
+        bar.style.marginLeft = '0';
+        bar.style.marginRight = '0';
         bar.style.zIndex = '35';
         this.breadcrumbStuck = true;
     },
@@ -7157,6 +7168,73 @@ html.dark .trash-btn.is-active,
         background: var(--tabs-switcher-accent-color, var(--primary-color-accent, #2563EB));
         box-shadow: 0 0 0 1.5px var(--tabs-switcher-current-bg, var(--toolbar-button-bg-color, #fff));
         pointer-events: none;
+    }
+}
+
+/* ============================================================================
+ * v1.1.4.1：移动端「图床管理页」顶部两行改为通栏贴边
+ * ----------------------------------------------------------------------------
+ * 只作用于本页（.dashboard-page-v3）+ 手机（≤768px）：
+ *   · 第一行（顶栏）：圆角归零、左右贴死屏幕两侧、上边贴死页面顶部；
+ *   · 第二行（全选栏）：同样去圆角贴边，上边紧贴第一行下边、上下内边距 +2px。
+ * 顶栏属于共享组件（AdminHeader），因此规则一律挂在 .dashboard-page-v3 之下，
+ * 其它后台页维持原来的「圆角浮起」样式不变。
+ *
+ * 【为什么光靠 top: 0 / margin: 0 还会留一条缝】
+ *   顶栏元素自带 `border: 1px solid transparent`（base 样式，圆角浮起时用于
+ *   让玻璃背框比元素内缩 1px），而背框 ::before 是绝对定位，`inset: 0` 相对
+ *   的是**padding box**，这 1px 边框环它永远盖不住。于是：
+ *     · 顶栏贴顶后，屏幕最上沿 y=0 实测像素仍是页面底色（243,243,245），
+ *       y=1 才是背框描边、y≥2 才是背框背景 —— 一条 1px 的浅色细缝；
+ *     · 顶栏的下边框同样留 1px 空白，第二行的上边一贴上去就又是一条缝；
+ *     · 左右两侧各 1px 竖缝，通栏后直接压在屏幕边缘上。
+ *   所以通栏状态下必须把这条「透明边框环」清零，否则几何坐标再准也有缝。
+ *
+ * 【描边处理】
+ *   通栏后左 / 上 / 右三边都压在视口边缘，继续描边只会变成一条压在屏幕边上的
+ *   线，故只保留第二行的底边（与下方文件区的分界），两行之间靠背景自然连成整块。
+ * ========================================================================= */
+@media (max-width: 768px) {
+    /* ---------- 第一行：顶栏 ---------- */
+    .dashboard-page-v3 .admin-header-spacer .admin-header-content {
+        /* 必须是带单位的 0px —— 顶栏宽度是 calc(100% - var(--admin-header-gutter) * 2)，
+           写成无单位的 0 会让整个 calc 失效、宽度退回 shrink-to-fit（实测 407px） */
+        --admin-header-gutter: 0px;
+        top: 0;
+        border-radius: 0;
+        /* 清掉 1px 透明边框环 —— 这是「贴顶后仍有一条 1px 细缝」的真正原因 */
+        border-width: 0;
+        /* 水平内边距保留 4px：通栏后 gutter 归零，不补回内容会直接压屏幕边 */
+        padding: 1px 4px;
+    }
+
+    /* 背框（::before）去圆角、收回原来的 -1px 外扩（inset: 0 相对 padding box，
+       边框清零后它正好铺满整个边框盒），描边同样清零以免压在视口边缘上 */
+    .dashboard-page-v3 .admin-header-spacer .admin-header-content::before {
+        inset: 0;
+        border-radius: 0;
+        border-width: 0;
+        /* 关掉投影 —— 背框的 box-shadow 是「0 6px 24px」，会顺着 y 轴往下压在
+           第二行顶部，实测第二行第一像素就被压到 237 并向下渐亮（250 → 237 → 240…），
+           在交界处形成一条渐变的暗带，跟 1px 缝隙一样显眼。通栏后两行本就是一整块，
+           分隔交给第二行自己的底边描边即可。 */
+        box-shadow: none;
+    }
+
+    /* ---------- 第二行：全选 / 视图 / 目录 / 排序工具栏 ---------- */
+    .dashboard-page-v3 .breadcrumb-sticky-wrap .breadcrumb-container {
+        /* 抵消主内容区左右各 10px 内边距 → 正好 100% 视口宽 */
+        margin-left: -10px;
+        margin-right: -10px;
+        width: calc(100% + 20px);
+        border-radius: 0;
+        /* 上边紧贴第一行下边：外层 wrap 的 -20px 已抵消「顶栏占位 +12px 余量」与
+           「主内容区 padding-top 8px」，这里只需清掉原本的 2px 外边距 */
+        margin-top: 0;
+        /* 上 / 左 / 右三边贴死视口，只留底边一条描边 */
+        border-width: 0 0 1px 0;
+        /* 上下 4px → 6px（+2px）；左右改为 2px（按钮更贴近屏幕两侧） */
+        padding: 6px 2px;
     }
 }
 </style>

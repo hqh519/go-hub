@@ -797,6 +797,18 @@ const ZH = {
         { t: '移动端后台：更多菜单也跟着滚动收起', d: '上一版已经让六处下拉页在滚动时收起，但右上角「更多菜单」在分享页、账户设置等页面仍是常开。这一版把它补到所有后台页共用的顶栏组件上；同时把滚动收起的监听从「只听 scroll」升级为 scroll + 手指拖动 + 滚轮三路 —— iOS 在惯性滚动期间根本不派发 scroll，只靠它会出现「下拉页一直挂着、松手才消失」。手指落在下拉页自身的列表里滑动不触发收起，刚展开的 60ms 内也不响应，避免 Element Plus 打开时自己做定位导致「开了就关」。' },
         { t: '数据库与其他模块', d: '本版没有新增表、没有新增列、没有迁移：笔记私有化只是在查询条件里多带一个作者字段（本来就有），共享文件的权限判定用的是既有的 shared / sharedSelf 标记，播放进度存在浏览器本地。升级直接覆盖代码即可，旧数据、旧链接、旧分享都不受影响。' }
       ]
+    },
+    {
+      title: '三十五、v1.1.4.1 更新要点',
+      intro: 'v1.1.4.1 只有一件事：把「图床管理页」在手机上顶部那两行工具栏改成通栏贴边的整块样式。原来两行都带圆角、左右各留一点缝、上下还各有几像素的间隔，看起来像两块浮在页面上的卡片；改完之后它们从屏幕最左贴到最右、第一行直接顶到屏幕顶部、第二行紧接在第一行下面，两行连成一整块。桌面端、平板端以及其它后台页面的顶栏全部维持原样，这次改动没有碰任何数据与接口。',
+      items: [
+        { t: '第一行（顶栏）：去圆角、贴顶、通栏', d: '手机上第一行原来是圆角 14px、左右各留 4px 缝、距屏幕顶部 2px。现在圆角归零、左右直接贴死屏幕两侧（宽度 100%）、上边贴死页面顶部（间距 0）。背后那层玻璃背框（带 1px 描边和投影的那层）跟着一起去圆角，并收回原来的 1px 外扩，避免通栏之后在屏幕边缘多出 1px 的溢出。' },
+        { t: '第二行（全选那一行）：去圆角、贴边、紧贴第一行', d: '第二行原来圆角 5px、左右各内缩 10px。现在同样是圆角归零、左右贴死屏幕两侧，并且与第一行之间的缝隙清零，两行上下一贴，视觉上就是同一块面板的上下两层。上下内边距同时各加 2px（4px 改为 6px），行内的按钮和图标不会显得被压扁。' },
+        { t: '两行的内容位置：第一行不变，第二行更贴边', d: '背景通栏之后，原来由「顶栏左右各 4px 缝」和「内容区左右各 10px 内边距」让出来的那一段就消失了，若不同步补回，第一行最左侧的「页面切换」和第二行最左边的「全选」会直接压在屏幕边缘上。所以第一行的左右内边距由 0 补到 4px，内容位置与改动前逐像素一致；第二行的左右内边距按需求只保留 2px，让按钮更贴近屏幕两侧，可横向滑动的内容区也从 364px 变成 386px。' },
+        { t: '贴死之后还剩的那条 1 像素细缝', d: '第一版交付后，坐标已经量到「顶栏 top 0、两行间隙 0」，但屏幕上仍能看见一条浅色细线。原因是顶栏元素本身带 1px 透明边框，而玻璃背框是它的伪元素、定位参照的是内边距盒，那 1px 边框环永远盖不住 —— 圆角浮起时这是刻意留白，通栏贴顶后就变成屏幕最上沿的一条缝；加上顶栏向下投的阴影会压在第二行顶部形成一条渐变暗带，两处叠起来就是肉眼看到的「缝」。现在把这 1px 边框环清零、背框铺满整个边框盒并关掉向下的投影，描边只保留第二行的底边，两行从背景到交界处完全连续。' },
+        { t: '滚动吸附时的位置同步', d: '手机上第二行在页面滚动后会吸附到第一行下方。既然常态下两行已经贴死，吸附态的定位也一并从「顶栏底部加 2px」改成「顶栏底部」，宽度与左偏移同步改成贴边值，并清掉吸附期间的左右外边距 —— 否则一滚动整行就会往下跳 2px、或者被负外边距推出屏幕。' },
+        { t: '影响范围', d: '只在「图床管理页 + 手机屏宽（不超过 768px）」生效：样式规则全部挂在图床管理页专属的页面标记之下，顶栏虽然是与其它后台页共用的组件，但其它页面不会命中这些规则；桌面端（大于 768px）与平板（769 至 1023px）的顶栏、第二行保持原样。没有新增表、没有新增字段、没有接口改动。' }
+      ]
     }
   ]
 };
@@ -1532,6 +1544,18 @@ const EN = {
         { t: 'Video lightbox remembers where you stopped', d: 'Closing the video lightbox stores the position in localStorage (keyed by name and URL). The next time that video opens, a line appears between the table of contents and the settings column saying you last watched at 12:34, with a Jump button to continue and a Dismiss button to hide it for this visit. Positions within the first or last three seconds are not stored, so pointless prompts never appear. Paging, pausing and closing all flush the position.' },
         { t: 'Mobile admin: the more menu closes on scroll too', d: 'The previous release already closed six dropdowns on scroll, but the top-right more menu stayed open on share and account pages. It is now covered in the shared admin header component used by every backend page, and the listener was upgraded from scroll-only to scroll plus touch drag plus wheel, because iOS does not dispatch scroll during momentum scrolling and the sheet otherwise hung on screen until the finger lifted. Drags inside the sheet itself are ignored, and the first 60ms after opening are skipped so Element Plus positioning cannot close it immediately.' },
         { t: 'Database and everything else', d: 'No new tables, no new columns, no migration: making notes private only adds an author condition on columns that already exist, the shared-file decision uses the existing flags, and the playback position lives in the browser. Deploying the code is enough - old data, old links and old shares keep working.' }
+      ]
+    },
+    {
+      title: '35. What is new in v1.1.4.1',
+      intro: 'v1.1.4.1 does one thing: on phones, the two toolbar rows at the top of the file manager now stretch edge to edge as a single block. Both rows used to have rounded corners, a small gutter on each side and a few pixels of vertical spacing, which made them look like two cards floating above the page. Now they run from the very left edge to the very right edge, the first row sits flush against the top of the screen, and the second row follows immediately underneath, so the two read as one surface. Desktop, tablet and every other backend page keep their previous header - nothing about data or APIs changed.',
+      items: [
+        { t: 'First row (header): square, flush to the top, full width', d: 'On phones the header had a 14px radius, a 4px gutter on both sides and sat 2px below the top edge. It now has no radius, spans the full screen width and sits flush against the top. The glass backing layer (the one with a 1px outline and shadow) loses its radius too and pulls its 1px outward overhang back in, so the full-bleed bar does not overflow the viewport by a pixel.' },
+        { t: 'Second row (the one with select-all): square, flush, attached', d: 'The second row had a 5px radius and was inset 10px on each side. It now has no radius, spans edge to edge, and the gap to the first row is gone, so the two stack as one panel. Its vertical padding grows by 2px (4px to 6px) so the buttons and icons inside do not look squeezed.' },
+        { t: 'Content inside the rows: row one unchanged, row two closer to the edges', d: 'Once the backgrounds go full bleed, the space previously provided by the header gutter and the content area padding disappears, and without compensation the page switcher on the far left of row one and the select-all box on the far left of row two would sit right against the screen edge. So the header horizontal padding goes from 0 to 4px, keeping every button in row one at exactly the same position as before; row two keeps only 2px of horizontal padding as requested, so its buttons sit closer to both edges and the scrollable area grows from 364px to 386px.' },
+        { t: 'The 1px line that survived the first pass', d: 'After the first build the geometry already measured zero - header at top 0, gap between rows 0 - yet a faint line was still visible. The header element itself carries a 1px transparent border, while the glass backing is a pseudo element positioned against the padding box, so that 1px ring can never be covered. With rounded corners it was intentional breathing room; once the bar is flush it becomes a hairline of page background along the very top edge. On top of that, the header drops its shadow onto the top of row two, adding a soft gradient band. Both are gone now: the border ring is zeroed, the backing fills the whole border box with no downward shadow, and the only outline left is the bottom edge of row two, so the two rows are continuous from background to seam.' },
+        { t: 'Sticky position follows the new layout', d: 'On phones the second row sticks below the header once you scroll. Since the static layout is now flush, the sticky offset changes from header bottom plus 2px to just the header bottom, the width and left offset become the full-bleed values, and the horizontal margins are cleared while stuck - otherwise the row would jump 2px on scroll or get pushed off-screen by the negative margins.' },
+        { t: 'Scope', d: 'Only the file manager page at phone widths (up to 768px): every rule is scoped under that page marker, so other backend pages - which share the same header component - never match them, and desktop plus tablet keep their current look. No new tables, no new columns, no API changes.' }
       ]
     }
   ]
