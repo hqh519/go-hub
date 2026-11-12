@@ -880,6 +880,19 @@ const ZH = {
         { t: '图标补齐', d: '「转为重定向」与「转存方向」原先引用了未注册的 exchange-alt、right-left，控制台报图标缺失、显示空白；现已注册（Font Awesome 6 里两者的规范名都是 right-left，浏览器里看到的是同一个图标）。笔记里用的 location-dot 也一并注册。' },
         { t: '页脚、首页页签与详情按钮', d: '首页与登录页页脚的「©2024-2026 Powered by」后面补上 HQH；首页「记录」页签改名为「发布」；从笔记管理浏览附件、在灯箱里打开的文件详情页，顶部补齐「标签 / 黑名单 / 白名单」三个按钮，与图床管理页里打开时完全一致。' }
       ]
+    },
+    {
+      id: 'whatsnew-119',
+      title: '四十、v1.1.9 更新要点',
+      intro: 'v1.1.9 把上一版「以为修好了」的一处彻底查清：图库预览里点「查看详情」时有时无反应，根因不是滚动，而是弹窗与预览之间的层级竞争。同时把文件详情里的十五个弹出页全部接进了层叠关闭体系，手机剪辑页的图片区放大到视口高度的 70%。',
+      items: [
+        { t: '修掉「预览里点详情没反应」', d: 'Element Plus 弹层的 z-index 是全局计数器从 2000 起逐个递增分配的，而文件预览大图的层级是写死的 3200。会话里开过的弹窗少时，详情拿到的是 2001 左右 —— 其实已经打开了，只是被压在预览底下，看起来就是「点了没反应」。现在把弹层的层级基准整体提到 4000，预览保持 3200（仍高于页面顶栏），详情永远在预览之上，关掉详情预览还在。' },
+        { t: '十五个弹出页纳入层叠监测', d: '文件详情里的标签、黑名单、白名单、重命名、删除、限时、加密、重定向、分享、源信息、转到异地 / 存入本地、压缩、转 WebP、剪辑，之前都没有登记到层叠栈里：它们开着时按 Esc 或边缘横滑会直接把文件详情关掉，小弹窗反而留在屏幕上。现在逐层登记，一次只关最上面那一层 —— 小弹窗全关完才会关详情，详情关完才会关预览。' },
+        { t: '确认框也算一层', d: '删除、黑名单、白名单用的是弹出确认框（还需要手动输入「确认删除」），不是普通弹窗，之前完全不在层叠体系里。现在同样登记，确认框开着时按 Esc 只关确认框，不会误关详情页。' },
+        { t: '手机剪辑页：图片区 70% 屏高', d: '由 60% 提高到 70%，底部工具栏因此被挤到可视区之外 —— 这时弹窗内容可以上下滑动，工具都能滑到、点到，不会被裁掉。' },
+        { t: '列表视图缩略图圆角 5px', d: '与卡片视图的卡片圆角对齐；桌面端原来是 8px、手机端 6px。' },
+        { t: '瞬间输入框提示文案', d: '改为「记录当下瞬间，汇聚未来回忆」。' }
+      ]
     }
   ]
 };
@@ -1698,6 +1711,19 @@ const EN = {
         { t: 'Card view: four small visual fixes', d: 'Card corners go from 12px to 5px; the selection circle moves up 2px; the hover copy and open buttons go from 32px to 28px with 12px icons; and video thumbnails get a small play badge in the bottom-right corner (not drawn when the thumbnail failed to load, so it never sits on top of the error state).' },
         { t: 'Icons registered', d: 'The convert to redirect and convert direction buttons referenced exchange-alt and right-left without registering them, which logged a missing icon warning and rendered blank; both are registered now (Font Awesome 6 resolves both names to right-left). The location-dot icon used by notes is registered too.' },
         { t: 'Footer, home tab and detail buttons', d: 'The footer on the home and login pages now ends with HQH. The Record tab on the home page is renamed Publish. Opening a file detail from the lightbox in the note manager now shows the same Tags, Blacklist and Whitelist buttons as the file manager.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-119',
+      title: '40. What is new in v1.1.9',
+      intro: 'v1.1.9 gets to the bottom of something the previous release thought it had fixed: in the file preview, tapping View detail sometimes did nothing. The cause was not scrolling but a z-index race between the dialog and the preview. All fifteen popups inside the file detail are now part of the layered close order, and the crop stage on phones is 70 percent of the viewport.',
+      items: [
+        { t: 'View detail from the preview now always works', d: 'Element Plus assigns overlay z-index values from a global counter starting at 2000, while the preview lightbox was hard-coded to 3200. Early in a session a detail dialog could land around 2001 - it did open, but sat underneath the lightbox, which read as a dead button. The overlay base is now 4000 while the lightbox stays at 3200 (still above the page header), so the detail is always on top, and closing it brings the preview back.' },
+        { t: 'Fifteen popups joined the layer stack', d: 'Tags, blacklist, whitelist, rename, delete, expiry, encrypt, redirect, share, source, convert to remote or local, compress, convert to WebP and crop were never registered as layers. With one of them open, Esc or an edge swipe closed the whole file detail and left the popup floating. They are registered now, so each gesture closes only the topmost layer: popups first, then the detail, then the preview.' },
+        { t: 'Confirmation boxes count as a layer', d: 'Delete, blacklist and whitelist use confirmation boxes (delete even asks you to type the confirm word), not regular dialogs, so they were completely outside the layer system. They are tracked now: pressing Esc with a confirmation open closes only that box, never the detail behind it.' },
+        { t: 'Crop stage on phones is 70 percent of the viewport', d: 'Raised from 60 percent. The toolbar is pushed below the fold as a result, so the dialog body scrolls - every tool can be reached instead of being clipped.' },
+        { t: 'List view thumbnails have 5px corners', d: 'Matching the card view. Previously 8px on desktop and 6px on phones.' },
+        { t: 'Moment placeholder', d: 'Now reads Capture this moment, gather memories for later.' }
       ]
     }
   ]

@@ -956,6 +956,36 @@ import { fileLink } from '@/utils/fileLink';
 import QRCodeBox from '@/components/common/QRCodeBox.vue';
 import ShareDialog from '@/components/dashboard/ShareDialog.vue';
 import ImageCropDialog from '@/components/upload/ImageCropDialog.vue';
+import { registerLayer, unregisterLayer } from '@/utils/layerStack';
+
+/**
+ * v1.1.9（需求：把详情页里的各个弹出页统统纳入 closePageOrder / hasOpenLayer 的层叠监测）
+ *
+ * 这之前只有「文件详情」这一层登记在 layerStack 里，详情里再点开的重命名 / 删除 / 限时 /
+ * 加密 / 重定向 / 分享 / 源 / 转存 / 压缩 / 转 WebP / 裁剪等二级弹窗**完全没有登记**。
+ * 后果是：这些弹窗压在上面时按 Esc 或边缘横滑，closePageOrder 只看见最上面那一层是
+ * 「文件详情」，于是直接把详情关掉，二级弹窗反而留在屏幕上（详情没了，弹窗还浮着）；
+ * hasOpenLayer() 也判断不出「还有弹窗开着」。
+ *
+ * 现在统一登记：变量名 → 层 id 后缀。打开时 registerLayer(id, () => this[key] = false)，
+ * 关闭时 unregisterLayer(id)。因为**打开顺序一定是「先详情、后子弹窗」**，
+ * 层栈按注册序号排序时子弹窗天然压在详情之上，一次返回 / Esc 只关最上面那一层。
+ *
+ * 注意：这里一律不传 z —— 详情弹窗的实际 z-index 由 Element Plus 全局计数器分配，
+ * 二级弹窗的计数一定比详情大（后开），与注册顺序一致，不需要额外上报。
+ */
+const DETAIL_SUB_LAYERS = [
+    ['showRenameDialog', 'rename'], // 重命名
+    ['showRedirectDialog', 'redirect'], // 重定向
+    ['showExpiryDialog', 'expiry'], // 限时
+    ['showPasswordDialog', 'password'], // 加密
+    ['showShareDialog', 'share'], // 分享
+    ['showSourceDialog', 'source'], // 源信息
+    ['showConvertDialog', 'convert'], // 转到异地 / 存入本地（同一弹窗，标题随方向变）
+    ['showCompressDialog', 'compress'], // 压缩
+    ['showWebpDialog', 'webp'], // 转 WebP
+    ['showCropDialog', 'crop'] // 图片剪辑
+];
 
 export default {
     name: 'FileDetailDialog',
@@ -1020,6 +1050,13 @@ export default {
                 this.noteText = '';
                 this.expiryAt = 0;
                 this.showQr = false;
+                /*
+                 * v1.1.9：详情被关掉时，压在上面的二级弹窗要一起收掉。
+                 * 之前它们不登记层，关详情不会连带关闭；现在登记了层但关闭路径不止
+                 * 「用户自己点关闭」一条（父组件直接置 detailVisible=false、路由跳走等），
+                 * 这里统一兜底，避免层栈里留下永远关闭不掉的幽灵层。
+                 */
+                this.closeSubLayers();
                 // v2.8.7c：关闭弹窗先暂停、再销毁媒体元素 —— 彻底结束视频 / 音频，
                 // 不留后台元素等 canplay / 重渲染把它再拉起来
                 this.pauseDetailMedia();
@@ -1043,6 +1080,13 @@ export default {
             // v3.0.0：「所属实例」需要实例名 + 序号，按需拉一次列表（失败不影响详情）
             this.loadInstances();
         }
+    },
+    mounted() {
+        // v1.1.9：二级弹窗统一纳入 layerStack（详细原因见 DETAIL_SUB_LAYERS 注释）
+        this.bindSubLayers();
+    },
+    beforeUnmount() {
+        this.releaseSubLayers();
     },
     data() {
         return {
@@ -1767,6 +1811,36 @@ export default {
         }
     },
     methods: {
+        /* ── v1.1.9：二级弹窗的层叠登记（见 DETAIL_SUB_LAYERS 说明） ────────── */
+        /** 给每个二级弹窗挂一个 open/close 监听，打开时登记层、关闭时注销 */
+        bindSubLayers() {
+            this._subLayerUnwatchers = DETAIL_SUB_LAYERS.map(([key, slug]) => {
+                const id = `file-detail-${slug}`;
+                return this.$watch(key, (open) => {
+                    if (open) {
+                        registerLayer(id, () => { this[key] = false; });
+                    } else {
+                        unregisterLayer(id);
+                    }
+                });
+            });
+        },
+        /** 把当前开着的二级弹窗全部关掉（关闭详情 / 卸载时兜底，watch 会顺手注销层） */
+        closeSubLayers() {
+            DETAIL_SUB_LAYERS.forEach(([key]) => {
+                if (this[key]) this[key] = false;
+            });
+            // 极端情况（watch 队列还没跑）下也保证层栈干净
+            DETAIL_SUB_LAYERS.forEach(([, slug]) => unregisterLayer(`file-detail-${slug}`));
+        },
+        /** 卸载时摘监听 + 彻底清层，避免层栈里留下已经不存在组件的层 */
+        releaseSubLayers() {
+            (this._subLayerUnwatchers || []).forEach((unwatch) => {
+                try { unwatch(); } catch (e) { /* 忽略 */ }
+            });
+            this._subLayerUnwatchers = [];
+            DETAIL_SUB_LAYERS.forEach(([, slug]) => unregisterLayer(`file-detail-${slug}`));
+        },
         /**
          * v1.0.3：读取转存候选（当前渠道类型 + 可选目标渠道）。
          * 失败时静默隐藏按钮（详情页其它功能不受影响）。

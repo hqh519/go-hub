@@ -427,7 +427,8 @@ export default {
     width: 48px;
     height: 48px;
     object-fit: cover;
-    border-radius: 8px;
+    /* v1.1.9：圆角 8px → 5px（与卡片视图的卡片圆角对齐） */
+    border-radius: 5px;
 }
 .list-folder-icon {
     font-size: 28px;
@@ -644,7 +645,8 @@ export default {
     .list-preview-img {
         width: 38px;
         height: 38px;
-        border-radius: 6px;
+        /* v1.1.9：与桌面端统一为 5px（原 6px） */
+        border-radius: 5px;
     }
     .list-folder-icon { font-size: 24px; }
     .list-file-icon { font-size: 21px; }

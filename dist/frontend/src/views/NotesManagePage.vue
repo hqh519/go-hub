@@ -879,6 +879,17 @@ export default {
                 unregisterLayer('note-file-detail');
             }
         },
+        /*
+         * v1.1.9（需求：标签弹出页也要纳入 closePageOrder 层叠监测）
+         * 笔记管理里同样能从文件详情点开标签管理，这里与图床管理页保持同一口径。
+         */
+        tagDialogVisible(v) {
+            if (v) {
+                registerLayer('note-file-detail-tags', () => { this.tagDialogVisible = false; });
+            } else {
+                unregisterLayer('note-file-detail-tags');
+            }
+        },
         /**
          * v1.1.8：背景图换了地址（设置刚加载完 / 切实例 / 换了一张）→ 先退回透明，
          * 等新图 @load 再淡入。否则 <img> 换了 src 会沿用上一张的淡入状态。
@@ -907,6 +918,7 @@ export default {
         if (this.resizeTimer) window.clearTimeout(this.resizeTimer);
         // 页面卸载时兜底摘掉详情层，避免残留导致下一次返回被「吃掉」
         unregisterLayer('note-file-detail');
+        unregisterLayer('note-file-detail-tags');
         if (this.topRO) {
             this.topRO.disconnect();
             this.topRO = null;

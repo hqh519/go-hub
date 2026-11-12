@@ -1698,7 +1698,14 @@ export default {
 /* 预览浮层：挂到 body 上，必须全局样式 */
 .np-preview {
     position: fixed;
-    z-index: 4000;
+    /*
+     * v1.1.9：4000 → 4600。
+     * App.vue 把 Element Plus 的 z-index 基准从 2000 提到了 4000（为了让文件详情等弹窗
+     * 稳定盖在 z-index 3200 的文件灯箱之上）。本组件自身就是 EP 弹窗、叠加在「发布瞬间」
+     * 弹窗之上，实际层级已经是 4000 + 累积值 —— 预览浮层若还写死 4000，就会被**自己的
+     * 弹窗**盖住，鼠标悬停缩略图时看不到预览。这里固定压在 EP 弹窗之上。
+     */
+    z-index: 4600;
     display: flex;
     flex-direction: column;
     padding: 6px;

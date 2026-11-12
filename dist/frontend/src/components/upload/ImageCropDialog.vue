@@ -1227,13 +1227,23 @@ export default {
 @media (max-width: 768px) {
     .image-crop-dialog .el-dialog__body {
         padding-top: 6px;
+        /*
+         * v1.1.9（需求）：图片区放大到 70vh 后，弹窗里本来就塞不下工具行 / 提示行，
+         * 它们会被推到可视区之外 —— 这里明确让 body 自己成为滚动容器（触屏给惯性滚动），
+         * 用户可以往下滑看到底部的工具与功能，而不是被裁掉看不见、也点不到。
+         */
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
     }
     /*
      * v1.1.8（需求）：移动端的图片加载区要更大 —— 最小不小于视口高度的 60%。
-     * 弹窗本身是 98vh，减去头部 / 工具行 / 尾部大约还有 70vh 可用，60vh 放得下。
+     * v1.1.9（需求）：继续放大到 70%。
+     * 选择器写成「弹窗类 + 舞台类」而不是单个 .crop-stage：
+     * scoped 块里有一条 `.crop-stage { min-height: 180px }`，带 data-v 属性后特异性比
+     * 单独的 .crop-stage 更高，只写单类会被它盖住 —— 之前看似生效其实是 flex 拉伸的结果。
      */
-    .crop-stage {
-        min-height: 60vh;
+    .image-crop-dialog .crop-stage {
+        min-height: 70vh;
     }
 }
 </style>

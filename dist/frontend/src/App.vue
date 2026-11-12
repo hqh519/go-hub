@@ -1,5 +1,13 @@
 <template>
-  <el-config-provider :locale="elementLocale">
+  <!--
+    v1.1.9：Element Plus 弹层 z-index 基准从默认 2000 提到 4000。
+    原因：文件灯箱（MediaPreviewOverlay）是自定义浮层，z-index 硬编码 3200 且必须高于页面顶栏（2001）；
+    而 EP 的弹层 z-index 由全局计数器从 2000 起逐次 +1，**累积到 3200 之前的所有弹窗都会被灯箱盖住** ——
+    典型表现就是「在灯箱里点查看详情，详情页打开了却看不见」，看起来像「打不开详情」。
+    基准提到 4000 后 EP 弹层永远在灯箱之上（一页最多开几十次弹窗，累积远小于 800 的余量），
+    灯箱里那些 teleport 到 body 的下拉浮层也顺带不再被灯箱自己盖住。
+  -->
+  <el-config-provider :locale="elementLocale" :z-index="4000">
     <router-view/>
     <el-dialog
       v-model="adminAuthWarningVisible"

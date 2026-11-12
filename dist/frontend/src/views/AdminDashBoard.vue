@@ -969,6 +969,7 @@
 
 <script>
 import { mapGetters } from 'vuex';
+import { ElMessageBox } from 'element-plus';
 import JSZip from 'jszip';
 import AdminHeader from '@/components/dashboard/AdminHeader.vue';
 import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
@@ -1815,6 +1816,18 @@ watch: {
             unregisterLayer('file-detail');
         }
     },
+    /*
+     * v1.1.9（需求：标签弹出页纳入 closePageOrder 层叠监测）
+     * 标签管理弹窗是从详情页点开的、叠在详情之上。它之前没登记，导致它开着时按 Esc /
+     * 边缘横滑会先把文件详情页关掉，标签弹窗反而留在屏幕上。
+     */
+    showTagDialog(v) {
+        if (v) {
+            registerLayer('file-detail-tags', () => { this.showTagDialog = false; });
+        } else {
+            unregisterLayer('file-detail-tags');
+        }
+    },
     customUrlPrefix(val) {
         this.$store.commit('setAdminUrlSettings', { key: 'customUrlPrefix', value: val })
     },
@@ -2461,11 +2474,13 @@ methods: {
             this.patchListType(key, 'None', 'blockRemoved', 'blockFailed', 'Block');
             return;
         }
-        this.$confirm(this.$t('dashboard.blockConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
+        const pending = this.$confirm(this.$t('dashboard.blockConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
             confirmButtonText: this.$t('dashboard.deleteConfirmOk'),
             cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
             type: 'warning'
-        }).then(() => {
+        });
+        // v1.1.9：黑名单确认框登记进浮层栈
+        this.trackLayer('file-detail-block', pending).then(() => {
             this.patchListType(key, 'Block', 'blockSuccess', 'blockFailed');
         }).catch(
             () => console.log('Block cancelled')
@@ -2478,11 +2493,13 @@ methods: {
             this.patchListType(key, 'None', 'whiteRemoved', 'whiteFailed', 'White');
             return;
         }
-        this.$confirm(this.$t('dashboard.whiteConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
+        const pending = this.$confirm(this.$t('dashboard.whiteConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
             confirmButtonText: this.$t('dashboard.deleteConfirmOk'),
             cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
             type: 'warning'
-        }).then(() => {
+        });
+        // v1.1.9：白名单确认框登记进浮层栈
+        this.trackLayer('file-detail-white', pending).then(() => {
             this.patchListType(key, 'White', 'whiteSuccess', 'whiteFailed');
         }).catch(
             () => console.log('White cancelled')
@@ -2869,7 +2886,7 @@ methods: {
     confirmDeleteByWord(messageKey = 'dashboard.deleteConfirmPrompt') {
         const word = this.$t('dashboard.deleteConfirmWord');
         const escaped = String(word).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        return this.$prompt(this.$t(messageKey), this.$t('dashboard.deleteConfirmTitle'), {
+        const pending = this.$prompt(this.$t(messageKey), this.$t('dashboard.deleteConfirmTitle'), {
             confirmButtonText: this.$t('dashboard.deleteConfirmOk'),
             cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
             inputPattern: new RegExp(`^\\s*${escaped}\\s*$`),
@@ -2877,6 +2894,29 @@ methods: {
             inputPlaceholder: this.$t('dashboard.deleteConfirmPlaceholder'),
             type: 'warning'
         });
+        // v1.1.9：删除确认框登记进浮层栈（详见 trackLayer 说明）
+        return this.trackLayer('file-detail-delete', pending);
+    },
+    /**
+     * v1.1.9（需求：删除 / 黑名单 / 白名单等弹出页也要纳入 closePageOrder 层叠监测）
+     *
+     * 这些确认框是 Element Plus 的命令式弹层（$confirm / $prompt），不是模板里的 el-dialog，
+     * 没有 v-model 可以监听，所以只能在调用处包一层：打开时登记、Promise 结束（确定或取消）时注销。
+     * 登记之后，「详情页 + 确认框」这种叠放关系才是一次返回只关确认框 —— 否则边缘横滑会
+     * 直接关掉文件详情页，确认框孤零零留在屏幕上。
+     *
+     * 关闭回调用 ElMessageBox.close()：它关掉的是「当前所有 MessageBox 实例」，
+     * 而同一时刻本项目只会挂一个确认框，语义等价于关掉这一层。
+     */
+    trackLayer(id, promise) {
+        registerLayer(id, () => {
+            try { ElMessageBox.close(); } catch (e) { /* 忽略：已经关掉了 */ }
+        });
+        const release = () => unregisterLayer(id);
+        return promise.then(
+            (res) => { release(); return res; },
+            (err) => { release(); return Promise.reject(err); }
+        );
     },
     handleDelete(index, key) {
         // 回收站模式下卡片上的「删除」= 恢复该文件
@@ -5272,6 +5312,8 @@ beforeUnmount() {
     this.cancelSearchIconPress();
     // v1.0.2：离开页面时把「文件详情」这一层从浮层栈摘掉，避免残留导致返回键空关
     unregisterLayer('file-detail');
+    // v1.1.9：详情页内的二级层也一并摘掉（标签 / 黑白名单 / 删除确认）
+    ['file-detail-tags', 'file-detail-block', 'file-detail-white', 'file-detail-delete'].forEach((id) => unregisterLayer(id));
     this.clearDirHoverTimer();
     this.teardownListObservers();
     window.removeEventListener('resize', this.updateResponsivePageSize);
