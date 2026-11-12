@@ -132,7 +132,8 @@ export const MOOD_OPTIONS = [
   { value: 'smile', emoji: '🙂', label: 'notes.moodSmile' },
   { value: 'calm', emoji: '😌', label: 'notes.moodCalm' },
   { value: 'tired', emoji: '😪', label: 'notes.moodTired' },
-  { value: 'sad', emoji: '😔', label: 'notes.moodSad' },
+  // v1.1.7：『难过』改名『伤心』，图标换成哭泣（😢）
+  { value: 'sad', emoji: '😢', label: 'notes.moodSad' },
   { value: 'angry', emoji: '😤', label: 'notes.moodAngry' },
   { value: 'love', emoji: '🥰', label: 'notes.moodLove' }
 ]
@@ -162,10 +163,15 @@ export function emojiOfWeather(value) {
  * 时间显示：列表卡片用的相对友好格式。
  * 今天 → 「今天 14:32」；昨天 → 「昨天 09:10」；今年 → 「3月8日 14:32」；更早 → 「2025/12/01」
  *
+ * v1.1.7：opts.week = true 时在末尾补星期，例如「11月11日 09:13 周三」。
+ * 只有瞬间卡片的标题旁时间需要星期，其它地方（历史记录、文件引用）保持原样，
+ * 所以做成可选参数而不是直接改格式。
+ *
  * @param {number} ts 毫秒时间戳
  * @param {Function} [t] i18n 的 $t（不传则用中文兜底，纯工具函数保持无框架依赖）
+ * @param {{week?: boolean}} [opts]
  */
-export function formatMomentTime(ts, t) {
+export function formatMomentTime(ts, t, opts) {
   const T = typeof t === 'function' ? t : (k, fallback) => fallback
   const txt = (key, fallback) => {
     try {
@@ -182,11 +188,15 @@ export function formatMomentTime(ts, t) {
   const pad = (v) => String(v).padStart(2, '0')
   const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
   const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
-  if (sameDay(d, now)) return `${txt('notes.timeToday', '今天')} ${hm}`
+  /** 星期后缀（opts.week 时才加）：中文「周三」，英文「Wed」 */
+  const WEEK_KEYS = ['notes.weekSun', 'notes.weekMon', 'notes.weekTue', 'notes.weekWed', 'notes.weekThu', 'notes.weekFri', 'notes.weekSat']
+  const WEEK_FALLBACK = ['周日', '周一', '周二', '周三', '周四', '周五', '周六']
+  const week = opts && opts.week ? ' ' + txt(WEEK_KEYS[d.getDay()], WEEK_FALLBACK[d.getDay()]) : ''
+  if (sameDay(d, now)) return `${txt('notes.timeToday', '今天')} ${hm}${week}`
   const yest = new Date(now.getTime() - 86400000)
-  if (sameDay(d, yest)) return `${txt('notes.timeYesterday', '昨天')} ${hm}`
+  if (sameDay(d, yest)) return `${txt('notes.timeYesterday', '昨天')} ${hm}${week}`
   if (d.getFullYear() === now.getFullYear()) {
-    return `${d.getMonth() + 1}${txt('notes.timeMonthDay', '月')}${d.getDate()}日 ${hm}`
+    return `${d.getMonth() + 1}${txt('notes.timeMonthDay', '月')}${d.getDate()}日 ${hm}${week}`
   }
-  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}${week}`
 }

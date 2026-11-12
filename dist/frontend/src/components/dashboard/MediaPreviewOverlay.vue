@@ -2776,7 +2776,8 @@ export default {
     width: 100%;
     height: 100%;
     object-fit: contain;
-    border-radius: 4px;
+    /* v1.1.7：灯箱里的图片一律不要圆角（需求原文），占位层跟着一起改，淡入时不会跳形 */
+    border-radius: 0;
     filter: blur(12px);
     transform: scale(1.03);
     opacity: 1;
@@ -2790,7 +2791,8 @@ export default {
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
-    border-radius: 4px;
+    /* v1.1.7：灯箱图片去掉圆角，铺满即是原图的方正边缘 */
+    border-radius: 0;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
     cursor: zoom-in;
     /* v1.0.4：原图解码完成前透明，完成后淡入覆盖占位图 */

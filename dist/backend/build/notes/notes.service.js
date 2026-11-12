@@ -360,6 +360,7 @@ let NotesService = class NotesService {
                     author: viewer,
                     instanceId,
                     publishedAt: now,
+                    firstPublishedAt: now,
                     moment: {
                         create: {
                             title: String(input.title || '').trim().slice(0, 80),
@@ -679,6 +680,41 @@ let NotesService = class NotesService {
         app_log_1.appLog.info('note', `删除瞬间留言：${row.noteId}`, `留言人=${row.author}`, ip);
         return { ok: true };
     }
+    async pickLocations(viewer, instanceId, q) {
+        const me = String(viewer || '');
+        if (!me)
+            return [];
+        const keyword = String(q || '').trim();
+        const rows = await prisma_1.prisma.noteMoment.findMany({
+            where: {
+                location: keyword ? { contains: keyword, mode: 'insensitive' } : { not: '' },
+                note: {
+                    kind: 'moment',
+                    status: { not: 'deleted' },
+                    author: me,
+                    instanceId: String(instanceId || ''),
+                },
+            },
+            select: { location: true, note: { select: { publishedAt: true, createdAt: true } } },
+            orderBy: [{ note: { publishedAt: 'desc' } }, { note: { createdAt: 'desc' } }],
+            take: 200,
+        });
+        const seen = new Set();
+        const out = [];
+        for (const r of rows) {
+            const v = String(r.location || '').trim();
+            if (!v)
+                continue;
+            const key = v.toLowerCase();
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            out.push(v);
+            if (out.length >= 20)
+                break;
+        }
+        return out;
+    }
     async pickFiles(input) {
         const page = Math.max(1, Math.floor(Number(input.page) || 1));
         const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 24)));
@@ -819,6 +855,12 @@ let NotesService = class NotesService {
             merged.moment = {
                 ...current.moment,
                 ...p.moment,
+            };
+        }
+        if (p.general && typeof p.general === 'object') {
+            merged.general = {
+                ...(current.general || {}),
+                ...p.general,
             };
         }
         const next = (0, notes_util_1.normalizeNoteSettings)(merged);

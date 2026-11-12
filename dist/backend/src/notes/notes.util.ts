@@ -115,9 +115,42 @@ export interface MomentSettings {
   attachRows: number;
 }
 
+/**
+ * v1.1.7「通用设置」（笔记设置里排在「瞬间设置」前面的一个分类）：
+ *   · pageLoad ：列表翻到底时的加载方式 —— auto 自动加载（默认）/ manual 手动点「加载更多」
+ *   · fontSize ：瞬间正文的展示字号（px），只作用于正文，标题 / 日期等不动
+ *
+ * 默认值与前端 `utils/noteSettings.js` 的 DEFAULT_GENERAL_SETTINGS 必须完全一致。
+ * 字号默认 14.5 = 当前列表里正文的实际字号（需求：「默认为当前的字号」）。
+ */
+export const NOTE_PAGE_LOAD_MODES = ['auto', 'manual'] as const;
+export const DEFAULT_NOTE_PAGE_LOAD = 'auto';
+export const DEFAULT_NOTE_FONT_SIZE = 14.5;
+export const NOTE_FONT_SIZE_MIN = 12;
+export const NOTE_FONT_SIZE_MAX = 22;
+
+export interface GeneralSettings {
+  pageLoad: (typeof NOTE_PAGE_LOAD_MODES)[number];
+  fontSize: number;
+}
+
 export interface NoteSettings {
   moment: MomentSettings;
+  general: GeneralSettings;
   [key: string]: unknown;
+}
+
+/** 把任意脏输入收敛成合法的「通用设置」（键缺失 / 非法时落默认，存过的值原样保留） */
+export function normalizeGeneralSettings(raw: unknown): GeneralSettings {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const pageLoad = (NOTE_PAGE_LOAD_MODES as readonly string[]).includes(String(o.pageLoad))
+    ? (String(o.pageLoad) as GeneralSettings['pageLoad'])
+    : DEFAULT_NOTE_PAGE_LOAD;
+  let fontSize = Number(o.fontSize);
+  if (!Number.isFinite(fontSize) || fontSize <= 0) fontSize = DEFAULT_NOTE_FONT_SIZE;
+  // 保留一位小数，避免前端滑块步进 0.5 时被四舍五入成整数
+  fontSize = Math.min(NOTE_FONT_SIZE_MAX, Math.max(NOTE_FONT_SIZE_MIN, Math.round(fontSize * 10) / 10));
+  return { pageLoad, fontSize };
 }
 
 /**
@@ -150,7 +183,11 @@ export function normalizeMomentSettings(raw: unknown): MomentSettings {
 /** 整份笔记设置（未知分类原样透传，便于以后灰度上线新分类） */
 export function normalizeNoteSettings(raw: unknown): NoteSettings {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  return { ...o, moment: normalizeMomentSettings(o.moment) } as NoteSettings;
+  return {
+    ...o,
+    general: normalizeGeneralSettings(o.general),
+    moment: normalizeMomentSettings(o.moment),
+  } as NoteSettings;
 }
 
 /**

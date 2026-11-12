@@ -352,6 +352,14 @@
 import fetchWithAuth from '@/utils/fetchWithAuth';
 import { formatSize } from '@/utils/notes';
 import { videoPoster } from '@/utils/videoPoster';
+import {
+    readPickMemory,
+    savePickMemory,
+    readBedCache,
+    writeBedCache,
+    readMountCache,
+    writeMountCache
+} from '@/utils/notePickCache';
 import { fileManager } from '@/utils/fileManager';
 import { CHANNEL_TYPES } from '@/components/config/channel-schema';
 import { fetchStorageChannels } from '@/utils/storageChannels';
@@ -482,8 +490,9 @@ export default {
                 this.$emit('update:modelValue', v);
             }
         },
+        /** v1.1.7：移动端宽度 94% → 98%（与编辑页一致），高度在全局样式里按 98vh 处理 */
         dialogWidth() {
-            return window.innerWidth < 768 ? '94%' : '860px';
+            return window.innerWidth < 768 ? '98%' : '860px';
         },
         typeTabs() {
             return [
@@ -643,11 +652,54 @@ export default {
 
         /* ── 打开 / 关闭 ───────────────────────────────────────── */
         onOpen() {
-            // 每次打开都按当前数据源重新取数：挂载目录可能被外部改动过，
-            // 图床侧也可能刚上传了新文件，用缓存反而会让用户困惑。
+            /*
+             * v1.1.7：进入面板时恢复「上次停在哪里」（数据源 / 类型 / 挂载渠道 / 目录），
+             * 并先把上次的取数结果铺上，再在后台刷新 —— 这样打开就是满屏内容，
+             * 不用对着空白格子等一次网络往返；刷新回来照样覆盖，不会拿到过期数据。
+             */
+            this.restoreMemory();
             this.loaded = true;
-            if (this.source === 'bed') this.reload();
-            else this.loadMount(true);
+            if (this.source === 'bed') {
+                const cached = readBedCache(this.instanceId, this.type);
+                if (cached && !this.search.trim()) {
+                    this.list = cached.list;
+                    this.total = cached.total;
+                    this.page = 1;
+                    this.$nextTick(() => this.loadPosters());
+                }
+                this.reload(true);
+            } else {
+                const cached = readMountCache(this.instanceId, this.mountChannelId, this.mountDir);
+                if (cached) {
+                    this.mountAll = cached.files;
+                    this.mountDirs = cached.dirs;
+                    this.total = cached.files.length;
+                    this.mountVisible = 60;
+                }
+                this.loadMount(true);
+            }
+        },
+        /** 把本地记忆贴到当前状态上（初始化一次，之后由用户操作驱动更新） */
+        restoreMemory() {
+            const m = readPickMemory(this.instanceId);
+            this.source = m.source;
+            this.type = m.type;
+            this.mountChannelId = m.mountChannelId;
+            this.mountDir = m.mountDir;
+            this.picked = [];
+            this.list = [];
+            this.total = 0;
+            this.mountAll = [];
+            this.mountDirs = [];
+        },
+        /** 记住当前停在哪里（切数据源 / 切类型 / 换渠道 / 进目录时各调一次） */
+        rememberPosition() {
+            savePickMemory(this.instanceId, {
+                source: this.source,
+                type: this.type,
+                mountChannelId: this.mountChannelId,
+                mountDir: this.mountDir
+            });
         },
         onClosed() {
             // 每次关闭都清掉待选状态与预览，避免下次打开还挂着上一轮
@@ -664,23 +716,32 @@ export default {
             this.closePreview();
             this.list = [];
             this.total = 0;
+            this.rememberPosition();
             if (v === 'bed') this.reload();
             else this.loadMount(true);
         },
         switchType(v) {
             if (this.type === v) return;
             this.type = v;
+            this.rememberPosition();
             this.closePreview();
             this.mountVisible = 60;
             if (this.source === 'bed') this.reload();
         },
 
         /* ── 图床文件：取数 ─────────────────────────────────────── */
-        reload() {
+        /**
+         * 重新取数。
+         * @param {boolean} keep  true = 不清空当前列表（用于「先用缓存铺屏、再后台刷新」），
+         *                        false / 缺省 = 清空后重新取（切换类型 / 搜索时用）
+         */
+        reload(keep) {
             if (this.source !== 'bed') return;
             this.page = 1;
-            this.list = [];
-            this.total = 0;
+            if (!keep) {
+                this.list = [];
+                this.total = 0;
+            }
             return this.fetch(true);
         },
         loadMore() {
@@ -728,6 +789,10 @@ export default {
                 const rows = Array.isArray(data.list) ? data.list : [];
                 this.total = Number(data.total) || 0;
                 this.list = reset ? rows : this.list.concat(rows);
+                // v1.1.7：只在「第一页 + 无搜索词 + 无额外筛选」时落缓存，否则缓存会串味
+                if (reset && !this.search.trim() && !fileManager.buildFilterParams(this.filters)) {
+                    writeBedCache(this.instanceId, this.type, this.list, this.total);
+                }
                 this.$nextTick(() => {
                     // 一页填不满时继续拉，否则「滚动加载」在宽屏上永远不会再触发
                     this.fillViewport();
@@ -845,6 +910,8 @@ export default {
                 this.mountAll = all;
                 this.mountDirs = dirs;
                 this.total = all.length;
+                // v1.1.7：记住这次的结果，下次进同一渠道 + 目录先拿它铺屏
+                writeMountCache(this.instanceId, this.mountChannelId, this.mountDir, all, dirs);
             } catch (e) {
                 this.mountAll = [];
                 this.mountDirs = [];
@@ -857,12 +924,14 @@ export default {
         onMountChannelChange() {
             this.mountDir = '';
             this.picked = [];
+            this.rememberPosition();
             this.loadMount(true);
         },
         enterDir(dir) {
             this.mountDir = dir || '';
             this.mountVisible = 60;
             this.closePreview();
+            this.rememberPosition();
             this.loadMount(true);
         },
         applyMountFilter() {
@@ -1736,5 +1805,14 @@ export default {
 
 .el-dialog.file-picker-dialog .el-dialog__footer {
     flex: 0 0 auto;
+}
+
+/* v1.1.7：移动端宽高一起改为 98%（宽度在 dialogWidth 里给，这里补高度） */
+@media (max-width: 768px) {
+    .el-dialog.file-picker-dialog {
+        height: 98vh;
+        max-height: 98vh;
+        margin: 1vh auto;
+    }
 }
 </style>

@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_KINDS = void 0;
+exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_KINDS = void 0;
 exports.attachHeightFactorOf = attachHeightFactorOf;
+exports.normalizeGeneralSettings = normalizeGeneralSettings;
 exports.normalizeMomentSettings = normalizeMomentSettings;
 exports.normalizeNoteSettings = normalizeNoteSettings;
 exports.countTextChars = countTextChars;
@@ -39,6 +40,22 @@ function attachHeightFactorOf(count) {
     return 1;
 }
 exports.MOMENT_ATTACH_SINGLE_FACTOR = 0.8;
+exports.NOTE_PAGE_LOAD_MODES = ['auto', 'manual'];
+exports.DEFAULT_NOTE_PAGE_LOAD = 'auto';
+exports.DEFAULT_NOTE_FONT_SIZE = 14.5;
+exports.NOTE_FONT_SIZE_MIN = 12;
+exports.NOTE_FONT_SIZE_MAX = 22;
+function normalizeGeneralSettings(raw) {
+    const o = (raw && typeof raw === 'object' ? raw : {});
+    const pageLoad = exports.NOTE_PAGE_LOAD_MODES.includes(String(o.pageLoad))
+        ? String(o.pageLoad)
+        : exports.DEFAULT_NOTE_PAGE_LOAD;
+    let fontSize = Number(o.fontSize);
+    if (!Number.isFinite(fontSize) || fontSize <= 0)
+        fontSize = exports.DEFAULT_NOTE_FONT_SIZE;
+    fontSize = Math.min(exports.NOTE_FONT_SIZE_MAX, Math.max(exports.NOTE_FONT_SIZE_MIN, Math.round(fontSize * 10) / 10));
+    return { pageLoad, fontSize };
+}
 function normalizeMomentSettings(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
     const size = exports.MOMENT_ATTACH_SIZES.includes(String(o.attachSize))
@@ -60,7 +77,11 @@ function normalizeMomentSettings(raw) {
 }
 function normalizeNoteSettings(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
-    return { ...o, moment: normalizeMomentSettings(o.moment) };
+    return {
+        ...o,
+        general: normalizeGeneralSettings(o.general),
+        moment: normalizeMomentSettings(o.moment),
+    };
 }
 function countTextChars(input) {
     const s = String(input ?? '');

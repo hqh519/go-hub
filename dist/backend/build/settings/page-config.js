@@ -7,9 +7,9 @@ exports.PAGE_CONFIG_DEFAULTS = {
             "id": "siteTitle",
             "label": "网站标题",
             "label_en": "Site Title",
-            "placeholder": "Sanyue ImgHub",
-            "tooltip": "支持占位符：<br/>{host} = 当前访问域名（不含 http:// 与 / 后的路径）<br/>{user} = 当前登录用户名（仅登录后生效）<br/>{pagename} = 当前页面名称（首页 / 图床管理 / 挂载管理 / 笔记管理 / 用户管理 / 系统管理，仅登录后生效）<br/>例：{pagename} · {host}",
-            "tooltip_en": "Placeholders: <br/>{host} = current domain (no protocol, no path) <br/>{user} = signed-in username (signed-in only) <br/>{pagename} = current page name (Home / Dashboard / Local files / Notes / Users / Settings; signed-in only) <br/>e.g. {pagename} · {host}",
+            "placeholder": "GoHub {pagename}",
+            "tooltip": "支持占位符：<br/>{host} = 当前访问域名（不含 http:// 与 / 后的路径）<br/>{user} = 当前登录用户名（仅登录后生效）<br/>{pagename} = 当前页面名称（首页 / 图床管理 / 挂载管理 / 笔记管理 / 用户管理 / 系统管理 / 历史记录，仅登录后生效）<br/>留空默认：GoHub {pagename}<br/>例：{pagename} · {host}",
+            "tooltip_en": "Placeholders: <br/>{host} = current domain (no protocol, no path) <br/>{user} = signed-in username (signed-in only) <br/>{pagename} = current page name (Home / Dashboard / Local files / Notes / Users / Settings / History; signed-in only) <br/>Empty value defaults to: GoHub {pagename} <br/>e.g. {pagename} · {host}",
             "category": "全局设置",
             "category_en": "Global Settings"
         },

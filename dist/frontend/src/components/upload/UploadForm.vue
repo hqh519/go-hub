@@ -395,10 +395,12 @@
         />
 
         <!-- 裁剪（v2.3.0）：手动上传模式下点列表里的剪刀按钮打开 -->
+        <!-- v1.1.7：上传页只保留「裁剪」本身，画笔/文字只在文件详情页的「剪辑」里出现 -->
         <ImageCropDialog
             v-model="showCrop"
             :file="cropTarget?.rawFile || null"
             :fileName="cropTarget?.name || ''"
+            :allow-annotate="false"
             @done="applyCrop"
         />
     </div>

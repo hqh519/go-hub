@@ -407,7 +407,8 @@ export default {
 <style scoped>
 .mg {
     display: grid;
-    gap: 3px;
+    /* v1.1.7：附件之间的上下左右间距统一 1px（两种排版样式一样） */
+    gap: 1px;
     margin-top: 10px;
     /* 卡片本身已被 .nt-main 收在 760px 内，九宫格直接铺满卡片宽度 ——
        再卡一个 520px 会在右边留出一道明显空白，看起来像没对齐 */
@@ -415,13 +416,9 @@ export default {
 }
 
 /*
- * v1.1.6：分割线样式下的附件 —— 圆角归零、四周间距统一 2px（需求原文）。
- * 分割线样式本身是一条「通栏流水」，附件带圆角 + 3px 缝会显得和线条不搭。
+ * v1.1.6：分割线样式下的附件 —— 圆角归零。
+ * v1.1.7：间距不再单列一条 2px，两种样式统一走 .mg 的 1px（需求原文）。
  */
-.mg.is-divider {
-    gap: 2px;
-}
-
 .mg.is-divider .mg-cell {
     border-radius: 0;
 }
@@ -509,8 +506,8 @@ export default {
     width: 100%;
     padding: 0;
     border: none;
-    /* v1.1.2.3：每个附件的圆角 5px → 3px */
-    border-radius: 3px;
+    /* v1.1.2.3：每个附件的圆角 5px → 3px；v1.1.7：边框样式下改为 2px */
+    border-radius: 2px;
     overflow: hidden;
     background: var(--note-cell-bg, rgba(127, 127, 127, 0.1));
     aspect-ratio: 1 / 1;

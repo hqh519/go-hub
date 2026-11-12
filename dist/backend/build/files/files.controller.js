@@ -1514,7 +1514,12 @@ let ManageController = ManageController_1 = class ManageController {
             where: {
                 status: withDeleted ? { in: ['active', 'deleted'] } : 'active',
                 ...(allInstances ? {} : { instanceId: instanceFilter }),
-                ...(ownerFilter && !shareScope ? { uploader: ownerFilter } : {}),
+                ...(browseRange
+                    ? { uploader: String(session?.user || '') }
+                    :
+                        ownerFilter && !shareScope
+                            ? { uploader: ownerFilter }
+                            : {}),
                 ...(browseRange
                     ? { lastViewedAt: { gte: new Date(browseRange.start), lt: new Date(browseRange.end) } }
                     : {}),
@@ -1823,7 +1828,8 @@ let ManageController = ManageController_1 = class ManageController {
         };
     }
     async recordBrowse(req, body) {
-        if (!(0, auth_guard_1.currentSession)(req)?.user)
+        const me = String((0, auth_guard_1.currentSession)(req)?.user || '');
+        if (!me)
             return { success: false, message: '未登录' };
         const ids = Array.isArray(body?.ids)
             ? Array.from(new Set(body.ids.map((v) => String(v || '').trim()).filter(Boolean))).slice(0, 200)
@@ -1833,7 +1839,7 @@ let ManageController = ManageController_1 = class ManageController {
         const now = new Date();
         try {
             const res = await prisma_1.prisma.fileRecord.updateMany({
-                where: { status: 'active', OR: [{ id: { in: ids } }, { name: { in: ids } }] },
+                where: { status: 'active', uploader: me, OR: [{ id: { in: ids } }, { name: { in: ids } }] },
                 data: { lastViewedAt: now },
             });
             return { success: true, count: res.count, at: now.getTime() };
@@ -3459,9 +3465,16 @@ let ManageController = ManageController_1 = class ManageController {
         const me = (0, auth_guard_1.currentSession)(req)?.user || '';
         if (!me)
             return { success: false, message: '请先登录后再查看引用' };
-        const rec = await this.resolveFile(wildcardParam(req), this.admin(req) ? '' : me);
+        const rawInstance = (req.query || {}).instanceId;
+        const rec = await this.resolveFile(wildcardParam(req), me);
         if (!rec)
             return { success: false, message: '文件不存在或无权查看' };
+        if (rawInstance !== undefined && rawInstance !== '*') {
+            const want = String(rawInstance || '');
+            if (String(rec.instanceId || '') !== want) {
+                return { success: false, message: '文件不存在或无权查看' };
+            }
+        }
         const refs = await (0, file_refs_1.refsOfFile)(rec.id);
         const bySource = (0, file_refs_1.countBySource)(refs);
         const stats = await (0, file_share_stats_1.fileStats)(rec.id);
@@ -4935,7 +4948,7 @@ let UserConfigController = class UserConfigController {
             return [];
         };
         return {
-            siteTitle: pv('siteTitle', 'GoHub') || 'GoHub',
+            siteTitle: pv('siteTitle', 'GoHub {pagename}') || 'GoHub {pagename}',
             siteIcon: pv('siteIcon', ''),
             ownerName: pv('ownerName', ''),
             logoUrl: pv('logoUrl', ''),

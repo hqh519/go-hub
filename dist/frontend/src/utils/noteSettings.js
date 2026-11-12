@@ -51,6 +51,24 @@ export const DEFAULT_MOMENT_SETTINGS = {
 export const ATTACH_RATIO_MIN = 5;
 export const ATTACH_RATIO_MAX = 80;
 
+/**
+ * v1.1.7「通用设置」出厂默认值（笔记设置里排在「瞬间设置」前面）。
+ *   · pageLoad：列表翻到底时的加载方式。auto = 滚到底自动加载（需求指定为默认），
+ *               manual = 停在底部显示「加载更多」，点了才继续。
+ *   · fontSize：瞬间**正文**的展示字号（px）。只作用于正文，
+ *               标题 / 日期 / 留言等一律不动。14.5 = 当前实际字号（「默认为当前的字号」）。
+ * 后端 `notes.util.ts` 的 normalizeGeneralSettings 必须与这里同口径。
+ */
+export const DEFAULT_GENERAL_SETTINGS = {
+    pageLoad: 'auto', // auto | manual
+    fontSize: 14.5 // 12 ~ 22
+};
+
+export const NOTE_FONT_SIZE_MIN = 12;
+export const NOTE_FONT_SIZE_MAX = 22;
+/** 字号滑块步进：0.5px —— 太小差别看不出来，太大又调不准 */
+export const NOTE_FONT_SIZE_STEP = 0.5;
+
 /** 附件最多加载几行（每行 3 个）—— 与后端 MOMENT_ATTACH_ROWS 一致 */
 export const ATTACH_ROWS_OPTIONS = [1, 2, 3];
 
@@ -90,11 +108,15 @@ export const SINGLE_DEFAULT_WIDTH = 0.62;
  */
 export const SINGLE_DEFAULT_MAX_RATIO = 0.45;
 
-/** 附件格间距（与 MomentGrid 的 `.mg { gap }` 一致，算总高度时要把间距扣掉） */
-export const ATTACH_GAP = 3;
+/**
+ * 附件格间距（与 MomentGrid 的 `.mg { gap }` 一致，算总高度时要把间距扣掉）。
+ * v1.1.7：3 → 1（需求原文：附件上下左右间距统一 1px）。
+ */
+export const ATTACH_GAP = 1;
 
 /** 全局设置对象：模板里直接读 `noteSettings.moment.attachRatio` */
 export const noteSettings = reactive({
+    general: { ...DEFAULT_GENERAL_SETTINGS },
     moment: { ...DEFAULT_MOMENT_SETTINGS }
 });
 
@@ -120,6 +142,19 @@ export function normalizeMomentSettings(raw) {
     const rowsNum = Math.round(Number(o.attachRows));
     const attachRows = ATTACH_ROWS_OPTIONS.includes(rowsNum) ? rowsNum : 2;
     return { attachSize: size, attachRatio: ratio, attachAlign: align, layoutStyle, attachRows };
+}
+
+/**
+ * 把任意脏数据收敛成合法的「通用设置」（与后端 normalizeGeneralSettings 等价）。
+ * 只在键缺失或非法时落出厂默认 —— 用户存过的值原样保留。
+ */
+export function normalizeGeneralSettings(raw) {
+    const o = raw && typeof raw === 'object' ? raw : {};
+    const pageLoad = o.pageLoad === 'manual' ? 'manual' : 'auto';
+    let fontSize = Number(o.fontSize);
+    if (!Number.isFinite(fontSize) || fontSize <= 0) fontSize = DEFAULT_GENERAL_SETTINGS.fontSize;
+    fontSize = Math.min(NOTE_FONT_SIZE_MAX, Math.max(NOTE_FONT_SIZE_MIN, Math.round(fontSize * 10) / 10));
+    return { pageLoad, fontSize };
 }
 
 /* ── Cookie 缓存 ────────────────────────────────────────────────────────── */
@@ -168,18 +203,38 @@ function writeCookie(patch) {
 }
 
 /** 把某个实例的设置写进 Cookie（多实例共用一份 Cookie，按 d[实例] 分组） */
-function cacheSettings(instanceId, momentSettings) {
+function cacheSettings(instanceId, settings) {
     const c = readCookie() || {};
     const map = c.d && typeof c.d === 'object' ? { ...c.d } : {};
     const key = instanceKeyOf(instanceId);
     // 先删后插：让「最近用过的实例」排在最后，裁剪时优先丢最久没用的
     delete map[key];
-    map[key] = { ...momentSettings };
+    // v1.1.7：缓存结构由「纯 moment」升级为 { general, moment }；
+    // 旧缓存（顶层就是 attachSize 那些键）在读取时按 moment 兼容，不需要清 Cookie
+    map[key] = { general: { ...(settings.general || {}) }, moment: { ...(settings.moment || {}) } };
     const keys = Object.keys(map);
     while (keys.length > COOKIE_MAX_INSTANCES) {
         delete map[keys.shift()];
     }
     writeCookie({ d: map });
+}
+
+/**
+ * 兼容两种缓存形态：
+ *   · v1.1.6 及以前：`{ attachSize, attachRatio, ... }`（顶层就是瞬间设置）
+ *   · v1.1.7 起：`{ general: {...}, moment: {...} }`
+ */
+function splitCached(cached) {
+    const o = cached && typeof cached === 'object' ? cached : null;
+    if (!o) return { general: {}, moment: {} };
+    const isNew = o.general !== undefined || o.moment !== undefined;
+    if (isNew) {
+        return {
+            general: o.general && typeof o.general === 'object' ? o.general : {},
+            moment: o.moment && typeof o.moment === 'object' ? o.moment : {}
+        };
+    }
+    return { general: {}, moment: o };
 }
 
 /**
@@ -190,8 +245,10 @@ function cacheSettings(instanceId, momentSettings) {
 export function applyCachedSettings(instanceId) {
     const c = readCookie();
     const cached = c && c.d ? c.d[instanceKeyOf(instanceId)] : null;
+    const parts = splitCached(cached);
     noteSettingsInstanceId.value = String(instanceId || '');
-    noteSettings.moment = normalizeMomentSettings(cached || {});
+    noteSettings.general = normalizeGeneralSettings(parts.general);
+    noteSettings.moment = normalizeMomentSettings(parts.moment);
     noteSettingsReady.value = Boolean(cached);
     return noteSettings;
 }
@@ -199,15 +256,16 @@ export function applyCachedSettings(instanceId) {
 /** 把服务端返回的一整份设置写进全局对象（未知分类原样保留，便于以后扩展） */
 export function applyNoteSettings(raw, instanceId) {
     const o = raw && typeof raw === 'object' ? raw : {};
+    noteSettings.general = normalizeGeneralSettings(o.general);
     noteSettings.moment = normalizeMomentSettings(o.moment);
     for (const key of Object.keys(o)) {
-        if (key === 'moment') continue;
+        if (key === 'moment' || key === 'general') continue;
         noteSettings[key] = o[key];
     }
     noteSettingsInstanceId.value = String(instanceId || '');
     noteSettingsReady.value = true;
     // 同步落一份 Cookie：下次刷新时 created() 里就能拿到，首屏不闪
-    cacheSettings(instanceId, noteSettings.moment);
+    cacheSettings(instanceId, noteSettings);
 }
 
 /**

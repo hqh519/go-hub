@@ -2097,8 +2097,17 @@ export class ManageController {
         status: withDeleted ? { in: ['active', 'deleted'] } : 'active',
         // v3.0.0（R5）：全部实例（instanceId=*）时不加实例条件
         ...(allInstances ? {} : { instanceId: instanceFilter }),
-        // 共享范围生效时由 folder 前缀决定取数范围，不再按 uploader 收窄（共享目录里可能有成员文件）
-        ...(ownerFilter && !shareScope ? { uploader: ownerFilter } : {}),
+        /*
+         * v1.1.7：浏览记录只对自己有意义 —— 「最近浏览」筛选一旦生效，
+         * 一律按登录账户收窄，连共享范围（可能含他人文件）也不放开；
+         * 否则共享目录里会冒出别人的浏览时间。
+         */
+        ...(browseRange
+          ? { uploader: String(session?.user || '') }
+          : // 共享范围生效时由 folder 前缀决定取数范围，不再按 uploader 收窄（共享目录里可能有成员文件）
+            ownerFilter && !shareScope
+            ? { uploader: ownerFilter }
+            : {}),
         // v1.1.6：历史记录页「最近浏览」—— 按灯箱浏览时间取区间（与上传时间筛选互不影响）
         ...(browseRange
           ? { lastViewedAt: { gte: new Date(browseRange.start), lt: new Date(browseRange.end) } }
@@ -2527,7 +2536,8 @@ export class ManageController {
    */
   @Post('browse')
   async recordBrowse(@Req() req: Request, @Body() body: { ids?: string[] }) {
-    if (!currentSession(req)?.user) return { success: false, message: '未登录' };
+    const me = String(currentSession(req)?.user || '');
+    if (!me) return { success: false, message: '未登录' };
     const ids = Array.isArray(body?.ids)
       ? Array.from(new Set(body.ids.map((v) => String(v || '').trim()).filter(Boolean))).slice(0, 200)
       : [];
@@ -2535,7 +2545,13 @@ export class ManageController {
     const now = new Date();
     try {
       const res = await prisma.fileRecord.updateMany({
-        where: { status: 'active', OR: [{ id: { in: ids } }, { name: { in: ids } }] },
+        /*
+         * v1.1.7：浏览时间只记在自己账户的文件行上。
+         * 以前管理员看图床里他人文件时也会写对方那行，文件作者在历史记录里
+         * 会看到「昨天浏览」其实从不是自己看的 —— 现在直接按 uploader 收窄，
+         * 不属于自己的文件一律不记录（不是错误，静默跳过）。
+         */
+        where: { status: 'active', uploader: me, OR: [{ id: { in: ids } }, { name: { in: ids } }] },
         data: { lastViewedAt: now },
       });
       return { success: true, count: res.count, at: now.getTime() };
@@ -4658,8 +4674,21 @@ export class ManageController {
   async fileRefs(@Req() req: Request) {
     const me = currentSession(req)?.user || '';
     if (!me) return { success: false, message: '请先登录后再查看引用' };
-    const rec = await this.resolveFile(wildcardParam(req), this.admin(req) ? '' : me);
+    /*
+     * v1.1.7：引用明细只给「自己的、且属于当前实例」的文件。
+     * 原来管理员传空 owner = 全库可查，于是超管能翻到别人账户 / 别的实例的文件引用明细；
+     * 需求要求一律按「自己 + 当前实例」收窄，管理员也不例外。
+     * instanceId 用「是否传了」来区分：没传 = 老调用方，不加实例条件；传了空串 = 默认实例。
+     */
+    const rawInstance = (req.query || {}).instanceId as string | undefined;
+    const rec = await this.resolveFile(wildcardParam(req), me);
     if (!rec) return { success: false, message: '文件不存在或无权查看' };
+    if (rawInstance !== undefined && rawInstance !== '*') {
+      const want = String(rawInstance || '');
+      if (String(rec.instanceId || '') !== want) {
+        return { success: false, message: '文件不存在或无权查看' };
+      }
+    }
     const refs = await refsOfFile(rec.id);
     const bySource = countBySource(refs);
     // v1.1.5：引用统计 / 共用统计 + 共用明细（被哪个用户的哪个实例用着）
@@ -6023,7 +6052,12 @@ export class UserConfigController {
 
     return {
       // 站点信息
-      siteTitle: pv('siteTitle', 'GoHub') || 'GoHub',
+      /*
+       * v1.1.7：「网站标题」留空时的默认值改为 GoHub {pagename} ——
+       * 前端 utils/siteTitle.js 会把 {pagename} 展开成当前页面名，
+       * 未登录 / 没有映射的路径则解析为空，再收拾掉多余分隔符，最终就是「GoHub」。
+       */
+      siteTitle: pv('siteTitle', 'GoHub {pagename}') || 'GoHub {pagename}',
       siteIcon: pv('siteIcon', ''),
       ownerName: pv('ownerName', ''),
       logoUrl: pv('logoUrl', ''),

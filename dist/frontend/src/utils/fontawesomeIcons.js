@@ -25,6 +25,9 @@ import { faChevronRight } from '@fortawesome/free-solid-svg-icons/faChevronRight
 import { faChevronUp } from '@fortawesome/free-solid-svg-icons/faChevronUp';
 import { faCircleHalfStroke } from '@fortawesome/free-solid-svg-icons/faCircleHalfStroke';
 import { faCrop } from '@fortawesome/free-solid-svg-icons/faCrop';
+// v1.1.7：「剪辑」里的画笔 / 文字工具
+import { faPaintbrush } from '@fortawesome/free-solid-svg-icons/faPaintbrush';
+import { faFont } from '@fortawesome/free-solid-svg-icons/faFont';
 import { faFilm } from '@fortawesome/free-solid-svg-icons/faFilm';
 import { faClock } from '@fortawesome/free-solid-svg-icons/faClock';
 import { faCloud } from '@fortawesome/free-solid-svg-icons/faCloud';
@@ -159,6 +162,8 @@ export default [
     faChevronUp,
     faCircleHalfStroke,
     faCrop,
+    faPaintbrush,
+    faFont,
     faFilm,
     faClock,
     faCloud,

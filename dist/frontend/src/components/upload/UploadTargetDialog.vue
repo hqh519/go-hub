@@ -15,11 +15,17 @@
           现在整个链路都交给 EP 管理器：弹窗先 open 拿 nextZIndex()，浮层后 open 再拿更大的值，
           天然永远在弹窗之上；灯箱固定 3200 只作背景层，3210+ 的弹窗本来就压得住它。
     -->
+    <!--
+        v1.1.7：只能靠按钮或 Esc 关闭（需求原文）。
+        点遮罩关掉容易误触 —— 这是个带表单的弹窗，误关一次就得把渠道 / 实例 / 目录
+        重新选一遍，所以直接禁掉点遮罩关闭。
+    -->
     <el-dialog
         v-model="visible"
         :title="title || $t('localFiles.uploadToBed')"
         :width="dialogWidth"
         append-to-body
+        :close-on-click-modal="false"
         @open="onOpen"
     >
         <el-form label-position="top">

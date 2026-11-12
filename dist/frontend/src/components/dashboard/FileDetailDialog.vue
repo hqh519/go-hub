@@ -846,11 +846,16 @@
              v1.0.5：原位媒体编辑的三个弹窗（裁剪 / 压缩 / 转WebP）
              ============================================================ -->
 
-        <!-- 裁剪：复用上传页的裁剪组件（含旋转方向），裁好后回传结果图 -->
+        <!--
+            剪辑（v1.1.7 由「裁剪」改名）：复用上传页的裁剪组件，除了框选裁剪与
+            旋转方向，还额外开放画笔涂鸦与文字（allow-annotate 默认开启）。
+        -->
         <ImageCropDialog
             v-model="showCropDialog"
             :file="cropFile"
             :file-name="cropFileName"
+            title-key="fileDetail.mediaCropTitle"
+            confirm-key="fileDetail.mediaCropConfirm"
             @done="onMediaCropped"
         />
 
@@ -2026,7 +2031,12 @@ export default {
         openFileRefs() {
             const name = this.file?.name || '';
             if (!name) return;
-            const url = this.$router.resolve({ name: 'fileRefs', query: { name } }).href;
+            /*
+             * v1.1.7：带上文件自己的实例 —— 引用明细页只允许查本实例下的文件，
+             * 不带的话它会退回「当前实例」记忆，跨实例打开详情时会查不到。
+             */
+            const instanceId = String(this.file?.instanceId ?? this.currentInstanceId ?? '');
+            const url = this.$router.resolve({ name: 'fileRefs', query: { name, instanceId } }).href;
             window.open(url, '_blank', 'noopener');
         },
         uploadSourceLabel(raw) {

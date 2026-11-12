@@ -575,6 +575,8 @@ export class NotesService {
           author: viewer,
           instanceId,
           publishedAt: now,
+          // v1.1.7：首次发布时间只在这里写一次，后续改 publishedAt 不会动它
+          firstPublishedAt: now,
           // metas 不再写 title（v1.1.3：标题独立成 note_moments.title 列）
           moment: {
             create: {
@@ -967,6 +969,57 @@ export class NotesService {
   }
 
   /* ========================================================================
+   *  位置候选（v1.1.7）
+   * ====================================================================== */
+  /**
+   * 取当前账户 + 当前实例下瞬间里出现过的 location。
+   *
+   * 为什么不再用前端 localStorage：
+   *   旧实现把地点记在浏览器里，换设备 / 换浏览器就全丢，也不跟着实例隔离。
+   *   地点本来就存在 note_moments.location 这一列，直接查库最准确，也顺带
+   *   「换设备可用」。
+   *
+   * 顺序按**最近一次发布时间**去重（同一地点只留最新那条），所以列表是
+   * 「最近用过的地点」而不是字典序。
+   *
+   * @param viewer     当前登录账户（只看自己的笔记）
+   * @param instanceId 当前实例（空串 = 默认实例）
+   * @param q          关键字（空 = 返回最近的若干条）
+   */
+  async pickLocations(viewer: string, instanceId: string, q: string) {
+    const me = String(viewer || '');
+    if (!me) return [];
+    const keyword = String(q || '').trim();
+    const rows = await prisma.noteMoment.findMany({
+      where: {
+        location: keyword ? { contains: keyword, mode: 'insensitive' } : { not: '' },
+        note: {
+          kind: 'moment',
+          status: { not: 'deleted' },
+          author: me,
+          instanceId: String(instanceId || ''),
+        },
+      },
+      select: { location: true, note: { select: { publishedAt: true, createdAt: true } } },
+      orderBy: [{ note: { publishedAt: 'desc' } }, { note: { createdAt: 'desc' } }],
+      // 只需「最近的一批」：200 条足够覆盖常用地点的去重结果，再多就是浪费
+      take: 200,
+    });
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const r of rows) {
+      const v = String(r.location || '').trim();
+      if (!v) continue;
+      const key = v.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(v);
+      if (out.length >= 20) break;
+    }
+    return out;
+  }
+
+  /* ========================================================================
    *  图床选文件器（只读，供「从图床选择」用）
    * ====================================================================== */
   async pickFiles(input: {
@@ -1191,6 +1244,13 @@ export class NotesService {
       merged.moment = {
         ...(current.moment as unknown as Record<string, unknown>),
         ...(p.moment as Record<string, unknown>),
+      };
+    }
+    // v1.1.7：通用设置同样按分类浅合并
+    if (p.general && typeof p.general === 'object') {
+      merged.general = {
+        ...((current.general as unknown as Record<string, unknown>) || {}),
+        ...(p.general as Record<string, unknown>),
       };
     }
     const next = normalizeNoteSettings(merged);

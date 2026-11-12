@@ -360,9 +360,21 @@
                 </div>
 
                 <div v-if="list.length" class="nt-more">
-                    <el-button v-if="hasMore" size="small" :loading="loading" @click="loadMore">
-                        {{ $t('notes.loadMore') }}
-                    </el-button>
+                    <!--
+                        v1.1.7：手动模式才显示「加载更多」按钮；
+                        自动模式滚到底就自己加载，这里只在请求进行中给一句轻提示，不占按钮位。
+                    -->
+                    <template v-if="hasMore">
+                        <el-button
+                            v-if="pageLoadMode === 'manual'"
+                            size="small"
+                            :loading="loading"
+                            @click="loadMore"
+                        >
+                            {{ $t('notes.loadMore') }}
+                        </el-button>
+                        <span v-else-if="loading" class="nt-end">{{ $t('notes.loadingMore') }}</span>
+                    </template>
                     <span v-else class="nt-end">{{ $t('notes.listEnd', { n: total }) }}</span>
                 </div>
             </template>
@@ -421,12 +433,18 @@
             append-to-body
             class="nt-time-dialog"
         >
+            <!--
+                v1.1.7：移动端面板居中。
+                日期面板是 teleport 到 body 的 popper，默认贴着输入框往下弹，
+                手机上经常被屏幕底部裁掉 —— 用 popper-class 在窄屏下改成屏幕居中的浮层。
+            -->
             <el-date-picker
                 v-model="timeEditorValue"
                 type="datetime"
                 :placeholder="$t('notes.publishedAtPlaceholder')"
                 format="YYYY-MM-DD HH:mm"
                 value-format="x"
+                popper-class="nt-time-popper"
                 style="width: 100%"
             />
             <p class="nt-time-tip">{{ $t('notes.publishedAtTip') }}</p>
@@ -537,7 +555,7 @@ import NoteTagPanel from '@/components/notes/NoteTagPanel.vue';
 import NoteSettingsDialog from '@/components/notes/NoteSettingsDialog.vue';
 import { extOf, formatSize } from '@/utils/notes';
 import { buildFileDetail } from '@/utils/fileDetail';
-import { loadNoteSettings, applyCachedSettings } from '@/utils/noteSettings';
+import { loadNoteSettings, applyCachedSettings, noteSettings } from '@/utils/noteSettings';
 import { writeThemeCookie } from '@/utils/themeCookie';
 // v1.1.3：实例切换密码守卫（与图床管理页 / 首页同一份实现）
 import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
@@ -673,6 +691,13 @@ export default {
         },
         hasMore() {
             return this.list.length < this.total;
+        },
+        /**
+         * v1.1.7：翻页方式（笔记设置 → 通用设置 → 页面加载设置）。
+         * auto = 滚到底自动加载更多（默认）；manual = 只在底部显示「加载更多」按钮。
+         */
+        pageLoadMode() {
+            return noteSettings.general && noteSettings.general.pageLoad === 'manual' ? 'manual' : 'auto';
         },
         /** 发布按钮文案随当前类型变化（需求原文） */
         publishLabel() {
@@ -1150,6 +1175,18 @@ export default {
             this.page += 1;
             return this.fetchList(false);
         },
+        /**
+         * v1.1.7：自动加载模式下的「滚到底就继续加载」。
+         * 提前 240px 触发，滑到底时下一批已经就位，不会看到「到底停一下再出内容」。
+         * 手动模式直接返回，底部只留「加载更多」按钮（原有行为）。
+         */
+        maybeAutoLoad() {
+            if (this.pageLoadMode !== 'auto') return;
+            if (this.loading || !this.hasMore || !this.list.length) return;
+            const doc = document.documentElement;
+            const bottom = (window.scrollY || doc.scrollTop || 0) + window.innerHeight;
+            if (bottom >= doc.scrollHeight - 240) this.loadMore();
+        },
         async fetchList(reset) {
             this.loading = true;
             try {
@@ -1159,11 +1196,20 @@ export default {
                 if (!res.ok) throw new Error(data.message || 'load failed');
                 const rows = Array.isArray(data.list) ? data.list : [];
                 this.total = Number(data.total) || 0;
-                this.list = reset ? rows : this.list.concat(rows);
+                if (reset) {
+                    this.list = rows;
+                } else {
+                    this.list = this.list.concat(rows);
+                }
             } catch (e) {
                 this.$message.error(this.$t('notes.loadFail'));
             } finally {
                 this.loading = false;
+                /*
+                 * v1.1.7 自动加载：首屏内容不满一屏时不会有 scroll 事件，
+                 * 所以每批数据落地后主动补一次「是否到底」的判断，否则用户得先滚一下才会继续加载。
+                 */
+                this.$nextTick(() => this.maybeAutoLoad());
             }
         },
         /* ── 发布 / 编辑 ────────────────────────────────────────── */
@@ -1422,6 +1468,8 @@ export default {
                 this.topbarHidden = false;
             }
             this.lastScrollTop = top;
+            // v1.1.7：自动加载模式下的「滚到底继续加载」
+            this.maybeAutoLoad();
         },
         /**
          * 把两行固定栏的实测高度写进 --nt-topbar-h / --nt-toolbar-h。
@@ -2089,7 +2137,8 @@ export default {
 
 @media (max-width: 768px) {
     .nt-topbar {
-        padding: 6px 8px;
+        /* v1.1.7：左上角「页面切换」按钮的左右外边距改为 5px（需求原文） */
+        padding: 6px 5px;
         gap: 6px;
     }
 
@@ -2378,5 +2427,27 @@ export default {
     font-size: 10px;
     font-weight: 500;
     line-height: 16px;
+}
+
+/*
+ * v1.1.7：移动端「修改发布时间」的日期面板居中。
+ * 面板是 teleport 到 body 的 popper，默认贴着输入框往下弹，
+ * 手机上会被屏幕底部裁掉一半 —— 窄屏下改成屏幕正中的浮层（并隐藏指向箭头）。
+ */
+@media (max-width: 768px) {
+    .el-picker__popper.nt-time-popper {
+        position: fixed !important;
+        top: 50% !important;
+        left: 50% !important;
+        right: auto !important;
+        bottom: auto !important;
+        margin: 0 !important;
+        transform: translate(-50%, -50%) !important;
+        max-width: 96vw;
+    }
+
+    .el-picker__popper.nt-time-popper .el-popper__arrow {
+        display: none;
+    }
 }
 </style>

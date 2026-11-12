@@ -573,6 +573,10 @@ model Note {
   /// 乐观并发版本号：每次保存 +1（协作编辑的锁/冲突检测后续版本会用）
   version       Int       @default(1)
   publishedAt   DateTime?
+  /// v1.1.7：首次发布时间 —— 只在创建瞬间时写一次，之后不论怎么改 publishedAt 都不动它。
+  /// 目前只落库不对外下发（需求：「暂时先存储到数据表，无需加载」），留给以后做
+  /// 「原始发布时刻」相关的统计 / 展示。
+  firstPublishedAt DateTime?
   deletedAt     DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt

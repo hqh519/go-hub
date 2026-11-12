@@ -82,6 +82,10 @@ let NotesController = class NotesController {
         const { viewer } = this.ctx(req);
         return this.notes.tagAdmin(instanceId || '', kind || '', viewer);
     }
+    async locations(req, instanceId, q) {
+        const { viewer } = this.ctx(req);
+        return this.notes.pickLocations(viewer, instanceId || '', q || '');
+    }
     async comments(req, id, instanceId, page, pageSize) {
         const { viewer, isAdmin } = this.ctx(req);
         const r = await this.notes.listComments({
@@ -247,6 +251,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, String]),
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "tagAdmin", null);
+__decorate([
+    (0, common_1.Get)('locations'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('instanceId')),
+    __param(2, (0, common_1.Query)('q')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "locations", null);
 __decorate([
     (0, common_1.Get)(':id/comments'),
     __param(0, (0, common_1.Req)()),

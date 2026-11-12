@@ -44,8 +44,52 @@
                 </button>
             </nav>
 
+            <!-- 通用设置（v1.1.7：排在「瞬间设置」前面，所有笔记类型共用） -->
+            <section v-if="active === 'general'" class="ns-panel">
+                <p class="ns-scope">{{ $t('notes.settingsScope') }}</p>
+
+                <!-- 1. 页面加载设置 -->
+                <div class="ns-field">
+                    <div class="ns-label">{{ $t('notes.pageLoad') }}</div>
+                    <el-radio-group v-model="form.pageLoad" class="ns-radios">
+                        <el-radio value="auto">{{ $t('notes.pageLoadAuto') }}</el-radio>
+                        <el-radio value="manual">{{ $t('notes.pageLoadManual') }}</el-radio>
+                    </el-radio-group>
+                    <p class="ns-tip">{{ $t('notes.pageLoadTip') }}</p>
+                </div>
+
+                <el-divider class="ns-divider" />
+
+                <!-- 2. 字体大小设置 -->
+                <div class="ns-field">
+                    <div class="ns-label">{{ $t('notes.fontSize') }}</div>
+                    <div class="ns-sub">
+                        <div class="ns-sub-row is-font">
+                            <span class="ns-sub-label">{{ $t('notes.fontSizeLabel') }}</span>
+                            <el-slider
+                                v-model="form.fontSize"
+                                class="ns-font-slider"
+                                :min="fontMin"
+                                :max="fontMax"
+                                :step="fontStep"
+                                :show-tooltip="false"
+                            />
+                            <span class="ns-font-value">{{ form.fontSize }} px</span>
+                        </div>
+                        <!-- 实时预览：只预览正文，避免用户以为标题也会跟着变 -->
+                        <p
+                            class="ns-tip ns-preview ns-font-preview"
+                            :style="{ fontSize: form.fontSize + 'px', lineHeight: 1.75 }"
+                        >
+                            {{ $t('notes.fontSizePreview') }}
+                        </p>
+                    </div>
+                    <p class="ns-tip">{{ $t('notes.fontSizeTip') }}</p>
+                </div>
+            </section>
+
             <!-- 瞬间设置 -->
-            <section v-if="active === 'moment'" class="ns-panel">
+            <section v-else-if="active === 'moment'" class="ns-panel">
                 <p class="ns-scope">{{ $t('notes.settingsScope') }}</p>
                 <!-- 1. 附件区大小 -->
                 <div class="ns-field">
@@ -148,7 +192,11 @@
 <script>
 import {
     noteSettings,
+    DEFAULT_GENERAL_SETTINGS,
     DEFAULT_MOMENT_SETTINGS,
+    NOTE_FONT_SIZE_MIN,
+    NOTE_FONT_SIZE_MAX,
+    NOTE_FONT_SIZE_STEP,
     saveNoteSettings,
     budgetOf,
     singleBudgetOf,
@@ -161,6 +209,8 @@ import {
 
 /** 分类定稿后不再变，直接常量放外面（避免每次渲染重建数组） */
 const CATEGORIES = [
+    // v1.1.7：新增「通用设置」，排在「瞬间设置」前面
+    { key: 'general', label: 'notes.settingsGeneral', icon: 'sliders-h', ready: true },
     { key: 'moment', label: 'notes.settingsMoment', icon: 'bolt', ready: true },
     { key: 'todo', label: 'notes.settingsTodo', icon: 'check-square', ready: false },
     { key: 'nav', label: 'notes.settingsNav', icon: 'compass', ready: false },
@@ -178,12 +228,15 @@ export default {
     emits: ['update:modelValue', 'saved'],
     data() {
         return {
-            active: 'moment',
+            active: 'general',
             saving: false,
             // 表单用副本：点「取消」直接丢弃，不会把半改的设置漏到列表上
-            form: { ...DEFAULT_MOMENT_SETTINGS },
+            form: { ...DEFAULT_GENERAL_SETTINGS, ...DEFAULT_MOMENT_SETTINGS },
             ratioMin: ATTACH_RATIO_MIN,
-            ratioMax: ATTACH_RATIO_MAX
+            ratioMax: ATTACH_RATIO_MAX,
+            fontMin: NOTE_FONT_SIZE_MIN,
+            fontMax: NOTE_FONT_SIZE_MAX,
+            fontStep: NOTE_FONT_SIZE_STEP
         };
     },
     computed: {
@@ -251,17 +304,26 @@ export default {
     methods: {
         /** 打开时把全局设置拷进表单（全局值可能已被别的标签页改过） */
         syncFromStore() {
-            this.active = 'moment';
-            this.form = { ...DEFAULT_MOMENT_SETTINGS, ...noteSettings.moment };
+            this.active = 'general';
+            this.form = {
+                ...DEFAULT_GENERAL_SETTINGS,
+                ...DEFAULT_MOMENT_SETTINGS,
+                ...(noteSettings.general || {}),
+                ...(noteSettings.moment || {})
+            };
         },
         resetToDefault() {
-            this.form = { ...DEFAULT_MOMENT_SETTINGS };
+            this.form = { ...DEFAULT_GENERAL_SETTINGS, ...DEFAULT_MOMENT_SETTINGS };
         },
         async save() {
             if (this.saving) return;
             this.saving = true;
             try {
                 await saveNoteSettings(this.instanceId, {
+                    general: {
+                        pageLoad: this.form.pageLoad === 'manual' ? 'manual' : 'auto',
+                        fontSize: Number(this.form.fontSize) || DEFAULT_GENERAL_SETTINGS.fontSize
+                    },
                     moment: {
                         attachSize: this.form.attachSize,
                         attachRatio: Number(this.form.attachRatio) || DEFAULT_MOMENT_SETTINGS.attachRatio,
@@ -433,6 +495,35 @@ export default {
 .ns-ratio-unit {
     color: var(--el-text-color-secondary);
     font-size: 13px;
+}
+
+/* v1.1.7：字号行的标签不许换行（宽度被滑块挤时会出现「正文 / 大小」两行） */
+.ns-sub-row.is-font .ns-sub-label {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* v1.1.7：字体大小设置 —— 滑块占满剩余宽度，右侧固定显示当前 px */
+.ns-font-slider {
+    flex: 1 1 auto;
+    min-width: 120px;
+    margin: 0 4px;
+}
+
+.ns-font-value {
+    flex: 0 0 auto;
+    min-width: 52px;
+    color: var(--el-text-color-regular);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+/* 字号预览块：底色沿用 .ns-preview，这里只压掉上下抖动 */
+.ns-font-preview {
+    margin-top: 10px;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .ns-preview {

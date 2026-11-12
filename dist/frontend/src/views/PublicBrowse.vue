@@ -353,6 +353,9 @@ import ToggleDark from '@/components/ToggleDark.vue';
 import { hardStopAll, installGlobalMediaGuards } from '@/utils/mediaManager';
 import { copyText } from '@/utils/clipboard';
 import { fileLink } from '@/utils/fileLink';
+// v1.1.7：站点标题可能带 {host} / {user} / {pagename} 占位符，展示前必须先解析，
+// 否则「留空默认 GoHub {pagename}」会把占位符原样显示在 logo 上
+import { resolveSiteTitle } from '@/utils/siteTitle';
 
 export default {
   name: 'PublicBrowse',
@@ -437,7 +440,14 @@ export default {
   computed: {
     ...mapGetters(['userConfig']),
     siteName() {
-      return this.userConfig?.siteTitle || 'GoHub';
+      /*
+       * v1.1.7：占位符解析（{host} / {user} / {pagename}）。
+       * 对外分享页一般不要求登录，{pagename} 解析为空 → 落到「GoHub」本身。
+       */
+      return resolveSiteTitle(this.userConfig?.siteTitle, {
+        user: (this.$store && this.$store.getters && this.$store.getters.sessionUser) || '',
+        path: (this.$route && this.$route.path) || '/',
+      });
     },
     rootDirName() {
       // 分享模式：根 = 分享名称（access.name），标签分享回退到标签名

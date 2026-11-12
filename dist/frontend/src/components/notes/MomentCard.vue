@@ -64,7 +64,7 @@
                     折叠态靠绝对定位 + 行内占位（见下）；展开态直接把按钮放进文字流尾部，
                     这样它天然落在最后一行末尾，而不是单独占一行。
                 -->
-                <div ref="body" class="mc-body">{{ note.content }}<span v-if="overflow && !expanded" class="mc-toggle-space" aria-hidden="true"></span><button
+                <div ref="body" class="mc-body" :style="bodyFontStyle">{{ note.content }}<span v-if="overflow && !expanded" class="mc-toggle-space" aria-hidden="true"></span><button
                         v-if="overflow && expanded"
                         type="button"
                         class="mc-toggle is-inline"
@@ -165,6 +165,12 @@
                     class="mc-comment"
                     :class="{ 'is-reply': !!c.replyTo }"
                     @click.stop="replyTo(c)"
+                    @contextmenu.prevent="openCommentMenu($event, c)"
+                    @pointerdown="startCommentLongPress($event, c)"
+                    @pointerup="cancelCommentLongPress"
+                    @pointercancel="cancelCommentLongPress"
+                    @pointerleave="cancelCommentLongPress"
+                    @pointermove="onCommentPointerMove"
                 >
                     <span class="mc-comment-author">{{ c.author || '—' }}</span>
                     <template v-if="c.replyTo">
@@ -173,9 +179,6 @@
                     </template>
                     <span class="mc-comment-sep">：</span>
                     <span class="mc-comment-text">{{ c.text }}</span>
-                    <span v-if="c.mine" class="mc-comment-del" :title="$t('notes.commentDelete')" @click.stop="removeComment(c)">
-                        <font-awesome-icon icon="times" />
-                    </span>
                 </li>
             </ul>
             <!--
@@ -193,6 +196,31 @@
                 <font-awesome-icon :icon="commentExpanded ? 'chevron-up' : 'chevron-down'" class="mc-comment-more-icon" />
             </button>
         </section>
+
+        <!--
+            v1.1.7：留言的删除入口改成「长按 / 右键 → 菜单」。
+            留言行尾部不再常驻一个 × —— 一条留言后面挂个叉既挡字又容易误点。
+            菜单 teleport 到 body 并 fixed 定位，避免被卡片的 overflow 裁掉。
+        -->
+        <teleport to="body">
+            <div
+                v-if="commentMenu"
+                class="mc-cmenu-mask"
+                @click="closeCommentMenu"
+                @contextmenu.prevent="closeCommentMenu"
+                @touchmove.prevent="closeCommentMenu"
+            >
+                <div
+                    class="mc-cmenu"
+                    :style="{ left: commentMenu.x + 'px', top: commentMenu.y + 'px' }"
+                    @click.stop
+                >
+                    <button type="button" class="mc-cmenu-item is-danger" @click="deleteFromMenu">
+                        <font-awesome-icon icon="trash" class="mc-cmenu-icon" />{{ $t('notes.commentDelete') }}
+                    </button>
+                </div>
+            </div>
+        </teleport>
 
         <!--
             留言输入（v1.1.2.3）：只有在「正在写 / 回复」时才展开。
@@ -245,7 +273,7 @@ import {
     buildReplyContent,
     parseCommentContent
 } from '@/utils/notes';
-import { noteSettings, viewportHeight } from '@/utils/noteSettings';
+import { noteSettings, viewportHeight, DEFAULT_GENERAL_SETTINGS } from '@/utils/noteSettings';
 
 export default {
     name: 'MomentCard',
@@ -275,7 +303,14 @@ export default {
             draft: '',
             posting: false,
             commentLoading: false,
-            commentMaxChars: COMMENT_MAX_CHARS
+            commentMaxChars: COMMENT_MAX_CHARS,
+            // v1.1.7：长按 / 右键弹出的留言菜单（null = 未打开）
+            commentMenu: null,
+            // 长按计时的句柄与起点（移动超过阈值即视为滑动，取消长按）
+            commentPressTimer: null,
+            commentPressOrigin: null,
+            // 长按已经弹出菜单时，紧随其后的 click 不能再当成「回复」
+            suppressCommentClick: false
         };
     },
     computed: {
@@ -290,8 +325,19 @@ export default {
         isDivider() {
             return noteSettings.moment.layoutStyle === 'divider';
         },
+        /**
+         * v1.1.7：正文自定义字号（笔记设置 → 通用设置 → 字体大小设置）。
+         * 与出厂值相同时返回 null —— 让样式表里的「桌面 14.5px / 移动 14px」自然生效，
+         * 用户没动过设置就不会因为这条内联样式改变移动端的现有观感。
+         */
+        bodyFontStyle() {
+            const px = Number(noteSettings.general && noteSettings.general.fontSize);
+            if (!Number.isFinite(px) || px <= 0 || px === DEFAULT_GENERAL_SETTINGS.fontSize) return null;
+            return { fontSize: `${px}px` };
+        },
         timeText() {
-            return formatMomentTime(this.note.publishedAt || this.note.createdAt, (k) => this.$t(k));
+            // v1.1.7：标题旁的时间带上星期，例如「11月11日 09:13 周三」
+            return formatMomentTime(this.note.publishedAt || this.note.createdAt, (k) => this.$t(k), { week: true });
         },
         moodEmoji() {
             return emojiOfMood(this.note.moment && this.note.moment.mood);
@@ -415,6 +461,11 @@ export default {
             }, 300);
         });
     },
+    beforeUnmount() {
+        // v1.1.7：把长按计时器摘掉，避免卡片已卸载还去改 commentMenu
+        this.cancelCommentLongPress();
+        this.commentMenu = null;
+    },
     methods: {
         /** 「更多」菜单：把动作统一转成对外的编辑 / 留言 / 删除事件 */
         onCommand(cmd) {
@@ -473,14 +524,40 @@ export default {
                     } catch (e) {
                         el.focus();
                     }
-                    if (typeof el.scrollIntoView === 'function') {
-                        el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-                    }
                 }
                 // 版面变了（多出一个输入框）→ 正文的「全文 / 收起」判定要重算一次
                 this.measure();
                 this.measureComments();
+                /*
+                 * v1.1.7：不再对输入框做 scrollIntoView。
+                 * 带附件的卡片本来就高，把输入框「滚进视野」往往要把整条笔记顶出屏幕，
+                 * 用户看到的就是「点了别人的留言，整条内容没了」。
+                 * 改成下面的 revealComposer：卡片尽量不动，只有确实必要时补最小幅度滚动，
+                 * 且绝不把卡片标题顶出屏幕。
+                 */
+                this.revealComposer();
             });
+        },
+        /**
+         * 让输入框可见，但不以「把卡片顶走」为代价。
+         * 允许的滚动上限 = 卡片顶部到视口顶部的距离（滚到卡片贴顶就停），
+         * 这样标题 / 正文始终留在屏幕上，与需求「保持停在该瞬间的位置」一致。
+         */
+        revealComposer() {
+            const card = this.$el;
+            const el = this.$refs.composer;
+            if (!card || !el) return;
+            const vh = window.innerHeight;
+            const r = el.getBoundingClientRect();
+            if (r.top >= 8 && r.bottom <= vh - 8) return; // 本来就看得见，不动
+            if (r.bottom > vh - 8) {
+                const need = r.bottom - vh + 8;
+                const room = Math.max(0, card.getBoundingClientRect().top - 8);
+                const delta = Math.min(need, room);
+                if (delta > 0) window.scrollBy({ top: delta, behavior: 'auto' });
+            } else {
+                window.scrollBy({ top: r.top - 8, behavior: 'auto' });
+            }
         },
         closeComposer() {
             this.composerOpen = false;
@@ -489,8 +566,72 @@ export default {
         },
         /** 点某条留言 = 回复它（朋友圈式：点谁回复谁） */
         replyTo(c) {
+            // 长按刚弹过菜单：这一次 click 是长按的尾巴，不能顺手把回复框打开
+            if (this.suppressCommentClick) return;
             if (this.note.status === 'deleted') return;
             this.openComposer(c.author || '');
+        },
+        /* ── 留言的「长按 / 右键 → 菜单」删除（v1.1.7） ─────────────── */
+        /**
+         * 按下开始计时：520ms 后弹菜单。
+         * 只对自己的留言生效 —— 别人的留言本来也删不掉，长按弹个空菜单会让人以为坏了。
+         */
+        startCommentLongPress(e, c) {
+            if (!c || !c.mine || this.note.status === 'deleted') return;
+            // 鼠标只认左键；右键走 contextmenu 那条路
+            if (e.pointerType === 'mouse' && e.button !== 0) return;
+            this.cancelCommentLongPress();
+            this.commentPressOrigin = { x: e.clientX, y: e.clientY };
+            this.commentPressTimer = window.setTimeout(() => {
+                this.commentPressTimer = null;
+                /*
+                 * 长按结束浏览器还会补一个 click。这里置一个短时间的抑制位，
+                 * 否则「弹菜单」的同时又跳出一个回复输入框，两个操作叠在一起。
+                 */
+                this.suppressCommentClick = true;
+                window.setTimeout(() => {
+                    this.suppressCommentClick = false;
+                }, 700);
+                this.showCommentMenu(this.commentPressOrigin.x, this.commentPressOrigin.y, c);
+            }, 520);
+        },
+        /** 手指 / 鼠标一移动就取消长按（滚动列表不该误弹菜单） */
+        onCommentPointerMove(e) {
+            if (!this.commentPressTimer || !this.commentPressOrigin) return;
+            const dx = Math.abs(e.clientX - this.commentPressOrigin.x);
+            const dy = Math.abs(e.clientY - this.commentPressOrigin.y);
+            if (dx > 10 || dy > 10) this.cancelCommentLongPress();
+        },
+        cancelCommentLongPress() {
+            if (this.commentPressTimer) {
+                window.clearTimeout(this.commentPressTimer);
+                this.commentPressTimer = null;
+            }
+            this.commentPressOrigin = null;
+        },
+        /** 桌面端右键：直接弹菜单（等价于长按） */
+        openCommentMenu(e, c) {
+            if (!c || !c.mine || this.note.status === 'deleted') return;
+            this.showCommentMenu(e.clientX, e.clientY, c);
+        },
+        /**
+         * 菜单定位：以按下的点为左上角，超出视口就贴边收回来。
+         * 尺寸写死成菜单的实际大小，避免先渲染再测量的抖动。
+         */
+        showCommentMenu(x, y, c) {
+            const W = 132;
+            const H = 42;
+            const left = Math.min(Math.max(8, x), Math.max(8, window.innerWidth - W - 8));
+            const top = Math.min(Math.max(8, y), Math.max(8, window.innerHeight - H - 8));
+            this.commentMenu = { x: left, y: top, comment: c };
+        },
+        closeCommentMenu() {
+            this.commentMenu = null;
+        },
+        deleteFromMenu() {
+            const c = this.commentMenu && this.commentMenu.comment;
+            this.commentMenu = null;
+            if (c) this.removeComment(c);
         },
         /** 「更多留言」：没带全就先补拉，再展开；已展开则收起 */
         async toggleComments() {
@@ -551,6 +692,8 @@ export default {
             if (!this.canPost) return;
             this.posting = true;
             try {
+                // v1.1.7：发完留言要停在这条瞬间上 —— 先记下卡片此刻的位置，回填后再对齐
+                const cardTop = this.$el ? this.$el.getBoundingClientRect().top : 0;
                 const content = this.effectiveContent;
                 const res = await fetchWithAuth(`/api/notes/${encodeURIComponent(this.note.id)}/comments`, {
                     method: 'POST',
@@ -571,7 +714,17 @@ export default {
                 this.draft = '';
                 this.replyTarget = null;
                 this.$message.success(this.$t('notes.commentOk'));
-                this.$nextTick(() => this.measureComments());
+                this.$nextTick(() => {
+                    this.measureComments();
+                    /*
+                     * v1.1.7：新留言插在输入框上方，会把卡片撑高。
+                     * 按「卡片顶部没有位移」为准做一次补偿滚动 —— 位移为 0 时什么都不做，
+                     * 有位移（比如上面某条瞬间被删 / 图片加载完成）就把页面拉回原处。
+                     */
+                    const now = this.$el ? this.$el.getBoundingClientRect().top : 0;
+                    const delta = now - cardTop;
+                    if (Math.abs(delta) > 1) window.scrollBy({ top: delta, behavior: 'auto' });
+                });
                 this.$emit('comment-changed', { id: this.note.id, count: this.commentList.length });
             } catch (e) {
                 this.$message.error(e.message || this.$t('common.failed'));
@@ -610,7 +763,10 @@ export default {
 <style scoped>
 .mc {
     box-sizing: border-box;
-    padding: 14px 16px 10px;
+    /* v1.1.7：左右内边距抽成变量 —— 分割线样式的下划线要按同一个值内缩，
+       否则线比内容区宽出 2 倍内边距（需求原文要求两者等宽）。 */
+    --mc-pad-x: 16px;
+    padding: 14px var(--mc-pad-x) 10px;
     /* v1.1.2.2：外边框圆角 12px → 5px */
     border-radius: 5px;
     background: var(--note-card-bg, var(--admin-container-bg-color, #fff));
@@ -640,10 +796,29 @@ export default {
      * 标题 / 文字 / 附件区的实际加载宽度与边框样式**逐像素一致**，只露出底边那条线。
      */
     border: 1px solid transparent;
-    border-bottom-color: var(--note-card-border, var(--glass-border, rgba(127, 127, 127, 0.16)));
+    border-bottom-color: transparent;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
+    /* v1.1.7：下划线用伪元素画，左右按内边距内缩 —— 与内容加载区等宽 */
+    position: relative;
+}
+
+/*
+ * v1.1.7：分割线的实际绘制。
+ * 以前直接用 border-bottom，它贴在盒子外沿，比内缩 16px（移动端 12px）的内容区宽出一倍内边距，
+ * 看上去像「线比内容长出一截」。改成绝对定位的 1px 横线，left/right 与内边距同值，
+ * 底边再下探 1px 补掉透明边框占的那 1px，视觉位置与原来的 border-bottom 完全重合。
+ */
+.mc.is-divider::after {
+    content: '';
+    position: absolute;
+    left: var(--mc-pad-x);
+    right: var(--mc-pad-x);
+    bottom: -1px;
+    height: 1px;
+    background: var(--note-card-border, var(--glass-border, rgba(127, 127, 127, 0.16)));
+    pointer-events: none;
 }
 
 .mc.is-divider:hover {
@@ -968,30 +1143,59 @@ export default {
 }
 
 /* 删除按钮只在本人留言上出现，靠右侧、默认半透明，hover 明显 */
-.mc-comment-del {
-    position: absolute;
-    top: 50%;
-    right: 0;
+/*
+ * v1.1.7：留言行尾的常驻「×」已去掉，删除改成长按 / 右键弹出的菜单。
+ * 下面这两块是那个菜单（teleport 到 body，fixed 定位，不受卡片 overflow 影响）。
+ */
+.mc-cmenu-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 3200;
+    background: transparent;
+}
+
+.mc-cmenu {
+    position: fixed;
+    min-width: 132px;
+    padding: 4px;
+    border: 1px solid var(--glass-border, rgba(127, 127, 127, 0.16));
+    border-radius: 8px;
+    background: var(--admin-container-bg-color, #fff);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.mc-cmenu-item {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    margin-top: -9px;
-    border-radius: 50%;
-    color: var(--note-muted, var(--el-text-color-secondary));
-    font-size: 10px;
-    opacity: 0;
-    transition: opacity 0.15s ease;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--el-text-color-regular);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
 }
 
-.mc-comment:hover .mc-comment-del {
-    opacity: 1;
+.mc-cmenu-item:hover {
+    background: var(--el-fill-color-light);
 }
 
-.mc-comment-del:hover {
-    background: rgba(245, 108, 108, 0.16);
+.mc-cmenu-item.is-danger {
     color: var(--el-color-danger);
+}
+
+.mc-cmenu-item.is-danger:hover {
+    background: rgba(245, 108, 108, 0.12);
+}
+
+.mc-cmenu-icon {
+    width: 12px;
+    font-size: 12px;
 }
 
 /* 移动端没有 hover，删除按钮常显（否则永远点不到） */
@@ -1107,7 +1311,9 @@ export default {
 
 @media (max-width: 768px) {
     .mc {
-        padding: 12px 12px 8px;
+        /* v1.1.7：分割线内缩量跟着内边距走 */
+        --mc-pad-x: 12px;
+        padding: 12px var(--mc-pad-x) 8px;
         /* v1.1.2.2：移动端同样收成 5px，两端观感统一 */
         border-radius: 5px;
     }

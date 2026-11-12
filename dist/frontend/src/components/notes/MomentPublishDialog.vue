@@ -46,7 +46,7 @@
                 </button>
             </div>
 
-            <!-- 标题：自动填「日期 + 星期」（可改） -->
+            <!-- v1.1.7：标题不再自动填「日期 + 星期」—— 默认留空，提示语改为「标题（选填）」 -->
             <el-input
                 ref="titleInput"
                 v-model="form.title"
@@ -135,6 +135,8 @@
                     v-model="form.content"
                     class="mp-textarea"
                     :placeholder="$t('notes.contentPlaceholder')"
+                    @pointerup="syncEditorHeight"
+                    @keyup="syncEditorHeight"
                 ></textarea>
                 <div class="mp-counter" :class="{ 'is-over': charCount > maxChars }">
                     {{ charCount }} / {{ maxChars }}
@@ -191,9 +193,10 @@
                 <el-button size="small" :loading="uploading" @click="extractLink">
                     <font-awesome-icon icon="link" class="mp-btn-icon" />{{ $t('notes.linkExtract') }}
                 </el-button>
-                <span v-if="assets.length" class="mp-asset-count">
-                    {{ $t('notes.assetCount', { n: assets.length }) }}
-                </span>
+                <!--
+                    v1.1.7：这里的「x 个附件」挪到页脚「取消」按钮左侧了（需求原文），
+                    与「文件上传中」共用同一个位置 —— 上传时显示上传中，平时显示附件数。
+                -->
                 <!--
                     v1.1.4：不再限制 accept —— 手机相册 / 文件管理器只会按 accept 过滤，
                     填 image/*,video/*,audio/* 时很多机型干脆只列出图片，视频与其它文件
@@ -210,6 +213,12 @@
 
             <!-- 标签 -->
             <div class="mp-tags-row">
+                <!--
+                    v1.1.7：
+                      · placement="top" —— 下拉一律向上展开。标签行在编辑页最下方，
+                        向下弹会被「取消 / 发布」按钮挡住，条目少的时候也一样。
+                      · @keydown 接管空格 —— 与回车同效，把当前输入变成标签。
+                -->
                 <el-select
                     v-model="form.tagNames"
                     class="mp-tags"
@@ -218,8 +227,10 @@
                     filterable
                     allow-create
                     default-first-option
+                    placement="top"
                     :reserve-keyword="false"
                     :placeholder="$t('notes.tagPlaceholder')"
+                    @keydown="onTagKeydown"
                 >
                     <el-option v-for="t in tagOptions" :key="t.id" :label="t.name" :value="t.name">
                         <span class="mp-tag-opt">{{ t.name }}</span>
@@ -237,6 +248,15 @@
             <div class="mp-footer">
                 <span class="mp-tip">{{ footerTip }}</span>
                 <div class="mp-footer-btns">
+                    <!--
+                        v1.1.7：「取消」按钮左侧固定一个状态位 ——
+                        上传中显示「文件上传中」并带旋转图标（与「本地上传」按钮同款），
+                        平时显示「x 个附件」，两者都没有就整块不占位。
+                    -->
+                    <span v-if="uploading || assets.length" class="mp-attach-tip">
+                        <font-awesome-icon v-if="uploading" icon="spinner" spin class="mp-attach-spin" />
+                        {{ uploading ? $t('notes.uploadingHint') : $t('notes.assetCount', { n: assets.length }) }}
+                    </span>
                     <el-button size="small" @click="visible = false">{{ $t('common.cancel') }}</el-button>
                     <el-button
                         size="small"
@@ -283,33 +303,24 @@ import {
     mediaKindOfMime
 } from '@/utils/notes';
 
-/**
- * 标题默认值：`2026-11-10 周二`。
- * v1.1.2 按需求去掉了「时间点」（时分），只留日期与星期 ——
- * 瞬间本来就是按天归档的内容，标题带时分反而更难扫。
+/*
+ * v1.1.7：标题不再自动填「日期 + 星期」，defaultTitle / titleOf 两个helper 一并移除。
+ * 卡片上标题为空时本来就会退回显示发布时间，所以留空不影响列表观感。
  */
-function defaultTitle() {
-    return titleOf(Date.now());
-}
-
-/** 同一个格式，按指定时间生成（草稿里记着「当时」的标题，用来判断是否需要刷新） */
-function titleOf(ts) {
-    const d = new Date(Number(ts) || Date.now());
-    const pad = (v) => String(v).padStart(2, '0');
-    const week = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} 周${week}`;
-}
 
 /** 草稿键：按实例隔离，切实例不会串内容 */
 const draftKeyOf = (instanceId) => `gohub:note-draft:moment:${instanceId || 'default'}`;
 
 /**
- * 位置记忆键（v1.1.2）：
- * 发布成功时把地点记进浏览器，下次打开编辑页点位置输入框就能直接挑最近的记录。
- * 同样按实例隔离 —— 不同实例往往是不同站点/不同用途，地点列表混在一起没有意义。
+ * v1.1.7：位置候选改成「数据表里的历史记录」，不再用浏览器 localStorage。
+ *
+ * 旧实现把地点写进本地存储，于是换设备 / 换浏览器就全丢了，也不跟着实例走。
+ * 现在直接问后端 `GET /api/notes/locations`（只查当前账户 + 当前实例的瞬间），
+ * 光标进入输入框时给最近的记录，敲字时按关键字过滤 —— 与标签输入框一样的交互。
+ *
+ * 候选结果按「查询词」缓存在本次弹窗生命周期内：同一个词来回删改不必重复请求，
+ * 弹窗一关就清空（数据可能已经被别的设备改过）。
  */
-const locationKeyOf = (instanceId) => `gohub:note-locations:${instanceId || 'default'}`;
-/** 最多记多少个地点（太多反而不好挑） */
 const LOCATION_MAX = 20;
 
 /** 心情 / 天气名称提示的显示时长（需求：2 秒后消失） */
@@ -360,7 +371,8 @@ export default {
             /** v1.1.6：鼠标悬停中的图标（桌面端悬停即显示名称，移走即收起） */
             hoverKey: '',
             /** 最近用过的地点（位置输入框的记忆，存在浏览器里） */
-            locationHistory: [],
+            // v1.1.7：位置候选（来自数据表），按查询词做一层会话内缓存
+            locationCache: {},
             /** 本次打开是否恢复过草稿 */
             draftRestored: false
         };
@@ -374,8 +386,12 @@ export default {
                 this.$emit('update:modelValue', v);
             }
         },
+        /**
+         * v1.1.7：移动端宽度 94% → 98%（需求原文：宽高一起改 98%）。
+         * 高度在样式表里按 98vh 处理，两端同改才算「一起」。
+         */
         dialogWidth() {
-            return window.innerWidth < 768 ? '94%' : '640px';
+            return window.innerWidth < 768 ? '98%' : '640px';
         },
         isEdit() {
             return !!(this.note && this.note.id);
@@ -390,8 +406,10 @@ export default {
             return !!this.form.content.trim() || this.assets.length > 0;
         },
         footerTip() {
-            // v1.1.6：上传中优先提示（需求：正在上传文件时，取消按钮左侧显示「文件上传中」）
-            if (this.uploading) return this.$t('notes.uploadingHint');
+            /*
+             * v1.1.7：「文件上传中」已经挪到「取消」左侧（与附件数共用那个位置），
+             * 这里不再重复报一遍，只在字数超限时提示。
+             */
             if (this.charCount > this.maxChars) {
                 return this.$t('notes.charOver', { n: this.charCount - this.maxChars });
             }
@@ -453,13 +471,37 @@ export default {
             this.skipDraftSave = false;
             this.draftRestored = false;
             this.reset();
-            this.loadLocationHistory();
+            // v1.1.7：位置候选每次打开都重新问后端，缓存只在本次弹窗内有效
+            this.locationCache = {};
             if (this.isEdit) {
                 this.fillFromNote(this.note);
             } else {
                 this.restoreDraft();
             }
             this.loadTags();
+            // v1.1.7：上次拉伸过的高度不要带到下一次
+            this.$nextTick(() => this.resetEditorHeight());
+        },
+        /**
+         * v1.1.7：正文输入框允许用户从右下角自由拉伸。
+         * 原生 resize 只改 textarea 自己的行内高度，父容器不会跟着变高 ——
+         * 后面的附件 / 标签就会压到输入框上。这里在松手（或打字）后把父容器的
+         * min-height 同步成实际高度；低于默认下限时清空，交还给样式表的 45vh。
+         */
+        syncEditorHeight() {
+            const el = this.$refs.textarea;
+            const wrap = el && el.parentElement;
+            if (!el || !wrap) return;
+            const base = Math.max(180, window.innerHeight * 0.45);
+            const h = el.offsetHeight;
+            wrap.style.minHeight = h > base + 1 ? `${Math.round(h)}px` : '';
+        },
+        /** 重新打开弹窗时把上一次拉伸留下的行内高度清掉，回到 45vh 起点 */
+        resetEditorHeight() {
+            const el = this.$refs.textarea;
+            if (el) el.style.height = '';
+            const wrap = el && el.parentElement;
+            if (wrap) wrap.style.minHeight = '';
         },
         onClosed() {
             // 关闭（含 Esc / 点遮罩 / 点取消）都留草稿；只有「发布成功」才跳过
@@ -472,7 +514,8 @@ export default {
         },
         reset() {
             this.form = {
-                title: defaultTitle(),
+                /* v1.1.7：新建时不再自动填标题（需求原文），交给用户自己写 */
+                title: '',
                 content: '',
                 mood: '',
                 weather: '',
@@ -482,11 +525,11 @@ export default {
             };
             this.assets = [];
         },
-        /** 编辑态回填：标题从历史数据取（老数据没有标题就按当天生成） */
+        /** 编辑态回填：标题照历史数据取；没有就留空（v1.1.7 起不再按当天生成） */
         fillFromNote(note) {
             const m = note.moment || {};
             this.form = {
-                title: (note.title || '').trim() || defaultTitle(),
+                title: (note.title || '').trim(),
                 content: note.content || '',
                 mood: m.mood || '',
                 weather: m.weather || '',
@@ -555,8 +598,8 @@ export default {
                 return;
             }
             this.form = {
-                // 标题留空或还是「草稿当时」的自动值时，按当前日期重算，避免草稿标题过期
-                title: d.title && d.title !== titleOf(d.savedAt) ? d.title : defaultTitle(),
+                // v1.1.7：标题由用户自己写，草稿里是什么就是什么（不再按日期重算）
+                title: d.title || '',
                 content: d.content || '',
                 mood: d.mood || '',
                 weather: d.weather || '',
@@ -582,40 +625,67 @@ export default {
             this.$nextTick(() => this.$refs.textarea && this.$refs.textarea.focus());
         },
 
-        /* ── 位置记忆 ───────────────────────────────────────────── */
-        loadLocationHistory() {
-            try {
-                const raw = window.localStorage.getItem(locationKeyOf(this.instanceId)) || '[]';
-                const arr = JSON.parse(raw);
-                this.locationHistory = Array.isArray(arr)
-                    ? arr.filter((x) => typeof x === 'string' && x.trim()).slice(0, LOCATION_MAX)
-                    : [];
-            } catch (e) {
-                this.locationHistory = [];
+        /* ── 位置候选（v1.1.7：数据表） ─────────────────────────────── */
+        /**
+         * el-autocomplete 的建议源。
+         *   空串 = 光标刚进输入框，给「最近的记录」；
+         *   有内容 = 按关键字在数据表里查同类记录。
+         * 只查当前账户 + 当前实例，与标签输入框同一套隔离口径。
+         */
+        async queryLocation(queryString, cb) {
+            const q = String(queryString || '').trim();
+            const key = q.toLowerCase();
+            if (this.locationCache[key]) {
+                cb(this.locationCache[key]);
+                return;
             }
-        },
-        /** el-autocomplete 的建议源：输入即按关键字过滤，不输入就按最近顺序全列出来 */
-        queryLocation(queryString, cb) {
-            const q = String(queryString || '').trim().toLowerCase();
-            const pool = this.locationHistory;
-            const hit = q ? pool.filter((x) => x.toLowerCase().includes(q)) : pool;
-            cb(hit.map((v) => ({ value: v })));
-        },
-        /** 发布成功后记一笔（最近的排前面、同名去重、最多 LOCATION_MAX 条） */
-        rememberLocation(v) {
-            const val = String(v || '').trim();
-            if (!val) return;
-            const next = [val, ...this.locationHistory.filter((x) => x !== val)].slice(0, LOCATION_MAX);
-            this.locationHistory = next;
             try {
-                window.localStorage.setItem(locationKeyOf(this.instanceId), JSON.stringify(next));
+                const params = new URLSearchParams({ instanceId: this.instanceId || '' });
+                if (q) params.set('q', q);
+                const res = await fetchWithAuth(`/api/notes/locations?${params.toString()}`);
+                const data = await res.json().catch(() => []);
+                const rows = Array.isArray(data) ? data : data.list || [];
+                const list = rows
+                    .filter((v) => typeof v === 'string' && v.trim())
+                    .slice(0, LOCATION_MAX)
+                    .map((v) => ({ value: v }));
+                this.locationCache[key] = list;
+                cb(list);
             } catch (e) {
-                /* 隐私模式 / 配额满：记不住就算了，不影响发布 */
+                cb([]);
             }
         },
 
-        async loadTags() {
-            try {
+        /**
+         * v1.1.7：标签输入框里按空格 = 按回车。
+         *
+         * el-select 的 allow-create 只在「回车」时把输入内容变成标签，空格会被当成普通字符
+         * 输进筛选框（这也是英文标签名里的合法字符）。需求点名要空格也能成词，
+         * 这里在输入框为空/纯空格时保持原样，有内容时拦下空格并合成一次回车事件，
+         * 让 Element Plus 自己走「创建标签」那条原有逻辑 —— 不另外复制一份实现。
+         */
+        onTagKeydown(e) {
+            if (!e || (e.key !== ' ' && e.key !== 'Spacebar' && e.keyCode !== 32)) return;
+            // 中文输入法正在组字：空格是选字键，绝不能抢
+            if (e.isComposing) return;
+            const el = e.target;
+            if (!el || el.tagName !== 'INPUT') return;
+            if (!String(el.value || '').trim()) return;
+            e.preventDefault();
+            e.stopPropagation();
+            el.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'Enter',
+                    code: 'Enter',
+                    keyCode: 13,
+                    which: 13,
+                    bubbles: true,
+                    cancelable: true
+                })
+            );
+        },
+
+        async loadTags() {            try {
                 const res = await fetchWithAuth(`/api/notes/tags?instanceId=${encodeURIComponent(this.instanceId || '')}`);
                 const data = await res.json().catch(() => []);
                 this.tagOptions = Array.isArray(data) ? data : [];
@@ -814,11 +884,11 @@ export default {
                 inputPlaceholder: 'https://example.com/a.jpg',
                 inputType: 'textarea',
                 /*
-                 * v1.1.6：输入框再加两行高度（默认 2 行 → 4 行）。
+                 * v1.1.7：在上次「2 行 → 4 行」的基础上再 +2 行（4 行 → 6 行）。
                  * rows 走 inputAttributes 透传给原生 textarea；customClass 兜底，
                  * 以防 Element Plus 版本差异导致 rows 没落到元素上（样式见 .mp-link-prompt）。
                  */
-                inputAttributes: { rows: 4 },
+                inputAttributes: { rows: 6 },
                 customClass: 'mp-link-prompt',
                 inputValidator: (v) => {
                     const s = String(v || '').trim();
@@ -910,7 +980,6 @@ export default {
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
                 // 发布成功 → 把地点记进浏览器，下次打开可直选
-                this.rememberLocation(this.form.location);
                 // 发布成功 → 草稿作废，别再恢复出「已经发过」的内容
                 this.clearDraftStorage();
                 this.skipDraftSave = true;
@@ -1118,16 +1187,19 @@ export default {
     position: relative;
     display: flex;
     flex: 1 1 auto;
-    /* v1.1.6：正文区最小高度 = 视口高度的 30%（矮屏保底 150px），需求原文 */
-    min-height: max(150px, 30vh);
+    /*
+     * v1.1.7：正文区最小收缩高度 30vh → 45vh（需求原文）。
+     * 矮屏（横屏手机 / 分屏）按 180px 兜底，否则 45vh 会小到没法写字。
+     */
+    min-height: max(180px, 45vh);
 }
 
 .mp-textarea {
     box-sizing: border-box;
     width: 100%;
     height: 100%;
-    /* v1.1.6：收缩下限不得低于视口高度的 30% */
-    min-height: max(150px, 30vh);
+    /* v1.1.7：收缩下限与父容器一致 —— 视口 45%，保底 180px */
+    min-height: max(180px, 45vh);
     padding: 10px 12px 26px;
     border: 1px solid var(--el-border-color);
     border-radius: 8px;
@@ -1136,7 +1208,8 @@ export default {
     font-family: inherit;
     font-size: 14px;
     line-height: 1.7;
-    resize: none;
+    /* v1.1.7：右下角可以自由上下拉伸（需求原文）——拖完由 syncEditorHeight 把容器一起撑开 */
+    resize: vertical;
     outline: none;
     transition: border-color 0.2s ease;
 }
@@ -1282,9 +1355,23 @@ export default {
     font-size: 12px;
 }
 
-.mp-asset-count {
+/*
+ * v1.1.7：原来跟在「链接提取」后面的「x 个附件」提示，
+ * 现在与「文件上传中」共用页脚「取消」左侧这个状态位。
+ */
+.mp-attach-tip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: 2px;
     font-size: 12px;
     color: var(--el-text-color-secondary);
+    white-space: nowrap;
+}
+
+.mp-attach-spin {
+    font-size: 11px;
+    color: var(--el-color-primary);
 }
 
 .mp-file-input {
@@ -1335,6 +1422,7 @@ export default {
 
 .mp-footer-btns {
     display: flex;
+    align-items: center;
     gap: 8px;
     margin-left: auto;
 }
@@ -1409,16 +1497,14 @@ export default {
         font-size: 12px;
     }
 
-    .mp-asset-count {
-        flex: 0 0 auto;
-        white-space: nowrap;
-    }
+    /* v1.1.7：附件数 / 上传中提示已挪进页脚，这里不再需要单独占位规则 */
 }
 
 @media (max-width: 768px) {
+    /* v1.1.7：移动端同样按视口 45% 起算（原来压到 130px，与桌面端口径不一致） */
     .mp-editor-wrap,
     .mp-textarea {
-        min-height: 130px;
+        min-height: max(160px, 45vh);
     }
 
     .mp-asset {
@@ -1448,13 +1534,13 @@ export default {
  */
 
 /*
- * v1.1.6：「链接提取」输入框加两行高度。
+ * 「链接提取」输入框高度（v1.1.6 引入，v1.1.7 再加两行）。
  * $prompt 的 MessageBox 同样 teleport 到 body，scoped 样式够不着，只能放全局块，
  * 用 customClass 里的 mp-link-prompt 限定范围（只影响这一个弹窗）。
- * 默认 2 行 → 4 行：单行 14px * 1.7 ≈ 24px，两行约 48px，给 96px 留足余量。
+ * 单行 14px * 1.7 ≈ 24px：4 行 ≈ 96px（v1.1.6）→ 6 行 ≈ 144px（v1.1.7，再 +2 行）。
  */
 .mp-link-prompt .el-textarea__inner {
-    min-height: 96px;
+    min-height: 144px;
     line-height: 1.7;
 }
 .el-dialog.moment-publish-dialog {
@@ -1482,5 +1568,18 @@ export default {
 
 .el-dialog.moment-publish-dialog .el-dialog__footer {
     flex: 0 0 auto;
+}
+
+/*
+ * v1.1.7：移动端「发布 / 编辑瞬间」弹窗宽高一起改为 98%。
+ * 宽度改在 dialogWidth（98%）；Element Plus 会把 width 写成内联样式，
+ * 所以这里只补高度，不再用 !important 抢宽度。
+ */
+@media (max-width: 768px) {
+    .el-dialog.moment-publish-dialog {
+        height: 98vh;
+        max-height: 98vh;
+        margin: 1vh auto;
+    }
 }
 </style>

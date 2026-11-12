@@ -17,6 +17,10 @@
  *     上一次全站滚不动，就是横滑判定太宽松，把「略带横向抖动的纵向滚动」也吃了。
  *   · 起手处本身就能继续横向滚动（工具条 / 缩略图带），或者是表单控件
  *     （滑块 / 输入框 / 开关），一律放行。
+ *
+ * v1.1.7：把「从边缘起手」放到最高优先级 —— 边缘 28px 是系统返回手势的专属区域，
+ * 只要不是「本来就能横滚的容器」或「横滑就是它功能的控件（滑块 / 走马灯 / 标签条）」，
+ * 一律吃掉。以前从边缘起手、又刚好落在输入框/开关上时会放行，于是那几下还是会退回上一页。
  */
 
 /** 触发区宽度：从这条边缘带起手，位移门槛降到 MIN_DECIDE_PX */
@@ -64,22 +68,12 @@ function canScrollHorizontally(target, dir) {
 }
 
 /**
- * 表单控件 / 自带横滑语义的组件：横滑是它们的功能，不能拦。
- * （滑块拖动、输入框选择文本、标签页横向滚动都属于这一类）
+ * 「横滑就是它本身的功能」的控件：滑块拖动、走马灯翻页、标签条横滚都属于这一类，
+ * 即使起手位置落在屏幕边缘也必须放行，否则滑块从左边拖不动。
  */
-const CONTROL_SELECTOR = [
-    'input',
-    'textarea',
-    'select',
-    '[contenteditable="true"]',
+const DRAG_CONTROL_SELECTOR = [
     '[role="slider"]',
     '.el-slider',
-    '.el-input',
-    '.el-textarea',
-    '.el-select',
-    '.el-switch',
-    '.el-checkbox',
-    '.el-radio',
     '.el-carousel',
     '.el-tabs__nav-wrap',
     '.el-scrollbar__wrap',
@@ -87,9 +81,36 @@ const CONTROL_SELECTOR = [
     '.no-hswipe-guard',
 ].join(',')
 
-function isControl(target) {
+/**
+ * 只是「可能用到横滑」的控件：输入框选词、下拉、开关。
+ * 页面中部的横滑放行；**从屏幕边缘起手的不放行** ——
+ * 边缘那一条带是系统返回手势的专属区域，v1.1.7 起一律优先保护「不后退」。
+ */
+const SOFT_CONTROL_SELECTOR = [
+    'input',
+    'textarea',
+    'select',
+    '[contenteditable="true"]',
+    '.el-input',
+    '.el-textarea',
+    '.el-select',
+    '.el-switch',
+    '.el-checkbox',
+    '.el-radio',
+    '.el-date-editor',
+    '.el-autocomplete',
+].join(',')
+
+/**
+ * @param {Element} target 起手处元素
+ * @param {boolean} fromEdge 是否从屏幕边缘起手
+ */
+function isControl(target, fromEdge) {
+    if (!target || !target.closest) return false
     try {
-        return !!(target && target.closest && target.closest(CONTROL_SELECTOR))
+        if (target.closest(DRAG_CONTROL_SELECTOR)) return true
+        if (!fromEdge && target.closest(SOFT_CONTROL_SELECTOR)) return true
+        return false
     } catch (e) {
         return false
     }
@@ -162,7 +183,7 @@ export function setupEdgeSwipeGuard() {
         }
 
         // 起手处本来就能横向滚动（工具条 / 标签页 / 缩略图带）：放行
-        if (canScrollHorizontally(startTarget, dx) || isControl(startTarget)) {
+        if (canScrollHorizontally(startTarget, dx) || isControl(startTarget, fromEdge)) {
             decided = true
             blocking = false
             return

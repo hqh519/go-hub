@@ -161,6 +161,23 @@ export class NotesController {
     return this.notes.tagAdmin(instanceId || '', kind || '', viewer);
   }
 
+  /**
+   * 位置候选（v1.1.7）
+   * GET /api/notes/locations?instanceId=&q=
+   *   取当前账户 + 当前实例下瞬间里出现过的 location（按最近发布时间去重排序）。
+   *   q 为空 = 光标刚进输入框，给最近的记录；有值 = 按关键字模糊匹配。
+   *   必须在 `@Get(':id')` 之前注册，否则会被当成笔记 id。
+   */
+  @Get('locations')
+  async locations(
+    @Req() req: Request,
+    @Query('instanceId') instanceId?: string,
+    @Query('q') q?: string,
+  ) {
+    const { viewer } = this.ctx(req);
+    return this.notes.pickLocations(viewer, instanceId || '', q || '');
+  }
+
   /** 某条瞬间的留言列表 */
   @Get(':id/comments')
   async comments(

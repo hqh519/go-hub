@@ -7,13 +7,13 @@ export const PAGE_CONFIG_DEFAULTS: any = {
       "id": "siteTitle",
       "label": "网站标题",
       "label_en": "Site Title",
-      "placeholder": "Sanyue ImgHub",
+      "placeholder": "GoHub {pagename}",
       /*
        * v1.1.6：标题支持三个占位符，写进 tooltip 让用户知道怎么用。
        * 实际解析在前端 utils/siteTitle.js（每次导航 / 登录态变化都重算）。
        */
-      "tooltip": "支持占位符：<br/>{host} = 当前访问域名（不含 http:// 与 / 后的路径）<br/>{user} = 当前登录用户名（仅登录后生效）<br/>{pagename} = 当前页面名称（首页 / 图床管理 / 挂载管理 / 笔记管理 / 用户管理 / 系统管理，仅登录后生效）<br/>例：{pagename} · {host}",
-      "tooltip_en": "Placeholders: <br/>{host} = current domain (no protocol, no path) <br/>{user} = signed-in username (signed-in only) <br/>{pagename} = current page name (Home / Dashboard / Local files / Notes / Users / Settings; signed-in only) <br/>e.g. {pagename} · {host}",
+      "tooltip": "支持占位符：<br/>{host} = 当前访问域名（不含 http:// 与 / 后的路径）<br/>{user} = 当前登录用户名（仅登录后生效）<br/>{pagename} = 当前页面名称（首页 / 图床管理 / 挂载管理 / 笔记管理 / 用户管理 / 系统管理 / 历史记录，仅登录后生效）<br/>留空默认：GoHub {pagename}<br/>例：{pagename} · {host}",
+      "tooltip_en": "Placeholders: <br/>{host} = current domain (no protocol, no path) <br/>{user} = signed-in username (signed-in only) <br/>{pagename} = current page name (Home / Dashboard / Local files / Notes / Users / Settings / History; signed-in only) <br/>Empty value defaults to: GoHub {pagename} <br/>e.g. {pagename} · {host}",
       "category": "全局设置",
       "category_en": "Global Settings"
     },

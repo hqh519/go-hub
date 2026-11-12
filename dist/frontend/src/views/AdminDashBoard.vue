@@ -566,7 +566,7 @@
                         @enter="enterFolderItem(item)"
                         @props="trashMode ? null : openFolderProps(item)"
                         @copy="trashMode ? null : handleFolderCopy(item.name)"
-                        @move="trashMode ? null : handleMove(index, item.name)"
+                        @move="trashMode ? null : handleMove(index, item.name, true)"
                         @delete="trashMode ? null : handleDelete(index, item.name)"
                         @touchstart="handleFolderTouchStart(item, index)"
                         @touchend="handleTouchEnd"
@@ -638,7 +638,7 @@
                         @detail="openDetailDialog(index, item.name)"
                         @copy="handleCopy(index, item.name)"
                         @folderCopy="handleFolderCopy(item.name)"
-                        @move="handleMove(index, item.name)"
+                        @move="handleMove(index, item.name, true)"
                         @delete="handleDelete(index, item.name)"
                         @download="handleDownload(item.name)"
                         @openLink="handleOpenLink(item.name)"
@@ -882,7 +882,7 @@
             :current-directory="currentPath"
             :is-batch-move="isBatchMove"
             :initial-path="moveTargetPath"
-            :show-instance-picker="isBatchMove"
+            :show-instance-picker="moveShowInstance"
             :instance-id="instanceId"
             @confirm="confirmMove"
         />
@@ -1262,6 +1262,8 @@ data() {
         moveFileKey: '', // 当前移动的文件key
         moveFileIndex: -1, // 当前移动的文件索引
         isBatchMove: false, // 是否为批量移动
+        // v1.1.7：移动弹窗里是否先走「选择接收实例」这一步（批量 / 文件夹 / 列表行 = true）
+        moveShowInstance: false,
         pageSwipeStartX: null,
         pageSwipeStartY: null,
         pageSwipeStartTime: 0,
@@ -3327,11 +3329,19 @@ methods: {
             loading.close();
         }
     },
-    handleMove(index, key) {
+    /**
+     * 单条移动。
+     *
+     * v1.1.7：新增 withInstance —— 卡片视图的**文件夹**、以及列表视图的所有行，
+     * 点移动时要先像批量操作那样选「接收实例」（需求原文），再选目录。
+     * 卡片视图的**文件**保持原来的「直接选目录」，不额外多一步。
+     */
+    handleMove(index, key, withInstance) {
         // 打开自定义移动对话框
         this.moveFileKey = key;
         this.moveFileIndex = index;
         this.isBatchMove = false;
+        this.moveShowInstance = !!withInstance;
         this.moveTargetPath = '/';
         this.showMoveDialog = true;
     },
@@ -3341,6 +3351,7 @@ methods: {
          * 由 MoveFileDialog 的 showInstancePicker 承担；这里不再预先弹「选实例」对话框。
          */
         this.isBatchMove = true;
+        this.moveShowInstance = true;
         this.moveTargetPath = '/';
         this.showMoveDialog = true;
     },
@@ -6075,6 +6086,15 @@ html.dark .trash-btn.is-active,
 }
 
 @media (max-width: 768px) {
+    /*
+     * v1.1.7：移动端左上角「页面切换」按钮的左右外边距改为 5px（需求原文）。
+     * AdminHeader 是全站共用的，这里用 :deep 只在本页收窄，其它页面保持原样。
+     */
+    :deep(.admin-header-content) {
+        padding-left: 5px;
+        padding-right: 5px;
+    }
+
     .history-btn {
         height: 28px;
         font-size: 11px;

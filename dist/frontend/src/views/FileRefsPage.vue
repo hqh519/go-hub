@@ -135,6 +135,19 @@ export default {
         },
         fileName() {
             return String(this.$route.query.name || '');
+        },
+        /**
+         * v1.1.7：当前实例 —— 引用明细只允许查本实例下的文件。
+         * 优先用地址栏带的 instanceId（从文件详情跳过来时带的），否则读本地实例记忆。
+         */
+        instanceId() {
+            const fromQuery = this.$route.query.instanceId;
+            if (typeof fromQuery === 'string') return fromQuery;
+            try {
+                return localStorage.getItem('gohub_instance_id') || '';
+            } catch (e) {
+                return '';
+            }
         }
     },
     mounted() {
@@ -155,7 +168,10 @@ export default {
                  * 之前这里写的是 `/api/file-refs/*`，一直 404，
                  * 表现就是「引用明细页永远显示没有被引用」。
                  */
-                const res = await fetchWithAuth(`/api/manage/api/file-refs/${encodeURIComponent(this.fileName)}`);
+                const qs = new URLSearchParams({ instanceId: String(this.instanceId ?? '') });
+                const res = await fetchWithAuth(
+                    `/api/manage/api/file-refs/${encodeURIComponent(this.fileName)}?${qs.toString()}`
+                );
                 const json = await res.json().catch(() => ({}));
                 if (!res.ok || json.success === false) throw new Error(json.message || this.$t('fileRef.loadFail'));
                 this.data = json.data || { name: '', originalName: '', count: 0, sharedCount: 0, shared: [], list: [] };
