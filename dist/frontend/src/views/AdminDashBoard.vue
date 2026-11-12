@@ -1591,6 +1591,11 @@ computed: {
             out.push({
                 key: row.name,
                 /*
+                 * v1.1.8：保留原始行 —— 灯箱里点「详情」时如果当前页数据已经变了
+                 * （翻页 / 刷新 / 重新排序），还能靠它把这条文件原样打开。
+                 */
+                row,
+                /*
                  * v1.1.6：浏览记录用的标识。列表接口只下发 File_ID（name），库内主键 id 不下发，
                  * 因此优先用 id、没有就退回 name —— 后端 /api/manage/browse 两种都认。
                  */
@@ -3789,7 +3794,20 @@ methods: {
         const key = payload && payload.key;
         if (!key) return;
         const index = (this.paginatedTableData || []).findIndex(row => row.name === key);
-        if (index >= 0) this.openDetailDialog(index, key);
+        if (index >= 0) {
+            this.openDetailDialog(index, key);
+            return;
+        }
+        /*
+         * v1.1.8：兜底 —— 列表数据在灯箱打开期间变过（换页 / 搜索 / 刷新），
+         * 按名字在当前页找不到这条文件了。以前这里直接 return，表现就是
+         * 「点了详情没反应」；现在退回灯箱自己保存的行引用，照样把详情打开。
+         */
+        const item = (this.mediaPreviewItems || []).find((it) => it.key === key);
+        if (item && item.row) {
+            this.detailFile = item.row;
+            this.showdetailDialog = true;
+        }
     },
     /**
      * v1.1.6：灯箱关闭 → 记录浏览时间（历史记录页「最近浏览」用它筛）。

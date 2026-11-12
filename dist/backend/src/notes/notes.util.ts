@@ -119,6 +119,8 @@ export interface MomentSettings {
  * v1.1.7「通用设置」（笔记设置里排在「瞬间设置」前面的一个分类）：
  *   · pageLoad ：列表翻到底时的加载方式 —— auto 自动加载（默认）/ manual 手动点「加载更多」
  *   · fontSize ：瞬间正文的展示字号（px），只作用于正文，标题 / 日期等不动
+ *   · pageBg   ：v1.1.8 新增 —— 笔记管理页的背景图（仅日间模式），
+ *                存 `["url1","url2"]` 形式的字符串，多张时每次刷新随机取一张
  *
  * 默认值与前端 `utils/noteSettings.js` 的 DEFAULT_GENERAL_SETTINGS 必须完全一致。
  * 字号默认 14.5 = 当前列表里正文的实际字号（需求：「默认为当前的字号」）。
@@ -129,15 +131,67 @@ export const DEFAULT_NOTE_FONT_SIZE = 14.5;
 export const NOTE_FONT_SIZE_MIN = 12;
 export const NOTE_FONT_SIZE_MAX = 22;
 
+/**
+ * 笔记页背景图的校验口径 —— 与「账户自定义背景图」（users.controller.ts 的 normalizeBkImg）
+ * 刻意保持一致：同一产品里两处背景图能用什么地址、能填几张不该有两套答案。
+ * 前端 `utils/noteSettings.js` 的 PAGE_BG_MAX_ITEMS / PAGE_BG_MAX_URL_LENGTH 同值。
+ */
+export const NOTE_PAGE_BG_MAX_ITEMS = 20;
+export const NOTE_PAGE_BG_MAX_URL_LENGTH = 2000;
+
 export interface GeneralSettings {
   pageLoad: (typeof NOTE_PAGE_LOAD_MODES)[number];
   fontSize: number;
+  /** `["url1","url2"]`；空串 = 不设背景 */
+  pageBg: string;
 }
 
 export interface NoteSettings {
   moment: MomentSettings;
   general: GeneralSettings;
   [key: string]: unknown;
+}
+
+/**
+ * 把用户填的背景图文本收敛成 `["url1","url2"]`。
+ * 能认 `["a","b"]`、单条 `a`，也能直接吃数组（前端回传时可能已是数组）。
+ * 认不出的地址一律丢掉、绝不报错 —— 背景图纯粹是观感配置，
+ * 不该因为它写错一个字符就把整份通用设置存不进去。
+ */
+export function normalizeNotePageBg(raw: unknown): string {
+  let arr: unknown[] = [];
+  if (Array.isArray(raw)) {
+    arr = raw;
+  } else {
+    const text = String(raw ?? '').trim();
+    if (!text) return '';
+    if (text.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(text);
+        if (!Array.isArray(parsed)) return '';
+        arr = parsed;
+      } catch {
+        return '';
+      }
+    } else {
+      /*
+       * 与前端 parsePageBg 同口径：不强求方括号，一行一条也认。
+       * 否则用户按行粘几条地址进来，整段会被当成「一条地址」过 http 校验后全部丢掉，
+       * 表现为「我明明填了却没生效」。只按换行拆 —— 地址本身可能带逗号。
+       */
+      arr = text
+        .split(/[\r\n]+/)
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
+  }
+  const list = arr
+    .map((x) => (typeof x === 'string' ? x.trim() : ''))
+    .filter(Boolean)
+    .map((x) => x.slice(0, NOTE_PAGE_BG_MAX_URL_LENGTH))
+    .filter((x) => /^https?:\/\//i.test(x) || x.startsWith('/'))
+    .slice(0, NOTE_PAGE_BG_MAX_ITEMS);
+  return list.length ? JSON.stringify(list) : '';
 }
 
 /** 把任意脏输入收敛成合法的「通用设置」（键缺失 / 非法时落默认，存过的值原样保留） */
@@ -150,7 +204,8 @@ export function normalizeGeneralSettings(raw: unknown): GeneralSettings {
   if (!Number.isFinite(fontSize) || fontSize <= 0) fontSize = DEFAULT_NOTE_FONT_SIZE;
   // 保留一位小数，避免前端滑块步进 0.5 时被四舍五入成整数
   fontSize = Math.min(NOTE_FONT_SIZE_MAX, Math.max(NOTE_FONT_SIZE_MIN, Math.round(fontSize * 10) / 10));
-  return { pageLoad, fontSize };
+  const pageBg = normalizeNotePageBg(o.pageBg);
+  return { pageLoad, fontSize, pageBg };
 }
 
 /**

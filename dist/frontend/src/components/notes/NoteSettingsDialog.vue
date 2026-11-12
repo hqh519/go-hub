@@ -86,6 +86,28 @@
                     </div>
                     <p class="ns-tip">{{ $t('notes.fontSizeTip') }}</p>
                 </div>
+
+                <el-divider class="ns-divider" />
+
+                <!--
+                    3. 笔记页背景图（v1.1.8 新增）
+                    与「系统管理 → 网页设置 → 管理页背景图」同一套机制：
+                    存多行文本、多张时刷新随机一张、只在日间模式生效。
+                    这里**不做即时预览** —— 背景图属于整页观感，在设置弹窗里预览看不出效果，
+                    反而会遮住表单。保存后回到列表即可看到。
+                -->
+                <div class="ns-field">
+                    <div class="ns-label">{{ $t('notes.pageBg') }}</div>
+                    <el-input
+                        v-model="form.pageBg"
+                        type="textarea"
+                        class="ns-page-bg-input"
+                        :rows="3"
+                        :placeholder="$t('notes.pageBgPlaceholder')"
+                        spellcheck="false"
+                    />
+                    <p class="ns-tip">{{ $t('notes.pageBgTip') }}</p>
+                </div>
             </section>
 
             <!-- 瞬间设置 -->
@@ -204,7 +226,8 @@ import {
     readPreviewCache,
     writePreviewCache,
     ATTACH_RATIO_MIN,
-    ATTACH_RATIO_MAX
+    ATTACH_RATIO_MAX,
+    normalizePageBg
 } from '@/utils/noteSettings';
 
 /** 分类定稿后不再变，直接常量放外面（避免每次渲染重建数组） */
@@ -322,7 +345,9 @@ export default {
                 await saveNoteSettings(this.instanceId, {
                     general: {
                         pageLoad: this.form.pageLoad === 'manual' ? 'manual' : 'auto',
-                        fontSize: Number(this.form.fontSize) || DEFAULT_GENERAL_SETTINGS.fontSize
+                        fontSize: Number(this.form.fontSize) || DEFAULT_GENERAL_SETTINGS.fontSize,
+                        // v1.1.8：背景图先在前端收敛成 `["url1","url2"]`，脏地址直接丢掉
+                        pageBg: normalizePageBg(this.form.pageBg)
                     },
                     moment: {
                         attachSize: this.form.attachSize,
@@ -536,6 +561,17 @@ export default {
 
 .ns-divider {
     margin: 18px 0;
+}
+
+/*
+ * v1.1.8：背景图输入框用等宽字体 —— 里面填的是 `["url1","url2"]` 这种带引号逗号的串，
+ * 等宽比比例字体好核对，也能让用户一眼看出自己有没有漏引号。
+ */
+.ns-page-bg-input :deep(.el-textarea__inner) {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    overflow-wrap: anywhere;
 }
 
 /* 第二个预览块（单个附件）与上面那条连在一起，去掉多余的间距感 */

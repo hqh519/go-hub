@@ -204,13 +204,16 @@ let NotesService = class NotesService {
         const where = this.buildWhere(input);
         const page = Math.max(1, Math.floor(Number(input.page) || 1));
         const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 20)));
-        const sortKey = SORTABLE[String(input.sort || '')] || 'createdAt';
+        const sortKey = SORTABLE[String(input.sort || '')] || 'publishedAt';
         const order = String(input.order || 'desc') === 'asc' ? 'asc' : 'desc';
+        const orderBy = sortKey === 'publishedAt'
+            ? [{ publishedAt: { sort: order, nulls: 'last' } }, { createdAt: 'desc' }]
+            : { [sortKey]: order };
         const [total, rows] = await Promise.all([
             prisma_1.prisma.note.count({ where: where }),
             prisma_1.prisma.note.findMany({
                 where: where,
-                orderBy: { [sortKey]: order },
+                orderBy,
                 skip: (page - 1) * pageSize,
                 take: pageSize,
                 include: {
@@ -864,6 +867,10 @@ let NotesService = class NotesService {
             };
         }
         const next = (0, notes_util_1.normalizeNoteSettings)(merged);
+        const rawBg = merged.general?.pageBg;
+        if (rawBg !== undefined && String(rawBg).trim() && !next.general.pageBg) {
+            app_log_1.appLog.warn('notes', '笔记页背景图地址全部无效，已忽略', String(rawBg).slice(0, 300));
+        }
         const value = JSON.stringify(next);
         await prisma_1.prisma.setting.upsert({
             where: { key },

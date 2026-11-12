@@ -21,7 +21,14 @@
  * v1.1.7：把「从边缘起手」放到最高优先级 —— 边缘 28px 是系统返回手势的专属区域，
  * 只要不是「本来就能横滚的容器」或「横滑就是它功能的控件（滑块 / 走马灯 / 标签条）」，
  * 一律吃掉。以前从边缘起手、又刚好落在输入框/开关上时会放行，于是那几下还是会退回上一页。
+ *
+ * v1.1.8：边缘横滑不再只是「吃掉」，它还承担「关闭层叠页面」的语义 ——
+ * 判明确实是一次返回手势之后调 layerStack.closePageOrder()，按层级从大到小关掉一层
+ * （灯箱上面还压着文件详情，就只关详情；再滑一次才关灯箱）。全站统一由这里驱动，
+ * 页面 / 组件不需要各自监听 touch。
  */
+
+import { closePageOrder, hasOpenLayer } from './layerStack'
 
 /** 触发区宽度：从这条边缘带起手，位移门槛降到 MIN_DECIDE_PX */
 const EDGE_PX = 28
@@ -31,6 +38,11 @@ const MIN_DECIDE_PX = 6
 const PAGE_DECIDE_PX = 24
 /** 非边缘起手时，横向分量至少是纵向的多少倍才认定为横滑 */
 const HORIZONTAL_RATIO = 1.5
+/**
+ * v1.1.8：判为「返回手势」并关掉一层浮层所需的朝内位移。
+ * 与灯箱原来的 64px 取同一个值 —— 阈值太小，翻页 / 拖动缩略图时抬手就误关弹窗。
+ */
+const BACK_TRIGGER_PX = 64
 
 /**
  * v1.0.4：与 layerStack / 页面导航统一「触屏优先」口径。
@@ -132,6 +144,12 @@ export function setupEdgeSwipeGuard() {
     let fromEdge = false
     // 起手处元素：判定「能不能横向滚动 / 是不是控件」必须用它，不能用 touchmove 时的 e.target
     let startTarget = null
+    /*
+     * v1.1.8：这次手势是否算「返回手势」（从边缘起手 + 朝内横向滑动 + 已吃掉默认行为）。
+     * 抬手时如果位移够了就关掉一层浮层；一次手势只关一层，不重复触发。
+     */
+    let backGesture = false
+    let lastDx = 0
 
     window.addEventListener('touchstart', (e) => {
         if (!isMobile() || !e.touches || e.touches.length !== 1) {
@@ -145,6 +163,8 @@ export function setupEdgeSwipeGuard() {
         active = true
         decided = false
         blocking = false
+        backGesture = false
+        lastDx = 0
         startX = t.clientX
         startY = t.clientY
         startTarget = e.target
@@ -155,7 +175,16 @@ export function setupEdgeSwipeGuard() {
         if (!active || !e.touches || e.touches.length !== 1) return
 
         if (decided) {
-            if (blocking && e.cancelable) e.preventDefault()
+            if (blocking) {
+                /*
+                 * v1.1.8 修正：**每次移动都要更新位移**。
+                 * 原来只在「下结论」那一帧记一次 lastDx（那时位移才 6~14px），
+                 * 之后所有 touchmove 都在这里提前 return，抬手时 lastDx 还停在 14px，
+                 * 永远够不到 BACK_TRIGGER_PX(64) —— 真实用户滑得再远也关不掉浮层。
+                 */
+                lastDx = e.touches[0].clientX - startX
+                if (e.cancelable) e.preventDefault()
+            }
             return
         }
 
@@ -191,14 +220,29 @@ export function setupEdgeSwipeGuard() {
 
         decided = true
         blocking = true
+        // v1.1.8：记录这是一次「返回手势」——抬手时按层叠顺序关一层
+        backGesture = fromEdge
+        lastDx = dx
         // 到这里说明是「横滑」：吃掉这次手势，浏览器不再执行返回 / 不再画伸缩动画
         if (e.cancelable) e.preventDefault()
     }, { capture: true, passive: false })
 
     const stop = () => {
+        /*
+         * v1.1.8：边缘横滑抬手 → 关掉最上面一层浮层（灯箱 / 详情页 / 弹窗…）。
+         * 顺序由 layerStack.closePageOrder() 按层级决定，一次只关一层：
+         * 灯箱上压着文件详情时先关详情，再滑一次才轮到灯箱。
+         * 没有浮层时保持原样（什么都不做）—— 页面顶部已经由 overscroll 兜住，
+         * 不能在这里自己 history.back()，否则会误退页面。
+         */
+        if (backGesture && hasOpenLayer() && Math.abs(lastDx) >= BACK_TRIGGER_PX) {
+            closePageOrder()
+        }
         active = false
         decided = false
         blocking = false
+        backGesture = false
+        lastDx = 0
     }
     window.addEventListener('touchend', stop, { capture: true, passive: true })
     window.addEventListener('touchcancel', stop, { capture: true, passive: true })

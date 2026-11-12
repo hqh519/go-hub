@@ -496,6 +496,11 @@ export default {
         },
         typeTabs() {
             return [
+                /*
+                 * v1.1.8（需求）：「图片」前面增加「全部」，一次看到所有类型的文件。
+                 * 取值 'all' 时后端不传 type（等于不加 mime 前缀限制），挂载模式也不做过滤。
+                 */
+                { value: 'all', label: 'notes.pickAll' },
                 { value: 'image', label: 'notes.mediaImage' },
                 { value: 'video', label: 'notes.mediaVideo' },
                 { value: 'audio', label: 'notes.mediaAudio' },
@@ -515,6 +520,7 @@ export default {
             ];
         },
         emptyIcon() {
+            if (this.type === 'all') return 'folder-open';
             if (this.type === 'video') return 'film';
             if (this.type === 'audio') return 'music';
             if (this.type === 'other') return 'file';
@@ -536,6 +542,8 @@ export default {
             const kw = this.mountKeyword.trim().toLowerCase();
             return (this.mountAll || []).filter((f) => {
                 if (kw && !String(f.name || '').toLowerCase().includes(kw)) return false;
+                // v1.1.8：「全部」不做类型过滤
+                if (this.type === 'all') return true;
                 if (this.type === 'image') return f.type === 'image';
                 if (this.type === 'video') return f.type === 'video';
                 if (this.type === 'audio') return f.type === 'audio';
@@ -778,7 +786,8 @@ export default {
                 qs.set('page', String(this.page));
                 qs.set('pageSize', String(this.pageSize));
                 qs.set('instanceId', this.instanceId || '');
-                if (this.type) qs.set('type', this.type);
+                // v1.1.8：「全部」= 不加类型限制，别把 all 当 mime 前缀发给后端
+                if (this.type && this.type !== 'all') qs.set('type', this.type);
                 if (this.search.trim()) qs.set('search', this.search.trim());
                 // 搜索范围 / 筛选：与图床管理页同名同义，后端同一份求值实现
                 if (this.searchScope && this.searchScope !== 'all') qs.set('searchType', this.searchScope);

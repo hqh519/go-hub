@@ -32,6 +32,7 @@
         :class="{ 'is-idle': !controlsVisible || silent, 'is-video': current.kind === 'video', 'is-doc': current.kind === 'pdf', 'is-text': current.kind === 'text', 'is-audio': current.kind === 'audio', 'is-landscape': landscapeCss }"
         @mousemove="bumpControls"
         @touchstart.passive="bumpControls"
+        @wheel.passive="bumpControls"
     >
         <!-- 背景遮罩：灰系偏暗、带透明度 + 轻微模糊 -->
         <div class="mv-backdrop" @click="onOutsideClick"></div>
@@ -682,13 +683,12 @@ const LONG_PRESS_RATE = 3
 /* 手指抖动阈值：超过它才算「滑动了」，长按作废（滑动切换仍按 60px 判定） */
 const LONG_PRESS_CANCEL_PX = 16
 /*
- * v1.1.4：屏幕两侧「边缘退出」手势。
- * 起手落在左右各 EDGE_BACK_PX 内、且横向朝屏幕内侧滑动超过 EDGE_BACK_TRIGGER_PX，
- * 就由灯箱自己退出（先关详情、再关灯箱）—— 同时全程 preventDefault，
- * 浏览器不会再执行「返回上一页」，页面也不会跟着后退。
+ * v1.1.8：边缘手势区宽度。
+ * 从这条带起手的滑动一律视为「返回 / 关一层」手势（由 utils/edgeSwipeGuard 统一处理，
+ * 灯箱只是它关闭的一层），舞台自己不再接管这类触摸、也不据此关闭自己。
+ * 数值与 edgeSwipeGuard 的 EDGE_PX 保持一致，避免两套判定差几像素。
  */
-const EDGE_BACK_PX = 26
-const EDGE_BACK_TRIGGER_PX = 64
+const EDGE_TOUCH_PX = 28
 
 export default {
     name: 'MediaPreviewOverlay',
@@ -1006,7 +1006,7 @@ export default {
                 this.endLongPress3x()
                 this.endImgDrag()
                 this.bindKeys(false)
-                this.bindEdgeBack(false)
+                this.unlockBodyScroll()
                 this.pauseAll()
                 // v3.0.0（R16）：关闭时退出横屏 / 全屏，清掉抓拍面板
                 this.resetVideoLandscape()
@@ -1082,8 +1082,13 @@ export default {
         // v3.0.0 卸载只摘监听，不回退历史（避免在路由切换过程中再触发一次导航）
         this.detachHistoryGuard()
         this.bindKeys(false)
-        // v1.1.4：卸载时摘掉边缘退出手势监听
-        this.bindEdgeBack(false)
+        // v1.1.8：组件被直接卸载时也要把页面滚动解开，否则整页再也滚不动
+        this.unlockBodyScroll()
+        /*
+         * v1.1.8：灯箱不再自己挂边缘手势 —— 全站由 utils/edgeSwipeGuard 统一判定
+         * 「这是一次返回手势」并调 layerStack.closePageOrder() 按层级从大到小关一层，
+         * 灯箱只是栈里的一层。两套同时监听会在同一次滑动里关掉两层（详情 + 灯箱）。
+         */
     },
     mounted() {
         /*
@@ -1131,8 +1136,7 @@ export default {
             })
             this.bumpControls()
             this.bindKeys(true)
-            // v1.1.4：接管屏幕两侧边缘的退出手势（滑动 = 关灯箱，不后退页面）
-            this.bindEdgeBack(true)
+            this.lockBodyScroll()
             // v1.1.4：视频进入即读一次上次播放点（提示行只在有记忆时出现）
             this.refreshResumeAt()
             // v3.0.0 打开时压一条历史哨兵：移动端返回键只关灯箱，不退出页面
@@ -1193,6 +1197,41 @@ export default {
             this.flushViewRecord()
             this.$emit('update:modelValue', false)
         },
+        /*
+         * v1.1.8（需求：「打开灯箱然后在灯箱里下拉，就打不开文件详情页了」）：
+         * 灯箱是 position:fixed 的全屏层，但它自己没锁页面滚动 —— 手指在灯箱里下拉时，
+         * 滚动的是**它身后的列表页**。页面一动，后面所有依赖「我在看哪一条」的状态
+         * （分页、当前页数据、滚动位置）都会漂移，接着点「详情」就查不到这条文件了。
+         * 打开期间把 body 锁住，滚动位置原样保留（不改成 overflow:hidden+fixed 那套，
+         * 那会丢失 scrollTop 并在关闭时跳回顶部）。
+         */
+        lockBodyScroll() {
+            if (typeof document === 'undefined' || this._bodyLocked) return;
+            const body = document.body;
+            if (!body) return;
+            this._bodyLocked = {
+                overflow: body.style.overflow,
+                overscroll: body.style.overscrollBehavior,
+                paddingRight: body.style.paddingRight
+            };
+            /*
+             * 补上滚动条宽度，避免锁定时整页往右撑一下（桌面端浏览器滚动条占 15px 左右）。
+             */
+            const gap = window.innerWidth - document.documentElement.clientWidth;
+            if (gap > 0) body.style.paddingRight = `${gap}px`;
+            body.style.overflow = 'hidden';
+            body.style.overscrollBehavior = 'none';
+        },
+        unlockBodyScroll() {
+            if (typeof document === 'undefined' || !this._bodyLocked) return;
+            const body = document.body;
+            const prev = this._bodyLocked;
+            this._bodyLocked = null;
+            if (!body) return;
+            body.style.overflow = prev.overflow || '';
+            body.style.overscrollBehavior = prev.overscroll || '';
+            body.style.paddingRight = prev.paddingRight || '';
+        },
         /* ── v1.0.0 返回键 / Esc 逐层关闭：登记到统一浮层栈 ────────────────
          * 以前这里自己往历史压哨兵并监听 popstate，文件详情页（Element Plus 弹窗）
          * 由 backGuard 另压一条哨兵 —— 一次返回被两套逻辑同时消费，详情页和灯箱
@@ -1206,77 +1245,12 @@ export default {
         detachHistoryGuard() {
             unregisterLayer('media-viewer');
         },
-        /* ── v1.1.4：屏幕两侧边缘退出 ────────────────────────────────────────
-         * 需求：移动端打开灯箱后，从屏幕左右边缘往里滑（系统的「返回」手势）时，
-         * 应该退出灯箱，而不是让页面后退。做法：
-         *   1) 灯箱打开时在 window 捕获阶段挂 touchstart / touchmove / touchend；
-         *   2) 起手在左右 EDGE_BACK_PX 内 → 记为一次候选；横向朝内移动即 preventDefault，
-         *      浏览器不再画返回动画、也不会真的导航；
-         *   3) 朝内位移达到 EDGE_BACK_TRIGGER_PX → 抬手时退出：详情开着先关详情，
-         *      否则关灯箱（与 layerStack「一次只关最上面一层」的口径一致）。
-         * 只在打开期间挂载，关闭 / 卸载即摘除，不影响其它页面。 */
-        bindEdgeBack(on) {
-            if (on) {
-                if (this._edgeBackStart) return;
-                this._edgeBackStart = (e) => this.onEdgeBackStart(e);
-                this._edgeBackMove = (e) => this.onEdgeBackMove(e);
-                this._edgeBackEnd = () => this.onEdgeBackEnd();
-                window.addEventListener('touchstart', this._edgeBackStart, { capture: true, passive: true });
-                // touchmove 必须非 passive —— 要靠 preventDefault 吃掉浏览器的返回手势
-                window.addEventListener('touchmove', this._edgeBackMove, { capture: true, passive: false });
-                window.addEventListener('touchend', this._edgeBackEnd, { capture: true, passive: true });
-                window.addEventListener('touchcancel', this._edgeBackEnd, { capture: true, passive: true });
-            } else {
-                if (this._edgeBackStart) window.removeEventListener('touchstart', this._edgeBackStart, { capture: true });
-                if (this._edgeBackMove) window.removeEventListener('touchmove', this._edgeBackMove, { capture: true });
-                if (this._edgeBackEnd) {
-                    window.removeEventListener('touchend', this._edgeBackEnd, { capture: true });
-                    window.removeEventListener('touchcancel', this._edgeBackEnd, { capture: true });
-                }
-                this._edgeBackStart = null;
-                this._edgeBackMove = null;
-                this._edgeBackEnd = null;
-                this._edgeBack = null;
-            }
-        },
-        onEdgeBackStart(e) {
-            this._edgeBack = null;
-            if (!this.modelValue) return;
-            if (!e.touches || e.touches.length !== 1) return;
-            // 只对触屏（手指）生效；桌面鼠标不会产生 touch 事件，这里不用再判设备
-            const t = e.touches[0];
-            const w = window.innerWidth;
-            const fromLeft = t.clientX <= EDGE_BACK_PX;
-            const fromRight = t.clientX >= w - EDGE_BACK_PX;
-            if (!fromLeft && !fromRight) return;
-            this._edgeBack = { x: t.clientX, y: t.clientY, fromLeft, fired: false };
-        },
-        onEdgeBackMove(e) {
-            const g = this._edgeBack;
-            if (!g || !e.touches || e.touches.length !== 1) return;
-            const t = e.touches[0];
-            const dx = t.clientX - g.x;
-            const dy = t.clientY - g.y;
-            // 纵向占主导 = 用户在滚动内容，不当作退出
-            if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) {
-                this._edgeBack = null;
-                return;
-            }
-            // 朝内方向：左侧边缘往右滑 / 右侧边缘往左滑
-            const inward = g.fromLeft ? dx : -dx;
-            if (inward < 0) return;
-            // 一确认是边缘横滑就吃掉浏览器默认手势（返回动画 + 导航）
-            if (inward >= 6 && e.cancelable) e.preventDefault();
-            if (inward >= EDGE_BACK_TRIGGER_PX) g.fired = true;
-        },
-        onEdgeBackEnd() {
-            const g = this._edgeBack;
-            this._edgeBack = null;
-            if (!g || !g.fired) return;
-            // 逐层关闭：详情页开着先关详情，否则关灯箱
-            if (this.detailOpen) this.$emit('close-detail');
-            else this.close();
-        },
+        /*
+         * v1.1.8：原来的 bindEdgeBack / onEdgeBackStart / onEdgeBackMove / onEdgeBackEnd
+         * 四个方法整体删掉。边缘横滑改由 utils/edgeSwipeGuard 统一接管：
+         * 判明确实是返回手势 → layerStack.closePageOrder() → 关掉层级最高的一层。
+         * 灯箱注册为 'media-viewer'，详情页注册为 'file-detail'，天然「先关详情再关灯箱」。
+         */
         releaseHistorySentinel() {
             this.detachHistoryGuard();
         },
@@ -1297,6 +1271,16 @@ export default {
             }
             if (this.silent || this.slideshowOn) {
                 this.silent = false
+                this.bumpControls()
+                return
+            }
+            /*
+             * v1.1.8（需求：「在灯箱里下拉之后打不开文件详情页」）：
+             * 控件自动隐藏时顶栏是 pointer-events:none，用户瞄准「详情」点下去，
+             * 这一下实际落在舞台上 —— 旧逻辑直接 close()，看起来就是「点详情把灯箱关了」。
+             * 改成：控件本来是隐藏的，这一下只负责把控件唤回来，不关闭。
+             */
+            if (!this.controlsVisible) {
                 this.bumpControls()
                 return
             }
@@ -1458,12 +1442,16 @@ export default {
         },
         /* ── v3.0.0 舞台触摸：滑动切换 / 长按 3 倍速 / 轻点与双击 ───── */
         onStageTouchStart(e) {
-            // v1.1.4：这次触摸是屏幕边缘的「退出」手势 —— 舞台不接管（否则会顺手翻页）
-            if (this._edgeBack) {
+            const t = e.touches && e.touches[0]
+            /*
+             * v1.1.8：屏幕左右边缘起手的触摸是「退出 / 关一层」的手势，
+             * 舞台不接管 —— 否则同一次滑动在关掉浮层的同时还顺手翻了一页。
+             * 阈值与 utils/edgeSwipeGuard 的 EDGE_PX 保持一致。
+             */
+            if (t && (t.clientX <= EDGE_TOUCH_PX || t.clientX >= window.innerWidth - EDGE_TOUCH_PX)) {
                 this._tStart = null
                 return
             }
-            const t = e.touches && e.touches[0]
             if (!t) return
             // 按钮与菜单上的触摸不走手势逻辑
             const tg = e.target

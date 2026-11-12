@@ -1,7 +1,10 @@
 <template>
     <div class="page-footer" v-if="!disableFooter">
         <p class="footer-line">
-            <span>© 2024-{{ thisYear }} Powered by</span>
+            <!--
+                v1.1.8（需求）：署名补上 HQH —— 首页与登录页共用这个页脚。
+            -->
+            <span>© 2024-{{ thisYear }} Powered by HQH</span>
             <!-- 页脚自定义代码：后台「页脚设置 → 页脚传送门链接」，支持 HTML / JS（如统计代码） -->
             <span v-if="footerCode" ref="footerCodeHost" class="footer-custom-code"></span>
         </p>

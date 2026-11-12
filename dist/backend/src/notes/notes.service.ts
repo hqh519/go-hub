@@ -388,14 +388,28 @@ export class NotesService {
     const where = this.buildWhere(input);
     const page = Math.max(1, Math.floor(Number(input.page) || 1));
     const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 20)));
-    const sortKey = SORTABLE[String(input.sort || '')] || 'createdAt';
+    /*
+     * v1.1.8（需求）：默认排序「最新发布」按**发布时间**降序 —— 发布时间可以在瞬间头部
+     * 点开手工校正，才是用户认知里的「发布顺序」；创建时间（createdAt）只是落库时间，
+     * 库里固定、不提供修改，作为并列时的次序兜底。
+     */
+    const sortKey = SORTABLE[String(input.sort || '')] || 'publishedAt';
     const order: 'asc' | 'desc' = String(input.order || 'desc') === 'asc' ? 'asc' : 'desc';
+    /*
+     * 老数据的 publishedAt 可能为空（v1.1.x 之前的瞬间没有这一列），
+     * Postgres 的 DESC 默认把 NULL 排在最前面 —— 那会让最老的几条永远置顶。
+     * 显式指定 nulls last / first：升序时 NULL 排最后、降序时也排最后。
+     */
+    const orderBy =
+      sortKey === 'publishedAt'
+        ? ([{ publishedAt: { sort: order, nulls: 'last' } }, { createdAt: 'desc' }] as any)
+        : ({ [sortKey]: order } as any);
 
     const [total, rows] = await Promise.all([
       prisma.note.count({ where: where as any }),
       prisma.note.findMany({
         where: where as any,
-        orderBy: { [sortKey]: order } as any,
+        orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
@@ -1254,6 +1268,15 @@ export class NotesService {
       };
     }
     const next = normalizeNoteSettings(merged);
+    /*
+     * v1.1.8（笔记页背景图）：写了内容但一条合法地址都没有 —— 记一条警告。
+     * 这类「设置了却没生效」最容易让人以为功能坏了（校验是静默丢弃非法地址，
+     * 不报错是为了不因为一张图写错就把整份设置存不进去），所以留痕方便排查。
+     */
+    const rawBg = (merged.general as Record<string, unknown> | undefined)?.pageBg;
+    if (rawBg !== undefined && String(rawBg).trim() && !next.general.pageBg) {
+      appLog.warn('notes', '笔记页背景图地址全部无效，已忽略', String(rawBg).slice(0, 300));
+    }
     const value = JSON.stringify(next);
     await prisma.setting.upsert({
       where: { key },

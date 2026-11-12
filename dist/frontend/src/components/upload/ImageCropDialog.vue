@@ -216,6 +216,8 @@ export default {
             drag: null,
             exporting: false,
             corners: ['nw', 'ne', 'sw', 'se'],
+            /** v1.1.8：正在拖动的文字（null = 没在拖） */
+            textDrag: null,
             /** v1.1.7：当前工具 —— crop / brush / text */
             tool: 'crop',
             /** v1.1.7：涂鸦与文字（归一化坐标） */
@@ -312,6 +314,10 @@ export default {
         window.removeEventListener('pointermove', this.onDrawMove);
         window.removeEventListener('pointerup', this.onDrawUp);
         window.removeEventListener('pointercancel', this.onDrawUp);
+        // v1.1.8：文字拖动同样要摘干净，否则关掉弹窗后还在监听
+        window.removeEventListener('pointermove', this.onTextDragMove);
+        window.removeEventListener('pointerup', this.onTextDragUp);
+        window.removeEventListener('pointercancel', this.onTextDragUp);
     },
     methods: {
         handleResize() {
@@ -335,6 +341,8 @@ export default {
             // v1.1.7：换图后旧的涂鸦/文字一律作废，工具回到框选
             this.annotations = [];
             this.drawing = null;
+            // v1.1.8：换图时把可能残留的文字拖动状态一起清掉
+            this.onTextDragUp();
             this.textDraft = null;
             this.textValue = '';
             this.tool = 'crop';
@@ -468,7 +476,13 @@ export default {
                 return;
             }
             if (this.tool === 'text') {
-                this.placeText(evt);
+                /*
+                 * v1.1.8（需求）：文字放置之后要能移动位置。
+                 * 先做命中判定 —— 按在已有文字上就拖动它，按在空白处才新建一段。
+                 */
+                const hit = this.hitText(evt);
+                if (hit >= 0) this.startTextDrag(evt, hit);
+                else this.placeText(evt);
                 return;
             }
             this.onPointerDown(evt, null);
@@ -517,6 +531,72 @@ export default {
             this.renderAnnotations();
         },
         /* ---------------------------- 文字 ---------------------------- */
+        /*
+         * v1.1.8：文字的命中判定。
+         * 叠加层是 canvas，没有 DOM 元素可以点，所以自己算文本框：
+         * 用与绘制时同一个字体 measureText 量宽度，高度按行高 1.25 估算，
+         * 再留 6px 的手指余量（手机指尖比鼠标粗得多）。
+         * 从后往前找 —— 后画的盖在上面，点到的是最上面那一段。
+         */
+        hitText(evt) {
+            const cv = this.$refs.anno;
+            const d = this.disp;
+            if (!cv || !d.w || !d.h) return -1;
+            const ctx = cv.getContext('2d');
+            const base = Math.min(d.w, d.h);
+            const p = this.toNorm(evt);
+            const PAD = 6;
+            for (let i = this.annotations.length - 1; i >= 0; i -= 1) {
+                const a = this.annotations[i];
+                if (a.type !== 'text') continue;
+                const size = Math.max(8, a.size * base);
+                let tw = size * String(a.text || '').length * 0.6;
+                if (ctx) {
+                    ctx.save();
+                    ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`;
+                    tw = ctx.measureText(String(a.text || '')).width;
+                    ctx.restore();
+                }
+                const bw = (tw + PAD * 2) / d.w;
+                const bh = (size * 1.25 + PAD * 2) / d.h;
+                if (p.x >= a.x - PAD / d.w && p.x <= a.x + bw && p.y >= a.y - PAD / d.h && p.y <= a.y + bh) {
+                    return i;
+                }
+            }
+            return -1;
+        },
+        /** 开始拖动某一段文字：记下「按下的点」相对文字左上角的偏移，移动时保持不跳 */
+        startTextDrag(evt, index) {
+            if (evt.cancelable) evt.preventDefault();
+            const a = this.annotations[index];
+            if (!a) return;
+            const p = this.toNorm(evt, false);
+            this.textDrag = { index, dx: p.x - a.x, dy: p.y - a.y };
+            this.$refs.stage?.classList.add('is-text-drag');
+            try { evt.currentTarget?.setPointerCapture?.(evt.pointerId); } catch { /* 忽略 */ }
+            window.addEventListener('pointermove', this.onTextDragMove);
+            window.addEventListener('pointerup', this.onTextDragUp);
+            window.addEventListener('pointercancel', this.onTextDragUp);
+        },
+        onTextDragMove(evt) {
+            const drag = this.textDrag;
+            if (!drag) return;
+            if (evt.cancelable) evt.preventDefault();
+            const a = this.annotations[drag.index];
+            if (!a) return;
+            const p = this.toNorm(evt, false);
+            // 允许略微移出画布（拖回来还在），但不让它彻底丢了
+            a.x = Math.min(1, Math.max(-0.05, p.x - drag.dx));
+            a.y = Math.min(1, Math.max(-0.05, p.y - drag.dy));
+            this.renderAnnotations();
+        },
+        onTextDragUp() {
+            window.removeEventListener('pointermove', this.onTextDragMove);
+            window.removeEventListener('pointerup', this.onTextDragUp);
+            window.removeEventListener('pointercancel', this.onTextDragUp);
+            this.textDrag = null;
+            this.$refs.stage?.classList.remove('is-text-drag');
+        },
         placeText(evt) {
             if (evt.cancelable) evt.preventDefault();
             // 上一段还没确认的文字先落定，避免被新的一次点击吞掉
@@ -826,6 +906,11 @@ export default {
 /* v1.1.7：画笔/文字模式下光标换成十字细线，避免误以为还能拖选区 */
 .crop-stage.is-painting {
     cursor: crosshair;
+}
+
+/* v1.1.8：正在拖动文字时给一个「抓住」的光标 */
+.crop-stage.is-text-drag {
+    cursor: grabbing;
 }
 
 .crop-img {
@@ -1142,6 +1227,13 @@ export default {
 @media (max-width: 768px) {
     .image-crop-dialog .el-dialog__body {
         padding-top: 6px;
+    }
+    /*
+     * v1.1.8（需求）：移动端的图片加载区要更大 —— 最小不小于视口高度的 60%。
+     * 弹窗本身是 98vh，减去头部 / 工具行 / 尾部大约还有 70vh 可用，60vh 放得下。
+     */
+    .crop-stage {
+        min-height: 60vh;
     }
 }
 </style>

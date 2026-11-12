@@ -16,9 +16,31 @@
     <div
         class="nt-page"
         ref="page"
-        :class="{ 'has-instance-badge': instanceSeq > 0 }"
+        :class="{ 'has-instance-badge': instanceSeq > 0, 'has-page-bg': !!pageBgUrl }"
         :style="instanceBadgeStyle"
     >
+        <!--
+            v1.1.8：笔记页背景图（笔记设置 → 通用设置 → 笔记页背景图）。
+            机制照抄「系统管理 → 网页设置 → 管理页背景图」：
+              · 只在**日间模式**出现（夜间直接不渲染，暗色下壁纸基本被遮住，白加载一趟）；
+              · 多张时**每次刷新随机**取一张（用 data 里的 bgSeed 做种子，同一页面停留期间不变，
+                避免任何一次重渲染就换图）；
+              · 用 <img> 而不是 background-image，为的是能等 @load 后再淡入 —— 图没到之前
+                不盖住页面底色，不会出现「先白一下再变图」的闪动。
+            整个元素 pointer-events: none，不拦任何点击。
+        -->
+        <img
+            v-if="pageBgUrl"
+            :key="pageBgUrl"
+            class="nt-page-bg"
+            :class="{ 'is-shown': bgShown }"
+            :src="pageBgUrl"
+            alt=""
+            aria-hidden="true"
+            decoding="async"
+            @load="bgShown = true"
+            @error="onPageBgError"
+        />
         <!-- 第一行顶栏 -->
         <header
             ref="topbarRef"
@@ -487,11 +509,25 @@
             :file="detailFile"
             :file-link="detailFileLink"
             :urls="detailUrls"
-            :show-advanced="false"
             @download="onDetailDownload"
             @delete="onDetailDelete"
+            @tag-management="onDetailTags"
+            @block="onDetailBlock"
+            @white="onDetailWhite"
             @metadata-updated="onDetailMetadata"
             @file-renamed="onDetailRenamed"
+        />
+
+        <!--
+            v1.1.8（需求）：笔记里点开附件的「文件详情」，顶部要和图床管理页一样有
+            「标签 / 黑名单 / 白名单」三个按钮。所以这里补上标签管理弹窗，
+            三个动作的实现与图床管理页同口径（同一个接口、同样的确认文案）。
+        -->
+        <TagManagementDialog
+            v-model="tagDialogVisible"
+            :file-id="tagFileId"
+            :file-metadata="tagFileMetadata"
+            @tags-updated="onDetailTagsUpdated"
         />
 
         <!-- 实例切换（与 /dashboard 同一套交互） -->
@@ -549,13 +585,15 @@ import fetchWithAuth from '@/utils/fetchWithAuth';
 import DashboardTabs from '@/components/DashboardTabs.vue';
 import MediaPreviewOverlay from '@/components/dashboard/MediaPreviewOverlay.vue';
 import FileDetailDialog from '@/components/dashboard/FileDetailDialog.vue';
+// v1.1.8：附件详情里的「标签」按钮需要一个标签管理弹窗（与图床管理页同一个组件）
+import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
 import MomentCard from '@/components/notes/MomentCard.vue';
 import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue';
 import NoteTagPanel from '@/components/notes/NoteTagPanel.vue';
 import NoteSettingsDialog from '@/components/notes/NoteSettingsDialog.vue';
 import { extOf, formatSize } from '@/utils/notes';
 import { buildFileDetail } from '@/utils/fileDetail';
-import { loadNoteSettings, applyCachedSettings, noteSettings } from '@/utils/noteSettings';
+import { loadNoteSettings, applyCachedSettings, noteSettings, parsePageBg } from '@/utils/noteSettings';
 import { writeThemeCookie } from '@/utils/themeCookie';
 // v1.1.3：实例切换密码守卫（与图床管理页 / 首页同一份实现）
 import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
@@ -586,6 +624,7 @@ export default {
         DashboardTabs,
         MediaPreviewOverlay,
         FileDetailDialog,
+        TagManagementDialog,
         MomentCard,
         MomentPublishDialog,
         NoteTagPanel,
@@ -594,6 +633,16 @@ export default {
     data() {
         return {
             kind: '',
+            /*
+             * v1.1.8：笔记页背景图的「随机种子」。
+             * 需求是「多张时每次刷新随机一张」—— 用一个 0~1 的随机数当种子，
+             * 由它去换算数组下标，而不是在 computed 里直接 Math.random()：
+             * computed 会在任何依赖变化时重算，直接随机会让「点一下排序」都换一张背景图。
+             * 种子只在页面实例创建时取一次，刷新页面才会变。
+             */
+            bgSeed: Math.random(),
+            /** 背景图是否已加载完（load 之后再淡入，避免先白一下再变图） */
+            bgShown: false,
             // v1.1.3：'all' 而不是 ''（见模板里的注释）
             mediaKind: 'all',
             // v1.1.3：搜索范围 —— all | title | content | tag | other（与图床管理页同一套口径）
@@ -606,7 +655,12 @@ export default {
             search: '',
             mobileSearchOpen: false,
             // 排序：只保留第二行这一处（第一行不放排序，避免两套控件打架）
-            sortKey: 'createdAt',
+            /*
+             * v1.1.8（需求）：「最新发布」要按**发布时间**降序，不再按创建时间。
+             * 发布时间可以手工校正（点瞬间头部的时间改），创建时间则在库里固定、不提供修改。
+             * 老数据 publishedAt 为空时后端会把它排到最后（nulls last）。
+             */
+            sortKey: 'publishedAt',
             sortOrder: 'desc',
             trashMode: false,
             // 标签管理模式（与回收站同一层面的页面模式）
@@ -631,6 +685,9 @@ export default {
             timeEditorSaving: false,
             timeEditorNote: null,
             detailVisible: false,
+            /** v1.1.8：附件详情里的标签管理弹窗 */
+            tagDialogVisible: false,
+            tagFileId: '',
             detailFile: null,
             detailFileLink: '',
             // v1.1.3：详情页各复制格式（原始链接 / Markdown / HTML / BBCode / TG / S3）
@@ -678,13 +735,14 @@ export default {
             },
             set(v) {
                 if (v === 'oldest') {
-                    this.sortKey = 'createdAt';
+                    // 最早发布 = 发布时间升序（同一口径，避免两种时间混着排）
+                    this.sortKey = 'publishedAt';
                     this.sortOrder = 'asc';
                 } else if (v === 'updated') {
                     this.sortKey = 'updatedAt';
                     this.sortOrder = 'desc';
                 } else {
-                    this.sortKey = 'createdAt';
+                    this.sortKey = 'publishedAt';
                     this.sortOrder = 'desc';
                 }
             }
@@ -696,8 +754,25 @@ export default {
          * v1.1.7：翻页方式（笔记设置 → 通用设置 → 页面加载设置）。
          * auto = 滚到底自动加载更多（默认）；manual = 只在底部显示「加载更多」按钮。
          */
+        /** v1.1.8：标签弹窗要的元数据（与图床管理页同一个入参形态） */
+        tagFileMetadata() {
+            return (this.detailFile && this.detailFile.metadata) || {};
+        },
         pageLoadMode() {
             return noteSettings.general && noteSettings.general.pageLoad === 'manual' ? 'manual' : 'auto';
+        },
+        /**
+         * v1.1.8：当前要显示的笔记页背景图地址（空串 = 不设）。
+         *   · 夜间模式一律返回空 —— 需求：背景图只在日间模式生效；
+         *   · 多张时按 bgSeed 取一张，同一页面停留期间稳定不变，刷新才换。
+         * 读的是模块级 reactive 的 noteSettings，设置请求回来后会自动重算并换上。
+         */
+        pageBgUrl() {
+            if (this.$store.getters.useDarkMode) return '';
+            const list = parsePageBg(noteSettings.general && noteSettings.general.pageBg);
+            if (!list.length) return '';
+            const i = Math.min(list.length - 1, Math.floor(this.bgSeed * list.length));
+            return list[i] || '';
         },
         /** 发布按钮文案随当前类型变化（需求原文） */
         publishLabel() {
@@ -804,6 +879,13 @@ export default {
                 unregisterLayer('note-file-detail');
             }
         },
+        /**
+         * v1.1.8：背景图换了地址（设置刚加载完 / 切实例 / 换了一张）→ 先退回透明，
+         * 等新图 @load 再淡入。否则 <img> 换了 src 会沿用上一张的淡入状态。
+         */
+        pageBgUrl() {
+            this.bgShown = false;
+        },
     },
     async mounted() {
         window.addEventListener('scroll', this.onPageScroll, true);
@@ -903,6 +985,14 @@ export default {
         applyInstanceSettings() {
             applyCachedSettings(this.instanceId);
             loadNoteSettings(this.instanceId);
+        },
+        /**
+         * v1.1.8：背景图加载失败 —— 静默处理，只保持透明并清掉元素。
+         * 这里刻意不弹提示：背景图坏掉不影响任何功能，弹一个红条反而盖住内容；
+         * 用户打开笔记设置就能看到自己填的地址，想改随时能改。
+         */
+        onPageBgError() {
+            this.bgShown = false;
         },
         async openInstanceManagement() {
             const username = this.$store.getters.sessionUser || '';
@@ -1443,6 +1533,69 @@ export default {
                 this.$message.error(e.message || this.$t('common.failed'));
             }
         },
+        /* ── v1.1.8：附件详情里的「标签 / 黑名单 / 白名单」（与图床管理页同口径） ── */
+        onDetailTags() {
+            const key = this.detailFile && this.detailFile.name;
+            if (!key) return;
+            this.tagFileId = key;
+            this.tagDialogVisible = true;
+        },
+        onDetailTagsUpdated(tags) {
+            const key = this.tagFileId || (this.detailFile && this.detailFile.name);
+            if (!key) return;
+            // 标签变了 → 详情里的元数据与链接一起刷新（标签会进 URL 展开 / 复制内容）
+            this.onDetailMetadata(key, { Tags: tags });
+        },
+        /** 黑名单：已在名单里再点一次 = 移出（与图床管理页的 toggle 语义一致） */
+        onDetailBlock() {
+            const current = String((this.detailFile && this.detailFile.metadata && this.detailFile.metadata.ListType) || 'None');
+            if (current === 'Block') {
+                this.patchListType('None', 'blockRemoved', 'blockFailed', 'Block');
+                return;
+            }
+            this.$confirm(this.$t('dashboard.blockConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
+                confirmButtonText: this.$t('dashboard.deleteConfirmOk'),
+                cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
+                type: 'warning'
+            })
+                .then(() => this.patchListType('Block', 'blockSuccess', 'blockFailed'))
+                .catch(() => {});
+        },
+        /** 白名单：语义同黑名单 */
+        onDetailWhite() {
+            const current = String((this.detailFile && this.detailFile.metadata && this.detailFile.metadata.ListType) || 'None');
+            if (current === 'White') {
+                this.patchListType('None', 'whiteRemoved', 'whiteFailed', 'White');
+                return;
+            }
+            this.$confirm(this.$t('dashboard.whiteConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
+                confirmButtonText: this.$t('dashboard.deleteConfirmOk'),
+                cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
+                type: 'warning'
+            })
+                .then(() => this.patchListType('White', 'whiteSuccess', 'whiteFailed'))
+                .catch(() => {});
+        },
+        /**
+         * 写 ListType（None / Block / White）。
+         * 笔记页没有 tableData，改完只需要同步 detailFile，列表里的缩略图不受影响。
+         */
+        async patchListType(value, successKey, failedKey) {
+            const key = this.detailFile && this.detailFile.name;
+            if (!key) return;
+            try {
+                const res = await fetchWithAuth(`/api/manage/metadata/${encodeURIComponent(key)}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ListType: value })
+                });
+                if (!res.ok) throw new Error('request failed');
+                this.$message.success(this.$t(`dashboard.${successKey}`));
+                this.onDetailMetadata(key, { ListType: value });
+            } catch (e) {
+                this.$message.error(this.$t(`dashboard.${failedKey}`));
+            }
+        },
         /** 详情页里改了名 / 改了元数据 → 列表里的附件信息跟着刷新 */
         onDetailRenamed() {
             this.refreshList();
@@ -1542,6 +1695,48 @@ export default {
      * 会被继承下来把瞬间正文也居中 —— 正文必须是左对齐，这里在页面根部复位一次。
      */
     text-align: left;
+}
+
+/* ── 笔记页背景图（v1.1.8）────────────────────────────────── */
+/*
+ * 为什么必须给 .nt-page 造一个层叠上下文：
+ * 背景元素是 `z-index: -1`，如果页面根节点没有自己的层叠上下文，它会跑到**根上下文**的负层，
+ * 被 body 的底色（日间是浅灰白）盖住 —— 图加载了却看不见，这正是「管理页背景图」最早踩过的坑。
+ * isolation: isolate 让它留在 .nt-page 内部：垫在所有内容下面、页面底色上面。
+ */
+.nt-page.has-page-bg {
+    position: relative;
+    z-index: 0;
+    isolation: isolate;
+    background: transparent;
+}
+
+.nt-page-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    opacity: 0;
+    /* 淡入慢一点（0.9s）：背景突然跳出来很扎眼 */
+    transition: opacity 0.9s ease-in-out;
+    /* 纯装饰层，绝不能拦住任何点击 / 滑动 */
+    pointer-events: none;
+    user-select: none;
+}
+
+.nt-page-bg.is-shown {
+    opacity: 1;
+}
+
+/* 移动端背景层用 fixed + 100% 高，避免 iOS 地址栏收起时露出一条底边 */
+@media (max-width: 768px) {
+    .nt-page-bg {
+        height: 100vh;
+        height: 100dvh;
+    }
 }
 
 /* ── 第一行 ─────────────────────────────────────────────── */

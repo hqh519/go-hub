@@ -57,17 +57,79 @@ export const ATTACH_RATIO_MAX = 80;
  *               manual = 停在底部显示「加载更多」，点了才继续。
  *   · fontSize：瞬间**正文**的展示字号（px）。只作用于正文，
  *               标题 / 日期 / 留言等一律不动。14.5 = 当前实际字号（「默认为当前的字号」）。
+ *   · pageBg  ：v1.1.8 新增 —— 笔记管理页的背景图（**仅日间模式生效**），
+ *               存的是用户手写的多行文本 `["url1","url2"]`，多张时每次刷新随机取一张。
+ *               空字符串 = 不设背景（沿用页面原底色）。
  * 后端 `notes.util.ts` 的 normalizeGeneralSettings 必须与这里同口径。
  */
 export const DEFAULT_GENERAL_SETTINGS = {
     pageLoad: 'auto', // auto | manual
-    fontSize: 14.5 // 12 ~ 22
+    fontSize: 14.5, // 12 ~ 22
+    pageBg: '' // `["url1","url2"]` 归一化后的字符串；空 = 不设
 };
 
 export const NOTE_FONT_SIZE_MIN = 12;
 export const NOTE_FONT_SIZE_MAX = 22;
 /** 字号滑块步进：0.5px —— 太小差别看不出来，太大又调不准 */
 export const NOTE_FONT_SIZE_STEP = 0.5;
+
+/* ── 笔记页背景图（v1.1.8）──────────────────────────────────────────────── */
+
+/**
+ * 校验口径**刻意抄**「用户管理 → 账户自定义背景图」（users.controller.ts 的 normalizeBkImg）：
+ * 同一个产品里两处背景图能用什么地址、能填几张，不应该有两套答案。
+ * 后端 notes.util.ts 的 normalizeNotePageBg 与本组常量一样，改一处必须改两处。
+ */
+export const PAGE_BG_MAX_ITEMS = 20;
+export const PAGE_BG_MAX_URL_LENGTH = 2000;
+
+/**
+ * 把用户输入的一整段文本（或数组）解析成可用的图片地址列表。
+ * 能认的写法：
+ *   · `["a.jpg","b.jpg"]` —— 需求指定的标准写法
+ *   · `a.jpg`            —— 单张（少了引号也认，省得用户为一张图去查格式）
+ *   · 数组               —— 后端回传时已经是数组的情况
+ * 认不出的（空串、非 http(s) 也不是 `/` 开头的、超长）一律丢掉，不报错 ——
+ * 背景图属于纯观感配置，为了它把整个设置存不进去不值得。
+ */
+export function parsePageBg(raw) {
+    let arr = [];
+    if (Array.isArray(raw)) {
+        arr = raw;
+    } else {
+        const text = String(raw ?? '').trim();
+        if (!text) return [];
+        if (text.startsWith('[')) {
+            try {
+                const parsed = JSON.parse(text);
+                arr = Array.isArray(parsed) ? parsed : [];
+            } catch {
+                return []; // JSON 写坏了：当作没设，等用户改好再存
+            }
+        } else {
+            /*
+             * v1.1.8：不强制用户写方括号 —— 一行一条也认。
+             * 需求给的标准写法是 ["url1","url2"]，但真的会有人直接把几条地址
+             * 一行一条粘进来；如果这时整段当成「一条地址」去过 http 校验，
+             * 结果是被全部丢掉、设置看起来「没生效」，不如宽容一点。
+             * 只按换行拆、不按逗号拆 —— 地址里本身就可能带逗号。
+             */
+            arr = text.split(/[\r\n]+/).map((x) => x.trim()).filter(Boolean);
+        }
+    }
+    return arr
+        .map((x) => (typeof x === 'string' ? x.trim() : ''))
+        .filter(Boolean)
+        .map((x) => x.slice(0, PAGE_BG_MAX_URL_LENGTH))
+        .filter((x) => /^https?:\/\//i.test(x) || x.startsWith('/'))
+        .slice(0, PAGE_BG_MAX_ITEMS);
+}
+
+/** 归一化成「存库形态」的字符串：`["url1","url2"]`，一张都没有时为空串 */
+export function normalizePageBg(raw) {
+    const list = parsePageBg(raw);
+    return list.length ? JSON.stringify(list) : '';
+}
 
 /** 附件最多加载几行（每行 3 个）—— 与后端 MOMENT_ATTACH_ROWS 一致 */
 export const ATTACH_ROWS_OPTIONS = [1, 2, 3];
@@ -111,8 +173,20 @@ export const SINGLE_DEFAULT_MAX_RATIO = 0.45;
 /**
  * 附件格间距（与 MomentGrid 的 `.mg { gap }` 一致，算总高度时要把间距扣掉）。
  * v1.1.7：3 → 1（需求原文：附件上下左右间距统一 1px）。
+ * v1.1.8：改成按排版样式取 —— 边框线样式 2px、分割线样式 1px，
+ *          用 attachGapOf() 算，不再直接引用本常量（留着是给老代码 / 默认口径兜底）。
  */
 export const ATTACH_GAP = 1;
+
+/**
+ * v1.1.8（需求）：边框线样式下的附件间隔要 2px，分割线样式保持 1px。
+ * 必须与 MomentGrid.vue 里 `.mg` / `.mg.is-divider` 的 gap 完全一致，
+ * 否则「算出来的行高」和「实际渲染的格子」会差 1px，最后一行容易溢出。
+ */
+export function attachGapOf(setting) {
+    const s = setting || noteSettings.moment;
+    return s && s.layoutStyle === 'default' ? 2 : 1;
+}
 
 /** 全局设置对象：模板里直接读 `noteSettings.moment.attachRatio` */
 export const noteSettings = reactive({
@@ -154,7 +228,9 @@ export function normalizeGeneralSettings(raw) {
     let fontSize = Number(o.fontSize);
     if (!Number.isFinite(fontSize) || fontSize <= 0) fontSize = DEFAULT_GENERAL_SETTINGS.fontSize;
     fontSize = Math.min(NOTE_FONT_SIZE_MAX, Math.max(NOTE_FONT_SIZE_MIN, Math.round(fontSize * 10) / 10));
-    return { pageLoad, fontSize };
+    // v1.1.8：背景图统一收敛成 `["url1","url2"]` 字符串，脏地址直接丢掉（不清空其他设置）
+    const pageBg = normalizePageBg(o.pageBg);
+    return { pageLoad, fontSize, pageBg };
 }
 
 /* ── Cookie 缓存 ────────────────────────────────────────────────────────── */
@@ -211,7 +287,15 @@ function cacheSettings(instanceId, settings) {
     delete map[key];
     // v1.1.7：缓存结构由「纯 moment」升级为 { general, moment }；
     // 旧缓存（顶层就是 attachSize 那些键）在读取时按 moment 兼容，不需要清 Cookie
-    map[key] = { general: { ...(settings.general || {}) }, moment: { ...(settings.moment || {}) } };
+    /*
+     * v1.1.8：Cookie 里**不存背景图**。
+     * 背景图是几十上百个字符的地址串，往 4KB 的 Cookie 里塞很容易顶到上限，
+     * 一旦超了 writeCookie 会整条放弃 —— 连带把字号 / 比例这些「首屏防抖」要用的值一起丢掉，
+     * 得不偿失。背景图只在设置请求回来后由服务端值渲染，晚一拍出现，且不会引起布局抖动。
+     */
+    const general = { ...(settings.general || {}) };
+    delete general.pageBg;
+    map[key] = { general, moment: { ...(settings.moment || {}) } };
     const keys = Object.keys(map);
     while (keys.length > COOKIE_MAX_INSTANCES) {
         delete map[keys.shift()];
@@ -345,18 +429,54 @@ let heightBound = false;
 function bindViewportHeight() {
     if (heightBound || typeof window === 'undefined') return;
     heightBound = true;
+
+    /*
+     * v1.1.8（需求：「点留言后整条笔记不见了」）：
+     * 手机上点一条留言会 focus 到留言输入框，软键盘一弹，window.innerHeight 立刻从 844 掉到 400 左右。
+     * 这个高度是「30% 正文上限 / 20% 留言上限 / 附件尺寸」三者的基准 —— 一缩，整页所有卡片的
+     * 正文和附件同时压缩，页面总高度骤变上百像素，用户正在看的那条瞬间就会被挤出视口，
+     * 看起来就是「点了一下留言，整条笔记消失了」。
+     *
+     * 所以：**输入框处于聚焦态、且高度是变小的时候，判定为软键盘遮挡，沿用旧值**。
+     * 键盘收起（高度恢复）、旋转屏幕、桌面拉窗口这些情况都能正常同步；
+     * 万一在聚焦态下真的改了窗口，键盘一收起（focusout）就会补一次同步。
+     */
+    const editableFocused = () => {
+        const el = document.activeElement;
+        if (!el || el === document.body) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+        if (el.isContentEditable) return true;
+        try {
+            return !!(el.closest && el.closest('[contenteditable="true"]'));
+        } catch (e) {
+            return false;
+        }
+    };
+
+    const sync = () => {
+        const h = window.innerHeight;
+        if (!h || h === viewportHeight.value) return;
+        // 键盘遮挡：聚焦输入框时高度骤减 → 不更新（保留布局，避免整页重排把人挤走）
+        if (editableFocused() && h < viewportHeight.value - 60) return;
+        viewportHeight.value = h;
+    };
+
     let raf = 0;
-    window.addEventListener(
-        'resize',
-        () => {
-            if (raf) return;
-            raf = window.requestAnimationFrame(() => {
-                raf = 0;
-                viewportHeight.value = window.innerHeight;
-            });
-        },
-        { passive: true }
-    );
+    const schedule = () => {
+        if (raf) return;
+        raf = window.requestAnimationFrame(() => {
+            raf = 0;
+            sync();
+        });
+    };
+
+    window.addEventListener('resize', schedule, { passive: true });
+    // 键盘收起 / 输入框失焦 → 补一次同步，把被跳过的真实高度变化补回来
+    window.addEventListener('focusout', () => window.setTimeout(sync, 120), { passive: true });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', schedule, { passive: true });
+    }
 }
 
 /**
@@ -391,20 +511,22 @@ export function budgetOf(count, cols, setting, vh, avail) {
     // v1.1.2.3：系数按「实际显示个数」取，不再按行数取
     const factor = attachHeightFactor(n);
     const total = (height * ratio) / 100 * factor;
+    // v1.1.8：间距按当前排版样式取（边框线 2px / 分割线 1px）
+    const gap = attachGapOf(s);
     // 扣掉行间距后平分给每一行 —— 格子是 1:1，所以「行高」就是「格宽」
-    let cell = Math.max(40, (total - ATTACH_GAP * (rows - 1)) / rows);
+    let cell = Math.max(40, (total - gap * (rows - 1)) / rows);
     // 宽度收敛：一行放不下时按可用宽度反推
     const availW = Number(avail) || 0;
     if (availW > 0) {
-        const maxCell = (availW - ATTACH_GAP * (colCount - 1)) / colCount;
+        const maxCell = (availW - gap * (colCount - 1)) / colCount;
         if (maxCell > 0 && cell > maxCell) cell = Math.max(24, maxCell);
     }
     return {
         cell,
         rows,
         cols: colCount,
-        width: cell * colCount + ATTACH_GAP * (colCount - 1),
-        height: cell * rows + ATTACH_GAP * (rows - 1)
+        width: cell * colCount + gap * (colCount - 1),
+        height: cell * rows + gap * (rows - 1)
     };
 }
 

@@ -1,7 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_KINDS = void 0;
+exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_KINDS = void 0;
 exports.attachHeightFactorOf = attachHeightFactorOf;
+exports.normalizeNotePageBg = normalizeNotePageBg;
 exports.normalizeGeneralSettings = normalizeGeneralSettings;
 exports.normalizeMomentSettings = normalizeMomentSettings;
 exports.normalizeNoteSettings = normalizeNoteSettings;
@@ -45,6 +46,43 @@ exports.DEFAULT_NOTE_PAGE_LOAD = 'auto';
 exports.DEFAULT_NOTE_FONT_SIZE = 14.5;
 exports.NOTE_FONT_SIZE_MIN = 12;
 exports.NOTE_FONT_SIZE_MAX = 22;
+exports.NOTE_PAGE_BG_MAX_ITEMS = 20;
+exports.NOTE_PAGE_BG_MAX_URL_LENGTH = 2000;
+function normalizeNotePageBg(raw) {
+    let arr = [];
+    if (Array.isArray(raw)) {
+        arr = raw;
+    }
+    else {
+        const text = String(raw ?? '').trim();
+        if (!text)
+            return '';
+        if (text.startsWith('[')) {
+            try {
+                const parsed = JSON.parse(text);
+                if (!Array.isArray(parsed))
+                    return '';
+                arr = parsed;
+            }
+            catch {
+                return '';
+            }
+        }
+        else {
+            arr = text
+                .split(/[\r\n]+/)
+                .map((x) => x.trim())
+                .filter(Boolean);
+        }
+    }
+    const list = arr
+        .map((x) => (typeof x === 'string' ? x.trim() : ''))
+        .filter(Boolean)
+        .map((x) => x.slice(0, exports.NOTE_PAGE_BG_MAX_URL_LENGTH))
+        .filter((x) => /^https?:\/\//i.test(x) || x.startsWith('/'))
+        .slice(0, exports.NOTE_PAGE_BG_MAX_ITEMS);
+    return list.length ? JSON.stringify(list) : '';
+}
 function normalizeGeneralSettings(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
     const pageLoad = exports.NOTE_PAGE_LOAD_MODES.includes(String(o.pageLoad))
@@ -54,7 +92,8 @@ function normalizeGeneralSettings(raw) {
     if (!Number.isFinite(fontSize) || fontSize <= 0)
         fontSize = exports.DEFAULT_NOTE_FONT_SIZE;
     fontSize = Math.min(exports.NOTE_FONT_SIZE_MAX, Math.max(exports.NOTE_FONT_SIZE_MIN, Math.round(fontSize * 10) / 10));
-    return { pageLoad, fontSize };
+    const pageBg = normalizeNotePageBg(o.pageBg);
+    return { pageLoad, fontSize, pageBg };
 }
 function normalizeMomentSettings(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});

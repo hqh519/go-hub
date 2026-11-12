@@ -22,27 +22,28 @@
           · 默认最多占视口高度 20%，超出显示「更多留言」，点开后铺满；
           · 样式照朋友圈：`姓名：内容`，点任意一条即回复该条（输入框自动带「回复 @姓名：」）。
     -->
-    <article class="mc" :class="{ 'is-deleted': note.status === 'deleted', 'is-divider': isDivider }">
+    <article ref="root" class="mc" :class="{ 'is-deleted': note.status === 'deleted', 'is-divider': isDivider }">
         <!-- 文字区：标题 + 正文 + 全文按钮，整块受 30% 视口高度约束 -->
         <div class="mc-text" :class="{ 'is-expanded': expanded }" :style="{ '--mc-text-max': maxTextHeight + 'px' }">
             <!-- 头部：时间 + 心情 + 天气 + 位置 + 可见性 -->
             <header class="mc-head">
                 <!--
-                    标题：编辑页自动填「日期 + 时间」，用户可改；没填标题就退化成时间。
-                    v1.1.6：时间可点 —— 点了可以校正这条内容的「实际发布时间」（需求原文）。
+                    v1.1.8：瞬间不再有标题。
+                    旧版本编辑页会把「日期 + 时间」自动填进标题，于是没写标题的瞬间看起来就像
+                    「时间变成了标题」——而且标题是 12px 加粗、不可点，无法修改。
+                    现在头部只留发布时间这一项：不加粗、任何一条都可以点开改（需求原文）。
                 -->
-                <span class="mc-time">{{ note.title || timeText }}</span>
                 <button
-                    v-if="note.title"
                     type="button"
-                    class="mc-time-sub mc-time-edit"
+                    class="mc-time mc-time-edit"
                     :title="$t('notes.editPublishedAt')"
                     @click.stop="$emit('edit-time', note)"
                 >{{ timeText }}</button>
                 <span v-if="moodEmoji" class="mc-chip" :title="moodTitle">{{ moodEmoji }}</span>
                 <span v-if="weatherEmoji" class="mc-chip" :title="weatherTitle">{{ weatherEmoji }}</span>
                 <span v-if="note.moment && note.moment.location" class="mc-loc">
-                    <font-awesome-icon icon="globe" class="mc-loc-icon" />{{ note.moment.location }}
+                    <!-- v1.1.8：地球图标改成定位针（需求原文：「位置」要一个定位图标） -->
+                    <font-awesome-icon icon="location-dot" class="mc-loc-icon" />{{ note.moment.location }}
                 </span>
                 <span v-if="note.visibility === 'public'" class="mc-public">
                     {{ $t('notes.publicBadge') }}
@@ -153,11 +154,20 @@
         -->
         <section
             v-if="commentList.length"
-            ref="commentBox"
             class="mc-comments"
-            :class="{ 'is-collapsed': !commentExpanded }"
             :style="{ '--mc-comment-max': commentMaxHeight + 'px' }"
         >
+            <!--
+                v1.1.8（需求原文）：「留言数量超过留言显示区高度限制时，下方要显示一个更多按钮」。
+                旧结构把「更多」按钮放在**同一个被 max-height + overflow:hidden 裁切的容器里**，
+                按钮自己也被裁掉了 —— 于是内容一超限，屏幕上既看不到按钮、也看不出还有留言。
+                现在只裁列表，按钮永远在裁切区外面。
+            -->
+            <div
+                ref="commentBox"
+                class="mc-comment-scroll"
+                :class="{ 'is-collapsed': !commentExpanded }"
+            >
             <ul class="mc-comment-list">
                 <li
                     v-for="c in commentList"
@@ -181,9 +191,11 @@
                     <span class="mc-comment-text">{{ c.text }}</span>
                 </li>
             </ul>
+            </div>
             <!--
                 超出 20% 视口高度才出现；点开铺满全部。
                 留言特别多（>100 条）时列表接口只带了前 100 条，这里顺带把剩下的补回来。
+                刷新后 commentExpanded 恒为 false —— 需求要求默认收起。
             -->
             <button
                 v-if="commentOverflow"
@@ -467,6 +479,20 @@ export default {
         this.commentMenu = null;
     },
     methods: {
+        /**
+         * v1.1.8：卡片根元素。
+         *
+         * 模板根是 **fragment**（`<article>` + 一个 `<teleport>`），这种组件实例的
+         * `this.$el` 不保证是元素 —— 实测会拿到注释占位节点，`getBoundingClientRect()`
+         * 直接抛 "is not a function"。以前 `revealComposer` / `post` 都用 `this.$el`，
+         * 一点留言就在 nextTick 里抛异常：滚动补偿整段被跳过，页面被浏览器自己
+         * 「聚焦文本框」的默认行为搬走，看起来就是「整条笔记不见了」。
+         * 现在统一走 ref 拿真实 DOM，取不到就返回 null，调用方自己做空判断。
+         */
+        cardEl() {
+            const el = this.$refs.root;
+            return el && typeof el.getBoundingClientRect === 'function' ? el : null;
+        },
         /** 「更多」菜单：把动作统一转成对外的编辑 / 留言 / 删除事件 */
         onCommand(cmd) {
             if (cmd === 'edit') this.$emit('edit', this.note);
@@ -516,6 +542,15 @@ export default {
         openComposer(name) {
             this.replyTarget = name || null;
             this.composerOpen = true;
+            /*
+             * v1.1.8（需求：「点自己 / 别人的留言，整条笔记都会隐藏不见」）：
+             * 打开输入框会让卡片长高，加上软键盘引起的视口变化，卡片在屏幕上会整体位移 ——
+             * 旧实现只用一个粗略的「够不够得着」公式滚一下，位移大了就再也追不回来。
+             * 现在改成**锚定**：先把卡片此刻的位置记下来，插入输入框后把它按原样放回去，
+             * 卡片在屏幕上的位置绝对不变；需要露出输入框时再由 revealComposer 做有上限的微调。
+             */
+            const card = this.cardEl();
+            const anchorTop = card ? card.getBoundingClientRect().top : null;
             this.$nextTick(() => {
                 const el = this.$refs.composer;
                 if (el && typeof el.focus === 'function') {
@@ -528,15 +563,20 @@ export default {
                 // 版面变了（多出一个输入框）→ 正文的「全文 / 收起」判定要重算一次
                 this.measure();
                 this.measureComments();
-                /*
-                 * v1.1.7：不再对输入框做 scrollIntoView。
-                 * 带附件的卡片本来就高，把输入框「滚进视野」往往要把整条笔记顶出屏幕，
-                 * 用户看到的就是「点了别人的留言，整条内容没了」。
-                 * 改成下面的 revealComposer：卡片尽量不动，只有确实必要时补最小幅度滚动，
-                 * 且绝不把卡片标题顶出屏幕。
-                 */
+                this.anchorCardTop(anchorTop);
                 this.revealComposer();
             });
+        },
+        /**
+         * 把卡片顶部恢复到 byTop（视口坐标）。
+         * 差值超过 1px 才动，避免无谓的滚动事件打断外面正在进行的滚动动画。
+         */
+        anchorCardTop(byTop) {
+            const card = this.cardEl();
+            if (byTop == null || !card) return;
+            const now = card.getBoundingClientRect().top;
+            const delta = now - byTop;
+            if (Math.abs(delta) > 1) window.scrollBy({ top: delta, behavior: 'auto' });
         },
         /**
          * 让输入框可见，但不以「把卡片顶走」为代价。
@@ -544,7 +584,7 @@ export default {
          * 这样标题 / 正文始终留在屏幕上，与需求「保持停在该瞬间的位置」一致。
          */
         revealComposer() {
-            const card = this.$el;
+            const card = this.cardEl();
             const el = this.$refs.composer;
             if (!card || !el) return;
             const vh = window.innerHeight;
@@ -693,7 +733,8 @@ export default {
             this.posting = true;
             try {
                 // v1.1.7：发完留言要停在这条瞬间上 —— 先记下卡片此刻的位置，回填后再对齐
-                const cardTop = this.$el ? this.$el.getBoundingClientRect().top : 0;
+                const postCard = this.cardEl();
+                const cardTop = postCard ? postCard.getBoundingClientRect().top : 0;
                 const content = this.effectiveContent;
                 const res = await fetchWithAuth(`/api/notes/${encodeURIComponent(this.note.id)}/comments`, {
                     method: 'POST',
@@ -721,7 +762,8 @@ export default {
                      * 按「卡片顶部没有位移」为准做一次补偿滚动 —— 位移为 0 时什么都不做，
                      * 有位移（比如上面某条瞬间被删 / 图片加载完成）就把页面拉回原处。
                      */
-                    const now = this.$el ? this.$el.getBoundingClientRect().top : 0;
+                    const nowCard = this.cardEl();
+                    const now = nowCard ? nowCard.getBoundingClientRect().top : 0;
                     const delta = now - cardTop;
                     if (Math.abs(delta) > 1) window.scrollBy({ top: delta, behavior: 'auto' });
                 });
@@ -856,22 +898,16 @@ export default {
     color: var(--note-muted, var(--el-text-color-secondary));
 }
 
+/*
+ * v1.1.8：头部只剩发布时间一项。
+ * 不再加粗 —— 以前它同时充当「没写标题时的标题」，所以用了 600 字重；
+ * 现在它就是一个可点的时间戳，字重交给父级 .mc-head（400）。
+ */
 .mc-time {
-    font-weight: 600;
-    /* v1.1.2.2：标题颜色改成与时间一致（时间用的是 .mc-head 的 muted 色） */
     color: var(--note-muted, var(--el-text-color-secondary));
 }
 
-/*
- * 时间：与标题同色（需求 v1.1.2.2「标题颜色改为和时间一样」）。
- * 之前这里用 opacity 0.65 压暗，会让「同色」只剩名义上的同色 ——
- * 去掉 opacity，主次完全交给字号（12px / 11px）和字重来区分。
- */
-.mc-time-sub {
-    font-size: 11px;
-}
-
-/* v1.1.6：标题旁的时间做成可点按钮（改发布时间），外观仍像文字，悬停才提示可点 */
+/* 时间做成可点按钮（改发布时间），外观仍像文字，悬停才提示可点 */
 .mc-time-edit {
     padding: 0 2px;
     border: none;
@@ -879,7 +915,8 @@ export default {
     background: transparent;
     color: var(--el-text-color-secondary);
     font-family: inherit;
-    font-size: 11px;
+    /* v1.1.8：字号跟随 .mc-head（12px）—— 它不再是「标题旁边的小字」 */
+    font-size: inherit;
     line-height: 1.4;
     cursor: pointer;
     transition: color 0.15s ease, background 0.15s ease;
@@ -1096,11 +1133,17 @@ export default {
     padding: 6px 8px;
     border-radius: 6px;
     background: var(--note-comment-bg, rgba(127, 127, 127, 0.06));
-    overflow: hidden;
+    /* v1.1.8：外层不再裁切 —— 裁切只作用在列表上（见 .mc-comment-scroll） */
+    overflow: visible;
 }
 
-.mc-comments.is-collapsed {
+/*
+ * v1.1.8：折叠态的高度限制移到这里，只裁留言列表本身。
+ * 「更多 / 收起」按钮在它外面，所以永远不会被一起裁掉。
+ */
+.mc-comment-scroll.is-collapsed {
     max-height: var(--mc-comment-max, 160px);
+    overflow: hidden;
 }
 
 .mc-comment-list {

@@ -18,8 +18,16 @@
 
 const MOBILE_MAX_WIDTH = 768
 
-/** 层列表：[{ id, close }] */
+/**
+ * 层列表：[{ id, close, esc, z, seq }]
+ *   · seq = 注册序号（越大越晚打开）；
+ *   · z   = 可选层级值（不传就 0），排序时先比 z 再比 seq ——
+ *           Element Plus 弹窗的 z-index 是动态自增的，调用方拿得到就传进来，
+ *           拿不到时「后打开的在上」这个默认口径与实际叠放顺序一致。
+ */
 const layers = []
+/** 注册序号自增器 */
+let seqCounter = 0
 
 /** 历史里是否已经放了哨兵条目（移动端） */
 let sentinel = false
@@ -101,9 +109,30 @@ function cancelPopSentinel() {
     popTimer = null
 }
 
+/**
+ * 按「层级从大到小」排好的层（栈顶在前）。
+ *
+ * v1.1.8（需求：closePageOrder）：用户要求关闭顺序按层级数值判断，而不是凭
+ * 「谁先注册」。两条口径同时保留：
+ *   ① 有 z-index 的按 z 排 —— Element Plus 每次打开弹窗都会自增 zIndex，最可靠；
+ *   ② 都没报 z 的按注册顺序排（后打开的在上），这与灯箱/详情页的实际叠放完全一致。
+ * 稳定排序：z 相同再比 seq，避免「同 z 的两层顺序随机」。
+ */
+function orderedLayers() {
+    return layers
+        .slice()
+        .sort((a, b) => (b.z - a.z) || (b.seq - a.seq))
+}
+
+/** 当前最上面一层 */
+function topLayer() {
+    const list = orderedLayers()
+    return list.length ? list[0] : null
+}
+
 /** 关掉栈顶一层；返回是否真的关掉了 */
 function closeTop() {
-    const top = layers[layers.length - 1]
+    const top = topLayer()
     if (!top) return false
     closing = true
     try {
@@ -114,6 +143,30 @@ function closeTop() {
     // 关闭动作通常是异步的（弹窗有动画），下一帧再放开重入保护
     window.setTimeout(() => { closing = false }, 0)
     return true
+}
+
+/**
+ * 关闭「当前最上面的一层」—— 全站层叠页面的统一出口。
+ *
+ * v1.1.8 新增（需求原文：「创建一个 closePageOrder 函数，专门用来处理边缘滑动时
+ * 关闭层叠页面顺序」）。任何页面都不必再自己判断「该关弹窗还是关灯箱」：
+ *   · 移动端：边缘横滑（edgeSwipeGuard 判定为返回手势）→ 调一次，关一层；
+ *   · 桌面端：Esc（本文件已经接管）→ 同样走这里。
+ *
+ * @param {{ silent?: boolean }} [opts] silent:true 时就算没有层也不回报（默认返回 false）
+ * @returns {boolean} 是否真的关掉了一层
+ */
+export function closePageOrder(opts) {
+    if (!layers.length) {
+        if (!(opts && opts.silent)) closing = false
+        return false
+    }
+    return closeTop()
+}
+
+/** 当前是否存在任何层叠页面（灯箱 / 弹窗 / 抽屉…） */
+export function hasOpenLayer() {
+    return layers.length > 0
 }
 
 function install() {
@@ -146,7 +199,8 @@ function install() {
         if (closing) return
         if (e.key !== 'Escape' && e.keyCode !== 27) return
         if (!layers.length) return
-        const top = layers[layers.length - 1]
+        const top = topLayer()
+        if (!top) return
         /*
          * Element Plus 弹窗自己就吃 Esc（close-on-press-escape），而且它的处理更聪明：
          * 下拉框展开、输入法候选未结束时只收下拉不关弹窗。这类层标注 esc:false，
@@ -187,7 +241,14 @@ export function registerLayer(id, close, opts) {
     install()
     const i = layers.findIndex((l) => l.id === id)
     if (i >= 0) layers.splice(i, 1)
-    layers.push({ id, close, esc: !(opts && opts.esc === false) })
+    layers.push({
+        id,
+        close,
+        esc: !(opts && opts.esc === false),
+        // v1.1.8：允许调用方上报层级（z-index），未上报时按注册顺序排
+        z: Number(opts && opts.z) || 0,
+        seq: ++seqCounter
+    })
     // 新层压上来了：取消可能正在等待的「归还哨兵」
     cancelPopSentinel()
     pushSentinel()
@@ -208,7 +269,7 @@ export function hasLayer(id) {
 
 /** 当前栈顶的 id（无层时返回空串） */
 export function topLayerId() {
-    const top = layers[layers.length - 1]
+    const top = topLayer()
     return top ? top.id : ''
 }
 

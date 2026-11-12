@@ -46,14 +46,11 @@
                 </button>
             </div>
 
-            <!-- v1.1.7：标题不再自动填「日期 + 星期」—— 默认留空，提示语改为「标题（选填）」 -->
-            <el-input
-                ref="titleInput"
-                v-model="form.title"
-                class="mp-title"
-                :placeholder="$t('notes.titlePlaceholder')"
-                maxlength="80"
-            />
+            <!--
+                v1.1.8（需求原文「把瞬间编辑的标题输入框和功能移除不要」）：
+                瞬间不再有标题，输入框整块删掉。历史数据的 title 列保留不动
+                （编辑老瞬间时原样带回，不会因为这次改动丢数据），但界面不再展示、也不再让改。
+            -->
 
             <!--
                 心情 / 天气（v1.1.3）
@@ -124,7 +121,7 @@
                 popper-class="mp-location-popper"
             >
                 <template #prefix>
-                    <font-awesome-icon icon="globe" class="mp-location-icon" />
+                    <font-awesome-icon icon="location-dot" class="mp-location-icon" />
                 </template>
             </el-autocomplete>
 
@@ -1073,15 +1070,10 @@ export default {
     opacity: 1;
 }
 
-/* ── 标题 ─────────────────────────────────────────────────── */
-.mp-title {
-    flex: 0 0 auto;
-}
-
-.mp-title :deep(.el-input__inner) {
-    font-size: 16px;
-    font-weight: 600;
-}
+/*
+ * v1.1.8：标题输入框已移除，.mp-title 的两条样式一并删掉
+ * （留着只会是「找不到使用者的死样式」）。
+ */
 
 /* ── 心情 / 天气 ──────────────────────────────────────────── */
 .mp-meta-row {

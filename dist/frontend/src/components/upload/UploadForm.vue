@@ -394,13 +394,15 @@
             @fileRenamed="handleDetailFileRenamed"
         />
 
-        <!-- 裁剪（v2.3.0）：手动上传模式下点列表里的剪刀按钮打开 -->
-        <!-- v1.1.7：上传页只保留「裁剪」本身，画笔/文字只在文件详情页的「剪辑」里出现 -->
+        <!--
+            图片处理（v2.3.0 的裁剪）：手动上传模式下点列表里的剪刀按钮打开。
+            v1.1.8（需求）：全站所有剪辑入口保持同一套能力 —— 上传页也开放画笔与文字，
+            不再传 allow-annotate=false。组件本身是同一份，样式与交互完全一致。
+        -->
         <ImageCropDialog
             v-model="showCrop"
             :file="cropTarget?.rawFile || null"
             :fileName="cropTarget?.name || ''"
-            :allow-annotate="false"
             @done="applyCrop"
         />
     </div>

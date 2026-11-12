@@ -407,8 +407,12 @@ export default {
 <style scoped>
 .mg {
     display: grid;
-    /* v1.1.7：附件之间的上下左右间距统一 1px（两种排版样式一样） */
-    gap: 1px;
+    /*
+     * v1.1.8（需求）：边框线样式下的附件间隔 2px，分割线样式下保持 1px。
+     * 两种样式的取值必须与 utils/noteSettings.js 的 attachGapOf() 完全一致 ——
+     * 那边用它扣间距算格子尺寸，这里用它排版，差 1px 就会让最后一行对不齐。
+     */
+    gap: 2px;
     margin-top: 10px;
     /* 卡片本身已被 .nt-main 收在 760px 内，九宫格直接铺满卡片宽度 ——
        再卡一个 520px 会在右边留出一道明显空白，看起来像没对齐 */
@@ -417,8 +421,12 @@ export default {
 
 /*
  * v1.1.6：分割线样式下的附件 —— 圆角归零。
- * v1.1.7：间距不再单列一条 2px，两种样式统一走 .mg 的 1px（需求原文）。
+ * v1.1.8：间距回到 1px（只有边框线样式是 2px），圆角仍为 0。
  */
+.mg.is-divider {
+    gap: 1px;
+}
+
 .mg.is-divider .mg-cell {
     border-radius: 0;
 }
@@ -506,8 +514,8 @@ export default {
     width: 100%;
     padding: 0;
     border: none;
-    /* v1.1.2.3：每个附件的圆角 5px → 3px；v1.1.7：边框样式下改为 2px */
-    border-radius: 2px;
+    /* v1.1.2.3：每个附件的圆角 5px → 3px；v1.1.8：边框线样式下回到 3px（分割线样式仍为 0） */
+    border-radius: 3px;
     overflow: hidden;
     background: var(--note-cell-bg, rgba(127, 127, 127, 0.1));
     aspect-ratio: 1 / 1;

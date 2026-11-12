@@ -47,6 +47,13 @@
                     @loadeddata="videoLoading = false"
                     @error="handleVideoError"
                 ></video>
+                <!--
+                    v1.1.8（需求）：视频缩略图右下角加一个播放图标，
+                    一眼能认出这是视频（以前只能靠名字里的扩展名判断）。不用太大。
+                -->
+                <span v-if="!videoLoading && !videoError" class="card-play-badge" aria-hidden="true">
+                    <font-awesome-icon icon="play" />
+                </span>
             </template>
 
             <!-- 音频预览 -->
@@ -366,7 +373,8 @@ export default {
     width: 100%;
     position: relative;
     background: var(--toolbar-button-bg-color);
-    border-radius: 12px;
+    /* v1.1.8（需求）：卡片圆角 12px → 5px */
+    border-radius: 5px;
     overflow: hidden;
     border: 1px solid var(--glass-border);
     box-shadow: var(--toolbar-button-shadow);
@@ -538,7 +546,8 @@ export default {
 /* v2.8.5：选中态必须始终可见（不依赖鼠标悬浮），未选中仍保持「悬浮才出现」 */
 .card-select {
     position: absolute;
-    top: 5px;
+    /* v1.1.8（需求）：选择圆圈往上挪 2px（5 → 3），与渠道角标的视觉中线对齐 */
+    top: 3px;
     right: 8px;
     z-index: 3;
     margin: 0;
@@ -588,8 +597,9 @@ export default {
     gap: 10px;
 }
 .overlay-btn {
-    width: 32px;
-    height: 32px;
+    /* v1.1.8（需求）：悬浮的「复制 / 打开」按钮调小一点点（32 → 28，图标 13 → 12） */
+    width: 28px;
+    height: 28px;
     border: none;
     border-radius: 50%;
     background: var(--el-color-primary);
@@ -598,7 +608,7 @@ export default {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
+    font-size: 12px;
     transition: transform 0.2s ease, background 0.2s ease;
 }
 .overlay-btn:hover {
@@ -608,6 +618,28 @@ export default {
 .overlay-btn:active {
     transform: scale(0.95);
 }
+/*
+ * v1.1.8（需求）：视频缩略图右下角的播放角标。
+ * 压在缩略图上，尺寸克制（22px 圆），不接收指针事件 ——
+ * 点它是点卡片（打开灯箱），不是单独的操作。
+ */
+.card-play-badge {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    font-size: 9px;
+    pointer-events: none;
+    backdrop-filter: blur(2px);
+}
+
 /* 下方中间：访问次数（小眼睛 + 数字）；v2.6.0 下方边距 +1px */
 .card-views-badge {
     align-self: center;

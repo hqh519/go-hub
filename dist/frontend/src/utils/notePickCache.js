@@ -51,7 +51,8 @@ export function readPickMemory(instanceId) {
     const m = (o && o.memory) || {};
     return {
         source: m.source === 'mount' ? 'mount' : 'bed',
-        type: ['image', 'video', 'audio', 'other'].includes(m.type) ? m.type : 'image',
+        // v1.1.8：新增「全部」分类，白名单里也要带上，否则记住的 all 会被改回 image
+        type: ['all', 'image', 'video', 'audio', 'other'].includes(m.type) ? m.type : 'image',
         mountChannelId: String(m.mountChannelId || ''),
         mountDir: String(m.mountDir || '')
     };

@@ -49,6 +49,8 @@ import { faDownload } from '@fortawesome/free-solid-svg-icons/faDownload';
 import { faEdit } from '@fortawesome/free-solid-svg-icons/faEdit';
 import { faEllipsisH } from '@fortawesome/free-solid-svg-icons/faEllipsisH';
 import { faEllipsisV } from '@fortawesome/free-solid-svg-icons/faEllipsisV';
+// v1.1.8：文件详情「转为重定向」用的双向箭头（此前漏注册，图标一直空白）
+import { faExchangeAlt } from '@fortawesome/free-solid-svg-icons/faExchangeAlt';
 import { faExclamation } from '@fortawesome/free-solid-svg-icons/faExclamation';
 import { faExclamationCircle } from '@fortawesome/free-solid-svg-icons/faExclamationCircle';
 import { faExclamationTriangle } from '@fortawesome/free-solid-svg-icons/faExclamationTriangle';
@@ -93,6 +95,8 @@ import { faListUl } from '@fortawesome/free-solid-svg-icons/faListUl';
 import { faSearchMinus } from '@fortawesome/free-solid-svg-icons/faSearchMinus';
 import { faSearchPlus } from '@fortawesome/free-solid-svg-icons/faSearchPlus';
 import { faFilePdf } from '@fortawesome/free-solid-svg-icons/faFilePdf';
+// v1.1.8：笔记「位置」改用定位针图标（原来是地球）
+import { faLocationDot } from '@fortawesome/free-solid-svg-icons/faLocationDot';
 import { faMinus } from '@fortawesome/free-solid-svg-icons/faMinus';
 import { faMinusSquare } from '@fortawesome/free-solid-svg-icons/faMinusSquare';
 import { faMoon } from '@fortawesome/free-solid-svg-icons/faMoon';
@@ -105,6 +109,8 @@ import { faQrcode } from '@fortawesome/free-solid-svg-icons/faQrcode';
 import { faQuestionCircle } from '@fortawesome/free-solid-svg-icons/faQuestionCircle';
 import { faQuoteRight } from '@fortawesome/free-solid-svg-icons/faQuoteRight';
 import { faRedo } from '@fortawesome/free-solid-svg-icons/faRedo';
+// v1.1.8：文件详情「转存方向」用的左右箭头（此前漏注册，图标一直空白）
+import { faRightLeft } from '@fortawesome/free-solid-svg-icons/faRightLeft';
 import { faRobot } from '@fortawesome/free-solid-svg-icons/faRobot';
 import { faSave } from '@fortawesome/free-solid-svg-icons/faSave';
 import { faSearch } from '@fortawesome/free-solid-svg-icons/faSearch';
@@ -190,6 +196,7 @@ export default [
     faExclamation,
     faExclamationCircle,
     faExclamationTriangle,
+    faExchangeAlt,
     faExternalLinkAlt,
     faEye,
     faEyeSlash,
@@ -217,6 +224,7 @@ export default [
     faKey,
     faInfoCircle,
     faLink,
+    faLocationDot,
     faList,
     faListUl,
     faSearchMinus,
@@ -234,6 +242,7 @@ export default [
     faQuestionCircle,
     faQuoteRight,
     faRedo,
+    faRightLeft,
     faRobot,
     faSave,
     faSearch,
