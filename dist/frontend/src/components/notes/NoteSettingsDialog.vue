@@ -229,6 +229,7 @@ import {
     ATTACH_RATIO_MAX,
     normalizePageBg
 } from '@/utils/noteSettings';
+import { bindDialogLayers } from '@/utils/layerStack';
 
 /** 分类定稿后不再变，直接常量放外面（避免每次渲染重建数组） */
 const CATEGORIES = [
@@ -322,6 +323,21 @@ export default {
     watch: {
         modelValue(v) {
             if (v) this.syncFromStore();
+        }
+    },
+    /*
+     * v1.1.9.1（需求：笔记管理中的笔记设置弹出页要纳入 closePageOrder / hasOpenLayer 层叠监测）
+     * 它是 el-dialog、开关来自 prop，所以关闭动作走 $emit('update:modelValue', false)。
+     */
+    mounted() {
+        this._unbindLayers = bindDialogLayers(this, {
+            modelValue: { id: 'note-settings', close: () => this.$emit('update:modelValue', false) }
+        });
+    },
+    beforeUnmount() {
+        if (this._unbindLayers) {
+            this._unbindLayers();
+            this._unbindLayers = null;
         }
     },
     methods: {

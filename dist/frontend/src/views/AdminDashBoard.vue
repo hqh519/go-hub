@@ -867,6 +867,7 @@
             show-detail
             :detailOpen="showdetailDialog"
             @detail="handleMediaPreviewDetail"
+            @record-detail="handleMediaPreviewDetail"
             @close-detail="showdetailDialog = false"
             @viewed="handlePreviewViewed"
             @view-uploaded="handleViewUploadedSnapshot"
@@ -969,7 +970,6 @@
 
 <script>
 import { mapGetters } from 'vuex';
-import { ElMessageBox } from 'element-plus';
 import JSZip from 'jszip';
 import AdminHeader from '@/components/dashboard/AdminHeader.vue';
 import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
@@ -997,7 +997,7 @@ import { fileManager } from '@/utils/fileManager';
 // v1.1.3：实例切换密码守卫（三个页面共用同一份实现）
 import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
 import { thumbUrl } from '@/utils/thumb';
-import { registerLayer, unregisterLayer } from '@/utils/layerStack';
+import { registerLayer, unregisterLayer, bindDialogLayers, trackMessageBox } from '@/utils/layerStack';
 // 文件详情通用数据构造器（与「历史记录」页共用同一套模板 + 同一套链接拼装逻辑）
 import {
     buildFileDetailUrls as buildFileDetailUrlsUtil,
@@ -2117,7 +2117,11 @@ methods: {
     async handleCreateFolder() {
         let name;
         try {
-            const r = await this.$prompt(this.$t('dashboard.newFolderPrompt'), this.$t('dashboard.newFolder'), {
+            /*
+             * v1.1.9.1（需求：图床管理中的新建目录弹出页也要纳入 closePageOrder 层叠监测）
+             * 这是命令式 $prompt，登记后才能被「边缘横滑 / Esc 逐层关闭」识别到。
+             */
+            const pending = this.$prompt(this.$t('dashboard.newFolderPrompt'), this.$t('dashboard.newFolder'), {
                 confirmButtonText: this.$t('common.confirm'),
                 cancelButtonText: this.$t('common.cancel'),
                 inputPlaceholder: this.$t('dashboard.newFolderPlaceholder'),
@@ -2128,6 +2132,7 @@ methods: {
                     return true;
                 },
             });
+            const r = await trackMessageBox('dashboard-new-folder', pending);
             name = r.value.trim();
         } catch {
             return;
@@ -2905,18 +2910,11 @@ methods: {
      * 登记之后，「详情页 + 确认框」这种叠放关系才是一次返回只关确认框 —— 否则边缘横滑会
      * 直接关掉文件详情页，确认框孤零零留在屏幕上。
      *
-     * 关闭回调用 ElMessageBox.close()：它关掉的是「当前所有 MessageBox 实例」，
-     * 而同一时刻本项目只会挂一个确认框，语义等价于关掉这一层。
+     * v1.1.9.1：具体实现搬到 utils/layerStack 的 trackMessageBox（多个页面都要用），
+     * 这里保留同名薄封装，调用处不用改。
      */
     trackLayer(id, promise) {
-        registerLayer(id, () => {
-            try { ElMessageBox.close(); } catch (e) { /* 忽略：已经关掉了 */ }
-        });
-        const release = () => unregisterLayer(id);
-        return promise.then(
-            (res) => { release(); return res; },
-            (err) => { release(); return Promise.reject(err); }
-        );
+        return trackMessageBox(id, promise);
     },
     handleDelete(index, key) {
         // 回收站模式下卡片上的「删除」= 恢复该文件
@@ -5206,6 +5204,16 @@ mounted() {
     // 文件列表缓存按账户隔离：切换账户（例如同一浏览器先管理员后普通用户）时
     // 先丢弃上一个账户的缓存，避免刷新瞬间闪现非本人文件。
     fileManager.setCacheOwner(this.$store.getters.sessionUser || '');
+    /*
+     * v1.1.9.1（需求：筛选 / 链接格式 / 切换实例等弹出页纳入 closePageOrder 层叠监测）
+     * 本页自己渲染的 el-dialog 统一在这里登记；筛选、登记文件两张弹窗是独立组件，
+     * 由组件内部自己登记（见 FilterDialog / RecordFileDialog），目录树弹窗同理。
+     * 「新建目录」是命令式 $prompt，在调用处用 trackMessageBox 登记。
+     */
+    this._unbindLayerDialogs = bindDialogLayers(this, {
+        showUrlDialog: 'dashboard-link-format',
+        showInstanceDialog: 'dashboard-instance'
+    });
     // 初始化背景图
     this.initializeBackground('adminBkImg', '.container', false, true);
     this.updateResponsivePageSize();
@@ -5310,6 +5318,11 @@ mounted() {
 },
 beforeUnmount() {
     this.cancelSearchIconPress();
+    // v1.1.9.1：本页登记的弹窗层（链接格式 / 切换实例）
+    if (this._unbindLayerDialogs) {
+        this._unbindLayerDialogs();
+        this._unbindLayerDialogs = null;
+    }
     // v1.0.2：离开页面时把「文件详情」这一层从浮层栈摘掉，避免残留导致返回键空关
     unregisterLayer('file-detail');
     // v1.1.9：详情页内的二级层也一并摘掉（标签 / 黑白名单 / 删除确认）

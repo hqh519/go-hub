@@ -284,6 +284,7 @@ import DirectoryTreePicker from '@/components/DirectoryTreePicker.vue';
 import DirectorySuggestionInput from '@/components/DirectorySuggestionInput.vue';
 import { resolveChannelLabel, invalidateStorageChannels } from '@/utils/storageChannels';
 import { COMPRESSIBLE_EXTENSIONS } from '@/utils/upload/compressExtensions';
+import { bindDialogLayers } from '@/utils/layerStack';
 
 export default {
     name: 'UploadSettingsDialog',
@@ -416,6 +417,22 @@ export default {
         webpMode(val) {
             try { localStorage.setItem('gohub_webp_mode', val) } catch (e) { /* 隐私模式忽略 */ }
             this.notifySaved()
+        }
+    },
+    /*
+     * v1.1.9.1（需求：首页的上传设置弹出页要纳入层叠监测，里面的目录选择弹出页还要压在它上面）
+     * 关窗动作走 visible 的 setter（= $emit('update:modelValue', false)），
+     * 这样还能顺带触发 watch 里的 commitFolder（补交未失焦的目录草稿）。
+     */
+    mounted() {
+        this._unbindLayers = bindDialogLayers(this, {
+            visible: { id: 'upload-settings', close: () => { this.visible = false; } }
+        });
+    },
+    beforeUnmount() {
+        if (this._unbindLayers) {
+            this._unbindLayers();
+            this._unbindLayers = null;
         }
     },
     methods: {

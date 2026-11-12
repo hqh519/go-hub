@@ -16,6 +16,13 @@
  * 栈顺序 = 注册顺序。后注册的在上面（灯箱先开、详情页后开 → 详情页在栈顶）。
  */
 
+/*
+ * v1.1.9.1：命令式确认框（$confirm / $prompt）的关闭要调 ElMessageBox.close()。
+ * 这里静态引入 Element Plus：layerStack 本来就在整个前端的最底层，EP 也早已在包里，
+ * 不会多打一份；用静态引入是为了让「关一层」保持同步语义（动态 import 会滞后一拍）。
+ */
+import { ElMessageBox } from 'element-plus'
+
 const MOBILE_MAX_WIDTH = 768
 
 /**
@@ -277,3 +284,84 @@ export function topLayerId() {
 export function layerCount() {
     return layers.length
 }
+
+/**
+ * v1.1.9.1 新增：把「组件里的布尔开关」批量登记成层叠页。
+ *
+ * 需求原文举例：「把以下的弹出页都加入到 closePageOrder()、hasOpenLayer() 函数的层叠监测中」——
+ * 笔记设置、筛选、链接格式、切换实例等等，全都是 `v-model="showXxx"` 的 el-dialog，
+ * 每个都手写一段 watch 太啰嗦，也容易漏掉注销（层栈里留下已卸载的层）。
+ *
+ * 用法：
+ *   mounted()     { this._unbindLayers = bindDialogLayers(this, { settingsVisible: 'note-settings' }) }
+ *   beforeUnmount(){ this._unbindLayers && this._unbindLayers() }
+ *
+ * 值有两种写法：
+ *   · '层 id'                —— 关闭时执行 `vm[字段] = false`（适用组件自己的 data 开关）；
+ *   · { id, close }          —— 关闭时执行自定义 close（适用 v-model 这类 prop，不能直接赋值，
+ *                               必须 $emit('update:modelValue', false)）。
+ *
+ * @param {object} vm  Vue 实例
+ * @param {Object<string, string|{id: string, close: Function}>} map  { 监听字段: 层定义 }
+ * @returns {Function} 解绑函数（卸载时调用：摘 watch + 清掉本组件登记的所有层）
+ */
+export function bindDialogLayers(vm, map) {
+    const fields = Object.keys(map || {})
+    const ids = fields.map((key) => {
+        const v = map[key]
+        return typeof v === 'string' ? v : (v && v.id) || ''
+    }).filter(Boolean)
+    /** 取某个字段对应的关闭动作 */
+    const closeOf = (key) => {
+        const v = map[key]
+        if (v && typeof v === 'object' && typeof v.close === 'function') return v.close
+        return () => {
+            try { vm[key] = false } catch (e) { /* 组件可能已销毁 */ }
+        }
+    }
+    const unwatchers = fields.map((key) => vm.$watch(key, (open) => {
+        const id = typeof map[key] === 'string' ? map[key] : (map[key] && map[key].id)
+        if (!id) return
+        if (open) registerLayer(id, closeOf(key))
+        else unregisterLayer(id)
+    }))
+    // 兜底：绑定那一刻已经处于打开状态的（例如弹窗先 open 后挂载），一并登记
+    fields.forEach((key) => {
+        const id = typeof map[key] === 'string' ? map[key] : (map[key] && map[key].id)
+        if (!id || !vm[key]) return
+        registerLayer(id, closeOf(key))
+    })
+    return () => {
+        unwatchers.forEach((unwatch) => {
+            try { unwatch() } catch (e) { /* 忽略 */ }
+        })
+        ids.forEach((id) => unregisterLayer(id))
+    }
+}
+
+/**
+ * v1.1.9.1 新增：把命令式确认框（$confirm / $prompt）登记成一层。
+ *
+ * 这些弹层没有 v-model 可监听，只能在调用处包一层：打开时登记，Promise 结束
+ * （确定或取消）时注销。关闭回调统一用 ElMessageBox.close() —— 同一时刻本项目
+ * 只会挂一个确认框，语义等价于「关掉这一层」。
+ *
+ * @param {string} id 层 id
+ * @param {Promise} promise $confirm / $prompt 返回的 Promise
+ * @returns {Promise} 原 Promise（then / catch 链不受影响）
+ */
+export function trackMessageBox(id, promise) {
+    registerLayer(id, () => {
+        try {
+            ElMessageBox.close()
+        } catch (e) {
+            /* 已经关掉了 */
+        }
+    })
+    const release = () => unregisterLayer(id)
+    return promise.then(
+        (res) => { release(); return res; },
+        (err) => { release(); return Promise.reject(err) }
+    )
+}
+

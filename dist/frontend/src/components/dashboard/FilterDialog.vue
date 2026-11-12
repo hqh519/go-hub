@@ -481,6 +481,7 @@
 <script>
 import { CHANNEL_TYPES, CHANNEL_SHORT_LABEL } from '@/components/config/channel-schema';
 import DateRangeCalendar from '@/components/DateRangeCalendar.vue';
+import { bindDialogLayers } from '@/utils/layerStack';
 
 const EMPTY_FILTERS = {
     accessStatus: [],
@@ -1109,6 +1110,23 @@ export default {
         'draft.widthMax'() { this.draft.dimPreset = ''; },
         'draft.heightMin'() { this.draft.dimPreset = ''; },
         'draft.heightMax'() { this.draft.dimPreset = ''; }
+    },
+    /*
+     * v1.1.9.1（需求：图床管理中的筛选弹出页要纳入 closePageOrder / hasOpenLayer 的层叠监测）
+     * 筛选弹窗是 el-dialog（modelValue 是 prop，不能直接赋值关闭），所以关闭动作换成
+     * $emit('update:modelValue', false)。登记之后，它开着时按 Esc / 边缘横滑只会先关它，
+     * 不会把下面的灯箱或详情页一起带走。
+     */
+    mounted() {
+        this._unbindLayers = bindDialogLayers(this, {
+            modelValue: { id: 'dashboard-filter', close: () => this.$emit('update:modelValue', false) }
+        });
+    },
+    beforeUnmount() {
+        if (this._unbindLayers) {
+            this._unbindLayers();
+            this._unbindLayers = null;
+        }
     }
 };
 </script>

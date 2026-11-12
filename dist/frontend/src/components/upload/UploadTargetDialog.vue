@@ -46,8 +46,35 @@
                     <el-option v-for="ins in instances" :key="ins.id" :label="instanceLabel(ins)" :value="ins.id" />
                 </el-select>
             </el-form-item>
+            <!--
+                v1.1.9.1（需求）：
+                  · 「上传目录」输入框左侧加目录选择器，可直接从当前实例的目录树里挑；
+                    与首页右下角「上传设置」里的那个是同一个组件、同一套交互。
+                  · 输入框换成 DirectorySuggestionInput —— 光标进入即列出「最近用过的目录」，
+                    输入时给出目录树里的同名候选；失焦/回车把当前值记进本地历史
+                    （history-key 与上传设置共用，两处互相看得见）。
+            -->
             <el-form-item :label="$t('localFiles.uploadFolder')">
-                <el-input v-model="form.uploadFolder" :placeholder="$t('localFiles.uploadFolderPlaceholder')" />
+                <div class="ut-folder-row">
+                    <DirectoryTreePicker
+                        :current-directory="form.uploadFolder"
+                        :instance-id="form.instanceId || ''"
+                        source="upload"
+                        @select="handleFolderSelect"
+                    >
+                        <template #trigger>
+                            <el-button class="ut-folder-btn" :title="$t('directoryTree.selectDirectory')">
+                                <font-awesome-icon icon="folder-tree" />
+                            </el-button>
+                        </template>
+                    </DirectoryTreePicker>
+                    <DirectorySuggestionInput
+                        v-model="form.uploadFolder"
+                        :placeholder="$t('localFiles.uploadFolderPlaceholder')"
+                        history-key="gohub:recent:uploadFolder"
+                        class="ut-folder-input"
+                    />
+                </div>
             </el-form-item>
         </el-form>
         <p v-if="hint" class="ut-hint">{{ hint }}</p>
@@ -61,9 +88,12 @@
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
 import { fetchStorageChannels, channelLabel } from '@/utils/storageChannels';
+import DirectoryTreePicker from '@/components/DirectoryTreePicker.vue';
+import DirectorySuggestionInput from '@/components/DirectorySuggestionInput.vue';
 
 export default {
     name: 'UploadTargetDialog',
+    components: { DirectoryTreePicker, DirectorySuggestionInput },
     props: {
         modelValue: { type: Boolean, default: false },
         /** 上传进行中：按钮转圈并禁止重复提交 */
@@ -121,6 +151,11 @@ export default {
                 this.instances = [];
             }
         },
+        /** 目录树选中：统一成「/a/b」形式（与目录树按钮在别处的口径一致） */
+        handleFolderSelect(path) {
+            const val = path ? `/${String(path).replace(/^\/+/, '')}` : '';
+            this.form.uploadFolder = val;
+        },
         confirm() {
             if (this.busy) return;
             this.$emit('confirm', {
@@ -134,6 +169,29 @@ export default {
 </script>
 
 <style scoped>
+/* v1.1.9.1：目录选择器 + 输入框同一行；输入框吃掉剩余宽度 */
+.ut-folder-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.ut-folder-row .ut-folder-btn {
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ut-folder-row .ut-folder-input {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
 .ut-hint {
     margin: 4px 0 0;
     font-size: 12px;

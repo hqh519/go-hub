@@ -893,6 +893,20 @@ const ZH = {
         { t: '列表视图缩略图圆角 5px', d: '与卡片视图的卡片圆角对齐；桌面端原来是 8px、手机端 6px。' },
         { t: '瞬间输入框提示文案', d: '改为「记录当下瞬间，汇聚未来回忆」。' }
       ]
+    },
+    {
+      id: 'whatsnew-1191',
+      title: '四十一、v1.1.9.1 更新要点',
+      intro: 'v1.1.9.1 把两处「层级打架」的根因挖了出来：一是预览里下拉打不开文件详情，二是确认框被宿主弹窗整层盖住。顺带把十四张弹出页全部接进层叠关闭体系，并把瞬间编辑页的头尾各收窄 10px、心情天气的名称提示改成不会被裁掉的浮层。',
+      items: [
+        { t: '图床管理：预览里下拉能打开详情了', d: '上一版只修了「点详情按钮」，下拉走的是另一条分支：文件已落库时会发出「打开文件详情」事件，但图床管理页从来没有接这个事件，于是下拉毫无反应。现在补上监听，与点按钮走同一套逻辑，找不到当前行时还会用预览里保存的原始行兜底。' },
+        { t: '确认框不再被弹窗盖住', d: '文件详情里的黑名单 / 白名单 / 删除、瞬间编辑页的「链接提取」，弹出的都是 Element Plus 的命令式确认框。它的层级基准是 2000，而普通弹窗是 4000，于是确认框永远垫在下面 —— 链接提取看起来就是「点了不弹」。现在确认框统一抬到 6200，永远在弹窗之上。' },
+        { t: '十四张弹出页纳入层叠关闭', d: '笔记设置、发布类型选择、删除瞬间、筛选、新建目录、链接格式（图床管理 / 首页）、登记文件与它的目录选择、上传设置与它的目录选择、三处切换实例，全部登记为层叠页。目录选择弹窗天然压在宿主弹窗之上，一次返回 / Esc 只关最上面那一层。' },
+        { t: '瞬间编辑页：名称提示不再被裁', d: '心情 / 天气的名称提示原先渲染在图标内部，而正文区是滚动容器，向上浮出的那一小块整块落在裁切区之外，实测完全看不见。现在改成挂在页面最外层、按图标位置浮动的提示，既不参与裁剪，也不会被标题区盖住。' },
+        { t: '瞬间编辑页与剪辑页：头尾各减 10px', d: '顶部标题行、底部按钮行的内边距各压掉 10px，正文 / 图片区因此多出 20px；这两处的固定块高度都实测少了整整 10px。' },
+        { t: '上传到图床：可直接选目录 + 记住历史', d: '「上传目录」输入框左侧新增目录选择器，列出当前所选实例下的目录，选中即回填；输入框同时记住最近用过的目录，光标进入即可直接挑，与首页上传设置共用同一份历史。' },
+        { t: '两处文案', d: '留言按钮由「发布留言」改为「发表留言」；瞬间输入框提示改为「记录瞬间，汇聚点滴」。' }
+      ]
     }
   ]
 };
@@ -1724,6 +1738,20 @@ const EN = {
         { t: 'Crop stage on phones is 70 percent of the viewport', d: 'Raised from 60 percent. The toolbar is pushed below the fold as a result, so the dialog body scrolls - every tool can be reached instead of being clipped.' },
         { t: 'List view thumbnails have 5px corners', d: 'Matching the card view. Previously 8px on desktop and 6px on phones.' },
         { t: 'Moment placeholder', d: 'Now reads Capture this moment, gather memories for later.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1191',
+      title: '41. What is new in v1.1.9.1',
+      intro: 'v1.1.9.1 digs out the root cause of two z-index fights: pulling down inside the preview did not open the file detail, and confirmation boxes sat underneath the dialog that opened them. Fourteen more popups also joined the layered close order, the moment editor got 10px trimmed from its header and footer, and the mood and weather name tips became a floating layer that cannot be clipped.',
+      items: [
+        { t: 'File manager: pull down in the preview opens the detail', d: 'The previous release only fixed the Detail button. Pulling down takes another branch: for stored files it emits an open-detail event, and the file manager never listened to it, so nothing happened. The listener is wired now and shares the same handler as the button, with the row saved by the preview as a fallback when the current page has moved on.' },
+        { t: 'Confirmation boxes are no longer buried', d: 'Blacklist, whitelist and delete inside the file detail, and Link extract in the moment editor, are imperative Element Plus message boxes. Their z-index base is 2000 while regular dialogs start at 4000, so they always ended up underneath - Link extract looked like a dead button. They are raised to 6200 now and always sit above the dialog that opened them.' },
+        { t: 'Fourteen popups joined the layer stack', d: 'Note settings, the publish-type chooser, delete moment, filters, new folder, link format (both pages), record file with its folder picker, upload settings with its folder picker, and the instance switcher in three places are all registered layers. The folder picker sits above its host dialog, and one back gesture or Esc closes only the topmost layer.' },
+        { t: 'Moment editor: name tips are no longer clipped', d: 'The mood and weather name tips used to be rendered inside the icon, but the body is a scroll container, so the little bubble above the icon fell entirely outside the clip box and was invisible. They are now a single floating layer anchored to the icon: nothing clips them and the header cannot cover them.' },
+        { t: 'Editor and crop page: 10px off header and footer', d: 'Padding on the header and footer rows is reduced by 10px each, giving the text area and the image stage 20px back. Both fixed blocks measure exactly 10px shorter than before.' },
+        { t: 'Upload to library: pick a folder, keep the history', d: 'A folder picker now sits left of the upload folder field and lists folders of the selected instance. The field also remembers recently used folders and offers them on focus, sharing the same history as the upload settings on the home page.' },
+        { t: 'Two labels', d: 'The comment button reads Post comment instead of Post, and the moment placeholder now reads Capture the moment, gather the little things.' }
       ]
     }
   ]

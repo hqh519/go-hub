@@ -787,6 +787,28 @@ html.dark .ai-settings .el-button--primary.is-link:not(.is-disabled) {
     max-height: 96dvh;
 }
 
+/* ==============================
+   v1.1.9.1：命令式确认框（ElMessageBox）始终压在普通弹窗之上
+   ------------------------------------------------------------------
+   现象：文件详情页里点「黑名单 / 白名单 / 删除」、瞬间编辑页点「链接提取」，
+   弹出的确认框被宿主弹窗整层盖住（看起来像「点了没反应」）。
+
+   原因：两套 z-index 基准不同源。
+     · el-dialog（模板里的弹窗）走 App.vue 里 el-config-provider 的 :z-index="4000"，
+       Element Plus 从 4000 起递增分配；
+     · $confirm / $prompt 是**命令式**创建的 MessageBox，它被 render 到 body 上，
+       父链上没有 config-provider，注入不到那个 4000，只能退回内部默认基准 2000。
+   于是详情弹窗 40xx、确认框 20xx，确认框永远在下面。
+
+   这里直接把 MessageBox 的遮罩层抬到 6200：远高于弹窗基准（4000）与目前所有
+   硬编码层级（灯箱 3200、预览 4600），又低于「会话内递增到失控」的量级
+   （要开 2000 多次弹窗才会涨到 6200），可视为恒定安全。
+   内联 z-index 由 ElOverlay 写在元素上，必须 !important 才盖得过去。
+   ============================== */
+.el-overlay.is-message-box {
+    z-index: 6200 !important;
+}
+
 /* 弹窗头部样式 */
 .el-dialog__header,
 .el-message-box__header {

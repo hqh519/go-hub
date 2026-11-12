@@ -478,6 +478,7 @@ import { ref } from 'vue'
 import { mapGetters } from 'vuex'
 import { validateFolderPath } from '@/utils/pathValidator'
 import { getLinkPrefix } from '@/utils/fileLink'
+import { bindDialogLayers } from '@/utils/layerStack'
 
 export default {
     name: 'UploadHome',
@@ -747,6 +748,15 @@ export default {
         }
     },
     mounted() {
+        /*
+         * v1.1.9.1（需求：首页的「链接格式设置管理页 / 切换实例弹出页」纳入层叠监测）
+         * 上传设置与登记文件是独立组件（各自内部登记），目录树弹窗也由组件自己登记；
+         * 这里只补本页自己的两张弹窗。
+         */
+        this._layerUnbind = bindDialogLayers(this, {
+            showUrlDialog: 'home-link-format',
+            showInstanceDialog: 'home-instance'
+        });
         // 初始化背景图，启用自动创建元素
         this.initializeBackground('uploadBkImg', '.container', true, true)
 
@@ -809,6 +819,13 @@ export default {
         this.fetchInstances()
 
         this.showAnnouncementIfNeeded()
+    },
+    /* v1.1.9.1：离开首页时把本页登记的弹窗层摘干净，避免返回键对着已销毁的组件关空层 */
+    beforeUnmount() {
+        if (this._layerUnbind) {
+            this._layerUnbind();
+            this._layerUnbind = null;
+        }
     },
     components: {
         UploadForm,

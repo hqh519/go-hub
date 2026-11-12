@@ -597,7 +597,7 @@ import { loadNoteSettings, applyCachedSettings, noteSettings, parsePageBg } from
 import { writeThemeCookie } from '@/utils/themeCookie';
 // v1.1.3：实例切换密码守卫（与图床管理页 / 首页同一份实现）
 import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
-import { registerLayer, unregisterLayer } from '@/utils/layerStack';
+import { registerLayer, unregisterLayer, bindDialogLayers, trackMessageBox } from '@/utils/layerStack';
 import { bindScrollDismiss } from '@/utils/scrollDismiss';
 import recordBrowse from '@/utils/browseRecord';
 
@@ -901,6 +901,15 @@ export default {
     async mounted() {
         window.addEventListener('scroll', this.onPageScroll, true);
         window.addEventListener('resize', this.onWindowResize);
+        /*
+         * v1.1.9.1（需求：笔记管理里的「笔记设置 / 发布类型选择 / 切换实例」三张弹出页
+         * 要纳入 closePageOrder / hasOpenLayer 的层叠监测）
+         * 笔记设置是独立组件（自己登记），这两个是本页的 el-dialog，在这里登记。
+         */
+        this._layerUnbind = bindDialogLayers(this, {
+            publishTypeVisible: 'notes-publish-type',
+            showInstanceDialog: 'notes-instance'
+        });
         this.syncTopHeights();
         // 顶栏 / 工具栏高度会随内容变化（搜索行展开、类型标签换行），用 ResizeObserver 盯着最省心
         if (typeof ResizeObserver !== 'undefined') {
@@ -919,6 +928,10 @@ export default {
         // 页面卸载时兜底摘掉详情层，避免残留导致下一次返回被「吃掉」
         unregisterLayer('note-file-detail');
         unregisterLayer('note-file-detail-tags');
+        if (this._layerUnbind) {
+            this._layerUnbind();
+            this._layerUnbind = null;
+        }
         if (this.topRO) {
             this.topRO.disconnect();
             this.topRO = null;
@@ -1362,11 +1375,15 @@ export default {
         /* ── 删除 / 恢复 / 彻底删除 ─────────────────────────────── */
         async confirmDelete(note) {
             try {
-                await this.$confirm(this.$t('notes.deleteConfirm'), this.$t('notes.deleteTitle'), {
+                /*
+                 * v1.1.9.1（需求：笔记管理里的删除瞬间笔记弹出页要纳入层叠监测）
+                 * 命令式 $confirm，包一层 trackMessageBox 才会被「逐层关闭」看到。
+                 */
+                await trackMessageBox('notes-delete-note', this.$confirm(this.$t('notes.deleteConfirm'), this.$t('notes.deleteTitle'), {
                     confirmButtonText: this.$t('common.confirm'),
                     cancelButtonText: this.$t('common.cancel'),
                     type: 'warning'
-                });
+                }));
             } catch (e) {
                 return;
             }

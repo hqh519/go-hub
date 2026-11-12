@@ -65,11 +65,18 @@
             -->
             <div class="mp-meta-row mp-meta-desktop">
                 <div class="mp-picker">
+                    <!--
+                        v1.1.9.1（需求：提示名称被顶部标题区遮挡）
+                        名称提示不再渲染在图标内部：编辑页正文区（.mp-body）是滚动容器，
+                        向上浮出的提示会被它裁掉（实测整块被切在可视区之外）。
+                        现在改成「唯一一个 teleport 到 body 的浮层」（见文件末尾），
+                        用 fixed 定位跟随当前图标 —— 既不会被裁，也不会被标题区盖住。
+                    -->
                     <span
                         v-for="m in moodOptions"
                         :key="m.value"
                         class="mp-emoji-wrap"
-                        @mouseenter="hoverKey = 'mood:' + m.value"
+                        @mouseenter="onNameEnter('mood:' + m.value, $event)"
                         @mouseleave="clearHover('mood:' + m.value)"
                     >
                         <button
@@ -78,11 +85,8 @@
                             :class="{ 'is-active': form.mood === m.value }"
                             :aria-label="nameOf(m)"
                             :title="nameOf(m)"
-                            @click="toggleMood(m)"
+                            @click="toggleMood(m, $event)"
                         >{{ m.emoji }}</button>
-                        <transition name="mp-tip">
-                            <span v-if="tipVisible('mood:' + m.value)" class="mp-name-tip">{{ nameOf(m) }}</span>
-                        </transition>
                     </span>
                 </div>
                 <div class="mp-picker">
@@ -90,7 +94,7 @@
                         v-for="w in weatherOptions"
                         :key="w.value"
                         class="mp-emoji-wrap"
-                        @mouseenter="hoverKey = 'weather:' + w.value"
+                        @mouseenter="onNameEnter('weather:' + w.value, $event)"
                         @mouseleave="clearHover('weather:' + w.value)"
                     >
                         <button
@@ -99,11 +103,8 @@
                             :class="{ 'is-active': form.weather === w.value }"
                             :aria-label="nameOf(w)"
                             :title="nameOf(w)"
-                            @click="toggleWeather(w)"
+                            @click="toggleWeather(w, $event)"
                         >{{ w.emoji }}</button>
-                        <transition name="mp-tip">
-                            <span v-if="tipVisible('weather:' + w.value)" class="mp-name-tip">{{ nameOf(w) }}</span>
-                        </transition>
                     </span>
                 </div>
             </div>
@@ -282,6 +283,17 @@
             :prefill="uploadPrefill"
             @confirm="onTargetConfirm"
         />
+
+        <!--
+            v1.1.9.1：心情 / 天气的名称提示 —— 全页唯一一个浮层，teleport 到 body。
+            放在 el-dialog 里也没关系（Teleport 会把真实节点挂到 body 上），
+            fixed 定位 + 高 z-index，既逃出了正文区的滚动裁切，也压得住标题区。
+        -->
+        <Teleport to="body">
+            <transition name="mp-tip">
+                <span v-if="tipText" class="mp-name-tip is-floating" :style="tipStyle">{{ tipText }}</span>
+            </transition>
+        </Teleport>
     </el-dialog>
 </template>
 
@@ -291,6 +303,7 @@ import fetchWithAuth from '@/utils/fetchWithAuth';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import FilePickerDialog from './FilePickerDialog.vue';
 import { defaultUploadFolder, uploadOne, importUrlToBed } from '@/utils/uploadTarget';
+import { bindDialogLayers } from '@/utils/layerStack';
 import {
     MOOD_OPTIONS,
     WEATHER_OPTIONS,
@@ -367,6 +380,8 @@ export default {
             tipKey: '',
             /** v1.1.6：鼠标悬停中的图标（桌面端悬停即显示名称，移走即收起） */
             hoverKey: '',
+            /** v1.1.9.1：提示浮层的锚点（图标矩形的中心 x + 顶边 y），null = 还没定位过 */
+            tipAnchor: null,
             /** 最近用过的地点（位置输入框的记忆，存在浏览器里） */
             // v1.1.7：位置候选（来自数据表），按查询词做一层会话内缓存
             locationCache: {},
@@ -423,11 +438,31 @@ export default {
             return this.pendingFiles.length > 1
                 ? this.$t('notes.uploadingFiles', { n: this.pendingFiles.length })
                 : '';
+        },
+        /**
+         * v1.1.9.1：当前该显示哪个名称提示。
+         * 点击后的 2 秒提示（tipKey）优先，其次才是鼠标悬停项（hoverKey）。
+         */
+        tipText() {
+            const key = this.tipKey || this.hoverKey;
+            return key ? this.nameOfKey(key) : '';
+        },
+        /** 提示浮层的定位：图标上沿往上 4px，水平居中（配合 .is-floating 的 translate） */
+        tipStyle() {
+            const a = this.tipAnchor;
+            if (!a) return { display: 'none' };
+            return { left: `${a.cx}px`, top: `${a.top}px` };
         }
     },
     watch: {
         visible(v) {
-            if (v) this.$nextTick(() => this.$refs.textarea && this.$refs.textarea.focus());
+            if (v) {
+                this.$nextTick(() => this.$refs.textarea && this.$refs.textarea.focus());
+            } else {
+                // v1.1.9.1：关窗顺手收掉名称提示，避免浮层留在 body 上
+                this.clearNameTip();
+                this.hoverKey = '';
+            }
         },
         /* 草稿自动保存：改什么都记一笔（防抖 400ms），关掉浏览器也不丢 */
         'form.title': 'scheduleSave',
@@ -445,11 +480,25 @@ export default {
             handler: 'scheduleSave'
         }
     },
+    /*
+     * v1.1.9.1：瞬间编辑页也登记成一层。
+     * 它是覆盖整屏的表单弹窗，里面还会再开「链接提取」输入框 / 上传目标 / 图床选择，
+     * 登记之后「先关里层、再关编辑页」的顺序才和视觉层级一致。
+     */
+    mounted() {
+        this._layerUnbind = bindDialogLayers(this, {
+            visible: { id: 'moment-publish', close: () => { this.visible = false; } }
+        });
+    },
     beforeUnmount() {
         // v1.1.3：长按计时器必须清掉，否则弹窗关了还会在 320ms 后改一次状态
         if (this._pressTimer) {
             window.clearTimeout(this._pressTimer);
             this._pressTimer = null;
+        }
+        if (this._layerUnbind) {
+            this._layerUnbind();
+            this._layerUnbind = null;
         }
     },
     methods: {
@@ -699,8 +748,34 @@ export default {
         clearHover(key) {
             if (this.hoverKey === key) this.hoverKey = '';
         },
-        showNameTip(kind, value) {
+        /** 「mood:happy」→ 对应中文名称（找不到就返回空串，浮层自动不显示） */
+        nameOfKey(key) {
+            const i = String(key || '').indexOf(':');
+            if (i < 0) return '';
+            const kind = key.slice(0, i);
+            const value = key.slice(i + 1);
+            const list = kind === 'mood' ? this.moodOptions : (kind === 'weather' ? this.weatherOptions : []);
+            const opt = list.find((o) => o.value === value);
+            return opt ? this.nameOf(opt) : '';
+        },
+        /**
+         * v1.1.9.1：把提示浮层钉在这个图标上方。
+         * 浮层是 fixed 定位的（挂在 body 上），所以必须记下图标此刻的视口坐标；
+         * 用 getBoundingClientRect 而不是 offsetTop —— 正文区是滚动容器，offset 系不可靠。
+         */
+        anchorTip(el) {
+            if (!el || typeof el.getBoundingClientRect !== 'function') return;
+            const r = el.getBoundingClientRect();
+            this.tipAnchor = { cx: Math.round(r.left + r.width / 2), top: Math.round(r.top - 4) };
+        },
+        /** 悬停：记显示项 + 钉住位置 */
+        onNameEnter(key, e) {
+            this.hoverKey = key;
+            this.anchorTip(e && e.currentTarget);
+        },
+        showNameTip(kind, value, el) {
             this.tipKey = `${kind}:${value}`;
+            this.anchorTip(el);
             clearTimeout(this._tipTimer);
             this._tipTimer = setTimeout(() => {
                 this.tipKey = '';
@@ -710,12 +785,12 @@ export default {
             clearTimeout(this._tipTimer);
             this.tipKey = '';
         },
-        toggleMood(opt) {
-            this.showNameTip('mood', opt.value);
+        toggleMood(opt, e) {
+            this.showNameTip('mood', opt.value, e && e.currentTarget);
             this.form.mood = this.form.mood === opt.value ? '' : opt.value;
         },
-        toggleWeather(opt) {
-            this.showNameTip('weather', opt.value);
+        toggleWeather(opt, e) {
+            this.showNameTip('weather', opt.value, e && e.currentTarget);
             this.form.weather = this.form.weather === opt.value ? '' : opt.value;
         },
 
@@ -1131,15 +1206,14 @@ export default {
 
 /*
  * 名称提示（v1.1.3）：从「图标正下方」改到**图标正上方**（需求原文）。
- * 位置用 bottom: calc(100% + 4px) —— 直接用负 top 在图标高低不一时会飘。
+ *
+ * v1.1.9.1（需求：提示名称被顶部标题区遮挡）：
+ * 原来它是图标内部的绝对定位元素，而图标所在的正文档区是滚动容器 —— 向上浮出的
+ * 那 23px 整个落在容器的裁切区之外，实测完全看不见（不是被标题盖住，是被裁掉）。
+ * 现在它被 teleport 到 body，用 fixed 定位钉在图标上方：不参与任何裁剪，
+ * 也不会被标题区、正文区盖住。z-index 取 6100（弹窗基准 4000，确认框 6200 之下）。
  */
 .mp-name-tip {
-    position: absolute;
-    bottom: calc(100% + 4px);
-    top: auto;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 8;
     padding: 2px 7px;
     border: 1px solid var(--el-border-color-light, rgba(127, 127, 127, 0.2));
     border-radius: 6px;
@@ -1152,15 +1226,25 @@ export default {
     pointer-events: none;
 }
 
+/* 浮层定位（v1.1.9.1）：left/top 由 tipStyle 给出，这里的 translate 负责「水平居中 + 整体上移自身高度」 */
+.mp-name-tip.is-floating {
+    position: fixed;
+    bottom: auto;
+    left: 0;
+    top: 0;
+    transform: translate(-50%, -100%);
+    z-index: 6100;
+}
+
 .mp-tip-enter-active,
 .mp-tip-leave-active {
     transition: opacity 0.18s ease, transform 0.18s ease;
 }
 
-.mp-tip-enter-from,
-.mp-tip-leave-to {
+.mp-tip-enter-from.mp-name-tip.is-floating,
+.mp-tip-leave-to.mp-name-tip.is-floating {
     opacity: 0;
-    transform: translateX(-50%) translateY(-3px);
+    transform: translate(-50%, -100%) translateY(3px);
 }
 
 /* ── 位置 ─────────────────────────────────────────────────── */
@@ -1545,6 +1629,12 @@ export default {
 
 .el-dialog.moment-publish-dialog .el-dialog__header {
     flex: 0 0 auto;
+    /*
+     * v1.1.9.1（需求：顶部标题行整块高度减 10px）
+     * 全局把 .el-dialog__header 的 padding 统一改成了「16px 20px !important」，
+     * 这里用 !important + 更高特异性把下内边距压回 6px：16 → 6 正好 -10px。
+     */
+    padding-bottom: 6px !important;
 }
 
 .el-dialog.moment-publish-dialog .el-dialog__body {
@@ -1560,6 +1650,8 @@ export default {
 
 .el-dialog.moment-publish-dialog .el-dialog__footer {
     flex: 0 0 auto;
+    /* v1.1.9.1（需求：底部发布按钮所在行整块高度减 10px）12 → 2，正好 -10px */
+    padding-top: 2px !important;
 }
 
 /*

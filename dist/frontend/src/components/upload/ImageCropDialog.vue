@@ -1224,6 +1224,20 @@ export default {
     overflow-y: auto;
 }
 
+/*
+ * v1.1.9.1（需求：剪辑页顶部标题行 / 底部保存按钮行各减 10px）
+ * 全局把 .el-dialog__header / __footer 的 padding 统一改成了 !important，
+ * 所以这里同样用 !important + 双类限定把内边距各压掉 10px（16→6 / 12→2）。
+ * 注意 body 高度是 flex:1 撑开的，头/尾一矮，图片区自然多出 20px。
+ */
+.image-crop-dialog .el-dialog__header {
+    padding-bottom: 6px !important;
+}
+
+.image-crop-dialog .el-dialog__footer {
+    padding-top: 2px !important;
+}
+
 @media (max-width: 768px) {
     .image-crop-dialog .el-dialog__body {
         padding-top: 6px;

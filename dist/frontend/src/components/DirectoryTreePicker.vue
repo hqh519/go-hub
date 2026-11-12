@@ -107,6 +107,15 @@
 <script>
 import axios from '@/utils/axios';
 import fetchWithAuth from '@/utils/fetchWithAuth';
+import { bindDialogLayers } from '@/utils/layerStack';
+
+/*
+ * v1.1.9.1：目录选择弹窗也要进层叠栈（需求：登记文件 / 上传设置里的「目录选择弹出页」
+ * 需要显示在宿主弹窗的上上层，并且要能被 closePageOrder 先关掉）。
+ * 同一个页面可能有多个目录选择器（上传设置、登记文件、批量移动…），
+ * 所以层 id 必须按实例区分，不能写死一个常量。
+ */
+let pickerSeq = 0;
 
 export default {
     name: 'DirectoryTreePicker',
@@ -200,9 +209,23 @@ export default {
     },
     mounted() {
         window.addEventListener('resize', this.handleResize);
+        /*
+         * v1.1.9.1：桌面端是 popover、移动/平板端是居中 dialog，两套各登记一次，
+         * 谁开着谁就在栈里；关闭动作分别落到各自的开关上。
+         */
+        pickerSeq += 1;
+        this._layerId = `directory-tree-${pickerSeq}`;
+        this._unbindLayers = bindDialogLayers(this, {
+            popoverVisible: { id: `${this._layerId}-popover`, close: () => { this.popoverVisible = false; } },
+            drawerVisible: { id: `${this._layerId}-dialog`, close: () => { this.drawerVisible = false; } }
+        });
     },
     beforeUnmount() {
         window.removeEventListener('resize', this.handleResize);
+        if (this._unbindLayers) {
+            this._unbindLayers();
+            this._unbindLayers = null;
+        }
     },
     methods: {
         handleResize() {

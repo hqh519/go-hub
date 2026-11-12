@@ -163,6 +163,7 @@ import DirectorySuggestionInput from '@/components/DirectorySuggestionInput.vue'
 import DirectoryTreePicker from '@/components/DirectoryTreePicker.vue'
 import fetchWithAuth from '@/utils/fetchWithAuth'
 import { fetchStorageChannels } from '@/utils/storageChannels'
+import { bindDialogLayers } from '@/utils/layerStack'
 
 /*
  * v3.0.0（R16）：「文件分类」记忆 ——
@@ -224,6 +225,23 @@ export default {
                 note: ''
             }
             await this.loadChannels()
+        }
+    },
+    /*
+     * v1.1.9.1（需求：图床管理 / 首页的登记文件弹出页要纳入层叠监测，
+     * 里面的目录选择弹出页还要压在它上面）
+     * 本弹窗自己登记为 record-file；目录树弹窗由 DirectoryTreePicker 自己登记，
+     * 因为它后打开、注册序号更大，天然在栈顶。
+     */
+    mounted() {
+        this._unbindLayers = bindDialogLayers(this, {
+            modelValue: { id: 'record-file', close: () => this.$emit('update:modelValue', false) }
+        })
+    },
+    beforeUnmount() {
+        if (this._unbindLayers) {
+            this._unbindLayers()
+            this._unbindLayers = null
         }
     },
     methods: {
