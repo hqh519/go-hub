@@ -27,7 +27,6 @@
                 @link-format="showUrlDialog = true"
                 @tag-management="enterTagMode"
             >
-            >
                 <!--
                     v3.0.0（R17）：实例入口已收进左上角「页面切换」弹窗列表的尾部，
                     通过 AdminHeader → DashboardTabs 的 #page-extra 插槽注入（原来是 Teleport）。
@@ -314,10 +313,21 @@
                             <font-awesome-icon icon="bars" class="breadcrumb-view-icon"></font-awesome-icon>
                         </button>
                     </div>
+                    <!--
+                        v1.1.6：桌面端「排序」按钮由纯图标改为「箭头 + 文字」——
+                        降序 = ↓ +「降序」，升序 = ↑ +「升序」；排序字段仍靠 title 提示。
+                        同时桌面端叠加「鼠标移上自动展开、移走自动收起」，触屏 / 窄屏只走点击。
+                    -->
+                    <div
+                        class="breadcrumb-sort-wrap"
+                        @mouseenter="handleSortHoverEnter"
+                        @mouseleave="handleSortHoverLeave"
+                    >
                     <el-dropdown
                         ref="sortDropdown"
                         trigger="click"
                         class="breadcrumb-sort-dropdown"
+                        popper-class="sort-hover-popper"
                         @command="setSortField"
                         @visible-change="handleSortDropdownVisible"
                     >
@@ -326,35 +336,19 @@
                             type="button"
                             :title="sortLabel"
                         >
-                            <svg class="breadcrumb-sort-icon" viewBox="0 0 30 18" aria-hidden="true">
-                                <g v-if="sortField === 'time'" class="sort-field-glyph">
-                                    <circle cx="7.5" cy="9" r="5.5" />
-                                    <path d="M7.5 5.5V9L10 10.5" />
-                                </g>
-                                <g v-else-if="sortField === 'size'" class="sort-field-glyph">
-                                    <path d="M2 4H13M2 9H10M2 14H7" />
-                                </g>
-                                <g v-else-if="sortField === 'rawName'" class="sort-field-glyph">
-                                    <path d="M5.5 3L4 15M11 3L9.5 15M2.5 7H13M2 11H12.5" />
-                                </g>
-                                <g v-else-if="sortField === 'views'" class="sort-field-glyph">
-                                    <path d="M2 9S4.5 4.5 7.5 4.5 13 9 13 9 10.5 13.5 7.5 13.5 2 9 2 9Z" />
-                                    <circle cx="7.5" cy="9" r="1.8" />
-                                </g>
-                                <g v-else class="sort-field-glyph">
-                                    <path d="M2.5 14L7.5 3L12.5 14M4.3 10H10.7" />
-                                </g>
+                            <svg class="breadcrumb-sort-arrow" viewBox="0 0 10 14" aria-hidden="true">
                                 <path
                                     v-if="sortOrder === 'asc'"
                                     class="sort-order-glyph"
-                                    d="M23 13.5V4.5M19 8.5L23 4.5L27 8.5"
+                                    d="M5 12.4V2.2M1.7 5.5L5 2.2L8.3 5.5"
                                 />
                                 <path
                                     v-else
                                     class="sort-order-glyph"
-                                    d="M23 4.5V13.5M19 9.5L23 13.5L27 9.5"
+                                    d="M5 1.6V11.8M1.7 8.5L5 11.8L8.3 8.5"
                                 />
                             </svg>
+                            <span class="breadcrumb-sort-text">{{ sortOrderText }}</span>
                         </button>
                         <template #dropdown>
                             <el-dropdown-menu class="sort-dropdown-menu">
@@ -400,6 +394,7 @@
                             </el-dropdown-menu>
                         </template>
                     </el-dropdown>
+                    </div>
                     <!--
                         v3.0.0：移动端「目录导航选择」改为与「排序」同款的下拉按钮 ——
                         · 「当前」= 只在当前路径的父子层级里导航（原有行为）；
@@ -873,6 +868,7 @@
             :detailOpen="showdetailDialog"
             @detail="handleMediaPreviewDetail"
             @close-detail="showdetailDialog = false"
+            @viewed="handlePreviewViewed"
             @view-uploaded="handleViewUploadedSnapshot"
         />
 
@@ -1020,6 +1016,7 @@ import pageActivation from '@/mixins/pageActivation';
 import { ref, defineAsyncComponent } from 'vue';
 import { useDragSelect } from '@/utils/dashboard/useDragSelect.js';
 import { bindScrollDismiss } from '@/utils/scrollDismiss';
+import recordBrowse from '@/utils/browseRecord';
 
 /*
  * v3.0.0：目录属性弹窗（FolderPropsDialog.vue）由其它代理并行新建。
@@ -1206,6 +1203,8 @@ data() {
             accessStatus: [], // 访问状态: 'normal'(正常), 'blocked'(已屏蔽)
             listType: [],     // 黑白名单: 'White', 'Block', 'None'
             label: [],         // 审查结果: 'normal', 'teen', 'adult'
+            refState: [],      // v1.1.6 文件引用: 'has'(已引用) | 'none'(未引用)
+            shareState: [],    // v1.1.6 文件共用: 'has'(已共用) | 'none'(未共用)
             fileType: [],      // 文件类型: 'image', 'video', 'audio', 'other'
             channel: [],       // 渠道类型: 后端 CHANNEL_LABEL（COS/MinIO/R2/S3/EasyImages/Lsky/WebDAV/Immich/External）
             channelName: [],   // 渠道名称: 动态获取
@@ -1272,6 +1271,8 @@ data() {
         /* ---------------- v3.0.0（R7）目录导航悬停展开 ---------------- */
         dirHoverOpened: false,
         dirHoverLeaveTimer: null,
+        /* ---------------- v1.1.6「排序」悬停展开 ---------------- */
+        sortHoverLeaveTimer: null,
         /* ---------------- v3.0.0 标签管理模式 ---------------- */
         tagModeActive: false,
         /* ---------------- v3.0.0 列表窗口（服务端分页） ---------------- */
@@ -1587,6 +1588,11 @@ computed: {
             const ext = this.fileExt(meta) || this.fileExt(row.name) || '';
             out.push({
                 key: row.name,
+                /*
+                 * v1.1.6：浏览记录用的标识。列表接口只下发 File_ID（name），库内主键 id 不下发，
+                 * 因此优先用 id、没有就退回 name —— 后端 /api/manage/browse 两种都认。
+                 */
+                recordId: row.id || row.name,
                 name: (meta.FileName || row.name || '').split('/').pop(),
                 url: this.getFileLink(row.name, meta),
                 kind,
@@ -1653,6 +1659,10 @@ computed: {
         const fieldLabel = this.$t(labelKeys[this.sortField] || labelKeys.time);
         const orderLabel = this.$t(this.sortOrder === 'desc' ? 'dashboard.sortDesc' : 'dashboard.sortAsc');
         return `${fieldLabel} · ${orderLabel}`;
+    },
+    /** v1.1.6：排序按钮上的文字（降序 / 升序），与箭头方向同源 */
+    sortOrderText() {
+        return this.$t(this.sortOrder === 'desc' ? 'dashboard.sortDesc' : 'dashboard.sortAsc');
     },
     dialogWidth() {
         return window.innerWidth > 768 ? '50%' : '90%';
@@ -3771,6 +3781,15 @@ methods: {
         if (index >= 0) this.openDetailDialog(index, key);
     },
     /**
+     * v1.1.6：灯箱关闭 → 记录浏览时间（历史记录页「最近浏览」用它筛）。
+     * 只统计本次在灯箱里真正翻到过的文件（含左右滑动切过去的），
+     * 由灯箱统一在关闭时 emit，详情页 / 直接点外链都不经过这里。
+     */
+    handlePreviewViewed(payload) {
+        const ids = payload && Array.isArray(payload.ids) ? payload.ids : [];
+        if (ids.length) recordBrowse(ids);
+    },
+    /**
      * v3.0.0（R17）：视频灯箱里「抓拍 → 上传 → 查看」。
      * 刚上传的抓拍图不在当前页列表里（列表没刷新，也不该因为抓拍被刷新），
      * 因此这里按上传返回的 File_ID + 抓拍文件名直接构造详情数据对象，
@@ -4367,6 +4386,33 @@ methods: {
         else this.releaseDropdownScrollDismiss('sort');
     },
     /**
+     * v1.1.6：桌面端「排序」悬停展开 / 移走收起。
+     * 与「目录导航」一致：≤1023px 或触屏（hover: none）不启用，避免和点击 / 滚动打架；
+     * 移走后留 320ms 缓冲，指针移进浮层时不关闭（浮层里还要点单选项 / 排序项）。
+     */
+    handleSortHoverEnter() {
+        if (this.suppressHoverOpen()) return;
+        this.clearSortHoverTimer();
+        const dd = this.$refs.sortDropdown;
+        if (dd && typeof dd.handleOpen === 'function') dd.handleOpen();
+    },
+    handleSortHoverLeave() {
+        if (this.suppressHoverOpen()) return;
+        this.clearSortHoverTimer();
+        this.sortHoverLeaveTimer = setTimeout(() => {
+            this.sortHoverLeaveTimer = null;
+            if (document.querySelector('.sort-hover-popper:hover')) return;
+            const dd = this.$refs.sortDropdown;
+            if (dd && typeof dd.handleClose === 'function') dd.handleClose();
+        }, 320);
+    },
+    clearSortHoverTimer() {
+        if (this.sortHoverLeaveTimer) {
+            clearTimeout(this.sortHoverLeaveTimer);
+            this.sortHoverLeaveTimer = null;
+        }
+    },
+    /**
      * v1.1.3：下拉展开期间，页面一滚动就收起（移动端需求）。
      * el-dropdown 有 handleClose，但滚动可能来自页内滚动容器，
      * 统一用 utils/scrollDismiss 处理，与笔记管理页共用同一套行为。
@@ -4413,10 +4459,16 @@ methods: {
             this.dirHoverLeaveTimer = null;
         }
     },
-    /** 触屏 / 窄屏（≤1023）不做悬停展开，避免和点击 / 滚动冲突 */
-    suppressDirHover() {
+    /**
+     * 触屏 / 窄屏（≤1023）不做悬停展开，避免和点击 / 滚动冲突。
+     * v1.1.6：「排序」与「目录导航」共用同一套判定。
+     */
+    suppressHoverOpen() {
         if (typeof window === 'undefined') return true;
         return window.innerWidth <= 1023 || window.matchMedia('(hover: none)').matches;
+    },
+    suppressDirHover() {
+        return this.suppressHoverOpen();
     },
     /** 切到「全局」时按当前实例拉取全部目录 */
     handleDirScopeChange(scope) {
@@ -5731,24 +5783,32 @@ html.dark .trash-btn.is-active,
     height: 14px;
 }
 
+.breadcrumb-sort-wrap {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
+
 .breadcrumb-sort-dropdown {
     flex: 0 0 auto;
 }
 
+/* v1.1.6：「排序」按钮 = 箭头 + 文字（降序 / 升序），宽度随文字自适应 */
 .breadcrumb-sort-button {
-    width: 44px;
     height: 32px;
     box-sizing: border-box;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 0;
+    gap: 4px;
+    padding: 0 8px;
     border: 1px solid var(--glass-border);
     border-radius: 10px;
     color: var(--el-text-color-secondary);
     background: var(--glass-bg);
     box-shadow: none;
     cursor: pointer;
+    white-space: nowrap;
     transition: color 0.16s ease, background-color 0.2s ease, border-color 0.2s ease;
 }
 
@@ -5762,23 +5822,26 @@ html.dark .trash-btn.is-active,
     outline: none;
 }
 
-.breadcrumb-sort-icon {
-    width: 30px;
-    height: 18px;
+.breadcrumb-sort-arrow {
+    width: 10px;
+    height: 14px;
+    flex: 0 0 auto;
     overflow: visible;
 }
 
-.sort-field-glyph,
+.breadcrumb-sort-text {
+    font-size: 12px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+}
+
+/* v1.1.6：字段图标已从触发按钮移除（改为箭头 + 文字），只保留箭头描边样式 */
 .sort-order-glyph {
     fill: none;
     stroke: currentColor;
-    stroke-width: 1.6;
+    stroke-width: 1.9;
     stroke-linecap: round;
     stroke-linejoin: round;
-}
-
-.sort-order-glyph {
-    stroke-width: 1.9;
 }
 
 @media (max-width: 768px) {
@@ -5873,13 +5936,17 @@ html.dark .trash-btn.is-active,
         height: 12px;
     }
     .breadcrumb-sort-button {
-        width: 40px;
         height: 28px;
+        padding: 0 6px;
+        gap: 3px;
         border-radius: 8px;
     }
-    .breadcrumb-sort-icon {
-        width: 27px;
-        height: 16px;
+    .breadcrumb-sort-arrow {
+        width: 9px;
+        height: 12px;
+    }
+    .breadcrumb-sort-text {
+        font-size: 11px;
     }
 }
 

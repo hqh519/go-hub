@@ -269,6 +269,8 @@ export class NotesController {
         assetIds: body.assetIds as string[],
         tagNames: body.tagNames as string[],
         instanceId: body.instanceId as string,
+        // v1.1.6：实际发布时间（毫秒时间戳 / ISO 字符串）
+        publishedAt: body.publishedAt as number | string | undefined,
       },
       viewer,
       isAdmin,

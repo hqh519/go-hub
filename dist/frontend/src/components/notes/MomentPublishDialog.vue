@@ -58,71 +58,54 @@
             <!--
                 心情 / 天气（v1.1.3）
                 ------------------------------------------------------------------
-                桌面端 / 平板：一行图标，点一下在**图标上方**浮出名称（2 秒后淡出）；
-                手机端（< 768px，不含平板）：换成两个下拉页 —— 心情在左、天气在右，
-                未选时的占位文字分别是「设置心情」「设置天气」，展开后每一项都是「图标 + 名称」。
+                全终端统一为「一行图标直选」：
+                  · 点一下切换选中（再点一次取消），选中后图标上方浮出名称，2 秒淡出；
+                  · 桌面端鼠标悬停图标也会浮出名称（v1.1.6，需求原文）；
+                  · 手机端不再使用下拉框（v1.1.6 改回图标直选），图标区按屏幕宽度自动换行，
+                    触控区放大到 32px，避免「挤成两行点不准」。
                 两套控件的值都绑定 form.mood / form.weather，提交时一并把中文名称
                 （moodName / weatherName）写进数据表，做筛选统计时不用再翻译枚举值。
             -->
-            <div class="mp-meta-mobile">
-                <el-select
-                    v-model="form.mood"
-                    class="mp-meta-select"
-                    size="small"
-                    clearable
-                    :placeholder="$t('notes.setMood')"
-                    popper-class="mp-meta-popper"
-                >
-                    <el-option v-for="m in moodOptions" :key="'mm-' + m.value" :label="nameOf(m)" :value="m.value">
-                        <span class="mp-opt">
-                            <span class="mp-opt-emoji">{{ m.emoji }}</span>
-                            <span class="mp-opt-name">{{ nameOf(m) }}</span>
-                        </span>
-                    </el-option>
-                </el-select>
-                <el-select
-                    v-model="form.weather"
-                    class="mp-meta-select"
-                    size="small"
-                    clearable
-                    :placeholder="$t('notes.setWeather')"
-                    popper-class="mp-meta-popper"
-                >
-                    <el-option v-for="w in weatherOptions" :key="'mw-' + w.value" :label="nameOf(w)" :value="w.value">
-                        <span class="mp-opt">
-                            <span class="mp-opt-emoji">{{ w.emoji }}</span>
-                            <span class="mp-opt-name">{{ nameOf(w) }}</span>
-                        </span>
-                    </el-option>
-                </el-select>
-            </div>
-
             <div class="mp-meta-row mp-meta-desktop">
                 <div class="mp-picker">
-                    <span v-for="m in moodOptions" :key="m.value" class="mp-emoji-wrap">
+                    <span
+                        v-for="m in moodOptions"
+                        :key="m.value"
+                        class="mp-emoji-wrap"
+                        @mouseenter="hoverKey = 'mood:' + m.value"
+                        @mouseleave="clearHover('mood:' + m.value)"
+                    >
                         <button
                             type="button"
                             class="mp-emoji"
                             :class="{ 'is-active': form.mood === m.value }"
                             :aria-label="nameOf(m)"
+                            :title="nameOf(m)"
                             @click="toggleMood(m)"
                         >{{ m.emoji }}</button>
                         <transition name="mp-tip">
-                            <span v-if="tipKey === 'mood:' + m.value" class="mp-name-tip">{{ nameOf(m) }}</span>
+                            <span v-if="tipVisible('mood:' + m.value)" class="mp-name-tip">{{ nameOf(m) }}</span>
                         </transition>
                     </span>
                 </div>
                 <div class="mp-picker">
-                    <span v-for="w in weatherOptions" :key="w.value" class="mp-emoji-wrap">
+                    <span
+                        v-for="w in weatherOptions"
+                        :key="w.value"
+                        class="mp-emoji-wrap"
+                        @mouseenter="hoverKey = 'weather:' + w.value"
+                        @mouseleave="clearHover('weather:' + w.value)"
+                    >
                         <button
                             type="button"
                             class="mp-emoji"
                             :class="{ 'is-active': form.weather === w.value }"
                             :aria-label="nameOf(w)"
+                            :title="nameOf(w)"
                             @click="toggleWeather(w)"
                         >{{ w.emoji }}</button>
                         <transition name="mp-tip">
-                            <span v-if="tipKey === 'weather:' + w.value" class="mp-name-tip">{{ nameOf(w) }}</span>
+                            <span v-if="tipVisible('weather:' + w.value)" class="mp-name-tip">{{ nameOf(w) }}</span>
                         </transition>
                     </span>
                 </div>
@@ -374,6 +357,8 @@ export default {
             longPressDragging: false,
             /** 当前浮出名称的图标：「mood:happy」 */
             tipKey: '',
+            /** v1.1.6：鼠标悬停中的图标（桌面端悬停即显示名称，移走即收起） */
+            hoverKey: '',
             /** 最近用过的地点（位置输入框的记忆，存在浏览器里） */
             locationHistory: [],
             /** 本次打开是否恢复过草稿 */
@@ -405,12 +390,13 @@ export default {
             return !!this.form.content.trim() || this.assets.length > 0;
         },
         footerTip() {
+            // v1.1.6：上传中优先提示（需求：正在上传文件时，取消按钮左侧显示「文件上传中」）
+            if (this.uploading) return this.$t('notes.uploadingHint');
             if (this.charCount > this.maxChars) {
                 return this.$t('notes.charOver', { n: this.charCount - this.maxChars });
             }
-            if (!this.form.content.trim() && !this.assets.length) {
-                return this.$t('notes.needContent');
-            }
+            // v1.1.6：「写点什么，或发个照片」这句常驻提示已移除（需求原文），
+            // 输入框内的 placeholder 保留，所以这里不再兜底任何文案。
             return '';
         },
         pickedFileIds() {
@@ -639,6 +625,13 @@ export default {
         },
 
         /* ── 心情 / 天气：名称提示 ─────────────────────────────── */
+        /** v1.1.6：点击后的 2 秒提示与鼠标悬停提示共用一套浮层 */
+        tipVisible(key) {
+            return this.tipKey === key || this.hoverKey === key;
+        },
+        clearHover(key) {
+            if (this.hoverKey === key) this.hoverKey = '';
+        },
         showNameTip(kind, value) {
             this.tipKey = `${kind}:${value}`;
             clearTimeout(this._tipTimer);
@@ -820,6 +813,13 @@ export default {
                 cancelButtonText: this.$t('common.cancel'),
                 inputPlaceholder: 'https://example.com/a.jpg',
                 inputType: 'textarea',
+                /*
+                 * v1.1.6：输入框再加两行高度（默认 2 行 → 4 行）。
+                 * rows 走 inputAttributes 透传给原生 textarea；customClass 兜底，
+                 * 以防 Element Plus 版本差异导致 rows 没落到元素上（样式见 .mp-link-prompt）。
+                 */
+                inputAttributes: { rows: 4 },
+                customClass: 'mp-link-prompt',
                 inputValidator: (v) => {
                     const s = String(v || '').trim();
                     if (!s) return this.$t('notes.linkEmpty');
@@ -1118,14 +1118,16 @@ export default {
     position: relative;
     display: flex;
     flex: 1 1 auto;
-    min-height: 150px;
+    /* v1.1.6：正文区最小高度 = 视口高度的 30%（矮屏保底 150px），需求原文 */
+    min-height: max(150px, 30vh);
 }
 
 .mp-textarea {
     box-sizing: border-box;
     width: 100%;
     height: 100%;
-    min-height: 150px;
+    /* v1.1.6：收缩下限不得低于视口高度的 30% */
+    min-height: max(150px, 30vh);
     padding: 10px 12px 26px;
     border: 1px solid var(--el-border-color);
     border-radius: 8px;
@@ -1337,32 +1339,7 @@ export default {
     margin-left: auto;
 }
 
-/* ── 心情 / 天气的手机版下拉（v1.1.3） ───────────────────────── */
-.mp-meta-mobile {
-    display: none;
-    gap: 8px;
-    flex: 0 0 auto;
-}
-
-.mp-meta-select {
-    flex: 1 1 0;
-    min-width: 0;
-}
-
-.mp-opt {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.mp-opt-emoji {
-    font-size: 16px;
-    line-height: 1;
-}
-
-.mp-opt-name {
-    font-size: 13px;
-}
+/* ── 心情 / 天气（v1.1.6 起全终端统一为图标直选，手机版下拉已移除） ── */
 
 /* 长按拖动时的「抓手」角标 */
 .mp-asset-drag-hint {
@@ -1386,15 +1363,25 @@ export default {
 
 @media (max-width: 767.98px) {
     /*
-     * 手机（不含平板）：心情 / 天气改成两个下拉页，一行两个 —— 左边心情、右边天气。
-     * 图标行在手机上隐藏（20 个图标挤成两行，指头点不准）。
+     * v1.1.6：手机端也改回「图标直选」（需求原文，撤掉 v1.1.3 的两个下拉框）。
+     * 窄屏上 20 个图标必然放不下一行，所以让心情 / 天气两组各自换行，
+     * 并把单个图标的触控区从 ~24px 放大到 32px，避免「挤成一团点不准」。
      */
-    .mp-meta-mobile {
-        display: flex;
+    .mp-meta-row {
+        gap: 6px;
     }
 
-    .mp-meta-desktop {
-        display: none;
+    .mp-picker {
+        flex-wrap: wrap;
+        gap: 2px;
+        padding: 3px 4px;
+    }
+
+    .mp-emoji {
+        min-width: 32px;
+        height: 32px;
+        padding: 0 4px;
+        font-size: 17px;
     }
 
     /*
@@ -1459,6 +1446,17 @@ export default {
  * 做法：把 dialog 变成纵向 flex，头部/底部固定，body 撑满剩余空间，
  * 再让内部 .mp-body 与正文输入框逐级 flex:1 —— 多出来的高度全部给主输入框。
  */
+
+/*
+ * v1.1.6：「链接提取」输入框加两行高度。
+ * $prompt 的 MessageBox 同样 teleport 到 body，scoped 样式够不着，只能放全局块，
+ * 用 customClass 里的 mp-link-prompt 限定范围（只影响这一个弹窗）。
+ * 默认 2 行 → 4 行：单行 14px * 1.7 ≈ 24px，两行约 48px，给 96px 留足余量。
+ */
+.mp-link-prompt .el-textarea__inner {
+    min-height: 96px;
+    line-height: 1.7;
+}
 .el-dialog.moment-publish-dialog {
     display: flex;
     flex-direction: column;

@@ -12,6 +12,7 @@ const common_1 = require("@nestjs/common");
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const tags_1 = require("../common/tags");
+const file_share_stats_1 = require("../common/file-share-stats");
 const file_view_1 = require("../common/file-view");
 const file_filter_1 = require("../common/file-filter");
 const notes_util_1 = require("./notes.util");
@@ -440,12 +441,26 @@ let NotesService = class NotesService {
         const visibility = input.visibility !== undefined && notes_util_1.NOTE_VISIBILITIES.includes(String(input.visibility))
             ? String(input.visibility)
             : existing.visibility;
+        let publishedAt = null;
+        if (input.publishedAt !== undefined) {
+            const raw = input.publishedAt;
+            const ms = typeof raw === 'number' ? raw : Date.parse(String(raw || ''));
+            if (!Number.isFinite(ms))
+                return { error: '发布时间格式不正确' };
+            const d = new Date(ms);
+            const min = new Date('1970-01-02T00:00:00Z').getTime();
+            const max = Date.now() + 24 * 3600 * 1000;
+            if (ms < min || ms > max)
+                return { error: '发布时间超出允许范围（不能早于 1970 年，也不能晚于明天）' };
+            publishedAt = d;
+        }
         try {
             await prisma_1.prisma.note.update({
                 where: { id: existing.id },
                 data: {
                     content,
                     visibility,
+                    ...(publishedAt ? { publishedAt } : {}),
                     coverFileId: finalFiles.find((f) => (0, notes_util_1.mediaKindOfMime)(f.mime) === 'image')?.id || '',
                     version: { increment: 1 },
                     moment: {
@@ -541,8 +556,7 @@ let NotesService = class NotesService {
     async tagCandidates(instanceId, viewer) {
         const rows = await prisma_1.prisma.tag.findMany({
             where: {
-                instanceId: String(instanceId || ''),
-                type: 'note',
+                ...(0, tags_1.tagScope)(instanceId, tags_1.TAG_TYPE_NOTE, viewer),
                 noteTags: { some: { note: { author: String(viewer || '') } } },
             },
             select: {
@@ -559,7 +573,7 @@ let NotesService = class NotesService {
             .sort((a, b) => b.count - a.count);
     }
     async tagAdmin(instanceId, kind, viewer) {
-        const where = { instanceId: String(instanceId || ''), type: 'note' };
+        const where = (0, tags_1.tagScope)(instanceId, tags_1.TAG_TYPE_NOTE, viewer);
         const tags = await prisma_1.prisma.tag.findMany({ where: where, orderBy: { createdAt: 'asc' } });
         if (!tags.length)
             return [];
@@ -672,8 +686,7 @@ let NotesService = class NotesService {
             status: 'active',
             instanceId: String(input.instanceId || ''),
         };
-        if (!input.isAdmin)
-            where.uploader = String(input.viewer || '');
+        where.uploader = String(input.viewer || '');
         const kw = String(input.search || '').trim();
         if (kw) {
             const contains = { contains: kw, mode: 'insensitive' };
@@ -726,6 +739,16 @@ let NotesService = class NotesService {
                     tags: { include: { tag: true } },
                 },
             });
+            if (filterOpts.hasRef || filterOpts.hasShare) {
+                const statsMap = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id), false);
+                for (const r of rows) {
+                    const st = statsMap.get(r.id);
+                    if (!st)
+                        continue;
+                    r.refCount = st.ref;
+                    r.shareCount = st.share;
+                }
+            }
             const filtered = rows.filter((r) => (0, file_filter_1.passesFileFilters)(r, filterOpts, matchMode));
             const slice = filtered.slice((page - 1) * pageSize, page * pageSize);
             return {

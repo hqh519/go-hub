@@ -257,6 +257,11 @@ model FileRecord {
   refCount         Int       @default(0)
   shareCount       Int       @default(0)
   cloneOf          String    @default("")
+  // v1.1.6：最近一次「文件灯箱」浏览时间（关闭灯箱时写入）。
+  //   只有从「图床管理 / 笔记管理」用灯箱打开过并关闭的文件才有值；
+  //   文件详情页、直接点外链、渠道直链访问都不记录（views 列仍按外链访问累计）。
+  //   历史记录页的「最近浏览」筛选直接按这一列取范围。
+  lastViewedAt DateTime?
   metas        String    @default("{}") // 标签、备注等扩展
   createdAt    DateTime  @default(now())
 
@@ -265,6 +270,7 @@ model FileRecord {
 
   @@index([status, folder, createdAt]) // 目录浏览：过滤回收站 + 目录 + 时间排序
   @@index([status, instanceId, createdAt]) // v3.0.0 多实例：按实例归集文件列表
+  @@index([status, uploader, lastViewedAt]) // v1.1.6：历史记录页「最近浏览」按账户 + 浏览时间取范围
   @@index([status, createdAt]) // 全库文件列表 / 回收站列表
   @@index([status, uploader]) // 用户归集统计
   @@index([ip]) // IP 归集统计 / 黑白名单关联
@@ -343,6 +349,12 @@ model Tag {
   type      String   @default("file")
   // v1.0.2：仅记录创建人，不参与隔离
   owner     String   @default("")
+  // v1.1.6：作用域补充维度。
+  //   · 文件标签（type='file'）恒为 ""：沿用「实例内共用一套」的团队语义；
+  //   · 笔记标签（type='note'）填**用户名**：笔记是私有内容，标签也必须按账户隔离，
+  //     否则 A 建的「旅行」会成为 B 的同一行标签（改名 / 删除会互相影响，还会暴露创建人）。
+  //   加进唯一键后，同一实例里不同账户可以有同名笔记标签，互不干扰。
+  scope     String   @default("")
   metas     String   @default("{}")
   createdAt DateTime @default(now())
 
@@ -355,7 +367,9 @@ model Tag {
   //     这正是「同名标签筛选筛不全」的根源；
   //   · 升级前由 prisma/compat-sync.js 先把历史重复合并成一条，因此 db push 不会失败；
   //   · owner 仅记录创建人，不再参与唯一性。
-  @@unique([name, instanceId, type])
+  // v1.1.6：追加 scope —— 文件标签 scope="" 与旧口径完全一致（历史数据天然满足），
+  //   笔记标签 scope=用户名 实现按账户隔离。老库升级不会撞唯一键。
+  @@unique([name, instanceId, type, scope])
   @@index([instanceId, type])
   @@index([instanceId, owner])
   @@map("tags")

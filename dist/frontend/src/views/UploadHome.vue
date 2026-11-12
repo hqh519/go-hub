@@ -132,6 +132,15 @@
             <div class="quick-toolbar-actions">
                 <div class="quick-toolbar-actions-inner">
                     <!-- v2.7.0：退出登录已迁至右上角「更多菜单」（文字模式），快捷栏不再保留 -->
+                    <!--
+                        v1.1.6：「笔记」入口 —— 放在「文件（图床管理）」正上方，
+                        点开与「文件」一样走新标签，不打断当前上传。
+                    -->
+                    <el-tooltip :disabled="disableTooltip || !isQuickToolbarOpen" :content="$t('upload.notesManage')" placement="left" :hide-after="0" :show-after="1000">
+                        <el-button class="quick-toolbar-button" @click="handleNotesManage">
+                            <font-awesome-icon icon="note-sticky" class="quick-toolbar-icon"/>
+                        </el-button>
+                    </el-tooltip>
                     <el-tooltip :disabled="disableTooltip || !isQuickToolbarOpen" :content="$t('upload.manageFiles')" placement="left" :hide-after="0" :show-after="1000">
                         <el-button class="quick-toolbar-button" @click="handleQuickToolbarCommand('manage')">
                             <font-awesome-icon icon="folder" class="quick-toolbar-icon"/>
@@ -302,7 +311,7 @@
                         <span class="record-app-label">{{ app.label }}</span>
                     </button>
                 </div>
-                <p v-if="!recordResults.length" class="record-tip">{{ $t('notes.recordTip') }}</p>
+                <!-- v1.1.6：移除「选一个类型，直接开始写」这句提示（需求原文） -->
             </template>
         </UploadForm>
         </div>
@@ -854,6 +863,10 @@ export default {
         handleManage() {
             // 右下角「文件管理」：新标签打开后台文件管理页，不打断当前上传
             window.open('/dashboard', '_blank', 'noopener')
+        },
+        /** v1.1.6：右下角「笔记」—— 与「文件管理」同样的新标签打开方式 */
+        handleNotesManage() {
+            window.open('/notes', '_blank', 'noopener')
         },
         /** 更多菜单 → 系统管理：新标签打开系统状态页 */
         openSystemManage() {
@@ -2236,7 +2249,8 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
     /* 用 flex 而不是 grid：5 个图标排成 4+1 / 3+2 时，最后一行能居中，
        不会像 grid 那样留一个空洞在右边 */
     justify-content: center;
-    gap: 16px var(--app-gap);
+    /* v1.1.6：换行后的行间距 +10px（原 16px → 26px），需求原文 */
+    gap: 26px var(--app-gap);
 }
 
 .record-app {
@@ -2310,7 +2324,8 @@ html.dark .upload-folder:hover :deep(.el-input__wrapper) {
         /* 移动端：一行 3 个，单元格更窄（≈70px）→ 图标跟着列宽走 */
         --app-cols: 3;
         --app-gap: 12px;
-        gap: 14px var(--app-gap);
+        /* v1.1.6：手机端行间距同步 +10px（14px → 24px） */
+        gap: 24px var(--app-gap);
     }
 
     .record-app {

@@ -355,6 +355,7 @@
                         @restore="confirmRestore"
                         @purge="confirmPurge"
                         @tag-click="onTagClick"
+                        @edit-time="openTimeEditor"
                     />
                 </div>
 
@@ -408,6 +409,35 @@
         <!-- 笔记设置（v1.1.2.1）：按实例保存，改完立刻作用到列表里的附件区 -->
         <NoteSettingsDialog v-model="settingsVisible" :instance-id="instanceId" />
 
+        <!--
+            v1.1.6：修改「实际发布时间」。
+            入口 = 卡片标题旁的时间（点击）。只改发布时间的展示口径，不动入库时间，
+            排序（publishedAt）与「历史记录」都跟着变。
+        -->
+        <el-dialog
+            v-model="timeEditorVisible"
+            :title="$t('notes.editPublishedAt')"
+            width="360px"
+            append-to-body
+            class="nt-time-dialog"
+        >
+            <el-date-picker
+                v-model="timeEditorValue"
+                type="datetime"
+                :placeholder="$t('notes.publishedAtPlaceholder')"
+                format="YYYY-MM-DD HH:mm"
+                value-format="x"
+                style="width: 100%"
+            />
+            <p class="nt-time-tip">{{ $t('notes.publishedAtTip') }}</p>
+            <template #footer>
+                <el-button size="small" @click="timeEditorVisible = false">{{ $t('common.cancel') }}</el-button>
+                <el-button size="small" type="primary" :loading="timeEditorSaving" @click="savePublishedAt">
+                    {{ $t('common.save') }}
+                </el-button>
+            </template>
+        </el-dialog>
+
         <!-- 附件灯箱：一屏 9 个只是列表形态，这里能翻完该瞬间的全部附件 -->
         <MediaPreviewOverlay
             v-if="previewItems.length"
@@ -418,6 +448,7 @@
             :detail-open="detailVisible"
             @detail="openFileDetail"
             @record-detail="openFileDetail"
+            @viewed="handlePreviewViewed"
             @close-detail="detailVisible = false"
         />
 
@@ -512,6 +543,7 @@ import { writeThemeCookie } from '@/utils/themeCookie';
 import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
 import { registerLayer, unregisterLayer } from '@/utils/layerStack';
 import { bindScrollDismiss } from '@/utils/scrollDismiss';
+import recordBrowse from '@/utils/browseRecord';
 
 const PAGE_SIZE = 20;
 /** 桌面端：离开顶部多少像素后允许隐藏两行栏 */
@@ -575,6 +607,11 @@ export default {
             previewVisible: false,
             previewItems: [],
             previewIndex: 0,
+            // v1.1.6：修改发布时间的弹窗（value 用毫秒时间戳字符串，与 el-date-picker value-format="x" 对应）
+            timeEditorVisible: false,
+            timeEditorValue: null,
+            timeEditorSaving: false,
+            timeEditorNote: null,
             detailVisible: false,
             detailFile: null,
             detailFileLink: '',
@@ -1228,6 +1265,48 @@ export default {
         },
 
         /* ── 灯箱 / 文件详情 ────────────────────────────────────── */
+        /**
+         * v1.1.6：点标题旁的时间 → 校正「实际发布时间」。
+         * 取当前 publishedAt（没有则退回入库时间），用 el-date-picker 改完直接 PUT 回后端。
+         */
+        openTimeEditor(note) {
+            if (!note) return;
+            this.timeEditorNote = note;
+            const ts = Number(note.publishedAt || note.createdAt || Date.now());
+            /*
+             * v1.1.6：value-format="x" 的模型值必须是**数字**。
+             * 之前传 String(ts)，el-date-picker 会当成日期字符串解析 → 输入框里显示成 1797 年。
+             */
+            this.timeEditorValue = ts > 0 ? ts : Date.now();
+            this.timeEditorVisible = true;
+        },
+        async savePublishedAt() {
+            const note = this.timeEditorNote;
+            if (!note) return;
+            const ms = Number(this.timeEditorValue || 0);
+            if (!Number.isFinite(ms) || ms <= 0) {
+                this.$message.warning(this.$t('notes.publishedAtInvalid'));
+                return;
+            }
+            this.timeEditorSaving = true;
+            try {
+                const res = await fetchWithAuth(`/api/notes/${encodeURIComponent(note.id)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    // 只送 publishedAt + instanceId，其余字段后端保持原值
+                    body: JSON.stringify({ instanceId: note.instanceId || '', publishedAt: ms })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
+                this.$message.success(this.$t('notes.publishedAtSaved'));
+                this.timeEditorVisible = false;
+                this.reload();
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            } finally {
+                this.timeEditorSaving = false;
+            }
+        },
         openPreview(note, index) {
             const assets = (note.assets || []).filter(Boolean);
             if (!assets.length) return;
@@ -1246,6 +1325,14 @@ export default {
             this.previewVisible = true;
         },
         /** 灯箱右上角「详情」/ 移动端下拉 → 打开文件详情（与图床文件管理页同一个弹窗） */
+        /**
+         * v1.1.6：附件灯箱关闭 → 记录浏览时间（历史记录页「最近浏览」用它筛）。
+         * 笔记附件只带 File_ID（= /file/<name>），后端同时认 id 与 name，无需再转一次。
+         */
+        handlePreviewViewed(payload) {
+            const ids = payload && Array.isArray(payload.ids) ? payload.ids : [];
+            if (ids.length) recordBrowse(ids);
+        },
         /** 把一条文件记录套进详情弹窗的三件套（file / fileLink / urls） */
         applyDetailFile(file) {
             const built = buildFileDetail(file);
@@ -1854,6 +1941,14 @@ export default {
  */
 .nt-list :deep(.mc.is-divider:last-child) {
     border-bottom: none;
+}
+
+/* v1.1.6：修改发布时间弹窗里的一句说明 */
+.nt-time-tip {
+    margin: 10px 0 0;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    line-height: 1.6;
 }
 
 .nt-loading {

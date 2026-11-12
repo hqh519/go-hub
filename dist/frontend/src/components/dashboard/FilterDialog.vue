@@ -75,6 +75,24 @@
                             </el-checkbox-group>
                         </div>
                     </div>
+                    <!-- v1.1.6：文件引用（是否有引用记录） -->
+                    <div class="filter-section">
+                        <div class="filter-title">{{ $t('filter.fileRefState') }}</div>
+                        <div class="filter-options">
+                            <el-checkbox-group v-model="draft.refState">
+                                <el-checkbox v-for="option in refStateOptions" :key="'refState-' + option.value" :label="option.value">{{ option.label }}</el-checkbox>
+                            </el-checkbox-group>
+                        </div>
+                    </div>
+                    <!-- v1.1.6：文件共用（是否有共用记录） -->
+                    <div class="filter-section">
+                        <div class="filter-title">{{ $t('filter.fileShareState') }}</div>
+                        <div class="filter-options">
+                            <el-checkbox-group v-model="draft.shareState">
+                                <el-checkbox v-for="option in shareStateOptions" :key="'shareState-' + option.value" :label="option.value">{{ option.label }}</el-checkbox>
+                            </el-checkbox-group>
+                        </div>
+                    </div>
                     <div class="filter-section">
                         <div class="filter-title">{{ $t('filter.backupStatus') }}</div>
                         <div class="filter-options">
@@ -468,6 +486,9 @@ const EMPTY_FILTERS = {
     accessStatus: [],
     listType: [],
     label: [],
+    /* v1.1.6：文件引用 / 文件共用（has = 已有 / none = 没有） */
+    refState: [],
+    shareState: [],
     fileType: [],
     channel: [],
     channelName: [],
@@ -582,6 +603,19 @@ export default {
                 { label: this.$t('filter.normal'), value: 'normal' },
                 { label: this.$t('filter.teenContent'), value: 'teen' },
                 { label: this.$t('filter.adultContent'), value: 'adult' }
+            ];
+        },
+        /** v1.1.6：文件引用 / 文件共用筛选选项 */
+        refStateOptions() {
+            return [
+                { label: this.$t('filter.hasRef'), value: 'has' },
+                { label: this.$t('filter.noRef'), value: 'none' }
+            ];
+        },
+        shareStateOptions() {
+            return [
+                { label: this.$t('filter.hasShare'), value: 'has' },
+                { label: this.$t('filter.noShare'), value: 'none' }
             ];
         },
         fileTypeOptions() {
@@ -783,6 +817,8 @@ export default {
                 accessStatus: Array.isArray(s.accessStatus) ? [...s.accessStatus] : [],
                 listType: Array.isArray(s.listType) ? [...s.listType] : [],
                 label: Array.isArray(s.label) ? [...s.label] : [],
+                refState: Array.isArray(s.refState) ? [...s.refState] : [],
+                shareState: Array.isArray(s.shareState) ? [...s.shareState] : [],
                 fileType: Array.isArray(s.fileType) ? [...s.fileType] : [],
                 channel: Array.isArray(s.channel) ? [...s.channel] : [],
                 channelName: Array.isArray(s.channelName) ? [...s.channelName] : [],
@@ -1011,6 +1047,8 @@ export default {
                 accessStatus: [...this.draft.accessStatus],
                 listType: [...this.draft.listType],
                 label: [...this.draft.label],
+                refState: [...(this.draft.refState || [])],
+                shareState: [...(this.draft.shareState || [])],
                 fileType: [...this.draft.fileType],
                 channel: [...this.draft.channel],
                 // v2.8.7b：渠道名按纯名称提交（与后端匹配口径一致）

@@ -16,7 +16,7 @@ import { prisma } from './common/prisma';
 import { SESSION_COOKIE, parseSession } from './auth/auth.guard';
 import { rateLimiter } from './common/rate-limit';
 import { appLog } from './common/app-log';
-import { mergeDuplicateTags } from './common/tags';
+import { mergeDuplicateTags, splitSharedNoteTags } from './common/tags';
 import { CryptoService } from './common/crypto.service';
 import { backendSub, frontendAppDir } from './common/project-paths';
 
@@ -570,6 +570,21 @@ async function bootstrap() {
     }
   } catch (err) {
     console.warn(`[tag] 标签去重失败：${(err as Error).message}`);
+  }
+
+  /*
+   * v1.1.6：笔记标签按账户隔离的迁移 —— 旧库里 A、B 两人同名笔记标签是同一行，
+   * 这里按关联笔记的作者拆开（单作者直接补 scope，多作者各自持有自己的一条）。
+   * 幂等：scope 已等于作者名时不会重复建行。
+   */
+  try {
+    const fixed = await splitSharedNoteTags();
+    if (fixed) {
+      console.log(`[tag] 笔记标签按账户隔离：处理 ${fixed} 条`);
+      appLog.info('file', `笔记标签隔离迁移：处理 ${fixed} 条`, 'scope = 笔记作者');
+    }
+  } catch (err) {
+    console.warn(`[tag] 笔记标签隔离迁移失败：${(err as Error).message}`);
   }
 
   const port = Number(process.env.PORT || 3619);

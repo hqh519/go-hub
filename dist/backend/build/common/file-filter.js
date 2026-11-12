@@ -30,6 +30,8 @@ function parseFileFilterQuery(q) {
     };
     return {
         hasTags: String(q.hasTags || '').toLowerCase(),
+        hasRef: String(q.hasRef || '').toLowerCase(),
+        hasShare: String(q.hasShare || '').toLowerCase(),
         filterTags: splitCsv(q.filterTags),
         tagMode: String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and',
         listType: splitCsv(q.listType),
@@ -62,6 +64,8 @@ function parseFileFilterQuery(q) {
 }
 function isEmptyFileFilter(f) {
     return (!f.hasTags &&
+        !f.hasRef &&
+        !f.hasShare &&
         !f.filterTags.length &&
         !f.listType.length &&
         !f.label.length &&
@@ -140,6 +144,14 @@ function fileFilterGroups(r, f, matchMode = 'all') {
         groups.push(tagNames.length > 0);
     else if (f.hasTags === 'no')
         groups.push(tagNames.length === 0);
+    if (f.hasRef === 'yes')
+        groups.push(Number(r.refCount || 0) > 0);
+    else if (f.hasRef === 'no')
+        groups.push(Number(r.refCount || 0) <= 0);
+    if (f.hasShare === 'yes')
+        groups.push(Number(r.shareCount || 0) > 0);
+    else if (f.hasShare === 'no')
+        groups.push(Number(r.shareCount || 0) <= 0);
     if (f.filterTags.length) {
         groups.push(f.tagMode === 'or'
             ? f.filterTags.some((t) => tagNames.includes(t))

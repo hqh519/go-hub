@@ -209,15 +209,18 @@
                         playsinline
                         tabindex="-1"
                     ></video>
-                    <video
+                    <!--
+                        图床侧视频：posters[f.id] 是前端用 canvas 抽出来的**首帧图片**（data:image/jpeg），
+                        必须用 <img> 渲染。v1.1.6 之前这里写成了 <video>，把 JPEG 塞进视频元素，
+                        浏览器解码失败 → 整个格子空白，表现为「图床文件下的视频没有缩略图」。
+                    -->
+                    <img
                         v-else-if="source === 'bed' && f.mediaKind === 'video' && posters[f.id]"
                         :src="posters[f.id]"
                         class="np-img"
-                        preload="metadata"
-                        muted
-                        playsinline
-                        tabindex="-1"
-                    ></video>
+                        loading="lazy"
+                        alt=""
+                    />
                     <img
                         v-else-if="coverOf(f) && !f.broken"
                         :src="coverOf(f)"

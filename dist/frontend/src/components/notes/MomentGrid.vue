@@ -31,6 +31,7 @@
             `mg-count-${visibleCount}`,
             {
                 'is-single': isSingle,
+                'is-divider': divider,
                 'is-grid4': items.length === 4,
                 'is-custom': !!multiBudget,
                 'is-sized': !!singleBudget,
@@ -167,7 +168,9 @@ export default {
     name: 'MomentGrid',
     props: {
         /** [{ fileId, url, thumbUrl, originalName, name, mediaKind, mime }] */
-        assets: { type: Array, default: () => [] }
+        assets: { type: Array, default: () => [] },
+        /** v1.1.6：内容排版为「分割线样式」时，附件不要圆角、间距收到 2px */
+        divider: { type: Boolean, default: false }
     },
     emits: ['preview'],
     data() {
@@ -409,6 +412,18 @@ export default {
     /* 卡片本身已被 .nt-main 收在 760px 内，九宫格直接铺满卡片宽度 ——
        再卡一个 520px 会在右边留出一道明显空白，看起来像没对齐 */
     max-width: 100%;
+}
+
+/*
+ * v1.1.6：分割线样式下的附件 —— 圆角归零、四周间距统一 2px（需求原文）。
+ * 分割线样式本身是一条「通栏流水」，附件带圆角 + 3px 缝会显得和线条不搭。
+ */
+.mg.is-divider {
+    gap: 2px;
+}
+
+.mg.is-divider .mg-cell {
+    border-radius: 0;
 }
 
 .mg-count-1 {

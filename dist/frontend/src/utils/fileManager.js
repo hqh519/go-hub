@@ -220,6 +220,22 @@ class FileManager {
         if (filters.label && filters.label.length > 0) {
             params += `&label=${encodeURIComponent(filters.label.join(','))}`;
         }
+        /*
+         * v1.1.6：文件引用 / 文件共用筛选。
+         * 与「标签有无」同一套写法：只勾「有」或只勾「没有」才传，两个都勾等于不筛。
+         */
+        if (filters.refState && filters.refState.length > 0) {
+            const has = filters.refState.includes('has');
+            const none = filters.refState.includes('none');
+            if (has && !none) params += '&hasRef=yes';
+            else if (none && !has) params += '&hasRef=no';
+        }
+        if (filters.shareState && filters.shareState.length > 0) {
+            const has = filters.shareState.includes('has');
+            const none = filters.shareState.includes('none');
+            if (has && !none) params += '&hasShare=yes';
+            else if (none && !has) params += '&hasShare=no';
+        }
         if (filters.fileType && filters.fileType.length > 0) {
             params += `&fileType=${encodeURIComponent(filters.fileType.join(','))}`;
         }

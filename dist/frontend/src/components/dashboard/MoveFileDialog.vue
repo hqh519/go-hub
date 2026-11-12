@@ -77,17 +77,23 @@
                             <button
                                 type="button"
                                 class="move-mode-item"
-                                :class="{ 'is-active': moveMode === 'copy' }"
+                                :class="{ 'is-active': moveMode === 'copy', 'is-disabled': isSameInstance }"
+                                :disabled="isSameInstance"
+                                :title="isSameInstance ? $t('fileManager.moveModeCopySameInstance') : ''"
                                 @click="pickMode('copy')"
                             >
                                 <font-awesome-icon icon="copy" class="move-mode-icon" />
                                 <span class="move-mode-name">{{ $t('dashboard.copy') }}</span>
-                                <span class="move-mode-desc">{{ $t('fileManager.moveModeCopyHint') }}</span>
+                                <span class="move-mode-desc">
+                                    {{ isSameInstance ? $t('fileManager.moveModeCopyDisabledHint') : $t('fileManager.moveModeCopyHint') }}
+                                </span>
                                 <font-awesome-icon v-if="moveMode === 'copy'" icon="check" class="move-instance-check" />
                             </button>
                         </div>
                         <!-- 未选择时的内联提示（按钮同时禁用，避免出现「点了没反应」） -->
-                        <p v-if="!moveMode" class="move-mode-tip">{{ $t('fileManager.moveModeRequired') }}</p>
+                        <p v-if="!moveMode" class="move-mode-tip">
+                            {{ isSameInstance ? $t('fileManager.moveModeSameInstanceTip') : $t('fileManager.moveModeRequired') }}
+                        </p>
                         <p v-else class="move-mode-tip is-chosen">
                             {{ moveMode === 'copy' ? $t('fileManager.moveModeCopyChosen') : $t('fileManager.moveModeMoveChosen') }}
                         </p>
@@ -276,6 +282,15 @@ export default {
         isDesktop() {
             return this.windowWidth > 768;
         },
+        /**
+         * v1.1.6：目标实例与当前实例是否相同。
+         * 相同 → 只能「移动」，不能「复制」（复制只在不同实例之间才有意义）。
+         * 没有实例选择器（单实例环境）时恒为 true。
+         */
+        isSameInstance() {
+            if (!this.showInstancePicker) return true;
+            return String(this.targetInstanceId || '') === String(this.instanceId || '');
+        },
         /** v3.0.0：移动端 92% 宽、桌面端固定 500px */
         dialogWidth() {
             return this.isDesktop ? '500px' : '92%';
@@ -370,9 +385,17 @@ export default {
         },
         pickInstance(id) {
             this.targetInstanceId = String(id || '');
+            /*
+             * v1.1.6：目标实例 == 当前实例时不能复制（复制是「给别的实例多一份」，
+             * 留在同一个实例里等于凭空多一条自己和自己共用的记录）。
+             * 已经选了「复制」的话，切回同实例时把它退回「未选」，强制用户重新选。
+             */
+            if (this.isSameInstance && this.moveMode === 'copy') this.moveMode = '';
         },
         /** v1.1.5：选择操作方式（'move' | 'copy'），再点一次可取消回到未选态 */
         pickMode(mode) {
+            // v1.1.6：同实例只允许「移动」，复制按钮已禁用，这里再挡一次
+            if (mode === 'copy' && this.isSameInstance) return;
             this.moveMode = this.moveMode === mode ? '' : mode;
         },
         goDirectoryStep() {
@@ -600,6 +623,18 @@ export default {
 
 .move-mode-item:hover {
     border-color: var(--el-border-color);
+}
+
+/* v1.1.6：同实例时「复制」不可用 —— 置灰 + 禁止点击，但仍然留在原位（不做隐藏，避免布局跳动） */
+.move-mode-item.is-disabled,
+.move-mode-item:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.move-mode-item.is-disabled:hover,
+.move-mode-item:disabled:hover {
+    border-color: var(--el-border-color-lighter);
 }
 
 .move-mode-item.is-active {

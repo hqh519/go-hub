@@ -1571,9 +1571,19 @@ export class LinkController {
    * 因此「能进这个实例」就视为有权维护该实例的标签；creator 只用于展示。
    * 调用方（tagUpdate / tagDelete / tagMerge / tagSplit）都已先校验 canAccessInstance。
    */
-  private canEditTag(req: Request, _tag: { owner?: string | null }): boolean {
+  private canEditTag(req: Request, tag: { owner?: string | null; type?: string; scope?: string }): boolean {
+    const me = this.sessionUser(req);
+    if (!me) return false;
+    /*
+     * v1.1.6：笔记标签按账户隔离 —— 只有本人能改名 / 删除 / 拆分（管理员也不行）。
+     * 文件标签维持「实例内共用一套」的团队语义：能进这个实例就能维护。
+     */
+    if (String((tag as { type?: string }).type || '') === 'note') {
+      const holder = String((tag as { scope?: string }).scope || tag.owner || '');
+      return holder === '' || holder === me;
+    }
     // 登录且能进该实例即可（实例校验在调用方完成）
-    return !!this.sessionUser(req);
+    return true;
   }
 
   /**
@@ -1596,7 +1606,7 @@ export class LinkController {
     }
     // v1.0.0：拆分只允许在自己名下的标签上做（拆分产物同样归自己）
     if (!this.canEditTag(req, tag)) throw new ForbiddenException('无权拆分其他账户的标签');
-    const owner = String(tag.owner || '');
+    const owner = String((tag as { scope?: string }).scope || tag.owner || '');
     const raw = Array.isArray(body?.names) ? body.names : [];
     const names = Array.from(
       new Set(
@@ -1695,6 +1705,20 @@ export class ManageController {
   /** 当前会话是否管理员 */
   private admin(req: Request): boolean {
     return isAdminRole(currentSession(req)?.role);
+  }
+
+  /**
+   * v1.1.6：删除 / 彻底删除时的归属过滤。
+   *
+   * 普通用户只能操作 uploader 是自己的记录；**超级管理员不再受此限制** ——
+   * 原来管理员清理别人的文件、或按 id 彻底删除时一律返回「文件不存在」，
+   * 只能绕到数据库里手工处理，运维上说不通。
+   * 注意：这里只放开「删除 / 彻底删除」，列表与回收站仍按 uploader 归属展示。
+   */
+  private ownFilter(req: Request): { uploader?: string } {
+    const user = currentSession(req)?.user || '';
+    if (!user || this.admin(req)) return {};
+    return { uploader: user };
   }
 
   /**
@@ -1937,6 +1961,31 @@ export class ManageController {
     const sizeMin = Math.max(0, Number(q.sizeMin) || 0);
     const sizeMax = Math.max(0, Number(q.sizeMax) || 0);
     /*
+     * v1.1.6：历史记录页「最近浏览」——按「灯箱浏览时间 lastViewedAt」取区间。
+     *   browse = today | yesterday | beforeYesterday | week（其它值 / 缺省 = 不筛）
+     * 与上传日期同一套时区口径：tz = 浏览器 getTimezoneOffset()（分钟），
+     * 先把「现在」平移到本地日历日，再换回真实 UTC 时刻，容器跑在 UTC 也不会切错天。
+     */
+    const browseKind = String(q.browse || '').toLowerCase();
+    const browseDay0 = (() => {
+      const local = new Date(Date.now() - tzOffset * 60_000);
+      return Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) + tzOffset * 60_000;
+    })();
+    const browseRange = ((): { start: number; end: number } | null => {
+      switch (browseKind) {
+        case 'today':
+          return { start: browseDay0, end: browseDay0 + DAY_MS };
+        case 'yesterday':
+          return { start: browseDay0 - DAY_MS, end: browseDay0 };
+        case 'beforeyesterday':
+          return { start: browseDay0 - 2 * DAY_MS, end: browseDay0 - DAY_MS };
+        case 'week':
+          return { start: browseDay0 - 6 * DAY_MS, end: browseDay0 + DAY_MS };
+        default:
+          return null;
+      }
+    })();
+    /*
      * v2.8.9 新增筛选：
      *   validity    —— 有效期：limited（已限时未过期）/ expired（已过期）/ permanent（永久有效）
      *   nameChanged —— 名称状态：changed（已改名，prevName 非空）/ unchanged（未改名）
@@ -1982,6 +2031,9 @@ export class ManageController {
     const withDeleted = fAccess.includes('deleted');
     const filterOpts = {
       hasTags,
+      // v1.1.6：引用 / 共用筛选
+      hasRef: String(q.hasRef || '').toLowerCase(),
+      hasShare: String(q.hasShare || '').toLowerCase(),
       filterTags,
       tagMode,
       listType: fListType,
@@ -2047,6 +2099,10 @@ export class ManageController {
         ...(allInstances ? {} : { instanceId: instanceFilter }),
         // 共享范围生效时由 folder 前缀决定取数范围，不再按 uploader 收窄（共享目录里可能有成员文件）
         ...(ownerFilter && !shareScope ? { uploader: ownerFilter } : {}),
+        // v1.1.6：历史记录页「最近浏览」—— 按灯箱浏览时间取区间（与上传时间筛选互不影响）
+        ...(browseRange
+          ? { lastViewedAt: { gte: new Date(browseRange.start), lt: new Date(browseRange.end) } }
+          : {}),
         /*
          * v3.0.0「已加密」筛选：先用 metas 里出现的 AccessPasswordHash 做库级粗筛，
          * 值是否为空串由 matched 阶段的 filterGroups 二次校验（避免误伤 "AccessPasswordHash":""）。
@@ -2065,6 +2121,24 @@ export class ManageController {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    /*
+     * v1.1.6：引用 / 共用筛选要求数字准确 —— refCount / shareCount 是缓存列，
+     * 笔记增删附件不会立刻回写，直接拿来筛会出现「明明被引用却筛不到」。
+     * 这里只在筛这两项时按需重算一遍（persist=false，只回填内存，不写库、不加写压力）。
+     */
+    if (filterOpts.hasRef || filterOpts.hasShare) {
+      const statsMap = await syncFileStats(
+        rows.map((r) => r.id),
+        false,
+      );
+      for (const r of rows) {
+        const st = statsMap.get(r.id);
+        if (!st) continue;
+        (r as unknown as { refCount: number }).refCount = st.ref;
+        (r as unknown as { shareCount: number }).shareCount = st.share;
+      }
+    }
 
     /*
      * v3.0.0（第三轮）：取消「共享目录自动并入列表」。
@@ -2443,6 +2517,35 @@ export class ManageController {
   }
 
   /**
+   * 浏览记录（v1.1.6）：POST /api/manage/browse  { ids: string[] }
+   *
+   * 「图床管理 / 笔记管理」的文件灯箱关闭时（关闭按钮 / 滑动边缘退出 / Esc / 点遮罩），
+   * 前端把本次在灯箱里看过的文件都上报上来（含左右滑动切换过的），这里统一写
+   * `lastViewedAt = 关闭时刻`。只更新这一列，不碰实体文件，重复上报就等于刷新时间。
+   *
+   * ids 兼容两种标识：FileRecord.id（图床管理下发）与 File_ID（笔记附件里只带 name）。
+   */
+  @Post('browse')
+  async recordBrowse(@Req() req: Request, @Body() body: { ids?: string[] }) {
+    if (!currentSession(req)?.user) return { success: false, message: '未登录' };
+    const ids = Array.isArray(body?.ids)
+      ? Array.from(new Set(body.ids.map((v) => String(v || '').trim()).filter(Boolean))).slice(0, 200)
+      : [];
+    if (!ids.length) return { success: true, count: 0 };
+    const now = new Date();
+    try {
+      const res = await prisma.fileRecord.updateMany({
+        where: { status: 'active', OR: [{ id: { in: ids } }, { name: { in: ids } }] },
+        data: { lastViewedAt: now },
+      });
+      return { success: true, count: res.count, at: now.getTime() };
+    } catch (err) {
+      appLog.warn('file', '浏览记录写入失败', (err as Error).message);
+      return { success: false, message: '记录失败' };
+    }
+  }
+
+  /**
    * 索引统计 —— 供「系统状态」页使用（GET /api/manage/list?action=info）。
    *
    * GoHub 底层是 SQLite，列表查询本就是实时的，没有独立倒排索引；
@@ -2693,9 +2796,9 @@ export class ManageController {
     if (!(await this.userPerm(req, 'delete'))) return { success: false, message: '没有删除权限' };
     const key = wildcardParam(req);
     if (!key) return { success: false, message: '缺少文件名' };
-    // 普通用户只能删自己的文件
+    // 普通用户只能删自己的文件（v1.1.6：超级管理员不受归属限制）
     const owner = currentSession(req)?.user || '';
-    const own = owner ? { uploader: owner } : {};
+    const own = this.ownFilter(req);
     /*
      * v1.0.0：删除也必须限定实例 —— 原来只按 folder 前缀匹配，
      * 在 A 实例删「2026」会把 B 实例同名的「2026」目录下文件一起丢进回收站。
@@ -2807,9 +2910,17 @@ export class ManageController {
         return { success: false, message: `「${hitByFolder.path}」是 ${hitByFolder.owner} 共享给你的目录，不允许删除` };
       }
     }
-    const record = await prisma.fileRecord.findFirst({
-      where: { status: 'active', ...own, OR: [{ name: key }, { name: key.replace(/\.[^.]*$/, '') }] },
+    const nameMatch = { OR: [{ name: key }, { name: key.replace(/\.[^.]*$/, '') }] };
+    let record = await prisma.fileRecord.findFirst({
+      where: { status: 'active', ...own, ...nameMatch },
     });
+    /*
+     * v1.1.6：超级管理员默认仍优先命中自己名下的同名记录；
+     * 只有自己名下没有时，才回落到「其它账户」的那一条 —— 避免同名文件被误删。
+     */
+    if (!record && this.admin(req)) {
+      record = await prisma.fileRecord.findFirst({ where: { status: 'active', ...instWhere, ...nameMatch } });
+    }
     if (!record) return { success: false, message: '文件不存在' };
     const sharedHit = sharedHitOf(record.folder || '');
     if (sharedHit) {
@@ -2913,6 +3024,9 @@ export class ManageController {
 
     const filterOpts = {
       hasTags: String(q.hasTags || '').toLowerCase(),
+      // v1.1.6：引用 / 共用筛选
+      hasRef: String(q.hasRef || '').toLowerCase(),
+      hasShare: String(q.hasShare || '').toLowerCase(),
       filterTags: splitCsv(q.filterTags),
       tagMode: String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and',
       listType: splitCsv(q.listType),
@@ -2942,6 +3056,20 @@ export class ManageController {
       heightMin: Math.max(0, Number(q.heightMin) || 0),
       heightMax: Math.max(0, Number(q.heightMax) || 0),
     };
+
+    // v1.1.6：回收站里的「引用 / 共用」筛选同样按需重算，口径与普通列表一致
+    if (filterOpts.hasRef || filterOpts.hasShare) {
+      const statsMap = await syncFileStats(
+        rows.map((r) => r.id),
+        false,
+      );
+      for (const r of rows) {
+        const st = statsMap.get(r.id);
+        if (!st) continue;
+        (r as unknown as { refCount: number }).refCount = st.ref;
+        (r as unknown as { shareCount: number }).shareCount = st.share;
+      }
+    }
 
     const filtered = rows.filter((r) => {
       if (search) {
@@ -3144,6 +3272,8 @@ export class ManageController {
     if (!(await this.userPerm(req, 'delete'))) return { success: false, message: '没有删除权限' };
     const key = wildcardParam(req);
     const owner = currentSession(req)?.user || '';
+    // v1.1.6：彻底删除对超级管理员放开归属限制（普通用户仍只能删自己的）
+    const own = this.ownFilter(req);
     // v3.0.0（R14）：文件夹条目彻底删除 = 清登记 + 连带清掉该前缀下所有软删文件
     if (key.startsWith('folder:')) {
       const path = key.slice('folder:'.length);
@@ -3152,7 +3282,8 @@ export class ManageController {
         const gate = await this.verifyTrashTotp(req, totpCode);
         if (gate) return gate;
         try {
-          const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
+          // v1.1.6：超级管理员按「不限归属」彻底删除整个目录（普通用户仍只清自己的）
+          const n = await this.purgeFolderEntry(this.admin(req) ? '' : owner, path, String(hit.instanceId || ''));
           return { success: true, folder: true, purged: n };
         } catch (err) {
           // v1.1.5：目录内有被引用的文件 → 整批拒绝（purgeFolderEntry 抛出原因）
@@ -3163,7 +3294,7 @@ export class ManageController {
       const rows = await prisma.fileRecord.findMany({
         where: {
           status: 'deleted',
-          uploader: owner,
+          ...own,
           OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
         },
         select: { id: true, name: true, uploader: true, folder: true, instanceId: true },
@@ -3181,7 +3312,7 @@ export class ManageController {
       return { success: true, folder: true, purged: rows.length };
     }
     const record = await prisma.fileRecord.findFirst({
-      where: { id: key, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
+      where: { id: key, status: 'deleted', ...own },
     });
     if (!record) return { success: false, message: '回收站中不存在该文件' };
     const gate = await this.verifyTrashTotp(req, totpCode);
@@ -3215,7 +3346,12 @@ export class ManageController {
     }
     const folderPaths = new Set((await this.listDeletedFoldersFor(req, owner)).map((e) => e.path));
     const rows = await prisma.fileRecord.findMany({
-      where: { id: { in: ids }, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
+      // v1.1.6：彻底删除对超级管理员放开归属限制；恢复仍严格按 uploader 归属
+      where: {
+        id: { in: ids },
+        status: 'deleted',
+        ...(action === 'purge' ? this.ownFilter(req) : owner ? { uploader: owner } : {}),
+      },
     });
     const found = new Set(rows.map((r) => r.id));
     /*
@@ -5991,7 +6127,7 @@ export class UserConfigController {
       bkOpacity: Number(pv('bkOpacity', 1)) || 1,
       /*
        * v1.0.3：白天/夜间自动切换时间（网页设置 · 全局设置）。
-       * 原样下发给前端解析；留空表示用默认 08:00—20:00。
+       * 原样下发给前端解析；留空表示用默认 07:00—19:00（v1.1.6 起）。
        */
       themeAutoRange: String(pv('themeAutoRange', '') || ''),
       /*

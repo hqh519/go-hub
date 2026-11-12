@@ -157,6 +157,7 @@ let NotesController = class NotesController {
             assetIds: body.assetIds,
             tagNames: body.tagNames,
             instanceId: body.instanceId,
+            publishedAt: body.publishedAt,
         }, viewer, isAdmin, String(req.ip || ''));
         if ('error' in r && r.error)
             throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);

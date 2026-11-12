@@ -27,6 +27,9 @@ import {
 /** 筛选参数（与 FilesController 原签名逐字段一致） */
 export interface FileFilterOpts {
   hasTags: string;
+  /** v1.1.6：引用 / 共用筛选（yes / no / 空串） */
+  hasRef: string;
+  hasShare: string;
   filterTags: string[];
   tagMode: string;
   listType: string[];
@@ -89,6 +92,8 @@ export function parseFileFilterQuery(q: Record<string, string | undefined>): Fil
   };
   return {
     hasTags: String(q.hasTags || '').toLowerCase(),
+    hasRef: String(q.hasRef || '').toLowerCase(),
+    hasShare: String(q.hasShare || '').toLowerCase(),
     filterTags: splitCsv(q.filterTags),
     tagMode: String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and',
     listType: splitCsv(q.listType),
@@ -124,6 +129,8 @@ export function parseFileFilterQuery(q: Record<string, string | undefined>): Fil
 export function isEmptyFileFilter(f: FileFilterOpts): boolean {
   return (
     !f.hasTags &&
+    !f.hasRef &&
+    !f.hasShare &&
     !f.filterTags.length &&
     !f.listType.length &&
     !f.label.length &&
@@ -217,6 +224,15 @@ export function fileFilterGroups(
     : [];
   if (f.hasTags === 'yes') groups.push(tagNames.length > 0);
   else if (f.hasTags === 'no') groups.push(tagNames.length === 0);
+  /*
+   * v1.1.6：引用 / 共用筛选 —— 读 FileRecord 上的缓存列（refCount / shareCount）。
+   * 调用方在启用这两项筛选时会先按需重算一遍统计（syncFileStats persist=false），
+   * 所以这里可以直接用列值，不会因为缓存过期而筛错。
+   */
+  if (f.hasRef === 'yes') groups.push(Number(r.refCount || 0) > 0);
+  else if (f.hasRef === 'no') groups.push(Number(r.refCount || 0) <= 0);
+  if (f.hasShare === 'yes') groups.push(Number(r.shareCount || 0) > 0);
+  else if (f.hasShare === 'no') groups.push(Number(r.shareCount || 0) <= 0);
   // 标签筛选有自己的「或/且」开关（tagMode），不参与这里的逐值拆分
   if (f.filterTags.length) {
     groups.push(

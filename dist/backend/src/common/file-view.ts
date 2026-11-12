@@ -449,6 +449,13 @@ export function buildMetadata(
       ? (rec as unknown as { linkExpiresAt: Date }).linkExpiresAt.getTime()
       : 0,
     ListType: (metas.ListType as string) || 'None',
+    /*
+     * v1.1.6：最近一次「文件灯箱」浏览时间（毫秒时间戳，0 = 从未用灯箱看过）。
+     * 由灯箱关闭时 POST /api/manage/browse 写入，历史记录页「最近浏览」按它筛。
+     */
+    LastViewedAt: (rec as unknown as { lastViewedAt?: Date | null }).lastViewedAt
+      ? (rec as unknown as { lastViewedAt: Date }).lastViewedAt.getTime()
+      : 0,
     // 评分 / 等级（v3.0.0 R8）：详情页展示 + 编辑；独立列存库
     Rating: Number((rec as unknown as { rating?: number }).rating) || 0,
     Level: Number((rec as unknown as { level?: number }).level) || 0,

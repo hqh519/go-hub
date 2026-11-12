@@ -714,7 +714,8 @@ export default {
         /** v1.0.5：上传进行中（按钮转圈并禁用） */
         uploadBusy: { type: Boolean, default: false }
     },
-    emits: ['update:modelValue', 'detail', 'close-detail', 'view-uploaded', 'upload', 'record-detail'],
+    // v1.1.6：viewed = 灯箱关闭时上报本轮看过的文件（父组件负责写浏览记录）
+    emits: ['update:modelValue', 'detail', 'close-detail', 'view-uploaded', 'upload', 'record-detail', 'viewed'],
     data() {
         return {
             index: 0,
@@ -990,40 +991,14 @@ export default {
     watch: {
         modelValue(val) {
             if (val) {
-                this.index = Math.min(Math.max(0, this.startIndex), Math.max(0, (this.items || []).length - 1))
-                this.videoMenuOpen = false
-                this.slideMenuOpen = false
-                this.tocOpen = false
-                this.outlineOpen = false
-                this.silent = false
-                this.videoMuted = false
-                this.longPress3x = false
-                this.fitMode = 'fit'
-                // v1.0.4：每次打开都重新走「缩略图占位 → 原图淡入」
-                this.imageLoaded = false
-                this.resetImageZoom()
-                this.resetVideoZoom()
-                this.controlsVisible = true
-                this.audioIndex = Math.max(0, this.audioItems.findIndex(a => a.key === this.current.key))
-                // v3.0.0：文本类预览按需拉取内容
-                this.loadTextPreview()
-                this.$nextTick(() => {
-                    this.applyVideoSettings()
-                    this.scrollThumbIntoView()
-                    // v3.0.0 打开即视频：muted 自动播放，起播后尝试取消静音
-                    if (this.current.kind === 'video') this.autoplayVideo(true)
-                    // v3.0.0（R8）打开即音频：自动播放（打开动作本身带用户手势，一般不会被拦）
-                    if (this.current.kind === 'audio') this.autoplayAudio()
-                })
-                this.bumpControls()
-                this.bindKeys(true)
-                // v1.1.4：接管屏幕两侧边缘的退出手势（滑动 = 关灯箱，不后退页面）
-                this.bindEdgeBack(true)
-                // v1.1.4：视频进入即读一次上次播放点（提示行只在有记忆时出现）
-                this.refreshResumeAt()
-                // v3.0.0 打开时压一条历史哨兵：移动端返回键只关灯箱，不退出页面
-                this.pushHistorySentinel()
+                this.applyOpenState()
             } else {
+                /*
+                 * v1.1.6：灯箱关掉即落地浏览记录 —— 不论这次关闭来自关闭按钮、
+                 * 屏幕边缘滑动退出、Esc / 返回键，还是父组件直接置 false，
+                 * 都在这里统一上报，避免只挂在某个按钮上漏记。
+                 */
+                this.flushViewRecord()
                 this.stopSlideshow()
                 this.clearHideTimer()
                 this.clearLongPress()
@@ -1045,6 +1020,8 @@ export default {
             }
         },
         index() {
+            /* v1.1.6：灯箱里每翻到一条就记一条（滑动 / 键盘 / 幻灯片都算看过） */
+            this.markViewed()
             /*
              * v1.1.3：切换时顺便预取相邻的图片。
              * 之前每翻一张都是「点下去才开始下载原图」，大图要等 1~2 秒，观感就是卡。
@@ -1091,6 +1068,8 @@ export default {
         }
     },
     beforeUnmount() {
+        /* v1.1.6：灯箱开着就走人（路由切换 / 父组件 v-if 卸载）也要把浏览记录补上 */
+        this.flushViewRecord()
         this.stopSlideshow()
         this.clearHideTimer()
         this.clearLongPress()
@@ -1106,7 +1085,59 @@ export default {
         // v1.1.4：卸载时摘掉边缘退出手势监听
         this.bindEdgeBack(false)
     },
+    mounted() {
+        /*
+         * v1.1.6：首次挂载时如果本来就是打开态，必须主动走一次打开流程。
+         *
+         * 父组件普遍是「同一 tick 里既设 items 又设 visible」，此时本组件是带着
+         * modelValue=true 被创建出来的，Vue 的 watcher 不会在创建时触发 ——
+         * 于是 index 停在默认值 0：点第 3 个附件却显示第 1 个（这就是「有时候行有时候不行」，
+         * 只有复用了已存在的实例时才正确）；同时键盘、屏幕边缘退出手势、历史哨兵全都没绑上，
+         * 边缘滑动就变成了页面后退而不是关灯箱。
+         */
+        if (this.modelValue) this.applyOpenState()
+    },
     methods: {
+        /** 打开灯箱时的一次性初始化（watcher 与首次挂载共用） */
+        applyOpenState() {
+            /* v1.1.6：新一轮浏览从空名单开始（上一次关闭时已经上报并清空） */
+            this._viewedIds = new Set()
+            this.index = Math.min(Math.max(0, this.startIndex), Math.max(0, (this.items || []).length - 1))
+            // index 没变化时 index watcher 不触发，这里补记首条
+            this.markViewed()
+            this.videoMenuOpen = false
+            this.slideMenuOpen = false
+            this.tocOpen = false
+            this.outlineOpen = false
+            this.silent = false
+            this.videoMuted = false
+            this.longPress3x = false
+            this.fitMode = 'fit'
+            // v1.0.4：每次打开都重新走「缩略图占位 → 原图淡入」
+            this.imageLoaded = false
+            this.resetImageZoom()
+            this.resetVideoZoom()
+            this.controlsVisible = true
+            this.audioIndex = Math.max(0, this.audioItems.findIndex(a => a.key === this.current.key))
+            // v3.0.0：文本类预览按需拉取内容
+            this.loadTextPreview()
+            this.$nextTick(() => {
+                this.applyVideoSettings()
+                this.scrollThumbIntoView()
+                // v3.0.0 打开即视频：muted 自动播放，起播后尝试取消静音
+                if (this.current.kind === 'video') this.autoplayVideo(true)
+                // v3.0.0（R8）打开即音频：自动播放（打开动作本身带用户手势，一般不会被拦）
+                if (this.current.kind === 'audio') this.autoplayAudio()
+            })
+            this.bumpControls()
+            this.bindKeys(true)
+            // v1.1.4：接管屏幕两侧边缘的退出手势（滑动 = 关灯箱，不后退页面）
+            this.bindEdgeBack(true)
+            // v1.1.4：视频进入即读一次上次播放点（提示行只在有记忆时出现）
+            this.refreshResumeAt()
+            // v3.0.0 打开时压一条历史哨兵：移动端返回键只关灯箱，不退出页面
+            this.pushHistorySentinel()
+        },
         /**
          * v1.1.3：预取相邻图片（前后各一张）。
          * 只对同类型列表（imageItems）里的相邻项生效 —— 灯箱的「上一页/下一页」
@@ -1132,7 +1163,34 @@ export default {
             }
         },
 
+        /*
+         * ── v1.1.6 浏览记录 ────────────────────────────────────────────────
+         * 需求：只有「用文件灯箱打开看过」的文件才记录（文件详情页、直接点外链不算），
+         * 记录的时刻是「关闭灯箱」的那一刻。做法：
+         *   1) 打开灯箱先清空本轮名单，之后每翻到一条就往名单里加（首条在 applyOpenState 补记，
+         *      因为 index 没变化时 watcher 不触发）；
+         *   2) 关闭时（关闭按钮 / 边缘滑动退出 / Esc / 父组件置 false）一次性上报，
+         *      由父组件 POST /api/manage/browse 把 lastViewedAt 写成关闭时刻。
+         * 上报后立刻清空，避免重复关闭时重复上报。
+         */
+        markViewed() {
+            if (!this.modelValue) return
+            const it = (this.items || [])[this.index]
+            // recordId：图床管理传 FileRecord.id / 笔记管理传 File_ID；本地文件页两者都没有 → 不记
+            const id = it && (it.recordId || it.fileId || it.id)
+            if (!id) return
+            if (!(this._viewedIds instanceof Set)) this._viewedIds = new Set()
+            this._viewedIds.add(String(id))
+        },
+        flushViewRecord() {
+            const set = this._viewedIds
+            this._viewedIds = new Set()
+            if (!set || !set.size) return
+            this.$emit('viewed', { ids: Array.from(set), at: Date.now() })
+        },
+
         close() {
+            this.flushViewRecord()
             this.$emit('update:modelValue', false)
         },
         /* ── v1.0.0 返回键 / Esc 逐层关闭：登记到统一浮层栈 ────────────────

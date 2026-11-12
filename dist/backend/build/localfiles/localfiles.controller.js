@@ -345,6 +345,8 @@ let LocalFilesController = class LocalFilesController {
                 cfg = {};
             }
             const synced = ch.type === 'local' && (cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true');
+            if (!ch.enabled)
+                return null;
             if (ch.type === 'local' && (!synced || !String(cfg.rootPath || '').trim()))
                 return null;
             if (!admin && !(0, channel_access_1.channelVisibleTo)(ch.authorizedUsers, ch.type, me, false))

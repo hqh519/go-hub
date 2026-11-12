@@ -59,6 +59,25 @@
           <el-option :label="$t('uploadHistory.typeOther')" value="other" />
         </el-select>
 
+        <!--
+          v1.1.6：最近浏览 —— 按「文件灯箱关闭时记录的时间」筛（与上面按上传时间的时间范围互不影响）。
+          未选时框里显示「最近浏览」（走 placeholder，空值 Element Plus 不会回显选项文字），
+          效果等于不过滤；选了具体一项才按浏览时间收窄。
+        -->
+        <el-select
+          v-model="filter.browse"
+          class="filter-select"
+          size="small"
+          :placeholder="$t('uploadHistory.browsePlaceholder')"
+          @change="applyFilter"
+        >
+          <el-option :label="$t('uploadHistory.browseAll')" value="all" />
+          <el-option :label="$t('uploadHistory.browseToday')" value="today" />
+          <el-option :label="$t('uploadHistory.browseYesterday')" value="yesterday" />
+          <el-option :label="$t('uploadHistory.browseBeforeYesterday')" value="beforeYesterday" />
+          <el-option :label="$t('uploadHistory.browseWeek')" value="week" />
+        </el-select>
+
         <el-input
           v-model="filter.search"
           class="filter-search"
@@ -269,7 +288,7 @@ export default {
       serverStart: 0,
       serverHasMore: true,
       // v3.0.0（R5）：instance 取值 '*'=全部实例 / ''=默认实例 / <id>=具体实例
-      filter: { instance: '*', user: 'all', range: 'all', fileType: 'all', search: '' },
+      filter: { instance: '*', user: 'all', range: 'all', fileType: 'all', browse: '', search: '' },
       userOptions: [],
       // v3.0.0：实例列表（不含默认实例；默认实例用 '' 表示）
       instances: [],
@@ -294,8 +313,17 @@ export default {
     /** 时间范围过滤（服务端按时间倒序返回，越界后即可停止续页） */
     filteredItems() {
       const start = this.rangeStart();
-      if (!start) return this.items;
-      return this.items.filter((it) => Number(it.metadata?.TimeStamp || 0) >= start);
+      const byUpload = start ? this.items.filter((it) => Number(it.metadata?.TimeStamp || 0) >= start) : this.items;
+      /*
+       * v1.1.6：浏览时间筛选（服务端已按同一区间取数，这里只做兜底校验）——
+       * 没有浏览记录（LastViewedAt = 0）的文件在选择任意浏览区间时都不会出现。
+       */
+      const win = this.browseRange();
+      if (!win) return byUpload;
+      return byUpload.filter((it) => {
+        const t = Number(it.metadata?.LastViewedAt || 0);
+        return t >= win.start && t < win.end;
+      });
     },
     displayItems() {
       return this.filteredItems.slice(0, this.renderedCount);
@@ -331,6 +359,10 @@ export default {
   watch: {
     /** 切换时间范围后重置渲染窗口，避免一次渲染过多 */
     'filter.range'() {
+      this.renderedCount = RENDER_STEP;
+    },
+    /** v1.1.6：切换「最近浏览」同样重置渲染窗口（数据由 applyFilter 重新拉取） */
+    'filter.browse'() {
       this.renderedCount = RENDER_STEP;
     },
   },
@@ -427,6 +459,29 @@ export default {
           return 0;
       }
     },
+    /**
+     * v1.1.6：「最近浏览」的区间（毫秒时间戳，左闭右开）；null = 不限。
+     * 与后端同一口径：按浏览器本地日历日切天（今天 / 昨天 / 前天各一天，近 7 天含今天）。
+     */
+    browseRange() {
+      const kind = this.filter.browse;
+      if (!kind || kind === 'all') return null;
+      const now = new Date();
+      const day0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const DAY = 86400000;
+      switch (kind) {
+        case 'today':
+          return { start: day0, end: day0 + DAY };
+        case 'yesterday':
+          return { start: day0 - DAY, end: day0 };
+        case 'beforeYesterday':
+          return { start: day0 - 2 * DAY, end: day0 - DAY };
+        case 'week':
+          return { start: day0 - 6 * DAY, end: day0 + DAY };
+        default:
+          return null;
+      }
+    },
     dayKey(ts) {
       const d = new Date(Number(ts) || Date.now());
       const p = (n) => String(n).padStart(2, '0');
@@ -521,6 +576,14 @@ export default {
         // 文件类型走服务端筛选：普通用户/管理员都可用的合法取值
         const typeMap = { image: 'image', video: 'video', audio: 'audio', other: 'other' };
         if (typeMap[this.filter.fileType]) params.set('fileType', typeMap[this.filter.fileType]);
+        /*
+         * v1.1.6：最近浏览（按灯箱浏览时间筛）——
+         * 带 tz 让后端按浏览器本地日历日切天，否则容器跑 UTC 时「今天」会错 8 小时。
+         */
+        if (this.filter.browse && this.filter.browse !== 'all') {
+          params.set('browse', this.filter.browse);
+          params.set('tz', String(new Date().getTimezoneOffset()));
+        }
 
         const res = await fetchWithAuth(`/api/manage/list?${params.toString()}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);

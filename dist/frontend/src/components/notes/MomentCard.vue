@@ -27,9 +27,18 @@
         <div class="mc-text" :class="{ 'is-expanded': expanded }" :style="{ '--mc-text-max': maxTextHeight + 'px' }">
             <!-- 头部：时间 + 心情 + 天气 + 位置 + 可见性 -->
             <header class="mc-head">
-                <!-- 标题：编辑页自动填「日期 + 时间」，用户可改；没填标题就退化成时间 -->
+                <!--
+                    标题：编辑页自动填「日期 + 时间」，用户可改；没填标题就退化成时间。
+                    v1.1.6：时间可点 —— 点了可以校正这条内容的「实际发布时间」（需求原文）。
+                -->
                 <span class="mc-time">{{ note.title || timeText }}</span>
-                <span v-if="note.title" class="mc-time-sub">{{ timeText }}</span>
+                <button
+                    v-if="note.title"
+                    type="button"
+                    class="mc-time-sub mc-time-edit"
+                    :title="$t('notes.editPublishedAt')"
+                    @click.stop="$emit('edit-time', note)"
+                >{{ timeText }}</button>
                 <span v-if="moodEmoji" class="mc-chip" :title="moodTitle">{{ moodEmoji }}</span>
                 <span v-if="weatherEmoji" class="mc-chip" :title="weatherTitle">{{ weatherEmoji }}</span>
                 <span v-if="note.moment && note.moment.location" class="mc-loc">
@@ -50,7 +59,17 @@
                 正文里额外插一个等宽占位块，让最后一行提前让出按钮的位置，文字不会被压住。
             -->
             <div v-if="note.content" class="mc-body-wrap">
-                <div ref="body" class="mc-body">{{ note.content }}<span v-if="overflow && !expanded" class="mc-toggle-space" aria-hidden="true"></span></div>
+                <!--
+                    v1.1.6：「全文 / 收起」都在正文最后一行末尾。
+                    折叠态靠绝对定位 + 行内占位（见下）；展开态直接把按钮放进文字流尾部，
+                    这样它天然落在最后一行末尾，而不是单独占一行。
+                -->
+                <div ref="body" class="mc-body">{{ note.content }}<span v-if="overflow && !expanded" class="mc-toggle-space" aria-hidden="true"></span><button
+                        v-if="overflow && expanded"
+                        type="button"
+                        class="mc-toggle is-inline"
+                        @click.stop="expanded = false"
+                    >{{ $t('notes.collapse') }}</button></div>
                 <button
                     v-if="overflow && !expanded"
                     type="button"
@@ -59,19 +78,13 @@
                 >{{ $t('notes.showFull') }}</button>
             </div>
 
-            <!-- 展开态：按钮回到正文后面（此时正文不再限高，跟在文末最自然） -->
-            <button
-                v-if="overflow && expanded"
-                type="button"
-                class="mc-toggle"
-                @click.stop="expanded = false"
-            >{{ $t('notes.collapse') }}</button>
         </div>
 
         <!-- 附件九宫格：超过「加载几行」的部分只显示 +N，点开灯箱看全部 -->
         <MomentGrid
             v-if="assets.length"
             :assets="assets"
+            :divider="isDivider"
             @preview="(i) => $emit('preview', i)"
         />
 
@@ -241,7 +254,7 @@ export default {
         note: { type: Object, required: true }
     },
     /** 留言在卡片内部完成读写，只对外广播「这条瞬间的留言数变了」 */
-    emits: ['preview', 'edit', 'delete', 'restore', 'purge', 'tag-click', 'comment-changed'],
+    emits: ['preview', 'edit', 'delete', 'restore', 'purge', 'tag-click', 'comment-changed', 'edit-time'],
     data() {
         return {
             // 正文是否被折叠（用户可以点「全文」展开）
@@ -617,10 +630,17 @@ export default {
  *   最后一条的分割线由列表页的 `:deep(.mc:last-child)` 去掉。
  */
 .mc.is-divider {
-    padding-left: 0;
-    padding-right: 0;
-    border: none;
-    border-bottom: 1px solid var(--note-card-border, var(--glass-border, rgba(127, 127, 127, 0.16)));
+    /*
+     * v1.1.6：分割线样式不再把左右内边距清零 —— 那样标题 / 正文 / 附件区
+     * 比「边框样式」宽出 32px，同一页切换排版时内容会左右跳一下（需求原文要求两者一致）。
+     * 这里只去掉外框与底色，内边距沿用 .mc 的 14px 16px 10px。
+     *
+     * 另外三边保留 1px「透明边框」而不是 border: none —— 盒子是 border-box，
+     * 边框消失会让内容区凭空多出 1px/边，与边框样式差 2px 宽。留透明边框后
+     * 标题 / 文字 / 附件区的实际加载宽度与边框样式**逐像素一致**，只露出底边那条线。
+     */
+    border: 1px solid transparent;
+    border-bottom-color: var(--note-card-border, var(--glass-border, rgba(127, 127, 127, 0.16)));
     border-radius: 0;
     background: transparent;
     box-shadow: none;
@@ -674,6 +694,26 @@ export default {
  */
 .mc-time-sub {
     font-size: 11px;
+}
+
+/* v1.1.6：标题旁的时间做成可点按钮（改发布时间），外观仍像文字，悬停才提示可点 */
+.mc-time-edit {
+    padding: 0 2px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+.mc-time-edit:hover {
+    color: var(--el-color-primary);
+    background: var(--el-fill-color-light, rgba(127, 127, 127, 0.12));
+    text-decoration: underline;
 }
 
 .mc-chip {
@@ -748,12 +788,15 @@ export default {
     flex: 0 0 auto;
     align-self: flex-start;
     margin-top: 4px;
-    padding: 0;
+    padding: 0 6px;
     border: none;
-    background: transparent;
+    /* v1.1.6：按钮加背景色（需求原文），做成小圆角标签，压在文字上也看得清 */
+    border-radius: 6px;
+    background: var(--el-fill-color, rgba(127, 127, 127, 0.12));
     color: var(--el-color-primary);
     font-size: 13px;
     font-family: inherit;
+    line-height: 1.6;
     cursor: pointer;
 }
 
@@ -767,9 +810,17 @@ export default {
     right: 0;
     bottom: 0;
     margin-top: 0;
-    padding-left: 2px;
+    padding-left: 6px;
     line-height: 1.75;
     font-size: 13px;
+}
+
+/* v1.1.6：展开态 = 文字流里的行内标签，落在最后一行末尾，不另起一行 */
+.mc-toggle.is-inline {
+    margin: 0 0 0 4px;
+    /* pre-wrap 下不会自动断行，保证按钮整体不掉到下一行开头 */
+    white-space: nowrap;
+    vertical-align: baseline;
 }
 
 .mc-toggle:hover {
@@ -1062,8 +1113,7 @@ export default {
     }
 
     .mc.is-divider {
-        padding-left: 0;
-        padding-right: 0;
+        /* v1.1.6：手机上同样保留左右内边距，与边框样式的加载宽度一致 */
         border-radius: 0;
     }
 

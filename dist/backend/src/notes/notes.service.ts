@@ -23,7 +23,8 @@
 import { Injectable } from '@nestjs/common';
 import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
-import { findOrCreateTag } from '../common/tags';
+import { TAG_TYPE_NOTE, findOrCreateTag, tagScope } from '../common/tags';
+import { syncFileStats } from '../common/file-share-stats';
 import { fileTypeOf } from '../common/file-view';
 // v1.1.3：「图床文件」模式的筛选与图床管理共用同一份求值实现（见 common/file-filter.ts）
 import { isEmptyFileFilter, parseFileFilterQuery, passesFileFilters } from '../common/file-filter';
@@ -169,6 +170,12 @@ export interface MomentInput {
   assetIds?: string[];
   tagNames?: string[];
   instanceId?: string;
+  /**
+   * v1.1.6：实际发布时间（点击卡片标题旁的时间可改）。
+   * 接受毫秒时间戳或 ISO 字符串；只用于校正「这条内容是什么时候发的」，
+   * 不影响 createdAt（数据入库时间），排序仍按 publishedAt 走。
+   */
+  publishedAt?: number | string;
 }
 
 /** 允许排序的字段（白名单，杜绝把任意字符串塞进 orderBy） */
@@ -664,12 +671,30 @@ export class NotesService {
         ? String(input.visibility)
         : existing.visibility;
 
+    /*
+     * v1.1.6：发布时间校正 —— 只接受合法时间，且限制在「1970 ~ 现在 + 1 天」之间。
+     * 上限放宽一天是为了容忍客户端与服务端的时区差（比如用户在东八区选了「今天 23:50」）。
+     */
+    let publishedAt: Date | null = null;
+    if (input.publishedAt !== undefined) {
+      const raw = input.publishedAt;
+      const ms = typeof raw === 'number' ? raw : Date.parse(String(raw || ''));
+      if (!Number.isFinite(ms)) return { error: '发布时间格式不正确' };
+      const d = new Date(ms);
+      const min = new Date('1970-01-02T00:00:00Z').getTime();
+      const max = Date.now() + 24 * 3600 * 1000;
+      if (ms < min || ms > max) return { error: '发布时间超出允许范围（不能早于 1970 年，也不能晚于明天）' };
+      publishedAt = d;
+    }
+
     try {
       await prisma.note.update({
         where: { id: existing.id },
         data: {
           content,
           visibility,
+          // v1.1.6：发布时间的校正（未传则保持原值）
+          ...(publishedAt ? { publishedAt } : {}),
           // 封面：保持/更新为第一张图
           coverFileId: finalFiles.find((f) => mediaKindOfMime(f.mime) === 'image')?.id || '',
           version: { increment: 1 },
@@ -783,10 +808,15 @@ export class NotesService {
    * 只统计「当前用户自己的笔记」关联到的标签，计数同样只算自己的笔记。
    */
   async tagCandidates(instanceId: string, viewer: string) {
+    /*
+     * v1.1.6：按「账户 + 实例」隔离。
+     * 笔记标签的 scope 就是用户名（见 common/tags.ts tagScope），
+     * 因此这里直接按作用域取，不再需要「靠自己的笔记反查」——
+     * 也不存在两个账户共用一行标签的问题（改名 / 删除不会互相影响）。
+     */
     const rows = await prisma.tag.findMany({
       where: {
-        instanceId: String(instanceId || ''),
-        type: 'note',
+        ...tagScope(instanceId, TAG_TYPE_NOTE, viewer),
         noteTags: { some: { note: { author: String(viewer || '') } } },
       },
       select: {
@@ -813,7 +843,8 @@ export class NotesService {
    * 合并 / 拆分 / 改名 / 备注直接复用图床已有的 /api/tags/* 接口（已支持 type='note'）。
    * ====================================================================== */
   async tagAdmin(instanceId: string, kind: string, viewer: string) {
-    const where: Record<string, unknown> = { instanceId: String(instanceId || ''), type: 'note' };
+    // v1.1.6：只取「本账户 + 本实例」的笔记标签（scope = 用户名）
+    const where: Record<string, unknown> = tagScope(instanceId, TAG_TYPE_NOTE, viewer);
     const tags = await prisma.tag.findMany({ where: where as any, orderBy: { createdAt: 'asc' } });
     if (!tags.length) return [];
     /*
@@ -962,8 +993,9 @@ export class NotesService {
       status: 'active',
       instanceId: String(input.instanceId || ''),
     };
-    // 与「文件管理」同一口径：普通用户只看到自己的上传
-    if (!input.isAdmin) where.uploader = String(input.viewer || '');
+    // v1.1.6：笔记是私有内容，选文件器只给「自己账户 + 当前实例」的文件 ——
+    // 管理员同样不例外（原来 isAdmin 会跳过 uploader 过滤，能在选文件里看到别人的图床文件）。
+    where.uploader = String(input.viewer || '');
     /*
      * 搜索范围（v1.1.3）—— 与 /api/files/list 的 searchType 完全同义：
      *   all（默认，兼容老请求） = 文件名 / 文件ID / MD5 / 分类 / 标签 / MIME / 上传者
@@ -1034,8 +1066,20 @@ export class NotesService {
           tags: { include: { tag: true } },
         },
       });
-      const filtered = rows.filter((r) => passesFileFilters(r, filterOpts, matchMode));
-      const slice = filtered.slice((page - 1) * pageSize, page * pageSize);
+      // v1.1.6：筛「文件引用 / 文件共用」时按需重算统计，避免缓存滞后导致筛错
+      if (filterOpts.hasRef || filterOpts.hasShare) {
+        const statsMap = await syncFileStats(
+          rows.map((r) => r.id),
+          false,
+        );
+        for (const r of rows) {
+          const st = statsMap.get(r.id);
+          if (!st) continue;
+          (r as unknown as { refCount: number }).refCount = st.ref;
+          (r as unknown as { shareCount: number }).shareCount = st.share;
+        }
+      }
+      const filtered = rows.filter((r) => passesFileFilters(r, filterOpts, matchMode));      const slice = filtered.slice((page - 1) * pageSize, page * pageSize);
       return {
         total: filtered.length,
         page,

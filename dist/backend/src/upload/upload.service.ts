@@ -1963,6 +1963,18 @@ export class UploadService {
     this.activeUploads += 1;
     try {
       return await this.uploadInner(input, opts);
+    } catch (err) {
+      /*
+       * v1.1.6：补上传失败日志（需求原文）。
+       * 原来的 catch 只有 finally —— 抛出去的异常统一由 Nest 异常过滤器兜底，
+       * 系统日志里查不到「哪个文件、走的哪个渠道、错在哪」，线上排查只能翻进程输出。
+       */
+      appLog.error(
+        'upload',
+        '上传失败',
+        `${(err as Error).message} ｜ 文件=${input.originalName || ''} ｜ 渠道=${opts.channelId || opts.uploadChannel || '默认'}`,
+      );
+      throw err;
     } finally {
       this.activeUploads -= 1;
     }

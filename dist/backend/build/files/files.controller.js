@@ -1066,8 +1066,15 @@ let LinkController = class LinkController {
             return true;
         return (0, instance_access_1.userInInstance)(this.sessionUser(req), instanceId);
     }
-    canEditTag(req, _tag) {
-        return !!this.sessionUser(req);
+    canEditTag(req, tag) {
+        const me = this.sessionUser(req);
+        if (!me)
+            return false;
+        if (String(tag.type || '') === 'note') {
+            const holder = String(tag.scope || tag.owner || '');
+            return holder === '' || holder === me;
+        }
+        return true;
     }
     async tagSplit(req, id, body) {
         const tag = await prisma_1.prisma.tag.findUnique({ where: { id: String(id || '') } });
@@ -1078,7 +1085,7 @@ let LinkController = class LinkController {
         }
         if (!this.canEditTag(req, tag))
             throw new common_1.ForbiddenException('无权拆分其他账户的标签');
-        const owner = String(tag.owner || '');
+        const owner = String(tag.scope || tag.owner || '');
         const raw = Array.isArray(body?.names) ? body.names : [];
         const names = Array.from(new Set(raw
             .map((n) => String(n ?? '').trim())
@@ -1261,6 +1268,12 @@ let ManageController = ManageController_1 = class ManageController {
     admin(req) {
         return (0, auth_guard_1.isAdminRole)((0, auth_guard_1.currentSession)(req)?.role);
     }
+    ownFilter(req) {
+        const user = (0, auth_guard_1.currentSession)(req)?.user || '';
+        if (!user || this.admin(req))
+            return {};
+        return { uploader: user };
+    }
     async filterOwned(fileIds, req) {
         const user = (0, auth_guard_1.currentSession)(req)?.user || '';
         const rows = await prisma_1.prisma.fileRecord.findMany({
@@ -1410,6 +1423,25 @@ let ManageController = ManageController_1 = class ManageController {
         const toMs = dateTo ? dayStartMs(dateTo) + 86_400_000 - 1 : 0;
         const sizeMin = Math.max(0, Number(q.sizeMin) || 0);
         const sizeMax = Math.max(0, Number(q.sizeMax) || 0);
+        const browseKind = String(q.browse || '').toLowerCase();
+        const browseDay0 = (() => {
+            const local = new Date(Date.now() - tzOffset * 60_000);
+            return Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) + tzOffset * 60_000;
+        })();
+        const browseRange = (() => {
+            switch (browseKind) {
+                case 'today':
+                    return { start: browseDay0, end: browseDay0 + DAY_MS };
+                case 'yesterday':
+                    return { start: browseDay0 - DAY_MS, end: browseDay0 };
+                case 'beforeyesterday':
+                    return { start: browseDay0 - 2 * DAY_MS, end: browseDay0 - DAY_MS };
+                case 'week':
+                    return { start: browseDay0 - 6 * DAY_MS, end: browseDay0 + DAY_MS };
+                default:
+                    return null;
+            }
+        })();
         const fValidity = splitCsv(q.validity).map((v) => v.toLowerCase());
         const fNameChanged = splitCsv(q.nameChanged).map((v) => v.toLowerCase());
         const sizeMode = String(q.sizeMode || 'actual').toLowerCase() === 'original' ? 'original' : 'actual';
@@ -1436,6 +1468,8 @@ let ManageController = ManageController_1 = class ManageController {
         const withDeleted = fAccess.includes('deleted');
         const filterOpts = {
             hasTags,
+            hasRef: String(q.hasRef || '').toLowerCase(),
+            hasShare: String(q.hasShare || '').toLowerCase(),
             filterTags,
             tagMode,
             listType: fListType,
@@ -1481,6 +1515,9 @@ let ManageController = ManageController_1 = class ManageController {
                 status: withDeleted ? { in: ['active', 'deleted'] } : 'active',
                 ...(allInstances ? {} : { instanceId: instanceFilter }),
                 ...(ownerFilter && !shareScope ? { uploader: ownerFilter } : {}),
+                ...(browseRange
+                    ? { lastViewedAt: { gte: new Date(browseRange.start), lt: new Date(browseRange.end) } }
+                    : {}),
                 ...(encryptedOnly ? { metas: { contains: '"AccessPasswordHash"' } } : {}),
                 ...(shareScope
                     ? shareFolderOr.length
@@ -1494,6 +1531,16 @@ let ManageController = ManageController_1 = class ManageController {
             },
             orderBy: { createdAt: 'desc' },
         });
+        if (filterOpts.hasRef || filterOpts.hasShare) {
+            const statsMap = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id), false);
+            for (const r of rows) {
+                const st = statsMap.get(r.id);
+                if (!st)
+                    continue;
+                r.refCount = st.ref;
+                r.shareCount = st.share;
+            }
+        }
         const sharedMark = [];
         if (session?.user) {
             const markInstance = allInstances ? '*' : instanceFilter;
@@ -1775,6 +1822,27 @@ let ManageController = ManageController_1 = class ManageController {
             isIndexedResponse: true,
         };
     }
+    async recordBrowse(req, body) {
+        if (!(0, auth_guard_1.currentSession)(req)?.user)
+            return { success: false, message: '未登录' };
+        const ids = Array.isArray(body?.ids)
+            ? Array.from(new Set(body.ids.map((v) => String(v || '').trim()).filter(Boolean))).slice(0, 200)
+            : [];
+        if (!ids.length)
+            return { success: true, count: 0 };
+        const now = new Date();
+        try {
+            const res = await prisma_1.prisma.fileRecord.updateMany({
+                where: { status: 'active', OR: [{ id: { in: ids } }, { name: { in: ids } }] },
+                data: { lastViewedAt: now },
+            });
+            return { success: true, count: res.count, at: now.getTime() };
+        }
+        catch (err) {
+            app_log_1.appLog.warn('file', '浏览记录写入失败', err.message);
+            return { success: false, message: '记录失败' };
+        }
+    }
     async indexInfo(q) {
         const rows = await prisma_1.prisma.fileRecord.findMany({
             where: { status: 'active' },
@@ -1991,7 +2059,7 @@ let ManageController = ManageController_1 = class ManageController {
         if (!key)
             return { success: false, message: '缺少文件名' };
         const owner = (0, auth_guard_1.currentSession)(req)?.user || '';
-        const own = owner ? { uploader: owner } : {};
+        const own = this.ownFilter(req);
         const delInstance = String(q.instanceId ?? '');
         const instWhere = delInstance === '*' ? {} : { instanceId: delInstance };
         let sharedToMeDirs = [];
@@ -2064,9 +2132,13 @@ let ManageController = ManageController_1 = class ManageController {
                 return { success: false, message: `「${hitByFolder.path}」是 ${hitByFolder.owner} 共享给你的目录，不允许删除` };
             }
         }
-        const record = await prisma_1.prisma.fileRecord.findFirst({
-            where: { status: 'active', ...own, OR: [{ name: key }, { name: key.replace(/\.[^.]*$/, '') }] },
+        const nameMatch = { OR: [{ name: key }, { name: key.replace(/\.[^.]*$/, '') }] };
+        let record = await prisma_1.prisma.fileRecord.findFirst({
+            where: { status: 'active', ...own, ...nameMatch },
         });
+        if (!record && this.admin(req)) {
+            record = await prisma_1.prisma.fileRecord.findFirst({ where: { status: 'active', ...instWhere, ...nameMatch } });
+        }
         if (!record)
             return { success: false, message: '文件不存在' };
         const sharedHit = sharedHitOf(record.folder || '');
@@ -2133,6 +2205,8 @@ let ManageController = ManageController_1 = class ManageController {
         const toMs = dateTo ? dayStartMs(dateTo) + 86_400_000 - 1 : 0;
         const filterOpts = {
             hasTags: String(q.hasTags || '').toLowerCase(),
+            hasRef: String(q.hasRef || '').toLowerCase(),
+            hasShare: String(q.hasShare || '').toLowerCase(),
             filterTags: splitCsv(q.filterTags),
             tagMode: String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and',
             listType: splitCsv(q.listType),
@@ -2162,6 +2236,16 @@ let ManageController = ManageController_1 = class ManageController {
             heightMin: Math.max(0, Number(q.heightMin) || 0),
             heightMax: Math.max(0, Number(q.heightMax) || 0),
         };
+        if (filterOpts.hasRef || filterOpts.hasShare) {
+            const statsMap = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id), false);
+            for (const r of rows) {
+                const st = statsMap.get(r.id);
+                if (!st)
+                    continue;
+                r.refCount = st.ref;
+                r.shareCount = st.share;
+            }
+        }
         const filtered = rows.filter((r) => {
             if (search) {
                 const hit = r.name.toLowerCase().includes(search) ||
@@ -2326,6 +2410,7 @@ let ManageController = ManageController_1 = class ManageController {
             return { success: false, message: '没有删除权限' };
         const key = wildcardParam(req);
         const owner = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const own = this.ownFilter(req);
         if (key.startsWith('folder:')) {
             const path = key.slice('folder:'.length);
             const hit = (await this.listDeletedFoldersFor(req, owner)).find((e) => e.path === path);
@@ -2334,7 +2419,7 @@ let ManageController = ManageController_1 = class ManageController {
                 if (gate)
                     return gate;
                 try {
-                    const n = await this.purgeFolderEntry(owner, path, String(hit.instanceId || ''));
+                    const n = await this.purgeFolderEntry(this.admin(req) ? '' : owner, path, String(hit.instanceId || ''));
                     return { success: true, folder: true, purged: n };
                 }
                 catch (err) {
@@ -2344,7 +2429,7 @@ let ManageController = ManageController_1 = class ManageController {
             const rows = await prisma_1.prisma.fileRecord.findMany({
                 where: {
                     status: 'deleted',
-                    uploader: owner,
+                    ...own,
                     OR: [{ folder: path }, { folder: { startsWith: `${path}/` } }],
                 },
                 select: { id: true, name: true, uploader: true, folder: true, instanceId: true },
@@ -2364,7 +2449,7 @@ let ManageController = ManageController_1 = class ManageController {
             return { success: true, folder: true, purged: rows.length };
         }
         const record = await prisma_1.prisma.fileRecord.findFirst({
-            where: { id: key, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
+            where: { id: key, status: 'deleted', ...own },
         });
         if (!record)
             return { success: false, message: '回收站中不存在该文件' };
@@ -2393,7 +2478,11 @@ let ManageController = ManageController_1 = class ManageController {
         }
         const folderPaths = new Set((await this.listDeletedFoldersFor(req, owner)).map((e) => e.path));
         const rows = await prisma_1.prisma.fileRecord.findMany({
-            where: { id: { in: ids }, status: 'deleted', ...(owner ? { uploader: owner } : {}) },
+            where: {
+                id: { in: ids },
+                status: 'deleted',
+                ...(action === 'purge' ? this.ownFilter(req) : owner ? { uploader: owner } : {}),
+            },
         });
         const found = new Set(rows.map((r) => r.id));
         const statsMap = action === 'purge' ? await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id)) : null;
@@ -4270,6 +4359,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], ManageController.prototype, "list", null);
+__decorate([
+    (0, common_1.Post)('browse'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], ManageController.prototype, "recordBrowse", null);
 __decorate([
     (0, common_1.Get)('delete/*'),
     __param(0, (0, common_1.Req)()),

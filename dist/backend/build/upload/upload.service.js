@@ -1273,6 +1273,10 @@ let UploadService = class UploadService {
         try {
             return await this.uploadInner(input, opts);
         }
+        catch (err) {
+            app_log_1.appLog.error('upload', '上传失败', `${err.message} ｜ 文件=${input.originalName || ''} ｜ 渠道=${opts.channelId || opts.uploadChannel || '默认'}`);
+            throw err;
+        }
         finally {
             this.activeUploads -= 1;
         }

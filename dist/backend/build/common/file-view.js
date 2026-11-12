@@ -248,6 +248,9 @@ function buildMetadata(rec, copies, opts = {}) {
             ? rec.linkExpiresAt.getTime()
             : 0,
         ListType: metas.ListType || 'None',
+        LastViewedAt: rec.lastViewedAt
+            ? rec.lastViewedAt.getTime()
+            : 0,
         Rating: Number(rec.rating) || 0,
         Level: Number(rec.level) || 0,
         TimeStamp: rec.createdAt.getTime(),

@@ -418,6 +418,12 @@ export class LocalFilesController {
           cfg = {};
         }
         const synced = ch.type === 'local' && (cfg.syncToLocalFiles === true || String(cfg.syncToLocalFiles || '') === 'true');
+        /*
+         * v1.1.6：渠道被停用（「系统管理 → 渠道设置」里启用开关关闭）→ 该加载源整条隐藏。
+         * 原实现仍把停用渠道下发（enabled=false），挂载管理页会列出这个点进去就报
+         * 「该渠道已停用」的死入口；现在直接从列表里去掉。
+         */
+        if (!ch.enabled) return null;
         // 自定义本地存储渠道：没开同步开关 / 没配存储地址 → 不出现在本地文件渠道选择里
         if (ch.type === 'local' && (!synced || !String(cfg.rootPath || '').trim())) return null;
         // v1.0.5：普通用户按授权名单过滤（管理员直通）

@@ -389,7 +389,12 @@
                         :placeholder="$t('userManage.adminNotePlaceholder')"
                     />
                 </el-form-item>
-                <el-form-item :label="$t('userManage.permissions')">
+                <!--
+                    v1.1.6：「账户权限」在创建页不再显示 —— 新建账户一律按默认值（可编辑 /
+                    可删除 / 链接可用 / 启用 / 受限），权限改到「编辑账户」页或列表行内开关设置，
+                    避免创建时被这里的默认勾选误伤（需求原文）。
+                -->
+                <el-form-item v-if="!!editingUser" :label="$t('userManage.permissions')">
                     <div class="permission-row">
                         <span>{{ $t('userManage.canEdit') }}<el-switch v-model="userForm.canEdit" /></span>
                         <span>{{ $t('userManage.canDelete') }}<el-switch v-model="userForm.canDelete" /></span>

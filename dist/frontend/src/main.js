@@ -22,6 +22,8 @@ import { setupEdgeSwipeGuard } from './utils/edgeSwipeGuard'
 import { readThemeCookie } from './utils/themeCookie'
 // v3.0.0：长时间闲置 / 标签页被回收后重新访问时的「自动复活」守护
 import { setupPageRevive } from './utils/page-revive'
+// v1.1.6：网站标题占位符（{host} / {user} / {pagename}）
+import { resolveSiteTitle } from './utils/siteTitle'
 
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import 'element-plus/theme-chalk/dark/css-vars.css'
@@ -56,11 +58,12 @@ for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
  *
  * v1.0.3：「自动」态改为按【网页设置 → 白天/夜间切换时间】判断，
  * 不再跟随系统深色偏好。区间内 = 白天，区间外 = 夜间；
- * 配置留空时用默认 08:00—20:00（08:00 切白天、20:00 切夜间）。
+ * 配置留空时用默认 07:00—19:00（07:00 切白天、19:00 切夜间）。
  * 因此同一台设备不论系统主题如何，全站观感一致，也方便统一运营。
  */
-const DEFAULT_DAY_START = '08:00';
-const DEFAULT_DAY_END = '20:00';
+// v1.1.6：默认切换时间由 08:00—20:00 调整为 07:00—19:00
+const DEFAULT_DAY_START = '07:00';
+const DEFAULT_DAY_END = '19:00';
 
 /** 把 "H:MM" / "8点" / "8" 归一化成当天分钟数；非法返回 null */
 const parseClock = (raw) => {
@@ -76,9 +79,9 @@ const parseClock = (raw) => {
 /**
  * 解析「白天/夜间切换时间」配置。
  * 兼容三种写法（都是同一件事：几点切白天、几点切夜间）：
- *   ["08:00":"20:00"]  —— 后台输入框的默认展示形态
- *   08:00-20:00 / 08:00~20:00 / 08:00 20:00 / 08:00,20:00
- * 解析不出来时回落到默认 08:00—20:00。
+ *   ["07:00":"19:00"]  —— 后台输入框的默认展示形态
+ *   07:00-19:00 / 07:00~19:00 / 07:00 19:00 / 07:00,19:00
+ * 解析不出来时回落到默认 07:00—19:00。
  */
 const parseDayNightRange = (raw) => {
     const text = String(raw || '');
@@ -133,8 +136,20 @@ const applyDarkModeClass = (isDarkMode) => {
 };
 
 // 预设网站标题的函数
+/*
+ * v1.1.6：标题支持占位符（{host} / {user} / {pagename}），因此每次都要按
+ * 「当前域名 + 当前登录用户 + 当前页面路径」重新解析，不能再简单写死一个字符串。
+ * 下面这个缓存用来避免「同一份结果反复写 document.title」引起的无意义变更。
+ */
+let lastAppliedTitle = '';
 const presetSiteTitle = (userConfig) => {
-    document.title = userConfig?.siteTitle || 'GoHub';
+    const title = resolveSiteTitle(userConfig?.siteTitle, {
+        user: store.getters.sessionUser || '',
+        path: router.currentRoute?.value?.path || (typeof window !== 'undefined' ? window.location.pathname : '/')
+    });
+    if (title === lastAppliedTitle) return;
+    lastAppliedTitle = title;
+    document.title = title;
 };
 
 // 预设和更新网站图标的函数
@@ -173,7 +188,7 @@ const presetSiteIcon = (isDarkMode, userConfig) => {
  */
 const bootConfig = store.dispatch('fetchUserConfig');
 /*
- * v1.0.3：配置可能晚于「6 秒兜底」才回来（此时上面已经按默认 08:00—20:00 挂载）。
+ * v1.0.3：配置可能晚于「6 秒兜底」才回来（此时上面已经按默认 07:00—19:00 挂载）。
  * 拿到真实「白天/夜间切换时间」后再算一次，避免用户在后台改了时间却要等下一次刷新。
  */
 bootConfig.then(() => {
@@ -226,6 +241,14 @@ Promise.race([bootConfig, bootTimeout]).then(() => {
             // 同时更新网站图标
             presetSiteIcon(store.state.useDarkMode, store.getters.userConfig);
         }
+
+        /*
+         * v1.1.6：标题里的 {user} / {pagename} 依赖登录态与配置，
+         * 登录、登出、配置刷新后都要重算一次（未登录时这两个占位符解析为空）。
+         */
+        if (mutation.type === 'setSession' || mutation.type === 'clearSession' || mutation.type === 'setUserConfig') {
+            presetSiteTitle(store.getters.userConfig);
+        }
     });
 
     /*
@@ -244,6 +267,15 @@ Promise.race([bootConfig, bootTimeout]).then(() => {
     // 弹层（详情弹窗 / MessageBox / message）从 3211 起递增，才能叠在灯箱上层
     // （详情按钮开详情不关灯箱、抓拍上传确认框都依赖这一点）。
     app.use(store).use(router).use(ElementPlus, { zIndex: 3210 }).use(i18n).mount('#app');
+
+    /*
+     * v1.1.6：每切一个页面重算标题 —— 占位符 {pagename} 才能跟着页面名变
+     * （/dashboard → 图床管理、/notes → 笔记管理 …；未登录时不显示页面名）。
+     */
+    router.afterEach(() => {
+        presetSiteTitle(store.getters.userConfig);
+    });
+    presetSiteTitle(store.getters.userConfig);
 
     /*
      * 访问记录上报（v2.3.0）。

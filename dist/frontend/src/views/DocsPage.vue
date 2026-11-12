@@ -826,6 +826,23 @@ const ZH = {
         { t: '顺手修掉的三个问题', d: '① 文件引用页以前一直显示「还没有被任何引用」，实际是请求地址写错一直打不开数据，现已能正常列出；② 详情页「文件引用」的数字以前恒为 0（列表数据里没有这两个字段，弹窗打开时也没回填），现在与真实情况一致；③ 开发环境下打开文件引用页会白屏（请求被错误转发到后端），已修正转发规则。' },
         { t: '数据库与其他', d: '本版给文件表新增三列：引用统计、删除统计、来源记录（记录这条数据是从哪条复制/克隆出来的）。三列都有默认值，旧数据不需要手工回填，第一次被访问或删除时会自动算出准确值。旧的图片、外链、分享、笔记附件关系全部不受影响。' }
       ]
+    },
+    {
+      id: 'whatsnew-116',
+      title: '三十七、v1.1.6 更新要点',
+      intro: 'v1.1.6 是一次「修问题 + 补细节」的版本：把笔记灯箱「点第 3 个却打开第 1 个」和「边缘滑动变成页面后退」这一对根因相同的 bug 钉死，把笔记标签真正做成按账户 + 实例隔离，把瞬间编辑页与瞬间卡片的一批交互细节按需求逐条对齐；同时新增了「文件浏览记录」——关掉灯箱就记下这一笔，历史记录页可以按「今天 / 昨天 / 前天 / 近 7 天」回看。另外还改了排序按钮、昼夜切换默认时间、网站标题占位符、挂载渠道停用后的入口隐藏等零散项。',
+      items: [
+        { t: '灯箱为什么「有时行有时不行」', d: '父组件通常在同一个渲染批次里既设置待预览列表、又把灯箱设为打开，于是灯箱组件是「带着打开状态被创建」的。这种创建方式不会触发「打开」的监听逻辑，导致内部停在第一项，键盘、屏幕边缘返回手势、历史哨兵也都没绑上 —— 点第 3 个附件显示第 1 个，滑边缘不会关灯箱而是页面后退，都是这一处引起的。现在组件挂载时会补跑一次完整的打开流程，两个问题一起消失。' },
+        { t: '笔记标签按账户 + 实例隔离', d: '标签的唯一标识原来只有「名称 + 实例 + 类型」，两个账户取同一个标签名会落到同一条记录上，于是互相看得见。现在标签多了一个「归属」维度：文件标签统一留空，笔记标签写入作者账户名，唯一性按四元组判定。启动时会自动把历史上「多个账户共用一条笔记标签」的数据按作者拆开，老数据无需手工处理。笔记标签只有作者本人（以及同账户下的自己）能改名 / 合并，管理员也看不到别人的。' },
+        { t: '发布笔记选文件只看自己当前实例', d: '「选择文件」里原本管理员能翻到全站文件，现在一律只列出「当前账户 + 当前实例」下的图床文件，与图床管理页看到的一致。' },
+        { t: '瞬间编辑页 6 项细节', d: '① 正文输入框最小高度提到视口高度的 30%；② 「取消」左侧那句常驻的「写点什么，或发个照片」去掉了（输入框里的提示文字保留）；③ 正在上传文件时，这个位置显示「文件上传中」；④ 「链接提取」的输入框加高两行；⑤ 「选择文件 → 图床文件」里的视频现在能显示缩略图了；⑥ 心情 / 天气在桌面端把鼠标放上去会显示名称，手机上也不再是下拉框，改回和桌面一样直接点图标。' },
+        { t: '瞬间内容排版', d: '文字超长时「全文 / 收起」会落在最后一行文字的末尾并带底色，不再单独占一行；选「分割线样式」时附件不留圆角、彼此间距收到 2px，并且标题、正文、附件区的实际宽度与「边框样式」完全一致（以前会宽出 32px，来回切换排版内容会左右跳）。' },
+        { t: '发布后可以改发布时间', d: '卡片标题旁边的时间现在可以点，点开就能把这条瞬间的发布时间改成真实时间（比如补记昨天的事）。列表按发布时间排序、分组，改完立即生效；误填的时间也能随时再改回来。' },
+        { t: '新增：文件浏览记录', d: '在「图床管理」或「笔记管理」里用灯箱看过某个文件，关闭灯箱时会把这一刻记到该文件上（灯箱里左右翻过的文件都会记）。只有用灯箱看过才算，从文件详情页打开、直接点链接都不算。历史记录页「文件类型」后面新增「最近浏览」下拉，可选全部 / 今天 / 昨天 / 前天 / 近 7 天，默认不过滤。' },
+        { t: '图床管理', d: '「排序」按钮由纯图标改成「↓ 降序 / ↑ 升序」的文字按钮，桌面端鼠标移上去自动展开菜单、移走自动收起；筛选里新增「文件引用」（已引用 / 未引用）与「文件共用」（已共用 / 未共用）两组条件；移动文件时如果目标就是当前实例，只能移动不能复制（复制到同一实例没有意义）。' },
+        { t: '系统设置与首页', d: '白天 / 夜间切换时间的默认值改为 07:00 — 19:00（已手动设置过的不受影响）；网站标题支持 {host}（当前域名）、{user}（登录用户名）、{pagename}（当前页面名）三个占位符，未登录时后两个不显示、也不会留下多余的分隔符；渠道设置里停用的「挂载文件」渠道不再出现在挂载管理页；「创建用户」弹窗里的「账户权限」整组移除，新建账户走默认权限，建好后再到编辑账户里调整；首页去掉了「选一个类型，直接开始写」、放开了图标行距，并在右下角「文件」上方新增「笔记」入口。' },
+        { t: '权限与日志', d: '超级管理员现在可以删除 / 彻底删除别人名下的文件（普通用户仍然只能删自己的，行为不变）；上传失败会写入系统日志，带上文件原名与渠道，方便排查。' }
+      ]
     }
   ]
 };
@@ -1590,6 +1607,23 @@ const EN = {
         { t: 'Reference page: two sections', d: 'The page shows Refs(xx) | Shared(xx) at the top and then splits into two lists. The reference list shows which notes, folder shares or tag shares use the file, with type, time and author. The shared list shows which other records share the same physical file - which instance, who uploaded it, whether it is in the trash, and whether it was copied from yours. That section only appears when at least one shared copy exists.' },
         { t: 'Three bugs fixed along the way', d: '1) The reference page used to always claim the file was not referenced anywhere; the request URL was wrong and never returned data, it now lists correctly. 2) The reference number in the detail dialog was always zero because that data only comes from the detail endpoint and was never merged back; it now matches reality. 3) Opening the reference page in development produced a blank screen because the request was routed to the backend by mistake; the proxy rule is fixed.' },
         { t: 'Database and everything else', d: 'Three columns are added to the file table: reference count, share count and the source record (which record this one was copied or cloned from). All three have defaults, so old rows need no backfill - values are computed the first time a record is opened or deleted. Existing images, links, shares and note attachments are untouched.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-116',
+      title: '37. What is new in v1.1.6',
+      intro: 'v1.1.6 is a fixes-and-polish release. Two symptoms with one root cause are gone - the lightbox opening the first attachment instead of the one you clicked, and an edge swipe going back in the browser instead of closing the lightbox. Note tags are now truly isolated per account and instance, and a batch of interaction details in the moment editor and moment cards were aligned with the requested behaviour. It also adds file view history: closing the lightbox records the moment, and the history page can filter by today / yesterday / two days ago / last 7 days. The sort button, day-night default, site title placeholders and a few settings entries changed as well.',
+      items: [
+        { t: 'Why the lightbox only worked sometimes', d: 'The parent usually sets the preview list and opens the lightbox in the same render pass, so the component is created already open. That creation path never runs the open routine, leaving the internal index at the first item and the keyboard, edge-back gesture and history sentinel unbound. Clicking the third attachment showed the first, and an edge swipe navigated back instead of closing. Mounting now runs the open routine once, and both symptoms disappear together.' },
+        { t: 'Note tags isolated per account and instance', d: 'Tag identity used to be name + instance + type, so two accounts using the same tag name shared one row and could see each other. Tags now carry an owner dimension: file tags leave it empty, note tags store the author account name, and uniqueness is judged on the four-part key. On startup, historical tags shared by several accounts are split per author automatically, so no manual migration is needed. Only the author can rename or merge a note tag, and admins cannot see other users\' note tags at all.' },
+        { t: 'Picking files when publishing a note', d: 'The file picker used to list every file on the server for admins. It now lists only the files of the current account in the current instance, matching what the file manager shows.' },
+        { t: 'Six moment editor details', d: '1) The body field is at least 30% of the viewport height. 2) The permanent "write something, or add a photo" hint left of Cancel is gone (the input placeholder stays). 3) While files are uploading, that spot reads "Uploading files". 4) The link-extract prompt is two rows taller. 5) Videos in the built-in file picker now show thumbnails. 6) Mood and weather show their names on hover on desktop, and phones now pick them by tapping icons instead of using dropdowns.' },
+        { t: 'Moment layout', d: 'When the text overflows, the Full text / Collapse button now sits at the end of the last line and has a background instead of taking its own row. In divider style, attachments have no rounded corners and a 2px gap, and the title, text and attachment areas are exactly as wide as in bordered style - they used to be 32px wider, so switching styles made the content jump sideways.' },
+        { t: 'Edit the publish time afterwards', d: 'The time next to a moment title is now clickable and opens a picker, so you can correct the real publish time (for example to record something from yesterday). The list sorts and groups by publish time, and the change takes effect immediately; a wrong value can be corrected again at any time.' },
+        { t: 'New: file view history', d: 'Viewing a file in the lightbox - in the file manager or the note manager - records that moment on the file when the lightbox closes, including every file you swiped past. Only lightbox views count; opening the detail page or clicking a link does not. The history page gains a Recent views dropdown after File type with all / today / yesterday / two days ago / last 7 days, unfiltered by default.' },
+        { t: 'File manager', d: 'The sort button is now a labelled button - down arrow with Descending, up arrow with Ascending - and on desktop hovering opens the menu and moving away closes it. Filters gain File references (referenced / not referenced) and File sharing (shared / not shared). When the move target is the current instance, only Move is allowed; copying into the same instance is disabled.' },
+        { t: 'Settings and home page', d: 'The default day / night switch time is now 07:00 - 19:00 (manual settings are untouched). The site title accepts {host} (current domain), {user} (signed-in user) and {pagename} (current page); the latter two stay hidden when signed out and no stray separators are left behind. Disabled mounted-file channels no longer appear on the local files page. The Account permissions block is removed from the create-user dialog - new accounts start with defaults and are adjusted in the edit page afterwards. The home page drops the evergreen hint, widens the icon row spacing and adds a Notes button above the Files button in the bottom right corner.' },
+        { t: 'Permissions and logging', d: 'Super admins can now delete or purge files owned by other accounts (regular users still only delete their own, unchanged). Failed uploads are written to the system log with the original file name and channel to make troubleshooting easier.' }
       ]
     }
   ]
