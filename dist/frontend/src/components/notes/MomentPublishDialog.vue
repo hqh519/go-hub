@@ -248,12 +248,17 @@
                 <div class="mp-footer-btns">
                     <!--
                         v1.1.7：「取消」按钮左侧固定一个状态位 ——
-                        上传中显示「文件上传中」并带旋转图标（与「本地上传」按钮同款），
-                        平时显示「x 个附件」，两者都没有就整块不占位。
+                        上传中显示「文件上传中」并带旋转图标（与「本地上传」按钮同款）。
+                        v1.1.9.3（需求）：这个位置改成「永远有内容」：
+                          · 正文与附件都空 → 「写点什么，或发个照片」；
+                          · 正文或附件有内容 → 「x 个附件」。
                     -->
-                    <span v-if="uploading || assets.length" class="mp-attach-tip">
+                    <span
+                        class="mp-attach-tip"
+                        :class="{ 'is-empty': !uploading && !hasDraftContent }"
+                    >
                         <font-awesome-icon v-if="uploading" icon="spinner" spin class="mp-attach-spin" />
-                        {{ uploading ? $t('notes.uploadingHint') : $t('notes.assetCount', { n: assets.length }) }}
+                        {{ attachHintText }}
                     </span>
                     <el-button size="small" @click="visible = false">{{ $t('common.cancel') }}</el-button>
                     <el-button
@@ -416,6 +421,21 @@ export default {
             if (this.charCount > this.maxChars) return false;
             // 允许「只有附件没有文字」，但不能两者都空
             return !!this.form.content.trim() || this.assets.length > 0;
+        },
+        /** v1.1.9.3：草稿里是否有内容（正文有字 或 有附件） */
+        hasDraftContent() {
+            return !!String(this.form.content || '').trim() || this.assets.length > 0;
+        },
+        /**
+         * v1.1.9.3（需求）：「取消」按钮左侧的状态文案 ——
+         *   上传中 → 「文件上传中」；
+         *   有内容 → 「x 个附件」；
+         *   全空   → 「写点什么，或发个照片」。
+         */
+        attachHintText() {
+            if (this.uploading) return this.$t('notes.uploadingHint');
+            if (this.hasDraftContent) return this.$t('notes.assetCount', { n: this.assets.length });
+            return this.$t('notes.needContent');
         },
         footerTip() {
             /*
@@ -1448,6 +1468,12 @@ export default {
 .mp-attach-spin {
     font-size: 11px;
     color: var(--el-color-primary);
+}
+
+/* v1.1.9.3：草稿为空时这句是「引导语」而不是状态，弱化一档（不抢「发布」按钮的注意力） */
+.mp-attach-tip.is-empty {
+    opacity: 0.65;
+    font-style: italic;
 }
 
 .mp-file-input {

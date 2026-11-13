@@ -29,7 +29,7 @@
     <div
         v-if="modelValue"
         class="media-viewer"
-        :class="{ 'is-idle': !controlsVisible || silent, 'is-video': current.kind === 'video', 'is-doc': current.kind === 'pdf', 'is-text': current.kind === 'text', 'is-audio': current.kind === 'audio', 'is-landscape': landscapeCss }"
+        :class="{ 'is-idle': !controlsVisible || silent, 'is-image': current.kind === 'image', 'is-video': current.kind === 'video', 'is-doc': current.kind === 'pdf', 'is-text': current.kind === 'text', 'is-audio': current.kind === 'audio', 'is-landscape': landscapeCss }"
         @mousemove="bumpControls"
         @touchstart.passive="bumpControls"
         @wheel.passive="bumpControls"
@@ -241,7 +241,7 @@
                     :src="current.url"
                     class="mv-video"
                     :style="videoStyle"
-                    controls
+                    :controls="!isIdle"
                     playsinline
                     @ended="handleVideoEnded"
                     @volumechange="syncVideoMuted"
@@ -623,6 +623,26 @@
             </div>
         </div>
 
+        <!--
+            v1.1.9.3（需求）：图片灯箱下方的小圆点（微信朋友圈浏览图片那种）。
+            · 只在「有多张图」时出现；
+            · 只在控件隐藏时出现 —— 点屏幕唤出控件后立即隐藏（.is-idle 控制）；
+            · 切图时高亮跟着走（dotIndex = 当前图在图片列表里的序号）。
+            · 距底部 10px，与缩略图条互不干扰（缩略图条只在控件可见时出现）。
+        -->
+        <div
+            v-if="current.kind === 'image' && imageThumbs.length > 1"
+            class="mv-dots"
+            aria-hidden="true"
+        >
+            <span
+                v-for="(t, di) in imageThumbs"
+                :key="'dot-' + t.index"
+                class="mv-dot"
+                :class="{ 'is-active': di === dotIndex }"
+            ></span>
+        </div>
+
         <!-- v3.0.0（R8）：PDF 底部文档导航（桌面端显示，移动端隐藏）——当前页全部 PDF 的点播条 -->
         <div v-if="current.kind === 'pdf' && pdfItems.length > 1" class="mv-thumbs mv-doc-thumbs" @click.stop>
             <div class="mv-thumbs-track">
@@ -796,6 +816,18 @@ export default {
         }
     },
     computed: {
+        /*
+         * v1.1.9.3：控件是否处于「隐藏态」——根节点的 is-idle 与视频原生控件条共用这一份判定，
+         * 保证「视频播放条」和「自定义控件」永远同步出现 / 同步隐藏。
+         */
+        isIdle() {
+            return !this.controlsVisible || this.silent
+        },
+        /** v1.1.9.3：底部小圆点里「当前这张」的下标（只在图片灯箱用） */
+        dotIndex() {
+            const pos = this.imageThumbs.findIndex((t) => t.index === this.index)
+            return pos < 0 ? 0 : pos
+        },
         // v3.0.0 播放模式顺序：单次播放 / 单片循环 / 随机播放 / 顺序播放
         /** v3.0.0：文本预览标题栏右侧的元信息（大小 · 截断提示） */
         textMeta() {
@@ -1122,7 +1154,13 @@ export default {
             this.imageLoaded = false
             this.resetImageZoom()
             this.resetVideoZoom()
-            this.controlsVisible = true
+            /*
+             * v1.1.9.3（需求）：打开时**默认不显示**灯箱控件（标题、按钮、缩略图条、箭头、
+             * 视频原生播放条），先给一个干净的画面；点屏幕才唤出。
+             * 所以这里不再 bumpControls()，而是直接进入 idle 并清掉待执行的隐藏计时器。
+             */
+            this.controlsVisible = false
+            this.clearHideTimer()
             this.audioIndex = Math.max(0, this.audioItems.findIndex(a => a.key === this.current.key))
             // v3.0.0：文本类预览按需拉取内容
             this.loadTextPreview()
@@ -1134,7 +1172,6 @@ export default {
                 // v3.0.0（R8）打开即音频：自动播放（打开动作本身带用户手势，一般不会被拦）
                 if (this.current.kind === 'audio') this.autoplayAudio()
             })
-            this.bumpControls()
             this.bindKeys(true)
             this.lockBodyScroll()
             // v1.1.4：视频进入即读一次上次播放点（提示行只在有记忆时出现）
@@ -2572,7 +2609,11 @@ export default {
     z-index: 3200;
     display: flex;
     flex-direction: column;
-    background: rgba(18, 19, 22, 0.86);
+    /*
+     * v1.1.9.3（需求）：背景透明度降到 10% —— 只看得到页面轮廓，图片本身仍然是主角。
+     * 保留背景模糊，否则页面上的文字纹理会透过画布与图片抢注意力。
+     */
+    background: rgba(18, 19, 22, 0.1);
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
     color: #f2f3f5;
@@ -3520,6 +3561,11 @@ export default {
 }
 
 /* ── 左右切换 ──────────────────────────────────────────────── */
+/*
+ * v1.1.9.3（需求）：左右切换按钮的透明度与右上角「关闭」按钮一致 ——
+ * 关闭按钮用的是 .mv-btn 的底色（白 8% + 边框 18% 白），这里照抄同一组值，
+ * 不再用原来的「黑 42%」实心圆（看上去比关闭按钮重一档）。
+ */
 .mv-nav {
     position: absolute;
     top: 50%;
@@ -3529,16 +3575,16 @@ export default {
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 50%;
-    background: rgba(0, 0, 0, 0.42);
+    background: rgba(255, 255, 255, 0.08);
     color: #fff;
     font-size: 15px;
     cursor: pointer;
     transition: background 0.2s ease, opacity 0.25s ease;
 }
 .mv-nav:hover {
-    background: rgba(255, 255, 255, 0.24);
+    background: rgba(255, 255, 255, 0.16);
 }
 .mv-nav-prev {
     left: 8px;
@@ -3696,8 +3742,9 @@ export default {
 }
 .mv-thumb {
     flex: 0 0 auto;
-    width: 72px;
-    height: 54px;
+    /* v1.1.9.3（需求）：缩略图再小一点点（72×54 → 64×48） */
+    width: 64px;
+    height: 48px;
     padding: 0;
     border: 2px solid transparent;
     border-radius: 6px;
@@ -3722,6 +3769,42 @@ export default {
     border-color: var(--primary-color, #2563EB);
 }
 
+/* ── v1.1.9.3：图片灯箱的页码小圆点（控件隐藏时才出现） ─────────── */
+.mv-dots {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 10px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    max-width: 92vw;
+    margin: 0 auto;
+    overflow: hidden;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+.media-viewer.is-idle .mv-dots {
+    opacity: 1;
+}
+.mv-dot {
+    flex: 0 0 auto;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.42);
+    /* 背景遮罩只有 10% 不透明度，浅色页面下白点会糊在一起 —— 补一圈很淡的描边保证可辨 */
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28);
+    transition: background 0.18s ease, transform 0.18s ease;
+}
+.mv-dot.is-active {
+    background: #fff;
+    transform: scale(1.25);
+}
+
 /* ── 移动端 ────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .mv-top {
@@ -3738,6 +3821,33 @@ export default {
     .media-viewer.is-video .mv-stage {
         padding: 0;
     }
+    /*
+     * v1.1.9.3（需求）：移动端图片灯箱 —— 图片按**窗口**垂直居中，
+     * 不再为上方标题区 / 下方缩略图区让位（以前那两块占着文档流，图片被挤得偏下）。
+     * 做法：把顶栏与缩略图条都改成绝对定位浮在图片上层，舞台独占整屏高度。
+     */
+    .media-viewer.is-image .mv-top {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        z-index: 3;
+        background: linear-gradient(to bottom, rgba(0, 0, 0, 0.45), transparent);
+    }
+    .media-viewer.is-image .mv-thumbs {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 3;
+    }
+    .media-viewer.is-image .mv-stage {
+        padding: 0;
+    }
+    /* v1.1.9.3（需求）：移动端不显示「缩小 / 尺寸切换 / 放大」三个按钮（双指缩放已够用） */
+    .media-viewer.is-image .mv-zoombar {
+        display: none;
+    }
     .mv-nav {
         width: 34px;
         height: 34px;
@@ -3749,8 +3859,9 @@ export default {
         right: 4px;
     }
     .mv-thumb {
-        width: 58px;
-        height: 44px;
+        /* v1.1.9.3（需求）：移动端缩略图同步小一点点（58×44 → 52×40） */
+        width: 52px;
+        height: 40px;
     }
     .mv-audio,
     .mv-other {

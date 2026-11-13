@@ -93,7 +93,7 @@
     "rotateLeft": "左转",
     "rotateRight": "右转",
     "rotateReset": "复位",
-    "toolCrop": "框选裁剪",
+    "toolCrop": "裁剪",
     "toolBrush": "画笔",
     "toolText": "文字",
     "brushHint": "按住图片拖动即可涂鸦；颜色与粗细可在上方切换，画完点「保存」会一起写进图片。",

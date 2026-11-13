@@ -258,7 +258,7 @@
                     />
                     <div
                         class="breadcrumb-view-toggle"
-                        :class="{ 'is-list': viewMode === 'list' }"
+                        :class="{ 'is-list': viewMode === 'list', 'is-album': viewMode === 'album' }"
                         role="group"
                     >
                         <button
@@ -702,6 +702,25 @@
                             loading="lazy"
                             decoding="async"
                         />
+                        <!--
+                            v1.1.9.3：视频也铺缩略图（取首帧）——
+                            preload="metadata" 只拉文件头，不下载整段视频；
+                            #t=0.1 让内核解出第一帧而不是停在黑屏。
+                            右下角叠一个播放角标，一眼能和图片区分开。
+                        -->
+                        <template v-else-if="isVideo(item)">
+                            <video
+                                class="album-thumb album-thumb-video"
+                                :src="albumVideo(item)"
+                                muted
+                                playsinline
+                                preload="metadata"
+                                aria-hidden="true"
+                            ></video>
+                            <span class="album-play-badge" aria-hidden="true">
+                                <font-awesome-icon icon="play" />
+                            </span>
+                        </template>
                         <font-awesome-icon
                             v-else
                             :icon="albumFallbackIcon(item)"
@@ -1990,6 +2009,15 @@ methods: {
     /** 相册缩略图：走本站 /file 代理 + thumb 参数 */
     albumThumb(item) {
         return thumbUrl(this.getFileLink(item && item.name), 480);
+    },
+    /**
+     * v1.1.9.3：相册里的视频缩略图取首帧。
+     * 加 `#t=0.1` 片段参数 —— 内核会在拿到 metadata 后跳到 0.1s 处解帧，
+     * 否则很多编码的首帧是纯黑，格子里看起来像「没加载出来」。
+     */
+    albumVideo(item) {
+        const link = this.getFileLink(item && item.name) || '';
+        return link ? `${link}#t=0.1` : '';
     },
     albumTitle(item) {
         return (item && (item.displayName || item.name)) || '';
@@ -4183,12 +4211,11 @@ methods: {
     },
     updateBreadcrumbStuck() {
         /*
-         * v3.0.0（R8）：移动端（≤768px）第二行恢复「顶栏下方吸附」——
-         * 越过原始位置后切 fixed 贴在顶栏下（与顶栏同进同出），滚回原位立即复位；
-         * 桌面 / 平板（>768px）维持静态背框，并把历史 fixed 内联样式复位
-         * （窗口尺寸变化 / 热更新时也安全）。
+         * v3.0.0（R8）：移动端（≤768px）第二行「顶栏下方吸附」。
+         * v1.1.9.3（需求）：桌面端（>768px）也一并启用 —— 与移动端/笔记管理页同一套行为：
+         * 越过原始位置后切 fixed 贴在顶栏下（与顶栏同进同出），滚回原位立即复位。
          */
-        if (window.innerWidth > 768 || this.tagModeActive) {
+        if (this.tagModeActive) {
             if (this.breadcrumbStuck) this.applyBreadcrumbStuck(false);
             return;
         }
@@ -4205,6 +4232,15 @@ methods: {
         if (!this.breadcrumbStuck || this.breadcrumbThreshold === null) {
             // 原始位置 = 占位容器在文档流里的顶部（占位高度在 fixed 化过程中不变，结果稳定）
             this.breadcrumbThreshold = wrap.getBoundingClientRect().top + scrollY;
+            /*
+             * v1.1.9.3：桌面端第二行本来就贴在顶栏底边（通栏贴紧），
+             * 它的「自然位置」已经被顶栏盖住了 —— 再按自然位置判定的话，
+             * 页面滚动 0~60px 这一段里第二行会先被 fixed 顶栏吃掉一截，然后才吸附。
+             * 因此阈值整体上移一个顶栏高度：只要开始滚动就立刻吸附。
+             */
+            if (window.innerWidth > 768) {
+                this.breadcrumbThreshold -= this.breadcrumbStickyTop();
+            }
         }
         const threshold = this.breadcrumbThreshold;
         const shouldStick = scrollY > threshold + 1;
@@ -6025,6 +6061,11 @@ html.dark .trash-btn.is-active,
     transform: translateX(30px);
 }
 
+/* v1.1.9.3：滑块第三个位置（相册视图）—— 步长 = 按钮宽 28px + 间隔 2px */
+.breadcrumb-view-toggle.is-album::before {
+    transform: translateX(60px);
+}
+
 /* v2.9.0：搜索结果展示切换（展示文件夹 / 全部展开）—— 与视图切换同款滑块
    v3.0.0：去掉 6px 额外左边距（第二行间距统一交给 .breadcrumb-container 的 gap） */
 .search-scope-toggle {
@@ -6203,6 +6244,10 @@ html.dark .trash-btn.is-active,
     }
     .breadcrumb-view-toggle.is-list::before {
         transform: translateX(26px);
+    }
+    /* v1.1.9.3：移动端滑块第三步长（24px 按钮 + 2px 间隔 = 26px） */
+    .breadcrumb-view-toggle.is-album::before {
+        transform: translateX(52px);
     }
     /* v3.0.0（R5）：移动端滑块步长与 is-list 一致（26px = 24px 按钮 + 2px 间隔），
        此前漏了这条覆盖，仍按桌面 30px 平移 → 选中「直接展示文件」时背框整体偏右 4px */
@@ -6784,8 +6829,12 @@ html.dark .trash-btn.is-active,
     grid-template-columns: repeat(8, 1fr);
     grid-template-rows: none;
     gap: 16px;
-    padding: 10px;
-    padding-bottom: 0px;
+    /*
+     * v1.1.9.3（需求）：文件加载区与「第二行（全选栏）」的间距必须与列表视图一致。
+     * 列表视图的间距 = 第二行自身 margin-bottom(2px) + .list-view margin-top(15px) = 17px，
+     * 所以这里把上内边距也提到 15px（原先 10px → 12px，比列表紧 5px）。
+     */
+    padding: 15px 10px 0;
     flex-grow: 1;
     min-height: 80vh;
     align-content: start;
@@ -6807,8 +6856,9 @@ html.dark .trash-btn.is-active,
     /*
      * 贴边靠「负 margin 抵掉主容器内边距」，补偿量随断点走（--album-bleed）：
      * 手机 10px / 平板 24px / 桌面 60px —— 与 .main-container 的 padding 完全对应。
+     * v1.1.9.3：上外边距 15px —— 与列表视图（margin-top: 15px）保持同一间距。
      */
-    margin: 0 calc(-1 * var(--album-bleed, 60px));
+    margin: 15px calc(-1 * var(--album-bleed, 60px)) 0;
     align-content: start;
     align-items: start;
 }
@@ -6865,6 +6915,29 @@ html.dark .trash-btn.is-active,
     color: var(--admin-container-color);
     opacity: 0.45;
 }
+/* v1.1.9.3：视频格 —— 首帧铺满 + 右下角播放角标（不用太大，只作类型标记） */
+.album-thumb-video {
+    background: #101216;
+}
+.album-play-badge {
+    position: absolute;
+    right: 6px;
+    bottom: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 9px;
+    pointer-events: none;
+}
+/* 播放角标里的三角往右挪一点，视觉上才是「居中」的 */
+.album-play-badge :deep(svg) {
+    transform: translateX(1px);
+}
 .album-cell.is-skeleton {
     background: linear-gradient(90deg, var(--el-fill-color-light) 25%, var(--el-fill-color) 37%, var(--el-fill-color-light) 63%);
     background-size: 400% 100%;
@@ -6890,7 +6963,6 @@ html.dark .trash-btn.is-active,
     .album-view {
         --album-bleed: 10px;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        margin-top: 15px;
     }
     .album-folder-icon { font-size: 26px; }
     .album-file-icon { font-size: 24px; }
@@ -6901,7 +6973,6 @@ html.dark .trash-btn.is-active,
 @media (orientation: landscape) and (max-height: 500px) {
     .album-view {
         grid-template-columns: repeat(8, minmax(0, 1fr));
-        margin-top: 0;
     }
     .album-folder-icon { font-size: 24px; }
     .album-file-icon { font-size: 22px; }
@@ -7557,8 +7628,18 @@ html.dark .trash-btn.is-active,
     }
 
     .content,
-    .list-view {
+    .list-view,
+    .album-view {
         margin-top: 0;
+    }
+
+    /*
+     * v1.1.9.3（需求）：卡片 / 相册与第二行的间距向列表视图看齐 ——
+     * 移动端列表视图的间距只由第二行的 margin-bottom(10px) 提供（margin-top 已归零），
+     * 所以卡片区的上内边距也要归零、相册的上外边距同样归零。
+     */
+    .content {
+        padding-top: 0;
     }
 
     /*
@@ -7821,4 +7902,99 @@ html.dark .trash-btn.is-active,
         padding: 6px 2px;
     }
 }
-</style>
+
+/* ============================================================================
+ * v1.1.9.3（需求）：桌面端顶部两行「通栏贴边 + 上下贴紧 + 滚动吸附」
+ * ----------------------------------------------------------------------------
+ * 目标（与移动端 / 笔记管理页 /notes 同一套观感）：
+ *   ① 页面回滚时两行吸附在顶端（第一行本来就 fixed，这里把第二行也接上吸附）；
+ *   ② 两行左右宽度 100%，直接贴在页面左右边缘，不留缝隙；
+ *   ③ 两行之间上下间隔为 0，贴紧成一块。
+ *
+ * 几何关系（不靠负 margin 猜数字）：
+ *   · 顶栏占位容器 .admin-header-spacer 在桌面端正好 60px；
+ *   · 所以把顶栏高度也钉成 60px + top: 0 → 顶栏底边 = y 60；
+ *   · 主内容区 padding-top 20px → 第二行自然位置 = y 80；
+ *   · 给占位容器 -20px 上外边距 → 第二行正好落在 y 60，与顶栏贴死。
+ * 吸附（切 fixed）由 updateBreadcrumbStuck() 负责，桌面端阈值已上移一个顶栏高度。
+ * ========================================================================= */
+@media (min-width: 769px) {
+    /* ---------- 第一行：顶栏 ---------- */
+    .dashboard-page-v3 .admin-header-spacer .admin-header-content {
+        --admin-header-gutter: 0px;
+        top: 0;
+        /* 与占位容器等高 —— 第二行才能靠 -20px 精确贴住底边 */
+        height: 60px;
+        min-height: 60px;
+        padding: 8px 12px;
+        border-radius: 0;
+        /* 清掉 1px 透明边框环（贴边后它会在屏幕边缘留一条细缝） */
+        border-width: 0;
+    }
+
+    .dashboard-page-v3 .admin-header-spacer .admin-header-content::before {
+        inset: 0;
+        border-radius: 0;
+        border-width: 0;
+        /* 投影会压到第二行顶部形成一条暗带，通栏后两行是一整块，分隔交给第二行的底边 */
+        box-shadow: none;
+    }
+
+    /* ---------- 第二行：全选 / 视图 / 目录 / 排序工具栏 ---------- */
+    .dashboard-page-v3 .breadcrumb-sticky-wrap {
+        /*
+         * 抵消主内容区 padding-top(20px)：第二行上边贴死顶栏底边。
+         * 数值 = 主区 padding-top。主区在 769~1199 是 16px、≤1023 时顶栏占位还多出 12px
+         * 「余量」（AdminHeader 的 reservedSpace 是 offsetTop + offsetHeight + 12），
+         * 两种情况在下面的媒体查询里各自覆盖。
+         */
+        margin-top: -20px;
+    }
+
+    /* 回收站提示条在第二行上面时不能再上移，否则会与提示条叠在一起 */
+    .dashboard-page-v3 .trash-banner + .breadcrumb-sticky-wrap {
+        margin-top: 0;
+    }
+
+    .dashboard-page-v3 .breadcrumb-sticky-wrap .breadcrumb-container {
+        /* 抵消主内容区左右各 60px 内边距 → 正好 100% 视口宽 */
+        margin-left: -60px;
+        margin-right: -60px;
+        /*
+         * 必须是 border-box：这行的宽度是「100% + 左右外扩量」，
+         * 用 content-box 时 padding（6px 12px）会额外再加进来，右边多出 24px、压出横向滚动条。
+         */
+        box-sizing: border-box;
+        width: calc(100% + 120px);
+        margin-top: 0;
+        border-radius: 0;
+        /* 上 / 左 / 右三边贴死视口，只留底边一条描边 */
+        border-width: 0 0 1px 0;
+        padding: 6px 12px;
+    }
+}
+
+/* 平板（769~1199）主内容区内边距是 24px，通栏补偿量跟着走 */
+@media (min-width: 769px) and (max-width: 1199px) {
+    .dashboard-page-v3 .breadcrumb-sticky-wrap {
+        /* 主内容区 padding-top 16px */
+        margin-top: -16px;
+    }
+
+    .dashboard-page-v3 .breadcrumb-sticky-wrap .breadcrumb-container {
+        margin-left: -24px;
+        margin-right: -24px;
+        width: calc(100% + 48px);
+    }
+}
+
+/*
+ * 769~1023：平板 / 窄窗用的是「紧凑顶栏」，它的占位高度 = 顶栏高 + 12px 余量
+ * （AdminHeader 的 reservedSpace = offsetTop + offsetHeight + 12），
+ * 所以除了抵掉主区 16px，还要再抵掉这 12px。
+ */
+@media (min-width: 769px) and (max-width: 1023px) {
+    .dashboard-page-v3 .breadcrumb-sticky-wrap {
+        margin-top: -28px;
+    }
+}</style>

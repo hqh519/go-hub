@@ -115,12 +115,10 @@
                         @click="textSize = s.v"
                     >{{ s.label }}</button>
                 </span>
-                <el-button size="small" text :disabled="!annotations.length" @click="undoAnnotation">
-                    {{ $t('uploadCrop.undo') }}
-                </el-button>
-                <el-button size="small" text :disabled="!annotations.length" @click="clearAnnotations">
-                    {{ $t('uploadCrop.clear') }}
-                </el-button>
+                <!--
+                    v1.1.9.3（需求）：撤销 / 清空 从这一行移到下方「取消」按钮左侧，
+                    与「重置选区」共用同一个位置，见 footer。
+                -->
             </div>
         </div>
 
@@ -142,15 +140,41 @@
                 <span class="crop-angle">{{ rotation }}°</span>
                 <el-button size="small" text :disabled="rotating || rotation === 0" @click="resetRotation">{{ $t('uploadCrop.rotateReset') }}</el-button>
             </div>
-            <el-button size="small" text :disabled="tool !== 'crop'" @click="resetSelection">{{ $t('uploadCrop.reset') }}</el-button>
         </div>
         <p class="crop-hint">{{ hintText }}</p>
 
         <template #footer>
-            <el-button @click="$emit('update:modelValue', false)">{{ $t('common.cancel') }}</el-button>
-            <el-button type="primary" :loading="exporting" :disabled="!canCrop" @click="confirm">
-                {{ $t(confirmKey) }}
-            </el-button>
+            <!--
+                v1.1.9.3（需求）：「重置选区 / 撤销 / 清空」统一放到「取消」左侧。
+                按当前工具二选一（不再两组同时出现）：
+                  · 裁剪模式 → 只显示「重置选区」；
+                  · 画笔 / 文字模式 → 只显示「撤销」「清空」。
+            -->
+            <div class="crop-footer">
+                <div class="crop-footer-left">
+                    <el-button
+                        v-if="tool === 'crop'"
+                        size="small"
+                        text
+                        :disabled="!sel.w || !sel.h"
+                        @click="resetSelection"
+                    >{{ $t('uploadCrop.reset') }}</el-button>
+                    <template v-else>
+                        <el-button size="small" text :disabled="!annotations.length" @click="undoAnnotation">
+                            {{ $t('uploadCrop.undo') }}
+                        </el-button>
+                        <el-button size="small" text :disabled="!annotations.length" @click="clearAnnotations">
+                            {{ $t('uploadCrop.clear') }}
+                        </el-button>
+                    </template>
+                </div>
+                <div class="crop-footer-right">
+                    <el-button @click="$emit('update:modelValue', false)">{{ $t('common.cancel') }}</el-button>
+                    <el-button type="primary" :loading="exporting" :disabled="!canCrop" @click="confirm">
+                        {{ $t(confirmKey) }}
+                    </el-button>
+                </div>
+            </div>
         </template>
     </el-dialog>
 </template>
@@ -1210,10 +1234,18 @@ export default {
 .image-crop-dialog.el-dialog {
     display: flex;
     flex-direction: column;
-    /* v1.1.7：处理页宽高一起 98%（原来是「移动端满屏 / 桌面 92% 宽 + 靠内容撑高」） */
-    height: 98vh;
-    max-height: 98vh;
-    margin: 1vh auto !important;
+    /*
+     * v1.1.9.3（需求）：处理页宽高改为视口宽高的 100%（原来是 98% 宽 + 98vh 高）。
+     * 用 !important + 三连类名是因为全局 styles/responsive.css 里有两条
+     * 「.el-dialog:not(.is-fullscreen){ width: min(...,92vw) !important }」的收敛规则
+     * （≤1023 / ≤768 各一条），不加这一层压不住 —— 否则手机上会剩 8px 边、平板剩 8% 宽。
+     */
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+    max-height: 100vh !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
 }
 
 .image-crop-dialog .el-dialog__body {
@@ -1238,6 +1270,29 @@ export default {
     padding-top: 2px !important;
 }
 
+/*
+ * v1.1.9.3：「重置选区 / 撤销 / 清空」搬到「取消」左侧后，底部行改成左右两组：
+ * 左侧操作组贴左，取消 / 保存贴右（原来是整行居右，左侧这几个按钮就没地方站）。
+ */
+.crop-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.crop-footer-left {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 24px;
+}
+.crop-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
 @media (max-width: 768px) {
     .image-crop-dialog .el-dialog__body {
         padding-top: 6px;
@@ -1252,12 +1307,13 @@ export default {
     /*
      * v1.1.8（需求）：移动端的图片加载区要更大 —— 最小不小于视口高度的 60%。
      * v1.1.9（需求）：继续放大到 70%。
+     * v1.1.9.3（需求）：改为 65%（处理页整页占满视口后，底部工具不够放就用滚动条）。
      * 选择器写成「弹窗类 + 舞台类」而不是单个 .crop-stage：
      * scoped 块里有一条 `.crop-stage { min-height: 180px }`，带 data-v 属性后特异性比
      * 单独的 .crop-stage 更高，只写单类会被它盖住 —— 之前看似生效其实是 flex 拉伸的结果。
      */
     .image-crop-dialog .crop-stage {
-        min-height: 70vh;
+        min-height: 65vh;
     }
 }
 </style>

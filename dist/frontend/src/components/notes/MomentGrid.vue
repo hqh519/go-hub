@@ -408,8 +408,8 @@ export default {
 .mg {
     display: grid;
     /*
-     * v1.1.8（需求）：边框线样式下的附件间隔 2px，分割线样式下保持 1px。
-     * 两种样式的取值必须与 utils/noteSettings.js 的 attachGapOf() 完全一致 ——
+     * v1.1.9.3（需求）：两种排版样式的附件间隔统一为 2px（分割线样式原来是 1px）。
+     * 取值必须与 utils/noteSettings.js 的 attachGapOf() 完全一致 ——
      * 那边用它扣间距算格子尺寸，这里用它排版，差 1px 就会让最后一行对不齐。
      */
     gap: 2px;
@@ -421,10 +421,10 @@ export default {
 
 /*
  * v1.1.6：分割线样式下的附件 —— 圆角归零。
- * v1.1.8：间距回到 1px（只有边框线样式是 2px），圆角仍为 0。
+ * v1.1.9.3：间距 1px → 2px（与边框线样式一致，需求原文）。
  */
 .mg.is-divider {
-    gap: 1px;
+    gap: 2px;
 }
 
 .mg.is-divider .mg-cell {

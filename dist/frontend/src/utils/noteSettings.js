@@ -175,17 +175,18 @@ export const SINGLE_DEFAULT_MAX_RATIO = 0.45;
  * v1.1.7：3 → 1（需求原文：附件上下左右间距统一 1px）。
  * v1.1.8：改成按排版样式取 —— 边框线样式 2px、分割线样式 1px，
  *          用 attachGapOf() 算，不再直接引用本常量（留着是给老代码 / 默认口径兜底）。
+ * v1.1.9.3：两种样式统一 2px。
  */
-export const ATTACH_GAP = 1;
+export const ATTACH_GAP = 2;
 
 /**
- * v1.1.8（需求）：边框线样式下的附件间隔要 2px，分割线样式保持 1px。
+ * v1.1.9.3（需求）：附件间隔不分排版样式，一律 2px
+ * （分割线样式原来是 1px，现在与边框线样式拉平）。
  * 必须与 MomentGrid.vue 里 `.mg` / `.mg.is-divider` 的 gap 完全一致，
  * 否则「算出来的行高」和「实际渲染的格子」会差 1px，最后一行容易溢出。
  */
-export function attachGapOf(setting) {
-    const s = setting || noteSettings.moment;
-    return s && s.layoutStyle === 'default' ? 2 : 1;
+export function attachGapOf() {
+    return 2;
 }
 
 /** 全局设置对象：模板里直接读 `noteSettings.moment.attachRatio` */
