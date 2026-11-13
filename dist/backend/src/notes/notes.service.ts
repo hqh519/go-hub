@@ -70,6 +70,13 @@ export interface NoteListItem {
   status: string;
   author: string;
   /**
+   * v1.2.0：发布者的展示名与头像（广场朋友圈式排版用）。
+   *   authorNickname  —— users.nickname，空串表示没设昵称（前端回落 author）；
+   *   authorAvatarUrl —— 带版本戳的头像地址，空串表示没设过头像（前端显示首字占位）。
+   */
+  authorNickname: string;
+  authorAvatarUrl: string;
+  /**
    * v1.1.9.4：这条笔记是不是当前登录账户自己的。
    * 广场里会混进别人的公开笔记 —— 前端据它隐藏编辑 / 删除入口（后端写接口仍会再校验）。
    */
@@ -474,6 +481,28 @@ export class NotesService {
       countByNote.set(String(g.noteId), Number(g._count && g._count._all) || 0);
     }
 
+    /*
+     * v1.2.0：广场朋友圈式排版要显示发布者头像 / 昵称 ——
+     * 先把本页涉及的所有作者一次性查出来（一页最多 20 条，作者通常只有几个），
+     * 再在 shape 里按用户名取用，避免每条笔记查一次用户表。
+     */
+    const authorNames = Array.from(
+      new Set(rows.map((r: any) => String(r.author || '')).filter(Boolean)),
+    );
+    const profileMap = new Map<string, { nickname: string; avatar: string }>();
+    if (authorNames.length) {
+      const users = await prisma.user.findMany({
+        where: { username: { in: authorNames } },
+        select: { username: true, nickname: true, avatar: true },
+      });
+      for (const u of users as any[]) {
+        profileMap.set(String(u.username), {
+          nickname: String(u.nickname || ''),
+          avatar: String(u.avatar || ''),
+        });
+      }
+    }
+
     const list = rows.map((row: any) => {
       const assets: NoteAssetView[] = [];
       for (const a of row.assets || []) {
@@ -481,7 +510,14 @@ export class NotesService {
         if (hit) assets.push(hit);
       }
       const all = commentsByNote.get(String(row.id)) || [];
-      return this.shape(row, assets, all.slice(0, LIST_COMMENT_MAX), countByNote.get(String(row.id)) || all.length, input.viewer);
+      return this.shape(
+        row,
+        assets,
+        all.slice(0, LIST_COMMENT_MAX),
+        countByNote.get(String(row.id)) || all.length,
+        input.viewer,
+        profileMap,
+      );
     });
 
     return { total, page, pageSize, list };
@@ -501,7 +537,20 @@ export class NotesService {
   }
 
   /** 纯同步的行 → 契约映射（附件与留言由调用方传入，便于批量复用） */
-  private shape(row: any, assets: NoteAssetView[], comments: any[] = [], commentCount = 0, viewer = ''): NoteListItem {
+  private shape(
+    row: any,
+    assets: NoteAssetView[],
+    comments: any[] = [],
+    commentCount = 0,
+    viewer = '',
+    profiles?: Map<string, { nickname: string; avatar: string }>,
+  ): NoteListItem {
+    /*
+     * v1.2.0：广场朋友圈式排版需要作者昵称 / 头像。
+     * profiles 由调用方一次性查好（列表页一页只有几个作者）；
+     * 详情接口不传也不会报错 —— 那两种情况本来就只有本人看，不显示作者区。
+     */
+    const prof = profiles ? profiles.get(String(row.author || '')) : undefined;
     return {
       id: row.id,
       kind: row.kind,
@@ -513,6 +562,12 @@ export class NotesService {
       visibility: row.visibility || 'private',
       status: row.status,
       author: row.author || '',
+      // v1.2.0：作者昵称 / 头像（无昵称由前端回落用户名；无头像由前端画首字占位）
+      authorNickname: prof ? String(prof.nickname || '') : '',
+      authorAvatarUrl:
+        prof && prof.avatar
+          ? `/api/avatar/${encodeURIComponent(String(row.author || ''))}?v=${encodeURIComponent(String(prof.avatar))}`
+          : '',
       // v1.1.9.4：广场里据此区分「我的」与「别人的公开内容」
       mine: String(row.author || '') === String(viewer || ''),
       instanceId: row.instanceId || '',

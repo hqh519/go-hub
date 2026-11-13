@@ -224,8 +224,10 @@
                     <p class="lf-empty-hint">{{ $t('localFiles.noChannelHint') }}</p>
                 </div>
 
+                <!-- v1.2.0（需求）：除转圈外补一句「加载中…」，切换加载源时用户能明确知道在等什么 -->
                 <div v-else-if="loading" class="lf-loading">
                     <font-awesome-icon icon="spinner" spin />
+                    <p class="lf-loading-text">{{ $t('localFiles.loading') }}</p>
                 </div>
 
                 <!-- v3.0.0（R8）：目录和文件都没有才算空 —— 之前只有文件为空就报「没有可浏览的文件」，
@@ -911,12 +913,43 @@ export default {
             window.addEventListener('popstate', this.__popStateHandler);
             this.setupBodyMutationWatch();
         }
+        /*
+         * v1.2.0（需求）：底部批量操作栏加入 closePageOrder() / hasOpenLayer() 层叠监测。
+         *
+         * 批量栏浮在页面之上，选中文件后就属于「可被返回关掉的一层」：
+         *   · 移动端从屏幕边缘横滑 → edgeSwipeGuard 判为返回手势 → 关闭栈顶一层；
+         *   · 桌面端按 Esc → layerStack 同样只关栈顶。
+         * 没登记之前这两种操作都毫无反应（批量栏纹丝不动，用户只能去点「取消」）。
+         *
+         * z 取 1200：低于 Element Plus 弹窗（2000+），所以「批量栏 + 上传弹窗同时开着」时
+         * 先关弹窗、再关批量栏，顺序与实际叠放一致；alive 用来防止批量栏已清空、层还留在栈里。
+         */
+        this._unwatchBatchBarLayer = this.$watch(
+            () => this.selected.length,
+            (count) => {
+                if (count > 0) {
+                    registerLayer('lf-batch-bar', () => this.clearSelection(), {
+                        z: 1200,
+                        alive: () => this.selected.length > 0
+                    });
+                } else {
+                    unregisterLayer('lf-batch-bar');
+                }
+            },
+            { immediate: true }
+        );
     },
     beforeUnmount() {
         document.removeEventListener('scroll', this.handlePageScroll, true);
         window.removeEventListener('resize', this.measureTopbar);
         // v1.1.0：离开页面时把详情页这一层从浮层栈摘掉（否则栈里会残留一个关不掉的层）
         unregisterLayer('lf-file-detail');
+        // v1.2.0：批量操作栏这一层同样要摘干净，并停止监听选中数量
+        if (this._unwatchBatchBarLayer) {
+            try { this._unwatchBatchBarLayer(); } catch (e) { /* 忽略 */ }
+            this._unwatchBatchBarLayer = null;
+        }
+        unregisterLayer('lf-batch-bar');
         if (this.__popStateHandler) {
             window.removeEventListener('popstate', this.__popStateHandler);
             this.__popStateHandler = null;
@@ -2528,6 +2561,12 @@ export default {
     gap: 8px;
     padding: 60px 0;
     color: var(--el-text-color-secondary);
+}
+/* v1.2.0：「加载中…」提示语 —— 与转圈同一行间距，字号比正文略小、不抢视线 */
+.lf-loading-text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.4;
 }
 .lf-empty-icon {
     font-size: 34px;

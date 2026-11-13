@@ -20,6 +20,8 @@
             role="navigation"
             @click.stop
             @pointerdown.stop
+            @mouseenter="handleSwitcherEnter"
+            @mouseleave="handleSwitcherLeave"
         >
             <div class="page-switcher-sheet" role="menu" @click.stop>
                 <button
@@ -110,6 +112,24 @@ export default {
     computed: {
         isAdminRole() {
             return this.$store.getters.isAdminRole === true;
+        },
+        /**
+         * v1.2.0（需求）：是否为「有精确指针 + 支持悬停」的桌面端。
+         *
+         * 用 hover/pointer 媒体查询而不是单纯看宽度：
+         *   · 触屏笔记本的平板模式、iPad —— hover:none，不能靠悬停展开（手指没有「悬停」）；
+         *   · 窄窗口的桌面浏览器 —— 仍然是 hover:hover，应当保留悬停展开。
+         * 拿不到 matchMedia 时退化为按宽度判断（> 1024 视为桌面）。
+         */
+        isHoverDevice() {
+            try {
+                if (window.matchMedia) {
+                    return window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+                }
+            } catch (e) {
+                /* 极老内核：走下面的宽度兜底 */
+            }
+            return window.innerWidth > 1024;
         },
         /**
          * 下拉尾部是否注入了附加条目（「切换实例」）。
@@ -236,6 +256,28 @@ export default {
             this.bindMenuScrollDismiss();
         },
         /**
+         * v1.2.0（需求）：桌面端鼠标移入「页面切换」自动展开。
+         * 移动端（hover:none）直接返回 —— 手指没有悬停态，合成事件还可能误触发。
+         */
+        handleSwitcherEnter() {
+            if (!this.isHoverDevice) return;
+            this.cancelHoverClose();
+            if (!this.isPageMenuOpen) this.openPageMenu();
+        },
+        /**
+         * v1.2.0（需求）：桌面端鼠标移出立即收起。
+         * 留 120ms 宽限：按钮与下拉面板之间只隔 4px 内边距，
+         * 拖动鼠标时偶尔会擦过这条缝，没有宽限就会「刚展开又收回去」闪一下。
+         */
+        handleSwitcherLeave() {
+            if (!this.isHoverDevice) return;
+            this.cancelHoverClose();
+            this.hoverCloseTimer = window.setTimeout(() => {
+                this.hoverCloseTimer = null;
+                this.closePageMenu();
+            }, 120);
+        },
+        /**
          * v1.1.3：下拉展开期间，页面一滚动就收起（移动端需求）。
          * 页面切换是 fixed 元素，用户往下滚内容时菜单留在原地会挡视线。
          */
@@ -250,6 +292,15 @@ export default {
             }
         },
         togglePageMenu() {
+            /*
+             * v1.2.0：桌面端由悬停负责开合，点击不再反向关闭 ——
+             * 否则鼠标刚移上去（已自动展开）再点一下会立刻收起，
+             * 用户会以为「点了没反应 / 闪一下」。关闭交给「移开鼠标」或「点页面其它地方」。
+             */
+            if (this.isHoverDevice) {
+                if (!this.isPageMenuOpen) this.openPageMenu();
+                return;
+            }
             this.isPageMenuOpen = !this.isPageMenuOpen;
             if (this.isPageMenuOpen) this.bindMenuScrollDismiss();
             else this.clearHoveredPageOption();

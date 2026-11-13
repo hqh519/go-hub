@@ -138,6 +138,14 @@ export class SysConfigService {
             stopChars: '["#","@","&","!","-","_"]',
             maxLen: 10,
           },
+          /*
+           * v1.2.0：灯箱（文件预览浮层）外观。
+           *   opacity —— 背景遮罩不透明度，0~1，默认 0.9（需求：留空即 0.9）。
+           * 老库没有这一段，deepMerge 会补上默认值；读取时再由 normalizeOthers 兜一次范围。
+           */
+          viewer: {
+            opacity: 0.9,
+          },
         };
       case 'ai':
         return { canStoreCredentials: false, defaults: { tagPrompt: '' }, models: [] };
@@ -158,8 +166,32 @@ export class SysConfigService {
     if (section === 'page') return this.mergePage(stored);
     if (section === 'security') return this.mergeSecurity(stored);
     const merged = deepMerge(this.defaults(section), stored);
-    if (section === 'others') return this.upgradeLegacyTagRule(merged);
+    if (section === 'others') return this.normalizeOthers(this.upgradeLegacyTagRule(merged));
     return merged;
+  }
+
+  /**
+   * v1.2.0：others 分区的取值兜底。
+   *
+   * 灯箱透明度是纯数值配置，前端可能传空串 / "abc" / -1 / 2 ——
+   * 这里统一收口成 0~1 的两位小数，留空或非法一律回落 0.9（与默认值一致）。
+   * 只归一化、不删字段：用户就是想要 0 或 1 时照原样保留。
+   */
+  private normalizeOthers(cfg: any) {
+    if (!cfg || typeof cfg !== 'object') return cfg;
+    if (!cfg.viewer || typeof cfg.viewer !== 'object') cfg.viewer = {};
+    const raw = cfg.viewer.opacity;
+    const n = Number(raw);
+    if (raw === null || raw === undefined || String(raw).trim() === '' || !Number.isFinite(n)) {
+      cfg.viewer.opacity = 0.9;
+    } else if (n <= 0) {
+      cfg.viewer.opacity = 0;
+    } else if (n >= 1) {
+      cfg.viewer.opacity = 1;
+    } else {
+      cfg.viewer.opacity = Math.round(n * 100) / 100;
+    }
+    return cfg;
   }
 
   /**

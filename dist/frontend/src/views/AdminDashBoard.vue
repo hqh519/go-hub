@@ -229,11 +229,9 @@
                 <!--
                     v1.0.3：回收站内层级导航 —— 当前所在目录 + 返回上一级。
                     v1.1.9.4：目录变量与普通浏览统一为 currentPath（回收站不再有独立目录）。
+                    v1.2.0（需求）：移除提示语后面的「目录显示」，只保留「返回上一级」按钮
+                    —— 目录信息在下方面包屑里已经有了，提示条里再显示一遍是重复。
                 -->
-                <span class="trash-path" :title="currentPath || $t('dashboard.trashRoot')">
-                    <font-awesome-icon icon="folder" class="trash-path-icon"/>
-                    {{ currentPath || $t('dashboard.trashRoot') }}
-                </span>
                 <button v-if="currentPath" type="button" class="trash-up-btn" @click="leaveTrashDir">
                     <font-awesome-icon icon="arrow-left"/> {{ $t('dashboard.trashBackUp') }}
                 </button>
@@ -2071,7 +2069,14 @@ methods: {
         if (t.includes('pdf')) return 'file-pdf';
         return 'file';
     },
-    /** 相册里点一下：文件进灯箱，文件夹进目录（回收站里文件改开详情，便于恢复） */
+    /**
+     * 相册里点一下：文件进灯箱，文件夹进目录。
+     *
+     * v1.2.0（需求）：回收站下的相册视图不再打开详情页，改为与普通相册一致的灯箱浏览
+     * —— 相册是「看图」的语境，进详情反而打断浏览（详情仍可从灯箱右上角进入）。
+     * 回收站里的文件外链虽然对外 404，但灯箱用的是 `?from=admin` 管理员预览通道
+     * （后端 serve() 对 from=admin 不筛 status），缩略图与原图都能正常加载。
+     */
     handleAlbumOpen(item, index) {
         if (!item) return;
         /*
@@ -2081,10 +2086,6 @@ methods: {
         if (Date.now() - (this.longPressAt || 0) < 700) return;
         if (this.isFolder(item)) {
             this.enterFolderItem(item);
-            return;
-        }
-        if (this.trashMode) {
-            this.openDetailDialog(index, item.name);
             return;
         }
         this.openMediaPreview(item);

@@ -976,6 +976,26 @@ const ZH = {
         { t: '瞬间权限：「仅自己可见」改为「私密」并新增「指定」', d: '下拉变为私密 / 指定 / 公开，默认仍是私密。私密只有作者可见、只出现在「瞬间」；公开会同时出现在「瞬间」与「广场」；指定沿用后端已有的取值，本版先落选项与说明，挑选具体账户的界面留待后续（现有账户列表接口对普通用户只返回自己，做不出选择器）。' },
         { t: '本版没有数据库变更', d: '类型只是多了一个取值，权限复用了既有取值，广场是查询口径的变化而非新表。旧库直接覆盖升级即可。' }
       ]
+    },
+    {
+      id: 'whatsnew-120',
+      title: '四十五、v1.2.0 更新要点',
+      intro: 'v1.2.0 集中在两件事上：一是「广场」从一堆列表项变成了真正能刷的内容流 —— 每条笔记左侧带发布者头像与昵称，标签与「公开」角标全部退场；二是把散落在各处的几个小别扭一次修干净，包括灯箱缩放按钮挪到顶栏中间、灯箱背景可按需调透明度、回收站相册点击改为开灯箱、挂载管理的加载态提示、桌面端顶栏菜单改为悬停展开。',
+      items: [
+        { t: '广场改成朋友圈式排版', d: '广场里的每条笔记左侧固定一列 1:1 头像（40×40、圆角 8px、object-fit: cover），右侧是昵称 + 正文 + 附件 + 留言。昵称为空时回落显示用户名；头像取不到（或加载失败）时回落成首字方块，不会留一个破图。头像地址带版本戳 /api/avatar/用户名?v=更新时间，换头像后旧缓存自然失效。' },
+        { t: '广场不显示标签、不显示「公开」', d: '广场里的笔记不渲染标签容器，也不渲染「公开」角标。这里用的是 v-if 而不是 display: none —— 标签容器如果留在 DOM 里，笔记底部那一行是 space-between 布局，「⋯」按钮会被一个空容器推偏，看起来像没对齐。' },
+        { t: '广场附件：别人的笔记不能开文件详情', d: '广场里是跨账户内容，附件可以被任何人看，但不该让人一路点进文件详情。灯箱在广场里同时关掉 show-detail 与 record-detail：前者管顶栏的「查看详情」按钮，后者管手机上从顶部往下拉进详情那条路 —— 只关前者的话，手机上照样能滑进详情。' },
+        { t: '瞬间笔记：类型标记退场，「公开」上位', d: '瞬间卡片右上角原先显示「图片 / 视频 / 混合」这类类型标记，现在整块移除，位置让给「公开」角标。角标用 margin-left: auto 贴右，即使这一行因为宽度不够换行，它依然在最右侧，不会掉到第二行左端。' },
+        { t: '灯箱缩放按钮移到顶栏中间', d: '桌面端图片灯箱底部那一排（缩小 / 尺寸切换 / 放大）整体搬到顶部标题行，绝对居中于视口。之所以不用 flex 子项，是因为顶栏是「标题 flex: 1 + 右侧工具组」的两段式结构，中间插第三项会把右侧按钮推向偏右。桌面端给标题名限宽 34vw 让位；手机上这三颗按钮隐藏，双指缩放本来就是主路径。' },
+        { t: '其他设置新增「其他」模块与灯箱透明度', d: '系统管理 → 其他设置里，「上传相关配置」之后新增一个「其他」模块，下面挂「灯箱透明度」。留空或填非法值（比如 abc）按 0.9 处理，填 0 是全透明背景、填 1 是完全不透明，超出 0～1 会被夹到边界，最多保留两位小数。这个值只影响灯箱背后那层遮罩，不影响控件本身。' },
+        { t: '改完立刻生效，不用刷新', d: '灯箱透明度存在前端一个模块级缓存里，设置页保存成功后直接写缓存并广播一次事件，已经挂在页面上的灯箱会即时跟随，下次打开灯箱也是新值。省掉了一次「保存后要刷新页面才看得到」的沟通成本。' },
+        { t: '回收站相册：点击改开灯箱', d: '回收站下的相册视图，点文件以前是弹文件详情，现在和图库其他位置一致，直接进灯箱浏览。批量选中、长按菜单等其余行为不变。' },
+        { t: '回收站提示条去掉目录显示', d: '「当前为回收站：这里的文件可进一步恢复或彻底删除(不可逆)」后面原本还跟着一截当前目录路径，在手机上会把整条提示挤成两行，已移除；「返回上级」按钮保留。' },
+        { t: '挂载管理：切换加载源时给个交代', d: '切换加载源后如果文件还没回来，页面会先立起加载态并清掉上一个源的内容，同时显示转圈和一句「加载中」。以前这段时间是旧内容挂在页面上，看着像点了没反应。' },
+        { t: '挂载管理：底部批量操作栏纳入层叠监测', d: '卡片视图与列表视图下，选中文件后弹出的底部批量操作栏现在是一层正式的浮层。手机从屏幕边缘横滑时，先关掉它，再关页面，不会一下子退两层。层的位置排在弹窗之下，所以顺序天然正确，不会出现弹窗还开着、批量栏先没了的情况。' },
+        { t: '桌面端顶栏菜单改为悬停展开', d: '后台左上角的页面切换下拉，桌面端鼠标移上去就展开，移开自动收起，不用再点一下。判断依据不是屏幕宽度而是「这个设备有没有真正的鼠标」—— 触屏笔记本的平板模式、iPad 都是没有 hover 的，只按宽度判断会出现「手指点一下就闪开」的问题。鼠标移开时留了 120ms 宽限，按钮和面板之间那点空隙不会误关。手机上仍然保持点击展开。' },
+        { t: '本版没有数据库变更', d: '灯箱透明度存在既有的系统配置 others 分区里，其余都是前端渲染与交互的调整。旧库直接覆盖升级即可；没写过这个配置的老库会自动补上 0.9 的默认值。' }
+      ]
     }
   ]
 };
@@ -1890,6 +1910,26 @@ const EN = {
         { t: 'Publish Center: a Note category and the Square', d: 'The categories are Square, Moment, To-do, Nav, Article, Log, Note. The leading All becomes Square and changes meaning: it collects every note marked Public across all accounts and instances, readable and commentable by any signed-in user. List items carry an ownership flag, so other people content shows no edit or delete entry, and the write endpoints still check the author. The recycle bin and the Square exclude each other, entering the bin falls back to your own category, and the tag panel receives the real type rather than Square.' },
         { t: 'Moment visibility: Private plus Specified', d: 'The dropdown now reads Private, Specified, Public, with Private as the default. Private stays author-only and appears only under Moment; Public also appears in the Square. Specified uses a value the backend already accepts; this release ships the option and its explanation, and the account picker is left for later because the account list endpoint only returns the caller for non-admins.' },
         { t: 'No database changes in this release', d: 'A type gains one more value, visibility reuses existing values, and the Square is a query scope rather than a table. Overwrite upgrade works on an existing database.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-120',
+      title: '45. What is new in v1.2.0',
+      intro: 'v1.2.0 does two things. First, the Square stops looking like a list and starts looking like a feed: every entry carries the author avatar and nickname on the left, and the tags and the Public badge are gone. Second, a handful of small annoyances are cleaned up at once - the zoom buttons move to the middle of the lightbox title bar, the lightbox backdrop takes a configurable opacity, clicking a file in the recycle bin album opens the lightbox, mounted files say they are loading, and the desktop page switcher opens on hover.',
+      items: [
+        { t: 'The Square reads like a moments feed', d: 'Each entry has a fixed avatar column on the left (40x40, 8px corners, object-fit: cover) and the nickname, body, attachments and comments on the right. An empty nickname falls back to the username, and a missing or broken avatar falls back to an initial tile instead of a broken image. Avatar URLs carry a version stamp (/api/avatar/username?v=mtime), so changing your avatar invalidates the old cache by itself.' },
+        { t: 'No tags and no Public badge in the Square', d: 'Entries shown in the Square render neither the tag container nor the Public badge. This uses v-if rather than display: none on purpose: the footer row is a space-between layout, so an empty tag container left in the DOM pushes the more button off its place and the row looks misaligned.' },
+        { t: 'Square attachments cannot open the file detail', d: 'The Square is cross-account, so attachments stay viewable but must not lead into the file detail page. The lightbox turns off both show-detail and record-detail there. The first controls the View details button in the title bar; the second controls pulling down from the top on a phone, which would otherwise still open the detail even with the button hidden.' },
+        { t: 'Moments: the type marker gives way to Public', d: 'Moment cards used to show a type marker (Image, Video, Mixed) in the top-right corner. It is removed and the Public badge takes that spot. The badge is pushed right with margin-left: auto, so it stays on the right even when the row wraps on a narrow screen.' },
+        { t: 'Lightbox zoom buttons move to the middle of the title bar', d: 'On desktop the bottom row (zoom out, fit toggle, zoom in) moves into the top title row, absolutely centred in the viewport. It is not a flex child because the bar is a two-part layout (title flex: 1 plus the tool group), and inserting a third item would shove the right-hand buttons off centre. The title name is capped at 34vw to make room. On phones these buttons are hidden - pinch to zoom is the primary path there anyway.' },
+        { t: 'A new Other module with lightbox opacity', d: 'In Settings, the Other module appears after the upload-related config block and holds Lightbox opacity. Empty or invalid input (for example abc) is treated as 0.9, 0 makes the backdrop fully transparent, 1 makes it fully opaque, out-of-range values are clamped, and at most two decimals are kept. It affects only the backdrop behind the lightbox, not the controls on top of it.' },
+        { t: 'Changes apply immediately, no reload', d: 'The opacity lives in a small module-level cache in the frontend. Saving the settings page writes the cache and broadcasts an event, so a lightbox already mounted follows along, and the next one opens with the new value. No more save-then-reload to see the result.' },
+        { t: 'Recycle bin album: clicking opens the lightbox', d: 'Inside the album view of the recycle bin, clicking a file used to open the file detail dialog. It now opens the lightbox, matching every other place in the gallery. Selection and the long-press menu are unchanged.' },
+        { t: 'The recycle bin banner drops the folder path', d: 'The banner used to end with the current folder path, which wrapped onto a second line on phones. It is gone; the up-one-level button stays.' },
+        { t: 'Mounted files: a real loading state', d: 'After switching source, the page raises the loading state, clears the previous source content and shows a spinner with a Loading label until the new files arrive. Previously the old content stayed on screen, which read as if the switch had done nothing.' },
+        { t: 'Mounted files: the batch bar joins the layer stack', d: 'In card and list view, the bottom batch bar that appears on selection is now a registered layer. Swiping from the screen edge on a phone closes it first and the page second, instead of leaving two levels at once. It sits below dialogs, so the order is naturally correct.' },
+        { t: 'The desktop page switcher opens on hover', d: 'In the admin header, the page switcher opens when the pointer enters and closes when it leaves - no click needed. The check is not screen width but whether the device has a real pointer: touch laptops in tablet mode and iPads report no hover, and a width-only check makes the menu flash shut on tap. A 120ms grace period covers the small gap between the button and the panel. Phones keep tap-to-open.' },
+        { t: 'No database changes in this release', d: 'The opacity is stored in the existing others section of the system config; everything else is rendering and interaction. Overwrite upgrade works on an existing database, and an older database without this key is filled with 0.9 automatically.' }
       ]
     }
   ]

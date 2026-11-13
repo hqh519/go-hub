@@ -371,6 +371,7 @@
                         :key="n.id"
                         :ref="`card-${n.id}`"
                         :note="n"
+                        :square="isSquare"
                         @preview="(i) => openPreview(n, i)"
                         @edit="openEdit"
                         @delete="confirmDelete"
@@ -484,7 +485,8 @@
             v-model="previewVisible"
             :items="previewItems"
             :start-index="previewIndex"
-            :show-detail="true"
+            :show-detail="previewDetailAllowed"
+            :record-detail="previewDetailAllowed"
             :detail-open="detailVisible"
             @detail="openFileDetail"
             @record-detail="openFileDetail"
@@ -680,6 +682,12 @@ export default {
             previewVisible: false,
             previewItems: [],
             previewIndex: 0,
+            /*
+             * v1.2.0（需求）：广场里「别人」的笔记附件只能看，不给文件详情入口。
+             * 打开灯箱时按 note.mine 记录一次 —— 灯箱内部的「详情」按钮与
+             * 移动端下拉都读这个标记，避免看别人的附件时暴露后台详情信息。
+             */
+            previewDetailAllowed: true,
             // v1.1.6：修改发布时间的弹窗（value 用毫秒时间戳字符串，与 el-date-picker value-format="x" 对应）
             timeEditorVisible: false,
             timeEditorValue: null,
@@ -1525,6 +1533,8 @@ export default {
         openPreview(note, index) {
             const assets = (note.assets || []).filter(Boolean);
             if (!assets.length) return;
+            // v1.2.0：非本人（广场里别人的笔记）只看附件，不给文件详情入口
+            this.previewDetailAllowed = !note || note.mine !== false;
             this.previewItems = assets.map((a) => ({
                 // key 用 File_ID（= /file/<name> 的标识），灯箱的「详情」事件带回来的就是它
                 key: a.name || a.fileId,

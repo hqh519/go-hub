@@ -117,6 +117,9 @@ let SysConfigService = class SysConfigService {
                         stopChars: '["#","@","&","!","-","_"]',
                         maxLen: 10,
                     },
+                    viewer: {
+                        opacity: 0.9,
+                    },
                 };
             case 'ai':
                 return { canStoreCredentials: false, defaults: { tagPrompt: '' }, models: [] };
@@ -136,8 +139,29 @@ let SysConfigService = class SysConfigService {
             return this.mergeSecurity(stored);
         const merged = deepMerge(this.defaults(section), stored);
         if (section === 'others')
-            return this.upgradeLegacyTagRule(merged);
+            return this.normalizeOthers(this.upgradeLegacyTagRule(merged));
         return merged;
+    }
+    normalizeOthers(cfg) {
+        if (!cfg || typeof cfg !== 'object')
+            return cfg;
+        if (!cfg.viewer || typeof cfg.viewer !== 'object')
+            cfg.viewer = {};
+        const raw = cfg.viewer.opacity;
+        const n = Number(raw);
+        if (raw === null || raw === undefined || String(raw).trim() === '' || !Number.isFinite(n)) {
+            cfg.viewer.opacity = 0.9;
+        }
+        else if (n <= 0) {
+            cfg.viewer.opacity = 0;
+        }
+        else if (n >= 1) {
+            cfg.viewer.opacity = 1;
+        }
+        else {
+            cfg.viewer.opacity = Math.round(n * 100) / 100;
+        }
+        return cfg;
     }
     upgradeLegacyTagRule(cfg) {
         const at = cfg && cfg.autoTag;

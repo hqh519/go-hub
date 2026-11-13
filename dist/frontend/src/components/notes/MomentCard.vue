@@ -22,7 +22,27 @@
           · 默认最多占视口高度 20%，超出显示「更多留言」，点开后铺满；
           · 样式照朋友圈：`姓名：内容`，点任意一条即回复该条（输入框自动带「回复 @姓名：」）。
     -->
-    <article ref="root" class="mc" :class="{ 'is-deleted': note.status === 'deleted', 'is-divider': isDivider }">
+    <article ref="root" class="mc" :class="{ 'is-deleted': note.status === 'deleted', 'is-divider': isDivider, 'is-square': square }">
+        <!--
+            v1.2.0（需求）：广场改成朋友圈式排版 —— 左侧发布者 1:1 头像（圆角 8px），
+            右侧是「昵称 → 正文 → 附件」的常规内容列。非广场（我的笔记）不渲染头像列，
+            .mc-layout 退化为普通块级容器，视觉与改动前完全一致。
+        -->
+        <div class="mc-layout">
+        <div v-if="square" class="mc-avatar-col">
+            <img
+                v-if="authorAvatarUrl && !avatarFailed"
+                :src="authorAvatarUrl"
+                class="mc-avatar"
+                :alt="authorName"
+                loading="lazy"
+                @error="avatarFailed = true"
+            />
+            <span v-else class="mc-avatar is-fallback" aria-hidden="true">{{ authorInitial }}</span>
+        </div>
+        <div class="mc-main">
+        <!-- 昵称（仅广场）：没有昵称时回落用户名 -->
+        <div v-if="square" class="mc-author">{{ authorName }}</div>
         <!-- 文字区：标题 + 正文 + 全文按钮，整块受 30% 视口高度约束 -->
         <div class="mc-text" :class="{ 'is-expanded': expanded }" :style="{ '--mc-text-max': maxTextHeight + 'px' }">
             <!-- 头部：时间 + 心情 + 天气 + 位置 + 可见性 -->
@@ -48,12 +68,15 @@
                     <!-- v1.1.8：地球图标改成定位针（需求原文：「位置」要一个定位图标） -->
                     <font-awesome-icon icon="location-dot" class="mc-loc-icon" />{{ note.moment.location }}
                 </span>
-                <span v-if="note.visibility === 'public'" class="mc-public">
-                    {{ $t('notes.publicBadge') }}
-                </span>
                 <span class="mc-spacer"></span>
-                <span v-if="note.moment && note.moment.mediaKind !== 'text'" class="mc-media-kind">
-                    {{ mediaKindText }}
+                <!--
+                    v1.2.0（需求）：
+                      · 右上角不再显示笔记类型（图片 / 视频 / 混合）；
+                      · 「公开」提示挪到这个位置（原来类型徽标所在处）。
+                    广场里所有内容都是公开的，再挂一个「公开」只会重复，所以 square 下不显示。
+                -->
+                <span v-if="note.visibility === 'public' && !square" class="mc-public mc-public-corner">
+                    {{ $t('notes.publicBadge') }}
                 </span>
             </header>
 
@@ -94,7 +117,8 @@
 
         <!-- 底部：标签 + 操作 -->
         <footer class="mc-foot">
-            <div class="mc-tags">
+            <!-- v1.2.0（需求）：广场里不显示标签（朋友圈式浏览只留正文与图片） -->
+            <div v-if="!square" class="mc-tags">
                 <button
                     v-for="t in note.tags"
                     :key="t.id"
@@ -285,6 +309,8 @@
                 </div>
             </div>
         </div>
+        </div>
+        </div>
     </article>
 </template>
 
@@ -310,7 +336,13 @@ export default {
     name: 'MomentCard',
     components: { MomentGrid },
     props: {
-        note: { type: Object, required: true }
+        note: { type: Object, required: true },
+        /**
+         * v1.2.0（需求）：是否「广场」形态。
+         * 广场 = 朋友圈式浏览：左侧显示发布者头像 + 昵称，隐藏标签与「公开」徽标。
+         * 默认 false，保证「我的笔记」页面的排版与改动前完全一致。
+         */
+        square: { type: Boolean, default: false }
     },
     /** 留言在卡片内部完成读写，只对外广播「这条瞬间的留言数变了」 */
     emits: ['preview', 'edit', 'delete', 'restore', 'purge', 'tag-click', 'comment-changed', 'edit-time'],
@@ -318,6 +350,8 @@ export default {
         return {
             // 正文是否被折叠（用户可以点「全文」展开）
             expanded: false,
+            // v1.2.0：头像加载失败（账户头像文件缺失）→ 回落到首字占位
+            avatarFailed: false,
             // 正文是否真的溢出（决定要不要显示「全文」按钮）
             overflow: false,
 
@@ -357,6 +391,24 @@ export default {
             return noteSettings.moment.layoutStyle === 'divider';
         },
         /**
+         * v1.2.0（需求）：广场里的发布者信息。
+         * 优先昵称，没有昵称回落用户名（与后台「用户管理」的展示口径一致）。
+         */
+        authorName() {
+            const nick = String((this.note && this.note.authorNickname) || '').trim();
+            if (nick) return nick;
+            return String((this.note && this.note.author) || '').trim();
+        },
+        /** 头像地址：后端下发带版本戳的 URL，空串表示该账户没设过头像 */
+        authorAvatarUrl() {
+            return String((this.note && this.note.authorAvatarUrl) || '');
+        },
+        /** 没有头像时的文字占位：取昵称/用户名首字 */
+        authorInitial() {
+            const s = this.authorName;
+            return s ? s.slice(0, 1).toUpperCase() : '?';
+        },
+        /**
          * v1.1.7：正文自定义字号（笔记设置 → 通用设置 → 字体大小设置）。
          * 与出厂值相同时返回 null —— 让样式表里的「桌面 14.5px / 移动 14px」自然生效，
          * 用户没动过设置就不会因为这条内联样式改变移动端的现有观感。
@@ -386,16 +438,6 @@ export default {
             const m = this.note.moment || {};
             const hit = WEATHER_OPTIONS.find((x) => x.value === m.weather);
             return hit ? this.$t(hit.label) : (m.weatherName || '');
-        },
-        mediaKindText() {
-            const k = (this.note.moment && this.note.moment.mediaKind) || 'text';
-            const map = {
-                image: 'notes.mediaImage',
-                video: 'notes.mediaVideo',
-                audio: 'notes.mediaAudio',
-                mixed: 'notes.mediaMixed'
-            };
-            return map[k] ? this.$t(map[k]) : '';
         },
 
         /* ── 留言 ── */
@@ -836,6 +878,49 @@ export default {
     transition: box-shadow 0.2s ease, border-color 0.2s ease;
 }
 
+/* ── v1.2.0（需求）：广场 = 朋友圈式排版（左侧头像 + 昵称 / 右侧正文与图片） ──
+   .mc-layout 恒为 flex：非广场时不渲染头像列，.mc-main 独占整行，
+   视觉与改动前一致，不会因为多裹一层容器产生额外间距。 */
+.mc-layout {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+.mc-avatar-col {
+    flex: 0 0 auto;
+    width: 40px;
+}
+.mc-avatar {
+    display: block;
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;          /* 需求：头像圆角 8px，1:1 */
+    object-fit: cover;
+    background: rgba(127, 127, 127, 0.12);
+}
+.mc-avatar.is-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--note-muted, var(--el-text-color-secondary));
+}
+.mc-main {
+    flex: 1 1 auto;
+    min-width: 0;                /* 允许内部文字正常折行，不撑破卡片 */
+}
+.mc-author {
+    margin-bottom: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--note-author-color, var(--el-color-primary, #2f7bd6));
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .mc:hover {
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.07);
 }
@@ -979,9 +1064,9 @@ export default {
     flex: 1 1 auto;
 }
 
-.mc-media-kind {
-    font-size: 11px;
-    opacity: 0.65;
+/* v1.2.0（需求）：右上角的笔记类型徽标已移除，「公开」提示改到该位置 */
+.mc-public-corner {
+    margin-left: auto;
 }
 
 /*

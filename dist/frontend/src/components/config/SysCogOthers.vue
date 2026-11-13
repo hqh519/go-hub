@@ -251,6 +251,34 @@
                     <div v-if="setting.hint" class="setting-hint">{{ localized(setting, 'hint') }}</div>
                 </el-form-item>
             </el-form>
+
+            <!--
+                v1.2.0（需求）：在「上传相关配置」之后新增「其他」模块。
+                目前只有一项「灯箱透明度」—— 所有文件灯箱的背景遮罩都按这个值渲染。
+            -->
+            <h3 class="first-title">{{ $t('sysOthers.otherModule') }}
+                <el-tooltip :content="$t('sysOthers.otherModuleTooltip')" placement="right" raw-content>
+                    <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
+                </el-tooltip>
+            </h3>
+            <el-form :model="viewerSettings" label-width="150px" :disabled="saving">
+                <el-form-item class="has-hint">
+                    <template #label>
+                        {{ $t('sysOthers.lightboxOpacity') }}
+                        <el-tooltip :content="$t('sysOthers.lightboxOpacityTooltip')" placement="top" raw-content>
+                            <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
+                        </el-tooltip>
+                    </template>
+                    <div class="setting-text-row">
+                        <el-input
+                            v-model="viewerSettings.opacity"
+                            :placeholder="'0.9'"
+                            style="max-width: 200px"
+                        ></el-input>
+                    </div>
+                    <div class="setting-hint">{{ $t('sysOthers.lightboxOpacityHint') }}</div>
+                </el-form-item>
+            </el-form>
         </div>
 
         <!-- 悬浮保存按钮 -->
@@ -264,6 +292,8 @@ import FloatingSaveButton from '@/components/FloatingSaveButton.vue';
 import unsavedSettings from '@/mixins/unsavedSettings';
 import { UPLOAD_DEFAULT_CONFIG_IDS } from '@/utils/uploadDefaults';
 import { copyText } from '@/utils/clipboard';
+// v1.2.0：灯箱透明度（others.viewer.opacity）—— 保存后广播给已挂载的灯箱
+import { normalizeOpacity, setLightboxOpacity } from '@/utils/lightboxOpacity';
 
 export default {
 mixins: [unsavedSettings],
@@ -314,6 +344,11 @@ data() {
         ],
         // 上传相关配置：数据仍在 sysConfig 的 page 分区（config 数组）
         pageSettings: { config: [] },
+        /*
+         * v1.2.0：其他模块 → 灯箱透明度（sysConfig others 分区 → viewer.opacity）。
+         * 用字符串存：输入框允许临时为空（用户全删再输入），提交时才归一化。
+         */
+        viewerSettings: { opacity: '0.9' },
         // 加载状态
         loading: true,
         saving: false
@@ -327,7 +362,9 @@ computed: {
             imageTransform: this.imageTransform,
             page: this.pageSettings.config.map(({ id, value }) => ({ id, value })),
             // v1.0.1：文件标签添加设置（others.autoTag）
-            autoTag: this.autoTag
+            autoTag: this.autoTag,
+            // v1.2.0：灯箱透明度（others.viewer）
+            viewer: this.viewerSettings
         };
     },
     isEn() {
@@ -484,6 +521,13 @@ methods: {
         try {
             // 1) 其他设置分区（遥测 / 随机图 / 公开画廊 / 文件标签添加设置）
             const othersPayload = JSON.parse(JSON.stringify(this.settings));
+            /*
+             * v1.2.0：灯箱透明度随 others 分区一起提交。
+             * 留空 / 非数字一律按 0.9 落库（需求：默认留空时的值为 0.9），
+             * 后端 normalizeOthers 会再兜一次范围，两侧口径一致。
+             */
+            const lightboxOpacity = normalizeOpacity(this.viewerSettings.opacity);
+            othersPayload.viewer = { opacity: lightboxOpacity };
             // v1.0.1：文件标签添加设置随 others 分区一起提交（后端深合并，不影响其它字段）
             othersPayload.autoTag = {
                 enabled: this.autoTag.enabled === true,
@@ -534,6 +578,9 @@ methods: {
             });
 
             this.settings = { ...this.settings, ...othersPayload };
+            // v1.2.0：把归一化后的值回填输入框，并广播给已挂载的灯箱（无需刷新页面）
+            this.viewerSettings.opacity = String(lightboxOpacity);
+            setLightboxOpacity(lightboxOpacity);
             this.markSettingsSaved();
             this.$message.success(this.$t('sysOthers.settingsSaved'));
         } catch {
@@ -577,9 +624,14 @@ mounted() {
             stopChars: this.markerToText(at.stopChars === undefined ? this.autoTag.stopChars : at.stopChars, this.TAG_RULE_STOP_EXAMPLE),
             maxLen: at.maxLen === undefined ? this.autoTag.maxLen : Math.max(0, Number(at.maxLen) || 0)
         };
+        /*
+         * v1.2.0：灯箱透明度 —— 后端已把空值 / 越界值归一化，这里再走一遍 normalizeOpacity
+         * 是为了让「直接打开设置页、没保存过」时输入框显示的也是实际生效的 0.9。
+         */
+        const viewer = this.settings.viewer || {};
+        this.viewerSettings = { opacity: String(normalizeOpacity(viewer.opacity)) };
 
-        const access = security?.access || {};
-        this.imageTransform = {
+        const access = security?.access || {};        this.imageTransform = {
             enabled: access.imageTransformEnabled === true,
             allowedSizes: String(access.imageTransformAllowedSizes || '')
         };

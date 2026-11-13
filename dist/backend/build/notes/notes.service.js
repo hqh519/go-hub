@@ -257,6 +257,20 @@ let NotesService = class NotesService {
         for (const g of commentCounts) {
             countByNote.set(String(g.noteId), Number(g._count && g._count._all) || 0);
         }
+        const authorNames = Array.from(new Set(rows.map((r) => String(r.author || '')).filter(Boolean)));
+        const profileMap = new Map();
+        if (authorNames.length) {
+            const users = await prisma_1.prisma.user.findMany({
+                where: { username: { in: authorNames } },
+                select: { username: true, nickname: true, avatar: true },
+            });
+            for (const u of users) {
+                profileMap.set(String(u.username), {
+                    nickname: String(u.nickname || ''),
+                    avatar: String(u.avatar || ''),
+                });
+            }
+        }
         const list = rows.map((row) => {
             const assets = [];
             for (const a of row.assets || []) {
@@ -265,7 +279,7 @@ let NotesService = class NotesService {
                     assets.push(hit);
             }
             const all = commentsByNote.get(String(row.id)) || [];
-            return this.shape(row, assets, all.slice(0, exports.LIST_COMMENT_MAX), countByNote.get(String(row.id)) || all.length, input.viewer);
+            return this.shape(row, assets, all.slice(0, exports.LIST_COMMENT_MAX), countByNote.get(String(row.id)) || all.length, input.viewer, profileMap);
         });
         return { total, page, pageSize, list };
     }
@@ -279,7 +293,8 @@ let NotesService = class NotesService {
             mine: r.author === viewer,
         }));
     }
-    shape(row, assets, comments = [], commentCount = 0, viewer = '') {
+    shape(row, assets, comments = [], commentCount = 0, viewer = '', profiles) {
+        const prof = profiles ? profiles.get(String(row.author || '')) : undefined;
         return {
             id: row.id,
             kind: row.kind,
@@ -289,6 +304,10 @@ let NotesService = class NotesService {
             visibility: row.visibility || 'private',
             status: row.status,
             author: row.author || '',
+            authorNickname: prof ? String(prof.nickname || '') : '',
+            authorAvatarUrl: prof && prof.avatar
+                ? `/api/avatar/${encodeURIComponent(String(row.author || ''))}?v=${encodeURIComponent(String(prof.avatar))}`
+                : '',
             mine: String(row.author || '') === String(viewer || ''),
             instanceId: row.instanceId || '',
             version: Number(row.version) || 1,

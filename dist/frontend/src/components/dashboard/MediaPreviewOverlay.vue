@@ -33,6 +33,7 @@
         @mousemove="bumpControls"
         @touchstart.passive="bumpControls"
         @wheel.passive="bumpControls"
+        :style="{ '--mv-backdrop-opacity': backdropOpacity }"
     >
         <!-- 背景遮罩：灰系偏暗、带透明度 + 轻微模糊 -->
         <div class="mv-backdrop" @click="onOutsideClick"></div>
@@ -42,6 +43,41 @@
             <div class="mv-title" :title="current.name">
                 <span class="mv-title-name">{{ current.name }}</span>
                 <span v-if="current.sizeText" class="mv-title-meta">{{ current.sizeText }}</span>
+            </div>
+            <!--
+                v1.2.0（需求）：桌面端图片灯箱的「缩小 / 尺寸切换 / 放大」从底栏移到标题行中间。
+                绝对定位居中，不参与 flex 排布 —— 标题再长也不会把右侧工具组挤走；
+                移动端整组隐藏（双指缩放已够用，与 v1.1.9.3 的口径一致）。
+            -->
+            <div v-if="current.kind === 'image'" class="mv-top-zoom" @click.stop>
+                <button
+                    type="button"
+                    class="mv-btn"
+                    :title="$t('mediaViewer.zoomOut')"
+                    :aria-label="$t('mediaViewer.zoomOut')"
+                    @click.stop="zoomStep(-1)"
+                >
+                    <font-awesome-icon icon="search-minus"/>
+                </button>
+                <button
+                    type="button"
+                    class="mv-btn"
+                    :class="{ 'is-on': fitMode === 'actual' }"
+                    :title="fitMode === 'actual' ? $t('mediaViewer.fitWindow') : $t('mediaViewer.actualSize')"
+                    :aria-label="fitMode === 'actual' ? $t('mediaViewer.fitWindow') : $t('mediaViewer.actualSize')"
+                    @click.stop="toggleFit"
+                >
+                    <font-awesome-icon :icon="fitMode === 'actual' ? 'compress-alt' : 'expand-alt'"/>
+                </button>
+                <button
+                    type="button"
+                    class="mv-btn"
+                    :title="$t('mediaViewer.zoomIn')"
+                    :aria-label="$t('mediaViewer.zoomIn')"
+                    @click.stop="zoomStep(1)"
+                >
+                    <font-awesome-icon icon="search-plus"/>
+                </button>
             </div>
             <div class="mv-tools">
                 <template v-if="current.kind === 'image'">
@@ -569,40 +605,9 @@
             </button>
 
             <!--
-                v3.0.0（R9-F）：图片缩放栏改为浮动在图片上层（stage 内部、链尾之后，不破坏 v-if 链）：
-                缩小 / 实际大小·适应窗口 / 放大（每次 ±10%）。
-                不再独占一行，图片默认可用高度因此扩大到「标题行 ~ 缩略图行」之间。
+                v1.2.0（需求）：三按钮已上移到顶栏标题行中间（见 .mv-top-zoom），
+                这里不再保留底部浮动缩放栏。
             -->
-            <div v-if="current.kind === 'image'" class="mv-zoombar" @click.stop>
-                <button
-                    type="button"
-                    class="mv-btn"
-                    :title="$t('mediaViewer.zoomOut')"
-                    :aria-label="$t('mediaViewer.zoomOut')"
-                    @click.stop="zoomStep(-1)"
-                >
-                    <font-awesome-icon icon="search-minus"/>
-                </button>
-                <button
-                    type="button"
-                    class="mv-btn"
-                    :class="{ 'is-on': fitMode === 'actual' }"
-                    :title="fitMode === 'actual' ? $t('mediaViewer.fitWindow') : $t('mediaViewer.actualSize')"
-                    :aria-label="fitMode === 'actual' ? $t('mediaViewer.fitWindow') : $t('mediaViewer.actualSize')"
-                    @click.stop="toggleFit"
-                >
-                    <font-awesome-icon :icon="fitMode === 'actual' ? 'compress-alt' : 'expand-alt'"/>
-                </button>
-                <button
-                    type="button"
-                    class="mv-btn"
-                    :title="$t('mediaViewer.zoomIn')"
-                    :aria-label="$t('mediaViewer.zoomIn')"
-                    @click.stop="zoomStep(1)"
-                >
-                    <font-awesome-icon icon="search-plus"/>
-                </button>
-            </div>
         </div>
 
         <!-- ── 底部缩略图条（仅图片灯箱） ─────────────────────── -->
@@ -687,6 +692,13 @@
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
 import { registerLayer, unregisterLayer } from '@/utils/layerStack';
+// v1.2.0（需求）：灯箱背景透明度由系统设置下发（默认 0.9），全站共用一个模块级缓存
+import {
+    DEFAULT_LIGHTBOX_OPACITY,
+    getLightboxOpacity,
+    loadLightboxOpacity,
+    onLightboxOpacityChange,
+} from '@/utils/lightboxOpacity';
 // v1.0.7：抓拍图上传前选「目标渠道 / 归属实例 / 上传目录」，与本地文件页共用同一组件
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 
@@ -737,7 +749,17 @@ export default {
         /** v1.0.5：关闭按钮左侧是否显示「上传」按钮（本地文件页用） */
         upload: { type: Boolean, default: false },
         /** v1.0.5：上传进行中（按钮转圈并禁用） */
-        uploadBusy: { type: Boolean, default: false }
+        uploadBusy: { type: Boolean, default: false },
+        /**
+         * v1.2.0（需求）：是否允许从灯箱进「文件详情页」。
+         *
+         * 背景：广场里别人公开笔记的附件，允许查看但不该给出详情入口
+         * （详情页会暴露存储渠道 / 上传者 / 链接等后台信息）。
+         * 注意不能只靠 showDetail —— 移动端下拉在 `current.recordId` 有值时
+         * 会优先走 openRecordDetail()，与 showDetail 无关，所以这里单独一个开关，
+         * 两者一起关掉才是真的没有入口。
+         */
+        recordDetail: { type: Boolean, default: true }
     },
     // v1.1.6：viewed = 灯箱关闭时上报本轮看过的文件（父组件负责写浏览记录）
     emits: ['update:modelValue', 'detail', 'close-detail', 'view-uploaded', 'upload', 'record-detail', 'viewed'],
@@ -751,6 +773,8 @@ export default {
             silent: false,
             // 图片
             fitMode: 'fit',            // fit = 适应窗口，actual = 实际大小
+            // v1.2.0：灯箱背景透明度（系统设置 → 其他设置 → 灯箱透明度，默认 0.9）
+            backdropOpacity: DEFAULT_LIGHTBOX_OPACITY,
             // v1.0.4：原图是否已解码完成（false 时显示缩略图占位）
             imageLoaded: false,
             // v3.0.0 PC 图片滚轮缩放 + 拖拽状态
@@ -1121,6 +1145,12 @@ export default {
         this.bindKeys(false)
         // v1.1.8：组件被直接卸载时也要把页面滚动解开，否则整页再也滚不动
         this.unlockBodyScroll()
+        // v1.2.0：摘掉灯箱透明度的订阅（防止卸载后仍被事件回调引用）
+        this._isUnmounted = true
+        if (this._offOpacity) {
+            try { this._offOpacity() } catch (e) { /* 忽略 */ }
+            this._offOpacity = null
+        }
         /*
          * v1.1.8：灯箱不再自己挂边缘手势 —— 全站由 utils/edgeSwipeGuard 统一判定
          * 「这是一次返回手势」并调 layerStack.closePageOrder() 按层级从大到小关一层，
@@ -1138,6 +1168,17 @@ export default {
          * 边缘滑动就变成了页面后退而不是关灯箱。
          */
         if (this.modelValue) this.applyOpenState()
+        /*
+         * v1.2.0：背景透明度取系统设置。先用缓存值立即可见（首屏不闪），
+         * 再异步补一次真实值；设置页保存时通过事件广播，已挂载的灯箱即时跟随。
+         */
+        this.backdropOpacity = getLightboxOpacity()
+        loadLightboxOpacity().then((v) => {
+            if (!this._isUnmounted) this.backdropOpacity = v
+        })
+        this._offOpacity = onLightboxOpacityChange((v) => {
+            this.backdropOpacity = v
+        })
     },
     methods: {
         /** 打开灯箱时的一次性初始化（watcher 与首次挂载共用） */
@@ -1707,7 +1748,11 @@ export default {
                      * 文件详情页；未落库才回落到「当前预览项」的元数据弹窗（showDetail）。
                      * 旧实现只看 showDetail，而本地文件页不接详情事件，于是下拉毫无反应。
                      */
-                } else if (this.current.recordId) {
+                    /*
+                     * v1.2.0：下拉入口同样受 recordDetail 控制 ——
+                     * 广场里看别人的附件时不该经这条路进详情页（其优先级高于 showDetail）。
+                     */
+                } else if (this.current.recordId && this.recordDetail) {
                     this.openRecordDetail()
                 } else if (this.showDetail) {
                     this.goDetail()
@@ -2617,9 +2662,11 @@ export default {
     /*
      * v1.1.9.4（需求）：背景不透明度改到 90%。
      * v1.1.9.3 曾降到 10%（几乎全透），但浅色页面下白色控件几乎无对比；
-     * 这一版按需求回调到 90%，图片/视频仍是画面主体，页面只隐约透出。
+     * 那一版按需求回调到 90%，图片/视频仍是画面主体，页面只隐约透出。
+     * v1.2.0（需求）：改由系统设置「其他设置 → 其他 → 灯箱透明度」控制，
+     * 默认 0.9；组件把配置值写成内联变量 --mv-backdrop-opacity，没配置时回落 0.9。
      */
-    background: rgba(18, 19, 22, 0.9);
+    background: rgba(18, 19, 22, var(--mv-backdrop-opacity, 0.9));
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
     color: #f2f3f5;
@@ -3635,18 +3682,17 @@ export default {
     opacity: 0;
     pointer-events: none;
 }
-/* ── v3.0.0（R9-F）：图片缩放栏（浮动在图片上层：stage 内 absolute 底部居中药丸） ──
-   不再独占一行 → 图片默认可用高度扩大到「标题行 ~ 缩略图行」之间
-   v3.0.0（R12）：去掉三个按钮外层的共用背框（背景 / 边框 / 药丸内边距全部透明），
-   只保留三个按钮自身的样式。 */
-.mv-zoombar {
+/* ── v1.2.0（需求）：图片缩放三按钮移到顶栏标题行中间 ──
+   绝对定位居中，不参与 .mv-top 的 flex 排布：
+   · 标题再长也只会被截断（见下面的 max-width），不会把右侧工具组挤走；
+   · 顶栏自动隐藏时整行 opacity 归零，按钮随之隐藏，不用单独写 .is-idle。
+   移动端整组隐藏（双指缩放已够用，沿用 v1.1.9.3 口径）。 */
+.mv-top-zoom {
     position: absolute;
     left: 50%;
-    /* v3.0.0（R14）：三按钮（缩小/尺寸切换/放大）整体下移 10px
-       v3.0.0（R15）：再下移 15px（24 → 9） */
-    bottom: 9px;
-    transform: translateX(-50%);
-    z-index: 4;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 3;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -3655,11 +3701,12 @@ export default {
     border-radius: 999px;
     background: transparent;
     border: 0;
-    transition: opacity 0.25s ease;
 }
-.media-viewer.is-idle .mv-zoombar {
-    opacity: 0;
-    pointer-events: none;
+/* 桌面端图片灯箱：给居中按钮组让出位置，标题最多占 34vw，不会被按钮压住尾部 */
+@media (min-width: 1025px) {
+    .media-viewer.is-image .mv-title-name {
+        max-width: 34vw;
+    }
 }
 /* ── v3.0.0（R8）：PDF 底部文档导航条（桌面端） ──────────────── */
 /*
@@ -3884,8 +3931,9 @@ export default {
     .media-viewer.is-image .mv-stage {
         padding: 0;
     }
-    /* v1.1.9.3（需求）：移动端不显示「缩小 / 尺寸切换 / 放大」三个按钮（双指缩放已够用） */
-    .media-viewer.is-image .mv-zoombar {
+    /* v1.1.9.3（需求）：移动端不显示「缩小 / 尺寸切换 / 放大」三个按钮（双指缩放已够用）
+       v1.2.0：这组按钮已移到顶栏（.mv-top-zoom），隐藏规则跟着改名 */
+    .media-viewer.is-image .mv-top-zoom {
         display: none;
     }
     .mv-nav {
