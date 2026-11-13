@@ -1932,6 +1932,15 @@ export class ManageController {
       if (!fAccess.includes('encrypted')) fAccess.push('encrypted');
     }
     const encryptedOnly = fAccess.includes('encrypted');
+    /*
+     * v1.1.9.4：回收站不再是「独立模式」，而是本接口的一个筛选开关。
+     *   statusOnly=deleted → 只取 status='deleted'，其余（目录聚合 / 搜索 / 筛选 /
+     *   排序 / 分页 / 实例隔离）全部复用同一条链路，于是回收站天然拥有
+     *   图床管理的全部功能（全选、视图切换、展示模式、排序、目录选择、回退机制）。
+     * 与 accessStatus=deleted 的区别：后者是「active + deleted 混排」，
+     * 前者是「只看 deleted」——回收站要的正是后者。
+     */
+    const onlyDeleted = String(q.statusOnly || '').toLowerCase() === 'deleted';
     const fLabel = splitCsv(q.label);
     const fFileType = splitCsv(q.fileType);
     const fChannel = splitCsv(q.channel);
@@ -2030,7 +2039,8 @@ export class ManageController {
     const matchModeRaw = String(q.matchMode || '').toLowerCase();
     const matchMode: 'all' | 'any' = matchModeRaw === 'any' || matchModeRaw === 'or' ? 'any' : 'all';
     const fUsers = splitCsv(q.filterUsers);
-    const withDeleted = fAccess.includes('deleted');
+    // v1.1.9.4：statusOnly=deleted 时不再叠加「混排」，两者互斥（只看已删除）
+    const withDeleted = !onlyDeleted && fAccess.includes('deleted');
     const filterOpts = {
       hasTags,
       // v1.1.6：引用 / 共用筛选
@@ -2096,7 +2106,13 @@ export class ManageController {
 
     const rows = await prisma.fileRecord.findMany({
       where: {
-        status: withDeleted ? { in: ['active', 'deleted'] } : 'active',
+        /*
+         * v1.1.9.4：三态 ——
+         *   · statusOnly=deleted → 只看回收站（status='deleted'）；
+         *   · accessStatus 含 deleted → active + deleted 混排（筛选弹窗的老语义）；
+         *   · 其余 → 只看 active。
+         */
+        status: onlyDeleted ? 'deleted' : withDeleted ? { in: ['active', 'deleted'] } : 'active',
         // v3.0.0（R5）：全部实例（instanceId=*）时不加实例条件
         ...(allInstances ? {} : { instanceId: instanceFilter }),
         /*
@@ -2130,7 +2146,8 @@ export class ManageController {
         copies: { include: { channel: true } },
         tags: { include: { tag: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      // v1.1.9.4：回收站按「删除时间」倒序（与原来的独立接口一致），普通列表仍按创建时间
+      orderBy: onlyDeleted ? { deletedAt: 'desc' } : { createdAt: 'desc' },
     });
 
     /*
@@ -2220,7 +2237,8 @@ export class ManageController {
     // 合并「已新建但暂无文件」的空目录（文件管理左上角「新建目录」登记的逻辑目录）
     // v3.0.0：shareScope 生效时这些登记目录不属于共享范围，不参与聚合
     // v1.0.0：登记目录按「账户 + 实例」隔离，这里必须带上当前实例（'*' = 全部实例合并）
-    for (const d of shareScope ? [] : await this.extraFolders(req, allInstances ? '*' : instanceFilter)) allFolders.add(d);
+    // v1.1.9.4：回收站里不并入登记目录 —— 没有任何已删文件的目录不该出现在回收站里
+    for (const d of shareScope || onlyDeleted ? [] : await this.extraFolders(req, allInstances ? '*' : instanceFilter)) allFolders.add(d);
 
     const matched = rows.filter((r) => {
       /* ---------- 搜索 / 标签搜索：不属于弹窗筛选，恒为 AND ---------- */
@@ -2460,6 +2478,16 @@ export class ManageController {
        */
       (item as any).instanceId = r.instanceId || '';
       (item as any).folder = r.folder || '';
+      /*
+       * v1.1.9.4：回收站筛选态下，条目要能直接喂给现有的「恢复 / 彻底删除」链路 ——
+       * 那条链路认的是 trashId（文件 = files.id；目录 = 'folder:<路径>'），
+       * 这里原样下发，前端不用再维护一套回收站专用结构。
+       * deletedAt 供列表 / 卡片显示「删除于 …」。
+       */
+      if (onlyDeleted) {
+        (item as any).trashId = r.id;
+        (item as any).deletedAt = r.deletedAt ? new Date(r.deletedAt).toISOString() : null;
+      }
       // v3.0.0（第四轮）：「共享」标识 —— 目录及子目录下的全部文件，发起方与接收方都打标
       const sharedInfo = sharedInfoOf(r);
       if (sharedInfo) {
@@ -5445,10 +5473,16 @@ export class ManageController {
     const instanceId = String(q.instanceId ?? '');
     const admin = this.admin(req);
     const me = currentSession(req)?.user || '';
+    /*
+     * v1.1.9.4：回收站同样是「筛选态」，所以目录树也要跟着换数据源 ——
+     * statusOnly=deleted 时按已删除文件的 folder 聚合，回收站里的
+     * 「目录选择 / 全局目录树 / 回退」才能列出真实存在的层级。
+     */
+    const onlyDeleted = String(q.statusOnly || '').toLowerCase() === 'deleted';
 
     const rows = await prisma.fileRecord.groupBy({
       by: ['folder'],
-      where: { status: 'active', instanceId, uploader: me },
+      where: { status: onlyDeleted ? 'deleted' : 'active', instanceId, uploader: me },
     });
     const base = new Set<string>(rows.map((r) => r.folder).filter(Boolean) as string[]);
 
@@ -5472,9 +5506,12 @@ export class ManageController {
     }
     // 已登记的「空目录」
     // v1.0.0：按当前实例读取（原来读的是账户级旧键，A 实例登记的目录会在所有实例里出现）
-    for (const d of await this.extraFolders(req, instanceId)) {
-      const p = String(d || '').replace(/^\/+|\/+$/g, '');
-      if (p) base.add(p);
+    // v1.1.9.4：回收站里不并入 —— 没有已删文件的空目录不该出现在回收站的目录树里
+    if (!onlyDeleted) {
+      for (const d of await this.extraFolders(req, instanceId)) {
+        const p = String(d || '').replace(/^\/+|\/+$/g, '');
+        if (p) base.add(p);
+      }
     }
 
     // 逐级补齐中间目录（"a/b/c" → "a"、"a/b"、"a/b/c"）

@@ -629,18 +629,23 @@
             · 只在控件隐藏时出现 —— 点屏幕唤出控件后立即隐藏（.is-idle 控制）；
             · 切图时高亮跟着走（dotIndex = 当前图在图片列表里的序号）。
             · 距底部 10px，与缩略图条互不干扰（缩略图条只在控件可见时出现）。
+            v1.1.9.4（需求）：超过 20 张时不再画圆点（会横向溢出屏幕），
+            改用「当前 / 总数」计数文本，位置与透明度保持一致，切图跟随。
         -->
         <div
             v-if="current.kind === 'image' && imageThumbs.length > 1"
             class="mv-dots"
             aria-hidden="true"
         >
-            <span
-                v-for="(t, di) in imageThumbs"
-                :key="'dot-' + t.index"
-                class="mv-dot"
-                :class="{ 'is-active': di === dotIndex }"
-            ></span>
+            <template v-if="imageThumbs.length <= 20">
+                <span
+                    v-for="(t, di) in imageThumbs"
+                    :key="'dot-' + t.index"
+                    class="mv-dot"
+                    :class="{ 'is-active': di === dotIndex }"
+                ></span>
+            </template>
+            <span v-else class="mv-dots-counter">{{ dotIndex + 1 }} / {{ imageThumbs.length }}</span>
         </div>
 
         <!-- v3.0.0（R8）：PDF 底部文档导航（桌面端显示，移动端隐藏）——当前页全部 PDF 的点播条 -->
@@ -2610,10 +2615,11 @@ export default {
     display: flex;
     flex-direction: column;
     /*
-     * v1.1.9.3（需求）：背景透明度降到 10% —— 只看得到页面轮廓，图片本身仍然是主角。
-     * 保留背景模糊，否则页面上的文字纹理会透过画布与图片抢注意力。
+     * v1.1.9.4（需求）：背景不透明度改到 90%。
+     * v1.1.9.3 曾降到 10%（几乎全透），但浅色页面下白色控件几乎无对比；
+     * 这一版按需求回调到 90%，图片/视频仍是画面主体，页面只隐约透出。
      */
-    background: rgba(18, 19, 22, 0.1);
+    background: rgba(18, 19, 22, 0.9);
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
     color: #f2f3f5;
@@ -2637,6 +2643,19 @@ export default {
     cursor: default;
 }
 
+/*
+ * v1.1.9.4（需求）：桌面端视频灯箱「隐藏控件时画面黑屏、但视频还在播」。
+ * 根因是 backdrop-filter 与 <video> 的合成层打架：隐藏控件会把 <video> 的
+ * controls 从 true 切到 false，浏览器要重建播放器的内部控件层；而祖先上的
+ * backdrop-filter 需要重新采样背景，Chrome 在这一次重建里会把背景烘成静态快照，
+ * video 后续的帧不再提交 → 画面定格（黑），动一下鼠标再切一次 controls 才恢复。
+ * 视频灯箱本来就铺满整窗、背景看不见，这里直接关掉模糊，绕开这条路径。
+ */
+.media-viewer.is-video {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
 /* ── 顶栏 ──────────────────────────────────────────────────── */
 .mv-top {
     position: relative;
@@ -2647,6 +2666,12 @@ export default {
     padding: 10px 14px;
     background: linear-gradient(to bottom, rgba(0, 0, 0, 0.45), transparent);
     transition: opacity 0.25s ease;
+    /*
+     * v1.1.9.4（需求）：顶部区域（标题 / 详情 / 关闭那一行）整体半透明 50%。
+     * 用 opacity 而不是给每个子按钮单独调色 —— 一次覆盖这一行的全部控件，
+     * 将来往顶栏加东西也不会漏掉。控件隐藏时被下面的 .is-idle 规则压回 0。
+     */
+    opacity: 0.5;
 }
 .media-viewer.is-idle .mv-top {
     opacity: 0;
@@ -3787,8 +3812,9 @@ export default {
     opacity: 0;
     transition: opacity 0.25s ease;
 }
+/* v1.1.9.4（需求）：整体再淡一点 —— 从完全不透明收到 0.7，避免在深色图上抢眼 */
 .media-viewer.is-idle .mv-dots {
-    opacity: 1;
+    opacity: 0.7;
 }
 .mv-dot {
     flex: 0 0 auto;
@@ -3796,13 +3822,27 @@ export default {
     height: 5px;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.42);
-    /* 背景遮罩只有 10% 不透明度，浅色页面下白点会糊在一起 —— 补一圈很淡的描边保证可辨 */
+    /* 深色底上白点够清楚；保留这圈极淡描边，浅色图片下方也不会糊成一片 */
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28);
     transition: background 0.18s ease, transform 0.18s ease;
 }
 .mv-dot.is-active {
     background: #fff;
     transform: scale(1.25);
+}
+/*
+ * v1.1.9.4：图片超过 20 张时圆点会横向溢出屏幕，改用它 —— 「当前 / 总数」。
+ * 与圆点共用 .mv-dots 容器，所以位置（距底 10px）与透明度（0.7）完全一致。
+ */
+.mv-dots-counter {
+    flex: 0 0 auto;
+    font-size: 11px;
+    line-height: 1;
+    letter-spacing: 0.5px;
+    /* 等宽数字：切图时「1/30 → 2/30」不会因字宽不同而左右抖动 */
+    font-variant-numeric: tabular-nums;
+    color: rgba(255, 255, 255, 0.92);
+    text-shadow: 0 0 4px rgba(0, 0, 0, 0.55);
 }
 
 /* ── 移动端 ────────────────────────────────────────────────── */

@@ -30,7 +30,9 @@ const PAGE_NAMES = {
     '/': '首页',
     '/dashboard': '图床管理',
     '/localFiles': '挂载管理',
-    '/notes': '笔记管理',
+    '/notes': '发布中心',
+    // v1.1.9.4：笔记管理改名「发布中心」，路径 /notes → /post（旧路径保留重定向，见 router）
+    '/post': '发布中心',
     '/customerConfig': '用户管理',
     '/systemConfig': '系统管理',
     '/manage/history': '历史记录'

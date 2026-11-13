@@ -235,11 +235,21 @@
                         <span class="mp-tag-count">{{ t.count }}</span>
                     </el-option>
                 </el-select>
+                <!--
+                    v1.1.9.4（需求）：「仅自己可见」改名「私密」，并在它下方新增「指定」。
+                    私密 = 只有作者自己能看到（仍出现在「发布中心 → 瞬间」里）；
+                    公开 = 同时出现在「瞬间」和「广场」，所有登录账户可看可留言；
+                    指定 = 只给被指定的账户看（名单管理随后续版本提供，本版等同于更严格的私密）。
+                -->
                 <el-select v-model="form.visibility" class="mp-visibility" size="small">
                     <el-option :label="$t('notes.visibilityPrivate')" value="private" />
+                    <el-option :label="$t('notes.visibilitySpecified')" value="specified" />
                     <el-option :label="$t('notes.visibilityPublic')" value="public" />
                 </el-select>
             </div>
+            <p v-if="form.visibility === 'specified'" class="mp-visibility-hint">
+                {{ $t('notes.visibilitySpecifiedTip') }}
+            </p>
         </div>
 
         <template #footer>
@@ -1496,6 +1506,14 @@ export default {
 
 .mp-visibility {
     width: 110px;
+}
+
+/* v1.1.9.4：选了「指定」时给一行说明，避免用户以为它会自动挑人 */
+.mp-visibility-hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
 }
 
 .mp-tag-opt {

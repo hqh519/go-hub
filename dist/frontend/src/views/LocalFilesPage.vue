@@ -1079,11 +1079,26 @@ export default {
         async onChannelChange() {
             this.rememberChannel(this.channelId);
             this.clearSelection();
+            /*
+             * v1.1.9.4（需求）：切换加载源后、新渠道的文件还没回来之前，页面必须显示「加载中」。
+             * 之前这里要先 await loadSettings + loadTree，这段时间旧渠道的列表还挂在页面上，
+             * 看起来像是「切了没反应」。现在先立 loading 并清掉旧内容，转圈由 .lf-loading 呈现，
+             * 直到 reload() 真正拿到新渠道的文件才撤掉。
+             */
+            this.loading = true;
+            this.entries = [];
+            this.dirs = [];
+            this.total = 0;
+            this.page = 1;
             // v3.0.0（R15）：切渠道 → 回到该渠道上次浏览的目录（无记忆则根目录）
             this.dir = this.recallDir(this.channelId);
-            await this.loadSettings();
-            await this.loadTree();
-            await this.reload(1);
+            try {
+                await this.loadSettings();
+                await this.loadTree();
+                await this.reload(1);
+            } finally {
+                this.loading = false;
+            }
         },
         async loadSettings() {
             try {
@@ -2493,10 +2508,15 @@ export default {
     background: var(--el-color-primary);
     color: #fff;
 }
-/* 触屏没有 hover：选中圆圈常显，否则手机上永远选不了第一个文件 */
+/*
+ * v1.1.9.4（需求）：移动端卡片视图默认把选中圆圈「完全透明」——
+ * 之前 touch 设备上直接 opacity: 1 常显，用户要求收起来。
+ * 透明不影响命中：圆圈本身没有 pointer-events: none，点它的位置照样能选中，
+ * 选中后 .lf-card.is-selected 让它显现；一旦有任一选中，.lf-grid.has-selection 让全部显现。
+ */
 @media (hover: none) {
     .lf-select {
-        opacity: 1;
+        opacity: 0;
     }
 }
 .lf-empty,

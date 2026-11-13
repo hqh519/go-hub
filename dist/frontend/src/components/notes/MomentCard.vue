@@ -34,11 +34,14 @@
                     现在头部只留发布时间这一项：不加粗、任何一条都可以点开改（需求原文）。
                 -->
                 <button
+                    v-if="note.mine !== false"
                     type="button"
                     class="mc-time mc-time-edit"
                     :title="$t('notes.editPublishedAt')"
                     @click.stop="$emit('edit-time', note)"
                 >{{ timeText }}</button>
+                <!-- v1.1.9.4：广场里别人的公开笔记，发布时间只读 -->
+                <span v-else class="mc-time">{{ timeText }}</span>
                 <span v-if="moodEmoji" class="mc-chip" :title="moodTitle">{{ moodEmoji }}</span>
                 <span v-if="weatherEmoji" class="mc-chip" :title="weatherTitle">{{ weatherEmoji }}</span>
                 <span v-if="note.moment && note.moment.location" class="mc-loc">
@@ -120,7 +123,7 @@
                         </template>
                     </el-dropdown>
                 </template>
-                <template v-else>
+                <template v-else-if="note.mine !== false">
                     <!--
                         v1.1.2（需求）：右下角「删除」后面加一个「更多」（3 点省略号）按钮，
                         把「编辑 / 删除」收进菜单，并在菜单里新增「留言」。
@@ -141,6 +144,22 @@
                                 <el-dropdown-item command="delete" divided>
                                     <font-awesome-icon icon="trash-alt" class="mc-menu-icon is-danger" />{{ $t('notes.delete') }}
                                 </el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
+                </template>
+                <template v-else>
+                    <!--
+                        v1.1.9.4（需求）：广场里别人的公开笔记 —— 只能看和留言，
+                        不给编辑 / 删除（后端写接口同样按 author 拦截，前端只是不摆入口）。
+                    -->
+                    <el-dropdown trigger="click" placement="top-end" @command="onCommand">
+                        <button type="button" class="mc-act mc-more" :title="$t('notes.more')" @click.stop>
+                            <font-awesome-icon icon="ellipsis-h" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="comment">{{ $t('notes.comment') }}</el-dropdown-item>
                             </el-dropdown-menu>
                         </template>
                     </el-dropdown>

@@ -69,6 +69,11 @@ export interface NoteListItem {
   visibility: string;
   status: string;
   author: string;
+  /**
+   * v1.1.9.4：这条笔记是不是当前登录账户自己的。
+   * 广场里会混进别人的公开笔记 —— 前端据它隐藏编辑 / 删除入口（后端写接口仍会再校验）。
+   */
+  mine: boolean;
   instanceId: string;
   version: number;
   publishedAt: number;
@@ -111,6 +116,11 @@ export const LIST_COMMENT_MAX = 100;
 
 export interface ListInput {
   kind?: string;
+  /**
+   * v1.1.9.4：'square' = 广场（全站公开笔记，跨账户跨实例）；
+   * 不传 = 我的笔记（author + instanceId 收窄）。
+   */
+  scope?: string;
   mediaKind?: string;
   search?: string;
   /** v1.1.3：搜索范围 —— all（默认）| title 标题 | content 正文 | tag 标签 | other 其他 */
@@ -302,20 +312,36 @@ export class NotesService {
    *  列表
    * ====================================================================== */
   private buildWhere(input: ListInput): Record<string, unknown> {
-    const where: Record<string, unknown> = {
-      // 实例隔离：空串 = 默认实例（与文件体系一致，不是「不过滤」）
-      instanceId: String(input.instanceId || ''),
-    };
+    /*
+     * v1.1.9.4（需求）：广场（scope=square）—— 全站公开笔记。
+     * 与「我的」是完全不同的两套口径：
+     *   · 不分账户（所有人的公开笔记都在里面）；
+     *   · 不分实例（需求原文：广场加载所有用户所有实例的公开内容）；
+     *   · 只取 visibility=public 且已发布（status=published），回收站内容不外露。
+     * 写入仍然照旧按 author 校验 —— 广场只放宽「看」，不放宽「改」。
+     */
+    const square = String(input.scope || '').toLowerCase() === 'square';
+    const where: Record<string, unknown> = square
+      ? {}
+      : {
+          // 实例隔离：空串 = 默认实例（与文件体系一致，不是「不过滤」）
+          instanceId: String(input.instanceId || ''),
+        };
     // 「全部」= 不传 kind（不要写成 kind='moment'，否则以后加类型要改所有调用点）
     if (input.kind) where.kind = String(input.kind);
-    // 回收站：status=deleted 才看回收站，否则只看正常内容
-    where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
-    /*
-     * v1.1.4：笔记只属于作者本人 —— 无论角色都按 author 收窄。
-     * 原来是「管理员在实例内看全部」，会让管理员在笔记管理里看到别人的私人记录；
-     * 现在管理员与普通用户同一口径：谁的笔记谁自己看。
-     */
-    where.author = String(input.viewer || '');
+    if (square) {
+      where.visibility = 'public';
+      where.status = 'published';
+    } else {
+      // 回收站：status=deleted 才看回收站，否则只看正常内容
+      where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
+      /*
+       * v1.1.4：笔记只属于作者本人 —— 无论角色都按 author 收窄。
+       * 原来是「管理员在实例内看全部」，会让管理员在笔记管理里看到别人的私人记录；
+       * 现在管理员与普通用户同一口径：谁的笔记谁自己看。
+       */
+      where.author = String(input.viewer || '');
+    }
     /*
      * 搜索（v1.1.3）：从「一句 LIKE 打天下」升级成「关键词 + 范围 + 标签语法」。
      *   · `#标签` / `-#标签` 从搜索词里解析出来，走关系过滤（tagId 用等值，名称用模糊）；
@@ -487,6 +513,8 @@ export class NotesService {
       visibility: row.visibility || 'private',
       status: row.status,
       author: row.author || '',
+      // v1.1.9.4：广场里据此区分「我的」与「别人的公开内容」
+      mine: String(row.author || '') === String(viewer || ''),
       instanceId: row.instanceId || '',
       version: Number(row.version) || 1,
       publishedAt: row.publishedAt ? new Date(row.publishedAt).getTime() : 0,
@@ -530,8 +558,25 @@ export class NotesService {
         tags: { include: { tag: true } },
       },
     });
-    if (!row) return null;
-    return this.toListItem(row, viewer);
+    if (row) return this.toListItem(row, viewer);
+    /*
+     * v1.1.9.4（需求）：广场里的公开笔记，任何登录账户都可以打开查看。
+     * 只放宽「读」——编辑 / 删除仍由 updateMoment / softDelete 里的 author 校验拦住。
+     */
+    const published = await prisma.note.findFirst({
+      where: {
+        id: String(id || ''),
+        status: 'published',
+        visibility: 'public',
+      },
+      include: {
+        moment: true,
+        assets: { orderBy: { sort: 'asc' } },
+        tags: { include: { tag: true } },
+      },
+    });
+    if (!published) return null;
+    return this.toListItem(published, viewer);
   }
 
   /* ========================================================================
@@ -913,14 +958,28 @@ export class NotesService {
    * 权限：能看见这条瞬间就能看见留言；留言只能由作者本人或管理员删除。
    * ====================================================================== */
   private async accessibleNote(id: string, viewer: string, _isAdmin: boolean, instanceId: string) {
-    return prisma.note.findFirst({
+    const select = { id: true, author: true, status: true, instanceId: true, metas: true };
+    const own = await prisma.note.findFirst({
       where: {
         id: String(id || ''),
         instanceId: String(instanceId || ''),
         // v1.1.4：留言也只跟随作者本人（笔记私有的直接推论）
         author: String(viewer || ''),
       },
-      select: { id: true, author: true, status: true, instanceId: true, metas: true },
+      select,
+    });
+    if (own) return own;
+    /*
+     * v1.1.9.4（需求）：广场里的公开笔记，任何登录账户都能看留言、也能留言；
+     * 但删除留言仍由 deleteComment 的「本人或管理员」校验拦住。
+     */
+    return prisma.note.findFirst({
+      where: {
+        id: String(id || ''),
+        status: 'published',
+        visibility: 'public',
+      },
+      select,
     });
   }
 

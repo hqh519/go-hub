@@ -54,7 +54,7 @@
             -->
             <div class="nt-topbar-main">
                 <div class="nt-topbar-left">
-                    <DashboardTabs active-tab="notes">
+                    <DashboardTabs active-tab="post">
                         <!--
                             实例切换收进「页面切换」下拉的底部 —— 与图床管理页（/dashboard）完全一致：
                             下拉尾部一条分隔线 + 一条「切换实例」，切换后按钮名称后（移动端悬浮在右上角）显示序号。
@@ -346,7 +346,7 @@
                 v-if="tagMode"
                 ref="tagPanel"
                 :instance-id="instanceId"
-                :kind="kind"
+                :kind="tagPanelKind"
                 @changed="reload"
             />
 
@@ -426,7 +426,7 @@
             <p class="npt-tip">{{ $t('notes.publishTypeTip') }}</p>
             <div class="npt-grid">
                 <button
-                    v-for="t in typeTabs.filter((x) => x.value)"
+                    v-for="t in typeTabs.filter((x) => x.value && x.value !== 'square')"
                     :key="'pt-' + t.value"
                     type="button"
                     class="npt-item"
@@ -616,7 +616,7 @@ const SWIPE_RATIO = 1.5;
 const SWIPE_EDGE_PX = 30;
 
 /** 类型轮播顺序：与功能栏一致，用于左右滑动循环 */
-const KIND_CYCLE = ['', 'moment', 'todo', 'nav', 'article', 'collection'];
+const KIND_CYCLE = ['square', 'moment', 'todo', 'nav', 'article', 'collection', 'memo'];
 
 export default {
     name: 'NotesManagePage',
@@ -632,7 +632,8 @@ export default {
     },
     data() {
         return {
-            kind: '',
+            // v1.1.9.4：默认落在「广场」（原「全部」），它是全站公开笔记的入口
+            kind: 'square',
             /*
              * v1.1.8：笔记页背景图的「随机种子」。
              * 需求是「多张时每次刷新随机一张」—— 用一个 0~1 的随机数当种子，
@@ -702,14 +703,37 @@ export default {
         };
     },
     computed: {
+        /**
+         * v1.1.9.4：当前是否在看「广场」。
+         * 回收站里一律只看自己的（status=deleted + author=自己），所以广场态要让位。
+         */
+        isSquare() {
+            return this.kind === 'square' && !this.trashMode;
+        },
+        /**
+         * v1.1.9.4：标签管理模式要的是「真实 kind」。
+         * 「广场」不是数据库里的 kind（它只是 visibility 的一个视图），
+         * 传下去会让标签面板按 kind='square' 过滤 → 永远空。这里退回「全部」。
+         */
+        tagPanelKind() {
+            return this.kind === 'square' ? '' : this.kind;
+        },
         typeTabs() {
             return [
-                { value: '', label: 'notes.typeAll' },
+                /*
+                 * v1.1.9.4（需求）：「全部」改名「广场」，并换掉它的加载机制 ——
+                 * 广场 = 全站（所有账户、所有实例）里 visibility=public 的笔记，
+                 * 任何登录账户都能看、能留言，但只有作者能编辑。
+                 * 自己的私密笔记只出现在各自的分类（瞬间 / 待办 / …）里。
+                 */
+                { value: 'square', label: 'notes.typeSquare' },
                 { value: 'moment', label: 'notes.typeMoment' },
                 { value: 'todo', label: 'notes.typeTodo' },
                 { value: 'nav', label: 'notes.typeNav' },
                 { value: 'article', label: 'notes.typeArticle' },
-                { value: 'collection', label: 'notes.typeCollection' }
+                { value: 'collection', label: 'notes.typeCollection' },
+                // v1.1.9.4（需求）：登记后面新增「笔记」分类（kind = memo）
+                { value: 'memo', label: 'notes.typeMemo' }
             ];
         },
         /** 搜索范围：与图床管理页同一套交互（嵌在搜索框起始位置），选项按笔记的字段重新定 */
@@ -778,31 +802,42 @@ export default {
         publishLabel() {
             const map = {
                 // v1.1.3：「全部」下不再假装知道要发什么 —— 按钮叫「发布笔记」，点开先选类型
+                // v1.1.9.4：广场沿用同一口径（广场里发的内容也要先选类型）
                 '': 'notes.publishNote',
+                square: 'notes.publishNote',
                 moment: 'notes.publishMoment',
                 todo: 'notes.addTodo',
                 nav: 'notes.addNav',
                 article: 'notes.publishArticle',
-                collection: 'notes.addCollection'
+                collection: 'notes.addCollection',
+                memo: 'notes.publishNote'
             };
             return this.$t(map[this.kind] || 'notes.publishMoment');
         },
-        /** 目前只有「瞬间」实装，其它类型的编辑页还没做 */
+        /**
+         * 目前只有「瞬间」实装，其它类型的编辑页还没做。
+         * v1.1.9.4：广场也保留发布入口（点了先选类型），所以一并算「可发布」。
+         */
         canPublishCurrent() {
-            return this.kind === '' || this.kind === 'moment';
+            return this.kind === '' || this.kind === 'square' || this.kind === 'moment';
         },
         emptyIcon() {
             if (this.trashMode) return 'trash-alt';
+            if (this.isSquare) return 'bullhorn';
             if (this.kind && this.kind !== 'moment') return 'inbox';
             return 'book';
         },
         emptyTitle() {
             if (this.trashMode) return this.$t('notes.trashEmpty');
+            if (this.isSquare) {
+                return this.search ? this.$t('notes.noMatch') : this.$t('notes.squareEmpty');
+            }
             if (this.kind && this.kind !== 'moment') return this.$t('notes.typeNotReady');
             if (this.search || (this.mediaKind && this.mediaKind !== 'all')) return this.$t('notes.noMatch');
             return this.$t('notes.emptyTitle');
         },
         emptyTip() {
+            if (this.isSquare) return this.$t('notes.squareEmptyTip');
             if (this.kind && this.kind !== 'moment' && !this.trashMode) return this.$t('notes.typeNotReadyTip');
             return this.$t('notes.emptyTip');
         },
@@ -1219,7 +1254,15 @@ export default {
         },
         toggleTrash() {
             this.trashMode = !this.trashMode;
-            if (this.trashMode) this.tagMode = false;
+            if (this.trashMode) {
+                this.tagMode = false;
+                /*
+                 * v1.1.9.4：回收站只装自己的东西（后端按 author 收窄），
+                 * 从「广场」进回收站要先落到自己的分类上，否则会以为广场里有删除项。
+                 * 目前只有「瞬间」实装，落到瞬间即可。
+                 */
+                if (this.kind === 'square') this.kind = 'moment';
+            }
             this.reload();
         },
         clearTagFilter() {
@@ -1250,7 +1293,12 @@ export default {
             qs.set('instanceId', this.instanceId || '');
             qs.set('sort', this.sortKey);
             qs.set('order', this.sortOrder);
-            if (this.kind) qs.set('kind', this.kind);
+            /*
+             * v1.1.9.4：广场不走 kind —— 后端据 scope=square 改成
+             * 「visibility=public + 不限作者 + 不限实例」，同时忽略 kind（广场展示全部类型）。
+             */
+            if (this.isSquare) qs.set('scope', 'square');
+            else if (this.kind) qs.set('kind', this.kind);
             if (this.mediaKind && this.mediaKind !== 'all') qs.set('mediaKind', this.mediaKind);
             if (this.search.trim()) {
                 // 原样传：后端自己解析 #标签 / -#标签，并把剩下的词按 searchType 搜
@@ -1333,7 +1381,8 @@ export default {
          * 选了还没开放的类型就照实提示，而不是假装能发。
          */
         openPublish() {
-            if (this.kind === '') {
+            // v1.1.9.4：广场与旧「全部」同口径 —— 先让用户选类型，再进编辑页
+            if (this.kind === '' || this.kind === 'square') {
                 this.publishTypeVisible = true;
                 return;
             }
@@ -1350,7 +1399,8 @@ export default {
                 todo: 'list',
                 nav: 'compass',
                 article: 'file-alt',
-                collection: 'layer-group'
+                collection: 'layer-group',
+                memo: 'edit'
             };
             return map[kind] || 'note-sticky';
         },

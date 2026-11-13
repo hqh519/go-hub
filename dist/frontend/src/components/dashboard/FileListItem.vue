@@ -170,9 +170,13 @@ export default {
         }
     },
     computed: {
-        /** v3.0.0（R10）：列表缩略图用 240 宽（行高约 56px，2x 屏够用） */
+        /**
+         * v3.0.0（R10）：列表缩略图用 240 宽（行高约 56px，2x 屏够用）。
+         * v1.1.9.4：改为 320 —— 与卡片视图 / 相册视图 / 详情页统一同一尺寸，
+         * 三者共用同一个 URL（也就共用同一份 HTTP 强缓存），切换视图不再重新下载。
+         */
         imageThumb() {
-            return thumbUrl(this.fileLink, 240);
+            return thumbUrl(this.fileLink, 320);
         },
         isFolder() {
             // 检查 isFolder 属性或名称以 / 结尾
@@ -366,7 +370,8 @@ export default {
     align-items: center;
     padding: 10px 14px;
     background: var(--toolbar-button-bg-color);
-    border-radius: 12px;
+    /* v1.1.9.4：列表视图圆角 12px → 8px（文件夹行与文件行共用这一条） */
+    border-radius: 8px;
     border: 1px solid var(--glass-border);
     box-shadow: var(--toolbar-button-shadow);
     transition: box-shadow 0.2s ease;
@@ -384,7 +389,8 @@ export default {
     align-items: center;
     justify-content: center;
     gap: 8px;
-    border-radius: 12px;
+    /* v1.1.9.4：跟随 .list-item 的 8px 圆角，否则遮罩四角会露出底下的白边 */
+    border-radius: 8px;
     background: rgba(0, 0, 0, 0.42);
     color: #fff;
     font-size: 12px;

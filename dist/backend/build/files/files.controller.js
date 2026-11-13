@@ -1404,6 +1404,7 @@ let ManageController = ManageController_1 = class ManageController {
                 fAccess.push('encrypted');
         }
         const encryptedOnly = fAccess.includes('encrypted');
+        const onlyDeleted = String(q.statusOnly || '').toLowerCase() === 'deleted';
         const fLabel = splitCsv(q.label);
         const fFileType = splitCsv(q.fileType);
         const fChannel = splitCsv(q.channel);
@@ -1465,7 +1466,7 @@ let ManageController = ManageController_1 = class ManageController {
         const matchModeRaw = String(q.matchMode || '').toLowerCase();
         const matchMode = matchModeRaw === 'any' || matchModeRaw === 'or' ? 'any' : 'all';
         const fUsers = splitCsv(q.filterUsers);
-        const withDeleted = fAccess.includes('deleted');
+        const withDeleted = !onlyDeleted && fAccess.includes('deleted');
         const filterOpts = {
             hasTags,
             hasRef: String(q.hasRef || '').toLowerCase(),
@@ -1512,7 +1513,7 @@ let ManageController = ManageController_1 = class ManageController {
         ]);
         const rows = await prisma_1.prisma.fileRecord.findMany({
             where: {
-                status: withDeleted ? { in: ['active', 'deleted'] } : 'active',
+                status: onlyDeleted ? 'deleted' : withDeleted ? { in: ['active', 'deleted'] } : 'active',
                 ...(allInstances ? {} : { instanceId: instanceFilter }),
                 ...(browseRange
                     ? { uploader: String(session?.user || '') }
@@ -1534,7 +1535,7 @@ let ManageController = ManageController_1 = class ManageController {
                 copies: { include: { channel: true } },
                 tags: { include: { tag: true } },
             },
-            orderBy: { createdAt: 'desc' },
+            orderBy: onlyDeleted ? { deletedAt: 'desc' } : { createdAt: 'desc' },
         });
         if (filterOpts.hasRef || filterOpts.hasShare) {
             const statsMap = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id), false);
@@ -1578,7 +1579,7 @@ let ManageController = ManageController_1 = class ManageController {
             for (let i = 1; i < segs.length; i++)
                 allFolders.add(segs.slice(0, i).join('/'));
         }
-        for (const d of shareScope ? [] : await this.extraFolders(req, allInstances ? '*' : instanceFilter))
+        for (const d of shareScope || onlyDeleted ? [] : await this.extraFolders(req, allInstances ? '*' : instanceFilter))
             allFolders.add(d);
         const matched = rows.filter((r) => {
             if (search) {
@@ -1768,6 +1769,10 @@ let ManageController = ManageController_1 = class ManageController {
             const item = (0, file_view_1.serializeFile)(r, r.copies, { tags: r.tags.map((t) => t.tag.name), resolveDirectUrl, resolveLoadUrl });
             item.instanceId = r.instanceId || '';
             item.folder = r.folder || '';
+            if (onlyDeleted) {
+                item.trashId = r.id;
+                item.deletedAt = r.deletedAt ? new Date(r.deletedAt).toISOString() : null;
+            }
             const sharedInfo = sharedInfoOf(r);
             if (sharedInfo) {
                 item.shared = true;
@@ -4008,9 +4013,10 @@ let ManageController = ManageController_1 = class ManageController {
         const instanceId = String(q.instanceId ?? '');
         const admin = this.admin(req);
         const me = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const onlyDeleted = String(q.statusOnly || '').toLowerCase() === 'deleted';
         const rows = await prisma_1.prisma.fileRecord.groupBy({
             by: ['folder'],
-            where: { status: 'active', instanceId, uploader: me },
+            where: { status: onlyDeleted ? 'deleted' : 'active', instanceId, uploader: me },
         });
         const base = new Set(rows.map((r) => r.folder).filter(Boolean));
         if (!admin) {
@@ -4031,10 +4037,12 @@ let ManageController = ManageController_1 = class ManageController {
             if (name)
                 displayNames[p] = name;
         }
-        for (const d of await this.extraFolders(req, instanceId)) {
-            const p = String(d || '').replace(/^\/+|\/+$/g, '');
-            if (p)
-                base.add(p);
+        if (!onlyDeleted) {
+            for (const d of await this.extraFolders(req, instanceId)) {
+                const p = String(d || '').replace(/^\/+|\/+$/g, '');
+                if (p)
+                    base.add(p);
+            }
         }
         const all = new Set();
         for (const f of base) {

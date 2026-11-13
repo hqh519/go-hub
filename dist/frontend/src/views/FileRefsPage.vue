@@ -201,7 +201,7 @@ export default {
         },
         goBack() {
             if (window.history.length > 1) window.history.back();
-            else this.$router.push('/notes');
+            else this.$router.push('/post');
         }
     }
 };

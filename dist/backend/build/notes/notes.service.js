@@ -132,13 +132,22 @@ let NotesService = class NotesService {
         return this.shape(row, assets, commentRows, commentCount, viewer);
     }
     buildWhere(input) {
-        const where = {
-            instanceId: String(input.instanceId || ''),
-        };
+        const square = String(input.scope || '').toLowerCase() === 'square';
+        const where = square
+            ? {}
+            : {
+                instanceId: String(input.instanceId || ''),
+            };
         if (input.kind)
             where.kind = String(input.kind);
-        where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
-        where.author = String(input.viewer || '');
+        if (square) {
+            where.visibility = 'public';
+            where.status = 'published';
+        }
+        else {
+            where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
+            where.author = String(input.viewer || '');
+        }
         const parsed = parseNoteSearch(input.search);
         const and = [];
         for (const name of parsed.includeTags) {
@@ -280,6 +289,7 @@ let NotesService = class NotesService {
             visibility: row.visibility || 'private',
             status: row.status,
             author: row.author || '',
+            mine: String(row.author || '') === String(viewer || ''),
             instanceId: row.instanceId || '',
             version: Number(row.version) || 1,
             publishedAt: row.publishedAt ? new Date(row.publishedAt).getTime() : 0,
@@ -318,9 +328,23 @@ let NotesService = class NotesService {
                 tags: { include: { tag: true } },
             },
         });
-        if (!row)
+        if (row)
+            return this.toListItem(row, viewer);
+        const published = await prisma_1.prisma.note.findFirst({
+            where: {
+                id: String(id || ''),
+                status: 'published',
+                visibility: 'public',
+            },
+            include: {
+                moment: true,
+                assets: { orderBy: { sort: 'asc' } },
+                tags: { include: { tag: true } },
+            },
+        });
+        if (!published)
             return null;
-        return this.toListItem(row, viewer);
+        return this.toListItem(published, viewer);
     }
     async createMoment(input, viewer, ip) {
         const instanceId = String(input.instanceId || '');
@@ -618,13 +642,24 @@ let NotesService = class NotesService {
             .map((t) => ({ ...t, count: t.kindCounts[kind] }));
     }
     async accessibleNote(id, viewer, _isAdmin, instanceId) {
-        return prisma_1.prisma.note.findFirst({
+        const select = { id: true, author: true, status: true, instanceId: true, metas: true };
+        const own = await prisma_1.prisma.note.findFirst({
             where: {
                 id: String(id || ''),
                 instanceId: String(instanceId || ''),
                 author: String(viewer || ''),
             },
-            select: { id: true, author: true, status: true, instanceId: true, metas: true },
+            select,
+        });
+        if (own)
+            return own;
+        return prisma_1.prisma.note.findFirst({
+            where: {
+                id: String(id || ''),
+                status: 'published',
+                visibility: 'public',
+            },
+            select,
         });
     }
     async listComments(input) {

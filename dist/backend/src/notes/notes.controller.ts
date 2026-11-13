@@ -58,6 +58,8 @@ export class NotesController {
   async list(
     @Req() req: Request,
     @Query('kind') kind?: string,
+    /** v1.1.9.4：'square' = 广场（全站公开笔记）；不传 = 我的笔记 */
+    @Query('scope') scope?: string,
     @Query('mediaKind') mediaKind?: string,
     @Query('search') search?: string,
     @Query('searchType') searchType?: string,
@@ -74,6 +76,7 @@ export class NotesController {
     const { viewer, isAdmin } = this.ctx(req);
     return this.notes.list({
       kind,
+      scope,
       mediaKind,
       search,
       searchType,

@@ -949,6 +949,33 @@ const ZH = {
         { t: '剪辑页：移动端舞台最小 65vh', d: '用 min-height 而不是 height：图片本身很矮时舞台也占 65vh（不塌），图片很高时舞台可以长出去、由 body 滚动条承接（不裁）。若写成固定 height，这两头都做不到。底部工具行展开超出屏幕时，页面出现滚动条，所有按钮都能滚到。' },
         { t: '文案：「框选裁剪」改为「裁剪」', d: '中文侧工具名改短，英文侧本来就是 Crop 不用动。工具行是「图标 + 文字」，名字短一点在手机上不容易折行。' }
       ]
+    },
+    {
+      id: 'whatsnew-1194',
+      title: '四十四、v1.1.9.4 更新要点',
+      intro: 'v1.1.9.4 的主线是「把相册做成真正的图库、把回收站收回成筛选条件」：相册补齐了多选圆圈、长按菜单、滑动切换展示方式与边缘回退拦截，桌面每行 10 张、一次加载 80 张；回收站不再另开一套接口与状态，改成 statusOnly=deleted 的筛选，图床管理页的全部功能直接可用；灯箱修掉了视频隐藏控件就黑屏的合成层问题；原先的「笔记管理」改名「发布中心」、路径改为 /post，并新增「笔记」分类与「广场」。',
+      items: [
+        { t: '相册：桌面每行 10 个、初始 80 条', d: '相册列数走纯 CSS 断点，桌面是基础档，grid-template-columns 由 repeat(8) 改为 repeat(10)；初始加载数量由 albumPageSize 按宽度分档，≥1200 宽给 80 条（原 72），手机仍是 48。' },
+        { t: '相册：手机左右滑动切换展示方式', d: '相册容器补上与卡片 / 列表同一套手势（touchstart / touchend / touchcancel，均 passive）。判定沿用既有口径：横向位移 ≥64px、|dx| 大于 |dy| 的 1.35 倍、耗时 ≤700ms。同方向连续滑动会轮回切换，与滑动方向无关。' },
+        { t: '切相册自动切「直接展示文件」', d: '相册是平铺图墙，按目录分层会被切成一堆只有一两个格子的碎片，所以进入相册时强制把展示方式置为 expanded，且不做「已在相册就保留原选择」的兜底 —— 每次点相册都重置一次。这里直接改值而不调 setSearchResultDisplay，避免与随后的重载重复发请求。' },
+        { t: '三种视图共用缩略图缓存', d: '原先卡片视图用 thumb=240、相册用 thumb=320，同一个文件在两种视图下是两个 URL。现在统一 320：后端对 thumb 出图带 immutable 的强缓存，三视图同 URL 就是命中同一份 HTTP 缓存，来回切视图不再重新下载。' },
+        { t: '相册格子的选中圆圈', d: '复用 el-checkbox，几何与卡片视图完全一致（top 3px / right 8px / 18px 圆）。桌面默认透明且 pointer-events: none（看不见就不该被点到），鼠标移入格子才浮现；触屏没有 hover，圆圈保持完全透明但仍可点，点中即选中并显现。只要列表里有任一选中项，所有格子的圆圈一律常显。选中格额外给一圈 inset 阴影而不是 border，避免格子尺寸跳动。' },
+        { t: '手机长按格子弹出文件菜单', d: '复用既有的底部操作面板，菜单与卡片视图一致（选择文件 / 查看详情 / 复制链接 / 下载文件 / 移动文件 / 标签管理 / 删除文件）。这里踩了两个坑：一是长按成功会顺手切一次展示方式（容器的 touchstart 也记了起点，抬手时位移达标），解法是在长按回调里清掉起点；二是松手瞬间浏览器会在抬起点补发一次 click，而那个元素正是刚渲染的遮罩层，于是「弹出 → 立刻被关掉」。后者从卡片 / 列表视图就存在，现统一在组件里加 350ms 静默窗吃掉这次合成 click。' },
+        { t: '相册里禁止边缘滑动触发回退', d: '手机端原本只有卡片与列表容器设了 touch-action: pan-y（屏蔽浏览器自带横向手势与边缘返回的伸缩动画），相册是后加的容器，漏了这条。补上后三者同口径。' },
+        { t: '回收站改成筛选态', d: '回收站原先有独立的接口、分页常量、路径状态与行转换，连目录选择都另做了一套，于是全选 / 视图切换 / 展示模式 / 排序 / 面包屑回退在回收站里要么缺失、要么是另一个实现。现在给列表接口加 statusOnly=deleted 开关复用同一条查询链路：不并入登记空目录、按 deletedAt 倒序、行上补 trashId 与 deletedAt 让既有恢复 / 彻底删除链路零改动。顺带纠正语义 —— 回收站里点「删除」是彻底删除（之前错走了「恢复」）。' },
+        { t: '列表视图圆角 8px', d: '列表行由 12px 收到 8px；删除中的遮罩必须同步改 8px，否则遮罩四角会露出白边。' },
+        { t: '电脑端第二行随顶栏隐藏', d: '滚动由 OverlayScrollbars 接管，sticky 的显隐没法纯 CSS 做，吸顶走「越阈值 → 切 fixed + 外层占位」，顶栏隐藏时给根节点挂类并通过事件同步。原先「第二行跟着收起」只在窄屏块里，桌面补齐同一条规则即可，与顶栏同进同出。' },
+        { t: '底部批量操作栏纳入层叠监测', d: '批量栏本身就是「有选中才出现」的浮层，现在显式登记为一层（z 1200，低于弹窗的 2000+，所以顺序天然正确：先把上面压着的弹窗层层关完，最后才轮到它）。登记的层带存活判定，别处清空选中时会被自动剪掉，不会留下死层。位置按确认保持原样。' },
+        { t: '灯箱：视频隐藏控件就黑屏（真 bug）', d: '根因是 backdrop-filter 与 video 合成层的冲突：controls 由 true 变 false 触发重绘，祖先的 backdrop-filter 重新采样时把画面烘成静态快照，于是「视频还在播但界面全黑」，鼠标一动又恢复。视频灯箱直接关掉毛玻璃即可。' },
+        { t: '灯箱：背景 90%、顶栏 50%、圆点 0.7 与计数', d: '遮罩统一到 90%；标题 / 详情 / 关闭那一行整行 50%；多图小圆点透明度降到 0.7；图片超过 20 张时不再画圆点（会溢出屏幕），改成「1 / 30」形式，斜杠前是当前、后是总数，透明度与圆点一致，并用等宽数字防止跳位。' },
+        { t: '挂载管理：切换加载源时的加载中', d: '原先切完渠道要先等设置与目录树回来才拉列表，这段时间旧渠道的内容还挂在页面上，看着像「切了没反应」。现在先立加载态并清空旧内容，等新渠道的文件真正回来才撤掉。' },
+        { t: '挂载管理：手机卡片圆圈默认透明', d: '原先触屏下直接常显，理由是「否则手机上永远选不了第一个文件」。但透明不影响命中，所以改成完全透明：默认看不见，点它的位置照样选中，选中后自己显现，有任一选中时全部显现。' },
+        { t: '首页「发布」页新增「笔记」图标', d: '在「登记」之后补一个「笔记」应用图标（类型标记 memo）。编辑页尚未实装，按既有约定置为「未开放」，点了给明确提示而不是毫无反馈。' },
+        { t: '笔记管理改名「发布中心」并换路径', d: '页面名称改为「发布中心」，路径 /notes 改为 /post，导航、路由、页面标题、各处跳转一并改掉，同时保留 /notes 到 /post 的重定向，已发出的链接与书签不会 404。接口前缀 /api/notes 不动 —— 它是接口而非页面路径，改它没有收益。' },
+        { t: '发布中心：新增「笔记」分类与「广场」', d: '分类变为：广场、瞬间、待办、导航、文章、登记、笔记。首位的「全部」改名「广场」并换掉加载机制 —— 广场装的是全站所有账户、所有实例中权限为「公开」的笔记，任何登录用户都能看、能留言；列表条目带「是否本人」标记，别人的内容不显示编辑与删除入口，后端写接口同样按作者拦截。回收站与广场互斥，进回收站会自动落到自己的分类上；标签管理模式拿到的是真实类型而不是「广场」。' },
+        { t: '瞬间权限：「仅自己可见」改为「私密」并新增「指定」', d: '下拉变为私密 / 指定 / 公开，默认仍是私密。私密只有作者可见、只出现在「瞬间」；公开会同时出现在「瞬间」与「广场」；指定沿用后端已有的取值，本版先落选项与说明，挑选具体账户的界面留待后续（现有账户列表接口对普通用户只返回自己，做不出选择器）。' },
+        { t: '本版没有数据库变更', d: '类型只是多了一个取值，权限复用了既有取值，广场是查询口径的变化而非新表。旧库直接覆盖升级即可。' }
+      ]
     }
   ]
 };
@@ -1836,6 +1863,33 @@ const EN = {
         { t: 'Editing page: genuinely full screen', d: 'On phones the dialog used to be 374px wide (390 x 94% minus margins) because responsive.css has a global, !important dialog width cap. Going full screen means overriding it with !important in turn (width and max-width 100vw, height and max-height 100vh, zero margin and corners) and removing the default Element Plus centring offset.' },
         { t: 'Editing page: stage is at least 65vh on phones', d: 'min-height rather than height: a short image still gets a 65vh stage instead of collapsing, and a tall image can grow past it with the body scrollbar taking over instead of being cropped. A fixed height would fail on both ends. When the toolbar pushes below the fold the page scrolls, so every button stays reachable.' },
         { t: 'Label: Crop instead of Box crop', d: 'The Chinese tool label is shorter now; the English side already read Crop. The toolbar is icon plus text, and a shorter label keeps it on one line on phones.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1194',
+      title: '44. What is new in v1.1.9.4',
+      intro: 'v1.1.9.4 turns the album into a real gallery and folds the recycle bin back into a filter: the album gains selection circles, a long-press menu, swipe-to-switch display mode and edge-swipe suppression, with ten tiles per row and eighty per load on desktop; the recycle bin drops its own API and state in favour of a statusOnly=deleted filter so every file-manager feature just works; the lightbox finally fixes the black screen when video controls hide; and the old Notes area becomes Publish Center at /post with a new Note category and the Square.',
+      items: [
+        { t: 'Album: ten per row, eighty per load on desktop', d: 'Column count is pure CSS breakpoints and desktop is the base tier, so repeat(8) becomes repeat(10). The initial load comes from albumPageSize by width: 80 at 1200px and up (was 72), 48 on phones.' },
+        { t: 'Album: swipe left or right to switch display mode on phones', d: 'The album container gets the same gesture pair as cards and list. The threshold is unchanged: at least 64px horizontally, |dx| above 1.35x |dy|, within 700ms. Consecutive swipes in the same direction keep toggling, so direction does not matter.' },
+        { t: 'Entering the album also picks Plain files', d: 'An album is an image wall; grouping it by folder shreds it into tiles of one or two items. Entering the album therefore forces the expanded display mode, and it resets every time rather than preserving a previous choice. The value is set directly instead of through the setter, because that setter reloads and the view switch already reloads.' },
+        { t: 'One thumbnail cache for all three views', d: 'Card view used thumb=240 while the album used thumb=320, so the same file had two URLs. Both are 320 now, and thumbnails come back with an immutable cache header, so switching views hits the same HTTP cache instead of downloading again.' },
+        { t: 'Selection circles on album tiles', d: 'An el-checkbox with the exact geometry of card view (top 3px, right 8px, 18px circle). On desktop it is transparent and pointer-events: none until the tile is hovered - invisible should mean unclickable. Touch has no hover, so the circle stays fully transparent but clickable: tapping it selects, and selecting reveals it. As soon as anything is selected every tile shows its circle. A selected tile gets an inset ring instead of a border so the grid never jumps.' },
+        { t: 'Long press an album tile for the file menu', d: 'The existing bottom sheet is reused with the same entries as card view. Two traps here: a successful long press also flipped the display mode, because the container recorded the same touchstart and the release crossed the threshold - fixed by clearing the swipe origin in the long-press callback; and the release itself fired a synthetic click on the element under the finger, which by then was the freshly rendered overlay, so the menu opened and closed instantly. The second one existed in card and list view too and is now fixed in the component with a 350ms quiet window.' },
+        { t: 'No edge-swipe back inside the album', d: 'Only the card and list containers had touch-action: pan-y, which suppresses the browser horizontal gesture and the edge-back animation. The album was added later and missed it; all three match now.' },
+        { t: 'The recycle bin becomes a filter', d: 'It used to have its own endpoint, page size, path state and row mapping, even its own folder picker, so select-all, view switching, display mode, sorting and breadcrumbs were either missing or a second implementation. A statusOnly=deleted switch on the list endpoint reuses the same query path: no empty registered folders, ordered by deletedAt, and rows carry trashId and deletedAt so restore and purge need no changes. The delete action inside the bin also now purges instead of restoring, which it had been doing by mistake.' },
+        { t: 'List rows get 8px corners', d: 'Down from 12px. The deleting mask has to match, otherwise its corners show white slivers.' },
+        { t: 'The second header row hides with the first on desktop', d: 'Scrolling is owned by OverlayScrollbars, so stickiness cannot be pure CSS: crossing the threshold switches to fixed with a placeholder, and the header toggle writes a class plus fires an event. The hide-along rule only existed in the narrow-screen block; adding the desktop rule makes both rows arrive and leave together.' },
+        { t: 'The bottom batch bar joins the layer stack', d: 'It is a layer by nature (it only exists while something is selected) and is now registered as one at z 1200, below the 2000+ of dialogs, so the order is naturally correct: dialogs close first, the bar last. The registration carries an alive check so clearing the selection elsewhere prunes it instead of leaving a dead layer. Its position stays as it was.' },
+        { t: 'Lightbox: video went black when controls hid', d: 'The root cause is a compositing conflict with backdrop-filter: toggling controls from true to false forces a repaint, and the ancestor re-samples its backdrop into a static snapshot, so the video keeps playing behind a black surface and recovers the moment the pointer moves. Disabling backdrop-filter on the video lightbox fixes it.' },
+        { t: 'Lightbox: 90% backdrop, 50% top row, 0.7 dots with a counter', d: 'The overlay goes to 90%; the title, details and close row is 50% as a whole; the multi-image dots drop to 0.7; above twenty images the dots are replaced by a 1 / 30 counter, which cannot overflow the screen, using tabular numbers so it does not jitter.' },
+        { t: 'Mounted files: a spinner when switching source', d: 'Switching used to wait for settings and the tree before listing, leaving the previous source on screen, which read as nothing happening. It now raises the loading state and clears the old content first, and only drops the spinner once the new source has actually listed.' },
+        { t: 'Mounted files: circles stay hidden on phone cards', d: 'Touch devices used to show them unconditionally, on the grounds that otherwise the first file could never be selected. But opacity does not affect hit-testing, so they are fully transparent now: invisible by default, still selectable by tapping where they are, revealed once selected, and all revealed once anything is selected.' },
+        { t: 'Home publish page gains a Note icon', d: 'A Note app icon sits after Log in the publish grid, marked as the memo type. Its editor is not built yet, so it reports Not available rather than doing nothing.' },
+        { t: 'Notes becomes Publish Center at /post', d: 'The page name, route, title and every jump point move from /notes to /post, and /notes redirects to /post so existing links and bookmarks keep working. The /api/notes prefix is untouched: it is an API surface, not a page path, and renaming it buys nothing.' },
+        { t: 'Publish Center: a Note category and the Square', d: 'The categories are Square, Moment, To-do, Nav, Article, Log, Note. The leading All becomes Square and changes meaning: it collects every note marked Public across all accounts and instances, readable and commentable by any signed-in user. List items carry an ownership flag, so other people content shows no edit or delete entry, and the write endpoints still check the author. The recycle bin and the Square exclude each other, entering the bin falls back to your own category, and the tag panel receives the real type rather than Square.' },
+        { t: 'Moment visibility: Private plus Specified', d: 'The dropdown now reads Private, Specified, Public, with Private as the default. Private stays author-only and appears only under Moment; Public also appears in the Square. Specified uses a value the backend already accepts; this release ships the option and its explanation, and the account picker is left for later because the account list endpoint only returns the caller for non-admins.' },
+        { t: 'No database changes in this release', d: 'A type gains one more value, visibility reuses existing values, and the Square is a query scope rather than a table. Overwrite upgrade works on an existing database.' }
       ]
     }
   ]

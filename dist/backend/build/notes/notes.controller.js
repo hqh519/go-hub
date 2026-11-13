@@ -29,10 +29,11 @@ let NotesController = class NotesController {
         }
         return { viewer, isAdmin: (0, auth_guard_1.isAdminRole)(session?.role) };
     }
-    async list(req, kind, mediaKind, search, searchType, tagId, status, from, to, sort, order, page, pageSize, instanceId) {
+    async list(req, kind, scope, mediaKind, search, searchType, tagId, status, from, to, sort, order, page, pageSize, instanceId) {
         const { viewer, isAdmin } = this.ctx(req);
         return this.notes.list({
             kind,
+            scope,
             mediaKind,
             search,
             searchType,
@@ -194,20 +195,21 @@ __decorate([
     (0, common_1.Get)('list'),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Query)('kind')),
-    __param(2, (0, common_1.Query)('mediaKind')),
-    __param(3, (0, common_1.Query)('search')),
-    __param(4, (0, common_1.Query)('searchType')),
-    __param(5, (0, common_1.Query)('tagId')),
-    __param(6, (0, common_1.Query)('status')),
-    __param(7, (0, common_1.Query)('from')),
-    __param(8, (0, common_1.Query)('to')),
-    __param(9, (0, common_1.Query)('sort')),
-    __param(10, (0, common_1.Query)('order')),
-    __param(11, (0, common_1.Query)('page')),
-    __param(12, (0, common_1.Query)('pageSize')),
-    __param(13, (0, common_1.Query)('instanceId')),
+    __param(2, (0, common_1.Query)('scope')),
+    __param(3, (0, common_1.Query)('mediaKind')),
+    __param(4, (0, common_1.Query)('search')),
+    __param(5, (0, common_1.Query)('searchType')),
+    __param(6, (0, common_1.Query)('tagId')),
+    __param(7, (0, common_1.Query)('status')),
+    __param(8, (0, common_1.Query)('from')),
+    __param(9, (0, common_1.Query)('to')),
+    __param(10, (0, common_1.Query)('sort')),
+    __param(11, (0, common_1.Query)('order')),
+    __param(12, (0, common_1.Query)('page')),
+    __param(13, (0, common_1.Query)('pageSize')),
+    __param(14, (0, common_1.Query)('instanceId')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, String, String, String, String, String, String, String, String, String, String, String, String]),
+    __metadata("design:paramtypes", [Object, String, String, String, String, String, String, String, String, String, String, String, String, String, String]),
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "list", null);
 __decorate([

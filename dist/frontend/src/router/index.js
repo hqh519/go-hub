@@ -419,10 +419,19 @@ const routes = [
     // v1.1.1：笔记管理（「瞬间」便签式笔记）。
     // 守卫沿用后台页（manageAuthGuard）—— 管理员与普通用户都能进，
     // 普通用户只看/改自己的瞬间，管理员在实例内看全部；实例隔离由后端按 instanceId 兜底。
-    path: '/notes',
-    name: 'notes',
+    // v1.1.9.4（需求）：笔记管理改名「发布中心」，路径 /notes → /post。
+    path: '/post',
+    name: 'post',
     component: () => import('../views/NotesManagePage.vue'),
     beforeEnter: manageAuthGuard
+  },
+  {
+    /*
+     * v1.1.9.4：旧路径兜底 —— 已发出去的链接、书签、以及老页面里 window.open('/notes')
+     * 都还能用，直接重定向到 /post，不做 404。
+     */
+    path: '/notes',
+    redirect: '/post'
   },
   {
     // v1.1.2：文件引用明细页（文件详情 →「文件引用」→ 查看，新标签页打开）。

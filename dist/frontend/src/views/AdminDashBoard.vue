@@ -226,12 +226,15 @@
             <div v-if="trashMode" class="trash-banner" role="status">
                 <font-awesome-icon icon="trash-alt" class="trash-banner-icon"/>
                 <span class="trash-banner-text">{{ $t('dashboard.trashBanner') }}</span>
-                <!-- v1.0.3：回收站内层级导航 —— 当前所在目录 + 返回上一级 -->
-                <span class="trash-path" :title="trashPath || $t('dashboard.trashRoot')">
+                <!--
+                    v1.0.3：回收站内层级导航 —— 当前所在目录 + 返回上一级。
+                    v1.1.9.4：目录变量与普通浏览统一为 currentPath（回收站不再有独立目录）。
+                -->
+                <span class="trash-path" :title="currentPath || $t('dashboard.trashRoot')">
                     <font-awesome-icon icon="folder" class="trash-path-icon"/>
-                    {{ trashPath || $t('dashboard.trashRoot') }}
+                    {{ currentPath || $t('dashboard.trashRoot') }}
                 </span>
-                <button v-if="trashPath" type="button" class="trash-up-btn" @click="leaveTrashDir">
+                <button v-if="currentPath" type="button" class="trash-up-btn" @click="leaveTrashDir">
                     <font-awesome-icon icon="arrow-left"/> {{ $t('dashboard.trashBackUp') }}
                 </button>
             </div>
@@ -568,17 +571,17 @@
                         :sharedSelf="!!item.sharedSelf"
                         :sharedReadonly="isSharedReadonly(item)"
                         :displayName="item.displayName || ''"
-                        :showActions="!isSearchMode && !trashMode"
+                        :showActions="!isSearchMode"
                         :deleting="isDeleting(item)"
                         :deleting-label="trashMode ? $t('dashboard.trashProcessing') : ''"
                         :disableTooltip="disableTooltip"
                         :showSelect="hasSelectedFolders"
                         @click.capture="handleShiftClickCapture($event, index)"
                         @enter="enterFolderItem(item)"
-                        @props="trashMode ? null : openFolderProps(item)"
-                        @copy="trashMode ? null : handleFolderCopy(item.name)"
-                        @move="trashMode ? null : handleMove(index, item.name, true)"
-                        @delete="trashMode ? null : handleDelete(index, item.name)"
+                        @props="openFolderProps(item)"
+                        @copy="handleFolderCopy(item.name)"
+                        @move="handleMove(index, item.name, true)"
+                        @delete="handleDelete(index, item.name)"
                         @touchstart="handleFolderTouchStart(item, index)"
                         @touchend="handleTouchEnd"
                         @touchmove="handleTouchEnd"
@@ -671,6 +674,9 @@
                 v-else
                 ref="albumContainerRef"
                 class="album-view"
+                @touchstart.passive="handlePageSwipeStart"
+                @touchend.passive="handlePageSwipeEnd"
+                @touchcancel.passive="resetPageSwipe"
             >
                 <!-- 骨架：只占位，不套卡片样式，避免与图墙的「无边框」冲突 -->
                 <template v-if="loading">
@@ -686,9 +692,13 @@
                         v-for="(item, index) in paginatedTableData"
                         :key="`album:${item.isFolder ? 'folder' : 'file'}:${item.name}`"
                         class="album-cell"
-                        :class="{ 'is-folder': isFolder(item) }"
+                        :class="{ 'is-folder': isFolder(item), 'is-selected': !!item.selected }"
                         :title="albumTitle(item)"
                         @click="handleAlbumOpen(item, index)"
+                        @touchstart="isFolder(item) ? handleFolderTouchStart(item, index) : handleTouchStart(item, index)"
+                        @touchend="handleTouchEnd"
+                        @touchmove="handleTouchEnd"
+                        @touchcancel="handleTouchEnd"
                     >
                         <template v-if="isFolder(item)">
                             <font-awesome-icon icon="folder" class="album-folder-icon" />
@@ -726,6 +736,22 @@
                             :icon="albumFallbackIcon(item)"
                             class="album-file-icon"
                         />
+                        <!--
+                            v1.1.9.4（需求）：相册格子右上角补一个选中圆圈，
+                            位置 / 尺寸 / 显隐规则与卡片视图完全一致：
+                              · 默认透明度 0（看不见），桌面端鼠标移入该格子浮现；
+                              · 移动端圆圈本身透明但可点 —— 点中即选中并显现；
+                              · 只要列表里已有任一选中项，所有格子的圆圈一律常显（is-force-select）；
+                              · 选中态由 el-checkbox 自己填充主题色。
+                            只读共享条目不可选，直接不渲染（与卡片视图同口径）。
+                        -->
+                        <el-checkbox
+                            v-if="!isSharedReadonly(item)"
+                            v-model="item.selected"
+                            class="album-select"
+                            :class="{ 'is-force-select': selectedFiles.length > 0 }"
+                            @click.stop
+                        ></el-checkbox>
                     </div>
                 </template>
             </div>
@@ -1169,8 +1195,10 @@ function readStoredInstanceId() {
 const SORT_FIELDS = ['time', 'size', 'fileName', 'rawName', 'fileType', 'views', 'uploader'];
 const SORT_ORDERS = ['asc', 'desc'];
 const SEARCH_RESULT_DISPLAYS = ['folders', 'expanded'];
-// v3.0.0（R12）：回收站每页条数（需求：每页 48 条；普通文件列表仍为 24）
-const TRASH_PAGE_SIZE = 48;
+/*
+ * v1.1.9.4：TRASH_PAGE_SIZE 已删除 —— 回收站不再是独立模式，
+ * 分页口径与普通列表一致（pageSize / 相册的 48·72·80）。
+ */
 
 function getStoredOption(key, validValues, fallback) {
     try {
@@ -1238,17 +1266,6 @@ data() {
         // 回收站模式：查看软删除文件，可恢复 / 彻底删除
         trashMode: false,
         trashLoading: false,
-        /*
-         * v1.0.3：回收站内当前所在目录（与普通浏览的 currentPath 分开，互不干扰）。
-         * 空串 = 回收站根目录；进入子目录后只显示该层的子目录与文件。
-         */
-        trashPath: '',
-        trashParent: '',
-        normalTableData: [], // 退出回收站时还原普通文件列表
-        // v3.0.0（R12）：进入回收站前的分页状态（退出时还原，避免沿用回收站的总数/页码）
-        normalListState: null,
-        // v3.0.0（R12）：回收站服务端分页 —— 每页 48 条（与普通列表的 24 条区分开）
-        trashTotal: 0,
         // v3.0.0（R12）：正在删除的条目 key 集合（卡片/列表行显示转圈遮罩，需求 43）
         deletingKeys: [],
         /*
@@ -1283,6 +1300,8 @@ data() {
         mobileActionIndex: -1, // 当前移动端操作的文件索引
         mobileActionIsFolder: false, // 是否为文件夹操作
         longPressTimer: null, // 长按计时器
+        // v1.1.9.4：上一次「长按成功弹出菜单」的时刻 —— 用来吃掉紧跟着的那次合成 click
+        longPressAt: 0,
         // v3.0.0：目录导航下拉「当前」模式的候选目录（当前目录的直接子目录，后端 /list 下发的 directories）
         directories: [],
         jumpPage: '', // 跳转页码输入
@@ -1477,30 +1496,33 @@ computed: {
     effectivePageSize() {
         // v1.1.9.2：相册视图按手机 48 / 平板·桌面 72 计算
         if (this.viewMode === 'album') return this.albumPageSize;
-        return this.trashMode ? TRASH_PAGE_SIZE : this.pageSize;
+        // v1.1.9.4：回收站不再单独用 48 条/页 —— 与普通列表同一套分页口径
+        return this.pageSize;
     },
     /* ── v1.1.9.2 相册视图 ─────────────────────────────────────────
      * 列数与比例全部交给 CSS（见样式里的 4 组断点）：
      *   · 手机（≤768）：每行 4 个（竖屏）/ 8 个（横屏），单格 1:1，初始 48 个；
      *   · 平板（769~1199）：每行 6 个（竖屏）/ 12 个（横屏），单格 1:1，初始 72 个；
-     *   · 桌面（≥1200）：每行固定 8 个、单格 1:1，格子尺寸随页面宽度等比缩放。
-     * 这里只负责「一次拉多少条」（手机 48 / 其余 72）。
+     *   · 桌面（≥1200）：每行 10 个、单格 1:1，格子尺寸随页面宽度等比缩放，初始 80 个。
+     * 这里只负责「一次拉多少条」（手机 48 / 平板 72 / 桌面 80）。
      */
     albumPageSize() {
         /*
-         * 手机 48 / 平板·桌面 72。横屏手机宽度常超过 768（844 / 896 / 932），
-         * 单看宽度会被当平板，所以再用「高度 ≤ 500」兜一下（与 CSS 断点同一口径）。
+         * v1.1.9.4：桌面档由 72 改 80（每行 10 个 × 8 行）。
+         * 横屏手机宽度常超过 768（844 / 896 / 932），单看宽度会被当平板，
+         * 所以再用「高度 ≤ 500」兜一下（与 CSS 断点同一口径）。
          */
         const w = Number(this.viewportWidth) || 1440;
         const h = Number(this.viewportHeight) || 0;
         const isPhone = w <= 768 || (h > 0 && h <= 500);
-        return isPhone ? 48 : 72;
+        if (isPhone) return 48;
+        return w >= 1200 ? 80 : 72;
     },
     /** 列表窗口尺寸：相册视图换档，其它视图维持原来的 24 */
     listWindowSize() {
         return this.viewMode === 'album' ? this.albumPageSize : this.pageSize;
     },
-    /** 骨架格数量：别按 72 个画，最多 60 个，避免首屏 DOM 太多 */
+    /** 骨架格数量：别按 80 个画，最多 60 个，避免首屏 DOM 太多 */
     albumSkeletonCount() {
         return Math.min(this.listWindowSize, 60);
     },
@@ -1985,14 +2007,27 @@ methods: {
     },
     // 切换视图模式
     setViewMode(mode) {
-        if (this.viewMode === mode) {
+        /*
+         * v1.1.9.4：进入相册视图必须同时切「直接展示文件」——
+         * 相册是平铺图墙，按目录分层会把它切成一层层的碎片。
+         * 每次进入都重置一次（含「已在相册时再点一次相册」），不做 keepFolders 兜底。
+         */
+        const forceExpand = mode === 'album' && this.searchResultDisplay !== 'expanded';
+        if (this.viewMode === mode && !forceExpand) {
             return;
         }
         const wasAlbum = this.viewMode === 'album';
         this.viewMode = mode;
         localStorage.setItem('viewMode', this.viewMode);
         /*
-         * v1.1.9.2：相册视图的「每页数量」与卡片/列表不同（48 或 72），
+         * 直接改值、不调 setSearchResultDisplay：那个方法自己会 refreshFileList，
+         * 而下面「进出相册」分支已经要重载一次，重复发请求没有意义。
+         */
+        if (mode === 'album') {
+            this.searchResultDisplay = 'expanded';
+        }
+        /*
+         * v1.1.9.2：相册视图的「每页数量」与卡片/列表不同（手机 48 / 平板 72 / 桌面 80），
          * 进出相册都要按新尺寸重新拉第一页，否则仍会按 24 条切窗口。
          */
         if (wasAlbum || mode === 'album') {
@@ -2006,9 +2041,15 @@ methods: {
         }
     },
     /* ── v1.1.9.2 相册视图：渲染辅助 ───────────────────────────── */
-    /** 相册缩略图：走本站 /file 代理 + thumb 参数 */
+    /**
+     * 相册缩略图：走本站 /file 代理 + thumb 参数。
+     * v1.1.9.4：尺寸由 480 改 320 —— 与卡片视图（FileCard）/ 列表视图（FileListItem）
+     * 统一到同一个 `thumb=320`，三种视图因此共用同一份 HTTP 强缓存
+     * （后端对 thumb 出图带 `Cache-Control: public, max-age=2592000, immutable`），
+     * 切换视图不再重新下载缩略图。桌面 10 列时单格约 142px，320 覆盖 2x 屏仍清晰。
+     */
     albumThumb(item) {
-        return thumbUrl(this.getFileLink(item && item.name), 480);
+        return thumbUrl(this.getFileLink(item && item.name), 320);
     },
     /**
      * v1.1.9.3：相册里的视频缩略图取首帧。
@@ -2033,6 +2074,11 @@ methods: {
     /** 相册里点一下：文件进灯箱，文件夹进目录（回收站里文件改开详情，便于恢复） */
     handleAlbumOpen(item, index) {
         if (!item) return;
+        /*
+         * v1.1.9.4：长按弹菜单之后，部分内核仍会补发一次 click，
+         * 会把灯箱/目录一起打开，盖在操作菜单后面。这里 700ms 内直接忽略。
+         */
+        if (Date.now() - (this.longPressAt || 0) < 700) return;
         if (this.isFolder(item)) {
             this.enterFolderItem(item);
             return;
@@ -2097,6 +2143,13 @@ methods: {
             this.mobileActionIndex = index;
             this.mobileActionIsFolder = false;
             this.showMobileActionModal = true;
+            /*
+             * v1.1.9.4：长按即视为「这一次触摸不用于翻模式」——
+             * 相册格子在容器里，容器的左右滑动切换会拿到同一个 touchstart，
+             * 抬手时如果还留着起点就会顺手切一次展示模式；这里把起点清掉。
+             */
+            this.longPressAt = Date.now();
+            this.resetPageSwipe();
         }, 500); // 500ms 长按触发
     },
     // 移动端长按结束/取消
@@ -2113,6 +2166,8 @@ methods: {
             this.mobileActionIndex = index;
             this.mobileActionIsFolder = true;
             this.showMobileActionModal = true;
+            this.longPressAt = Date.now();
+            this.resetPageSwipe();
         }, 500);
     },
     // 处理移动端操作
@@ -2412,16 +2467,21 @@ methods: {
         const wantTrash = Array.isArray(filters?.accessStatus) && filters.accessStatus.includes('deleted');
         this.currentPage = 1;
         if (wantTrash) {
-            // 已经在回收站里就只重载数据，避免把回收站数据误存成「普通列表备份」
-            await this.enterTrashMode(this.trashMode);
+            // v1.1.9.4：回收站就是「只看已删除」的筛选态，进入/重载共用一条链路
+            if (this.trashMode) {
+                this.refreshFileList();
+            } else {
+                await this.enterTrashMode();
+            }
             return;
         }
         // v3.0.0（第三轮）：提交筛选时若还在「展示文件夹」，自动改「直接展开文件」
-        // （回收站分支不走这里：回收站保持原有展示方式，不被顺手改掉）
         this.autoExpandOnSubmit();
+        // v1.1.9.4：筛选里去掉「已删除」= 退出回收站（统一走 exitTrashMode 的清理）
         if (this.trashMode) {
             this.trashMode = false;
-            this.tableData = this.normalTableData;
+            this.currentPath = '';
+            this.currentPage = 1;
         }
         this.refreshFileList();
     },
@@ -2453,8 +2513,9 @@ methods: {
         this.tagModeDraft = 'and';
         this.currentPage = 1;
         if (this.trashMode) {
-            // 回收站视图下同样复位条件并重载回收站列表
-            await this.enterTrashMode(true);
+            // v1.1.9.4：回收站视图下同样复位条件并重载（与普通列表同一条链路）
+            await this.refreshFileList();
+            this.$message?.success(this.$t('dashboard.statsBadgeResetDone'));
             return;
         }
         await this.refreshFileList();
@@ -2610,10 +2671,13 @@ methods: {
         });
     },
     handleDetailDelete(key) {
-        // 回收站模式：详情页「删除」按钮已切换为「恢复」，这里兜底走恢复
+        /*
+         * v1.1.9.4：回收站里「删除」= 彻底删除（与卡片 / 列表 / 批量工具栏同一口径）。
+         * 详情弹窗在回收站下走的是 restore / purge 两个专属事件，这里是兜底。
+         */
         if (this.trashMode) {
             const item = this.tableData.find(file => file.name === key);
-            if (item) this.trashRestoreItems([item]);
+            if (item) this.trashPurgeItems([item]);
             return;
         }
         this.confirmDeleteByWord('dashboard.deleteConfirm').then(() => {
@@ -2757,100 +2821,40 @@ methods: {
         });
     },
 
+    /**
+     * v1.1.9.4（需求）：回收站不再是「独立模式」，而是图床管理的**筛选态**。
+     *
+     * 旧实现同时维护了两套东西：独立接口 /api/manage/trash、独立的回收站目录变量
+     * trashPath/trashParent、独立分页常量、独立数据备份…… 结果是全选、视图切换、
+     * 展示模式、排序、目录选择、回退机制在回收站里要么失效、要么得另写一份。
+     *
+     * 现在只留一个 trashMode 标志，它唯一的作用是让 buildListUrl 多带一个
+     * statusOnly=deleted；目录仍是 currentPath、分页仍是 loadListWindow、
+     * 目录树 / 排序 / 视图 / 全选 / 面包屑回退全部天然可用。
+     */
     async toggleTrashMode() {
         if (this.trashLoading) return;
         if (this.trashMode) {
-            // 退出：还原普通文件列表
-            this.clearSelection();
-            this.tableData = this.normalTableData;
-            this.showdetailDialog = false;
-            this.trashMode = false;
-            // v1.0.3：退出回收站时回到回收站根目录，下次进入不会停在深层目录
-            this.trashPath = '';
-            this.trashParent = '';
-            /*
-             * v3.0.0（R12）：回收站改服务端分页（每页 48）后会改写 listTotal / 窗口状态，
-             * 退出时必须把普通列表的分页状态还原，否则页码/总数会沿用回收站的数字。
-             */
-            const st = this.normalListState;
-            if (st) {
-                this.listTotal = st.listTotal;
-                this.fileWindowStart = st.fileWindowStart;
-                this.fileWindowCount = st.fileWindowCount;
-                this.currentPage = st.currentPage;
-                this.normalListState = null;
-            }
-            // v2.9.0：手动退出回收站时同步取消筛选里的「已删除」，否则角标与实际视图不一致
-            if (Array.isArray(this.filters?.accessStatus) && this.filters.accessStatus.includes('deleted')) {
-                this.filters = {
-                    ...this.filters,
-                    accessStatus: this.filters.accessStatus.filter((v) => v !== 'deleted')
-                };
-            }
+            this.exitTrashMode();
             return;
         }
         await this.enterTrashMode();
     },
-    async enterTrashMode(preserveNormal = false, page = 1, append = false) {
+    async enterTrashMode() {
+        if (this.trashLoading) return;
         this.trashLoading = true;
         try {
-            // v2.8.7：回收站同样带上搜索 / 筛选 / 日期 / 大小等条件（后端联合过滤）
-            const fm = (await import('@/utils/fileManager')).fileManager;
-            const filterParams = fm.buildFilterParams(this.filters) + fm.buildExtraParams(this.searchType, this.userFilter);
-            const searchQ = this.searchKeywords ? `&search=${encodeURIComponent(this.searchKeywords)}` : '';
-            // v3.0.0：回收站同样按当前实例隔离
-            const instanceQ = `&instanceId=${encodeURIComponent(this.instanceId || '')}`;
-            /*
-             * v3.0.0（R12）：回收站改「服务端分页 + 每页 48 条」（需求 42）。
-             * 以前是整表返回，条目多时首屏明显卡；现在 page/pageSize 交给后端切片。
-             */
-            const pageQ = `&page=${Math.max(1, Number(page) || 1)}&pageSize=${TRASH_PAGE_SIZE}`;
-            /*
-             * v1.0.3：回收站按目录层级浏览 —— 带上当前所在目录（空串 = 根）。
-             * 后端只返回该层的子目录 + 直接子文件，进入子目录后文件才可见。
-             */
-            const dirQ = `&dir=${encodeURIComponent(this.trashPath || '')}`;
-            /*
-             * v1.1.9.2：回收站同样跟随「内容展示方式」——
-             * folders = 按层级展示文件夹+文件；expanded = 不显示文件夹，递归平铺文件。
-             */
-            const flatQ = `&flat=${this.searchResultDisplay === 'expanded' ? 'true' : 'false'}`;
-            const resp = await fetchWithAuth(
-                `/api/manage/trash?1=1${filterParams}${searchQ}${instanceQ}${pageQ}${dirQ}${flatQ}`
-            );
-            if (!resp.ok) throw new Error('Request failed');
-            const data = await resp.json();
-            this.trashParent = String(data.parent || '');
-            // 备份普通列表，切换渲染数据（v2.9.0：回收站内刷新时不要覆盖这份备份）
-            if (!preserveNormal) {
-                this.normalTableData = this.tableData;
-                // v3.0.0（R12）：连分页状态一起备份，退出回收站时还原
-                this.normalListState = {
-                    listTotal: this.listTotal,
-                    fileWindowStart: this.fileWindowStart,
-                    fileWindowCount: this.fileWindowCount,
-                    currentPage: this.currentPage
-                };
-            }
-            if (!append) this.clearSelection();
-            const items = Array.isArray(data.items) ? data.items : [];
-            const rows = items.map((it) => this.convertTrashItem(it));
-            const total = Number(data.total ?? rows.length) || 0;
-            const start = (Math.max(1, Number(page) || 1) - 1) * TRASH_PAGE_SIZE;
-            if (append) {
-                this.tableData = [...this.tableData, ...rows];
-                this.fileWindowCount += rows.length;
-            } else {
-                this.tableData = rows;
-                this.fileWindowStart = start;
-                this.fileWindowCount = rows.length;
-                this.currentPage = Math.max(1, Number(page) || 1);
-            }
-            this.trashTotal = total;
-            this.listTotal = total;
-            this.updateStats(total, true);
             this.trashMode = true;
-            if (total === 0) {
+            // 从回收站根目录开始浏览（回收站里同样有目录层级）
+            this.currentPath = '';
+            this.currentPage = 1;
+            this.fileWindowStart = 0;
+            this.fileWindowCount = 0;
+            this.clearSelection();
+            await this.loadListWindow({ page: 1, force: true });
+            // 目录树 / 目录选择在回收站里也要能用
+            this.loadAllFolders().catch(() => undefined);
+            if (this.listTotal === 0) {
                 this.$message.info(this.$t('dashboard.trashEmpty'));
             }
         } catch (e) {
@@ -2859,66 +2863,49 @@ methods: {
             this.trashLoading = false;
         }
     },
-    /**
-     * v1.0.3：进入回收站内的子目录（只显示这一层的子目录与文件）。
-     * 目录树在回收站里由「已删目录登记 + 文件原路径」共同反推，所以任何一层都能进。
-     */
-    async enterTrashDir(path) {
-        const next = String(path || '').replace(/^\/+|\/+$/g, '');
-        if (next === this.trashPath) return;
-        this.trashPath = next;
-        await this.enterTrashMode(true, 1, false);
-    },
-    /** 回收站里「返回上一级」 */
-    async leaveTrashDir() {
-        if (!this.trashPath) return;
-        await this.enterTrashDir(String(this.trashParent || ''));
-    },
-    /** 统一的「进入目录」入口：普通模式进当前浏览目录，回收站模式进回收站目录 */
-    enterFolderItem(item) {
-        if (this.trashMode) {
-            this.enterTrashDir(item?.trashPath || item?.name || '');
-            return;
+    /** 退出回收站：清标志 + 回根目录 + 重载普通列表（不沿用回收站的页码与总数） */
+    exitTrashMode() {
+        this.trashMode = false;
+        this.showdetailDialog = false;
+        this.currentPath = '';
+        this.currentPage = 1;
+        this.fileWindowStart = 0;
+        this.fileWindowCount = 0;
+        this.clearSelection();
+        // v2.9.0：手动退出回收站时同步取消筛选里的「已删除」，否则角标与实际视图不一致
+        if (Array.isArray(this.filters?.accessStatus) && this.filters.accessStatus.includes('deleted')) {
+            this.filters = {
+                ...this.filters,
+                accessStatus: this.filters.accessStatus.filter((v) => v !== 'deleted')
+            };
         }
+        this.refreshFileList();
+    },
+    /**
+     * 回收站里「返回上一级」—— v1.1.9.4 起与普通浏览共用 currentPath，
+     * 直接按路径段回退（等价于点面包屑的上一级）。
+     */
+    leaveTrashDir() {
+        if (!this.currentPath) return;
+        const segs = String(this.currentPath).replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+        segs.pop();
+        const next = segs.join('/');
+        this.currentPage = 1;
+        this.currentPath = next ? `${next}/` : '';
+        this.refreshFileList();
+    },
+    /**
+     * 统一的「进入目录」入口 —— v1.1.9.4 起回收站与普通浏览共用 currentPath，
+     * 「回收站专用目录」这条分叉已删除。
+     */
+    enterFolderItem(item) {
         this.enterFolder(item?.name);
     },
-    /** 把回收站接口的条目转成卡片/列表渲染需要的结构 */
-    convertTrashItem(it) {
-        const primary = (it.channels || []).find(c => c.isPrimary) || (it.channels || [])[0] || {};
-        const deletedAtText = it.deletedAt ? new Date(it.deletedAt).toLocaleString() : '';
-        return {
-            name: it.name,
-            // v3.0.0（R14）：后端会把「已删除的文件夹」作为 isFolder 条目混排进回收站，这里原样透传
-            isFolder: !!it.isFolder,
-            /*
-             * v1.0.3：回收站内的目录路径（id 形如 folder:<路径>）。
-             * 点击文件夹卡片就是进入这一层，看它里面删掉的内容。
-             */
-            trashPath: it.isFolder ? String(it.trashPath || String(it.id || '').replace(/^folder:/, '')) : '',
-            selected: false,
-            trashId: it.id,
-            // 详情页「文件状态」据此显示「已删除」
-            status: it.status || 'deleted',
-            metadata: {
-                FileName: it.originalName || it.name,
-                RawName: it.name,
-                // 卡片/列表视图判断视频/图片靠 FileType（回收站条目没有扩展名后缀）
-                FileType: it.isFolder ? 'folder' : (it.mime || ''),
-                FileExt: (String(it.originalName || '').split('.').pop() || '').toLowerCase(),
-                FileSizeBytes: Number(it.size) || 0,
-                TimeStamp: it.deletedAt || '',
-                UploadUser: it.uploader || '',
-                UploadSource: it.uploadSource || 'Default',
-                Channel: primary.name || '',
-                ChannelShort: primary.name || '',
-                MimeType: it.mime || '',
-                Status: it.status || 'deleted',
-                Tags: [],
-                TrashDeletedAt: deletedAtText,
-                TrashChannels: (it.channels || []).map(c => c.name).filter(Boolean)
-            }
-        };
-    },
+    /*
+     * v1.1.9.4：原 convertTrashItem() 已删除 —— 它存在的唯一理由是「回收站接口
+     * 返回的是另一套结构」，现在回收站改走 /api/manage/list，行结构由
+     * buildRowsFromResponse() 统一生成，不再需要转换层。
+     */
     /**
      * 批量恢复 / 批量彻底删除（回收站模式）。
      * v3.0.0（R14）：返回完整 data —— 开启 2FA 时后端回 `{ success:false, needTotp:true }`，
@@ -3048,18 +3035,16 @@ methods: {
         this.tableData = this.tableData.filter((f) => !(f.trashId && ids.has(f.trashId)) && !names.has(f.name));
         this.selectedFiles = [];
         /*
-         * v3.0.0（R12）：回收站改服务端分页后，本地删完要按剩余总数补拉当前页
-         * （否则当前页会「缺几条」，翻页时页码与后端切片对不上）。
-         * 当前页被删空且不是第一页 → 回退一页。
+         * v1.1.9.4：回收站与普通列表共用同一套窗口分页状态 —— 本地移掉条目后
+         * 同步扣减总数与窗口计数；当前页被清空且不在第一页时回退一页。
          */
-        this.trashTotal = Math.max(0, this.trashTotal - items.length);
-        this.listTotal = this.trashTotal;
+        this.listTotal = Math.max(0, this.listTotal - items.length);
         this.fileWindowCount = Math.max(0, this.fileWindowCount - items.length);
         if (this.detailFile && names.has(this.detailFile.name)) {
             this.showdetailDialog = false;
             this.detailFile = null;
         }
-        if (this.trashTotal === 0) {
+        if (this.listTotal === 0) {
             this.tableData = [];
             this.fileWindowStart = 0;
             this.fileWindowCount = 0;
@@ -3067,8 +3052,10 @@ methods: {
             this.updateStats(0, true);
             return;
         }
-        const maxPage = Math.max(1, Math.ceil(this.trashTotal / TRASH_PAGE_SIZE));
-        this.enterTrashMode(true, Math.min(this.currentPage, maxPage));
+        const pageSize = this.listWindowSize || 24;
+        const maxPage = Math.max(1, Math.ceil(this.listTotal / pageSize));
+        const target = Math.min(this.currentPage, maxPage);
+        this.loadListWindow({ page: target, force: true });
     },
     /**
      * 危险操作确认框：必须手动输入「确认删除」才能继续（防误删）。
@@ -3103,10 +3090,14 @@ methods: {
         return trackMessageBox(id, promise);
     },
     handleDelete(index, key) {
-        // 回收站模式下卡片上的「删除」= 恢复该文件
+        /*
+         * v1.1.9.4：回收站里的「删除」= 彻底删除。
+         * 旧实现这里走的是「恢复」—— 按钮叫删除、行为却是恢复，语义完全相反；
+         * 现在与批量工具栏（handleBatchDelete → trashPurgeItems）保持同一口径。
+         */
         if (this.trashMode) {
             const item = this.tableData.find(file => file.name === key);
-            if (item) this.trashRestoreItems([item]);
+            if (item) this.trashPurgeItems([item]);
             return;
         }
         // v3.0.0（R8）：别人共享给我的（无论只读/编辑）一律不可删除
@@ -3473,14 +3464,21 @@ methods: {
         this.lastSelectedIndex = -1;
     },
     handleBatchAction(command) {
-        // 回收站模式：批量工具栏只有「恢复 / 彻底删除」
+        /*
+         * v1.1.9.4：回收站 = 筛选态，批量工具栏不再整体拦截。
+         * 只有「恢复 / 彻底删除」是回收站专属语义（映射到 trashXxx），
+         * 其余命令（改标签 / 移动 / 改名 / 下载…）照常走图床管理的原逻辑 ——
+         * 这正是「回收站直接复用图床管理全部功能」的要求。
+         */
         if (this.trashMode) {
             if (command === 'restore') {
                 this.trashRestoreItems([...this.selectedFiles]);
-            } else if (command === 'purge') {
-                this.trashPurgeItems([...this.selectedFiles]);
+                return;
             }
-            return;
+            if (command === 'purge') {
+                this.trashPurgeItems([...this.selectedFiles]);
+                return;
+            }
         }
         if (command === 'copy') {
             this.handleBatchCopy();
@@ -4748,8 +4746,10 @@ methods: {
     async loadAllFolders() {
         this.allFoldersLoading = true;
         try {
+            // v1.1.9.4：回收站里目录树按「已删除文件」的目录聚合，否则整个下拉是空的
+            const trashQ = this.trashMode ? '&statusOnly=deleted' : '';
             const res = await fetchWithAuth(
-                `/api/manage/folders/all?instanceId=${encodeURIComponent(this.instanceId || '')}`,
+                `/api/manage/folders/all?instanceId=${encodeURIComponent(this.instanceId || '')}${trashQ}`,
                 { method: 'GET' }
             );
             const json = await res.json().catch(() => ({}));
@@ -4791,6 +4791,12 @@ methods: {
             + `&instanceId=${encodeURIComponent(this.instanceId || '')}`;
         // 直接展开文件 = 递归平铺当前目录（后端不返回文件夹聚合）
         if (this.recursiveSearchResults) url += '&flat=true';
+        /*
+         * v1.1.9.4：回收站 = 本接口的一个筛选开关（只看 status='deleted'）。
+         * 不再走 /api/manage/trash 那套独立数据源 —— 所以目录、排序、分页、
+         * 筛选、搜索、实例隔离全部与原列表同源，回收站自然拥有这些能力。
+         */
+        if (this.trashMode) url += '&statusOnly=deleted';
         if (this.searchIncludeTags) url += `&includeTags=${encodeURIComponent(this.searchIncludeTags)}`;
         if (this.searchExcludeTags) url += `&excludeTags=${encodeURIComponent(this.searchExcludeTags)}`;
         /*
@@ -4855,6 +4861,12 @@ methods: {
                 sharedPerm: folderPerm,
                 // v3.0.0（R12）：目录属性里的自定义名称（空 = 用路径末段）
                 displayName: folderNames[folder] || '',
+                /*
+                 * v1.1.9.4：回收站里的目录同样能整套操作 ——
+                 * 恢复 / 彻底删除整目录走既有的 'folder:<路径>' 约定（后端 batch 认这个前缀），
+                 * 所以这里先把 trashId 拼好，操作链路无需区分「独立模式」还是「筛选态」。
+                 */
+                trashId: this.trashMode ? `folder:${folder}` : '',
                 metadata: { FileName: folderNames[folder] || folder.split('/').pop(), folderStats: folderStatsMap[folder] || null }
             };
         });
@@ -4881,9 +4893,16 @@ methods: {
              * 详情页「只读共享 → 顶部按钮全部隐藏」的判定依赖 f.sharedPerm，
              * 这里漏挑字段会让判定恒为 false，只读共享文件的编辑/重命名等按钮照旧显示。
              */
-            sharedPerm: file.sharedPerm || '',
-            instanceId: file.instanceId || '',
-            folder: file.folder || ''
+                sharedPerm: file.sharedPerm || '',
+                instanceId: file.instanceId || '',
+                folder: file.folder || '',
+                /*
+                 * v1.1.9.4：回收站筛选态 —— 后端只在 statusOnly=deleted 时下发这两项。
+                 * 补齐之后，现有的「恢复 / 彻底删除」链路（认 trashId）一行都不用改。
+                 */
+                trashId: file.trashId || '',
+                deletedAt: file.deletedAt || '',
+                status: file.trashId ? 'deleted' : ''
             };
         });
         return { folderItems, fileItems };
@@ -4896,21 +4915,11 @@ methods: {
      * @param {boolean} prepend      在窗口头部补载上一页（保持滚动位置）
      */
     async loadListWindow({ page = null, append = false, prepend = false, force = false } = {}) {
-        if (this.trashMode) {
-            /*
-             * v3.0.0（R12）：回收站走自己的服务端分页 ——
-             * 翻页 = 拉对应 page，加载更多 = 拉下一页并追加，
-             * 刷新（无参）= 重拉当前页。
-             */
-            if (append) {
-                await this.enterTrashMode(true, this.currentPage + 1, true);
-            } else if (page !== null) {
-                await this.enterTrashMode(true, page);
-            } else {
-                await this.enterTrashMode(true, this.currentPage || 1);
-            }
-            return;
-        }
+        /*
+         * v1.1.9.4：回收站不再有独立数据源 —— 它只是 buildListUrl 里的
+         * statusOnly=deleted 开关，所以这里不需要任何 trashMode 分支，
+         * 翻页 / 加载更多 / 刷新 / 补载全部走同一条路径。
+         */
         /*
          * v3.0.0：force = 顶栏「刷新」专用 ——
          * 以前这里一句 `if (this.listLoading) return` 会把刷新请求静默吞掉
@@ -5003,11 +5012,10 @@ methods: {
 
     // 刷新文件列表（回收站模式下走回收站接口）
     async refreshFileList() {
-        if (this.trashMode) {
-            // v3.0.0（R12）：回收站刷新保持当前页码（服务端分页后按页重拉）
-            await this.enterTrashMode(true, this.currentPage || 1);
-            return;
-        }
+        /*
+         * v1.1.9.4：回收站复用同一个刷新链路（statusOnly 由 buildListUrl 带出），
+         * 原来的 enterTrashMode 独立分支已删除。
+         */
         this.refreshLoading = true;
         try {
             /*
@@ -5437,6 +5445,26 @@ mounted() {
         showBatchExpiryDialog: 'dashboard-batch-expiry'
     });
     /*
+     * v1.1.9.4（需求）：把底部「批量操作栏」也纳入 closePageOrder / hasOpenLayer 的层叠监测。
+     * 它本身就是「有选中项才出现」的浮层（z-index 1200，低于 Element Plus 弹窗的 2000+），
+     * 所以层级顺序天然正确：先把上面压着的弹窗一层层关完，最后才轮到它。
+     * 关掉它 = 取消选中（栏体随选中数归零而消失），与 v1.1.9.2 的「空栈返回取消选中」同义。
+     */
+    this._unwatchBatchBarLayer = this.$watch(
+        () => this.selectedFiles.length,
+        (count) => {
+            if (count > 0) {
+                registerLayer('dashboard-batch-bar', () => this.clearSelection(), {
+                    z: 1200,
+                    alive: () => this.selectedFiles.length > 0
+                });
+            } else {
+                unregisterLayer('dashboard-batch-bar');
+            }
+        },
+        { immediate: true }
+    );
+    /*
      * v1.1.9.2：批量选中时，Esc / 屏幕边缘横滑改为「取消选中」。
      * 没有浮层可关的时候由浮层栈回调到这里（见 utils/layerStack + edgeSwipeGuard）。
      */
@@ -5560,6 +5588,12 @@ beforeUnmount() {
     unregisterLayer('file-detail');
     // v1.1.9：详情页内的二级层也一并摘掉（标签 / 黑白名单 / 删除确认）
     ['file-detail-tags', 'file-detail-block', 'file-detail-white', 'file-detail-delete'].forEach((id) => unregisterLayer(id));
+    // v1.1.9.4：摘掉底部批量操作栏这一层（含它的 watcher）
+    if (this._unwatchBatchBarLayer) {
+        this._unwatchBatchBarLayer();
+        this._unwatchBatchBarLayer = null;
+    }
+    unregisterLayer('dashboard-batch-bar');
     // v1.1.9.2：摘掉本页注册的「空栈返回兜底」，避免离开页面后还拦着 Esc
     setEmptyStackBackHandler(null);
     this.clearDirHoverTimer();
@@ -6845,12 +6879,12 @@ html.dark .trash-btn.is-active,
  * 左右两侧直接贴到页面边缘（用负 margin 抵掉主容器的内边距）。
  *  · 手机：每行 4（竖屏）/ 8（横屏），单格 1:1；
  *  · 平板：每行 6（竖屏）/ 12（横屏），单格 1:1；
- *  · 桌面：每行固定 8 个、单格 1:1，格子尺寸随页面宽度等比缩放（纯 CSS，无需 JS 算列数）。
+ *  · 桌面：每行固定 10 个、单格 1:1，格子尺寸随页面宽度等比缩放（纯 CSS，无需 JS 算列数）。
  */
 .album-view {
     display: grid;
-    /* 基础档 = 桌面：固定 8 列，格子宽度 = (页宽 - 7×2px) ÷ 8，两边天然对齐 */
-    grid-template-columns: repeat(8, minmax(0, 1fr));
+    /* 基础档 = 桌面：固定 10 列（v1.1.9.4 由 8 改 10），格子宽度 = (页宽 - 9×2px) ÷ 10，两边天然对齐 */
+    grid-template-columns: repeat(10, minmax(0, 1fr));
     gap: 2px;
     padding: 0;
     /*
@@ -6938,6 +6972,55 @@ html.dark .trash-btn.is-active,
 .album-play-badge :deep(svg) {
     transform: translateX(1px);
 }
+/*
+ * v1.1.9.4（需求）：相册格子的选中圆圈。
+ * 几何与卡片视图的 .card-select 完全对齐（top 3px / right 8px / 18px 圆形），
+ * 只是父级没有圆角、没有白色底，所以直接绝对定位到格子右上角。
+ * 显隐三态：默认透明 → 悬停浮现 → 已有选中则常显。
+ */
+.album-select {
+    position: absolute;
+    top: 3px;
+    right: 8px;
+    z-index: 3;
+    margin: 0;
+    opacity: 0;
+    /* 桌面端：看不见就不该被点到（鼠标移入后 opacity 变 1 才可点） */
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+.album-cell:hover .album-select,
+.album-cell:focus-within .album-select,
+.album-cell.is-selected .album-select,
+.album-select.is-force-select {
+    opacity: 1;
+    pointer-events: auto;
+}
+/* 移动端 / 平板：没有 hover，圆圈保持透明但仍可点 —— 点中即选中并显现 */
+@media (hover: none) {
+    .album-select {
+        pointer-events: auto;
+    }
+}
+.album-select :deep(.el-checkbox__inner) {
+    width: 18px !important;
+    min-width: 18px;
+    height: 18px !important;
+    min-height: 18px;
+    border-radius: 50% !important;
+    background: transparent;
+}
+.album-select :deep(.el-checkbox__input.is-checked .el-checkbox__inner) {
+    background-color: var(--el-color-primary);
+    border-color: var(--el-color-primary);
+}
+.album-select :deep(.el-checkbox__input.is-checked .el-checkbox__inner::after) {
+    border-color: #fff;
+}
+/* 选中格给一圈内描边（相册无圆角，用 inset 阴影而不是 border，避免格子尺寸跳动） */
+.album-cell.is-selected {
+    box-shadow: inset 0 0 0 2px var(--el-color-primary);
+}
 .album-cell.is-skeleton {
     background: linear-gradient(90deg, var(--el-fill-color-light) 25%, var(--el-fill-color) 37%, var(--el-fill-color-light) 63%);
     background-size: 400% 100%;
@@ -6949,6 +7032,17 @@ html.dark .trash-btn.is-active,
 }
 .album-view .empty-state {
     grid-column: 1 / -1;
+}
+/*
+ * v1.1.9.4（需求：相册视图下禁止边缘滑动触发回退）。
+ * 下面 ≤768 的块里已经给了 .album-view touch-action: pan-y，但那只覆盖手机；
+ * 平板竖屏（768 以上）同样是手指操作、同样会触发系统返回手势，
+ * 所以这里按「触屏」判定再兜一层，不限宽度。
+ */
+@media (hover: none) {
+    .album-view {
+        touch-action: pan-y;
+    }
 }
 
 /*
@@ -7646,9 +7740,12 @@ html.dark .trash-btn.is-active,
      * v3.0.0（R14）：文件加载区横向手势交给页面 JS（左右滑动切换展示模式）——
      * touch-action: pan-y 屏蔽浏览器自带的横向手势（含屏幕边缘滑动返回的伸缩动画），
      * 纵向滚动照常。与灯箱里 .mv-stage 的处理同源。
+     * v1.1.9.4（需求）：相册视图（.album-view）同样纳入 —— 它也有左右滑动切换展示模式，
+     * 之前只有 .content / .list-view 有这条规则，相册里从屏幕左右边缘起手仍会触发返回。
      */
     .content,
-    .list-view {
+    .list-view,
+    .album-view {
         touch-action: pan-y;
     }
 }
@@ -7971,6 +8068,21 @@ html.dark .trash-btn.is-active,
         /* 上 / 左 / 右三边贴死视口，只留底边一条描边 */
         border-width: 0 0 1px 0;
         padding: 6px 12px;
+    }
+
+    /*
+     * v1.1.9.4（需求）：桌面端滚动时第二行与顶栏「同进同出」。
+     *   · 向下滚（滚动条往下走）→ 顶栏上滑隐藏，第二行也跟着上滑出屏，不再吸在顶端；
+     *   · 向上滚（滚动条往上走）→ 顶栏滑回，第二行跟着回到顶栏下沿继续吸附。
+     * 位移量 -100% - 12px：-100% 是自身高度，多出的 12px 保证底边那条 1px 描边也不露头。
+     * 与 ≤768 块里移动端的同名规则完全一致，只是桌面端这一行是通栏。
+     */
+    .dashboard-page-v3 .breadcrumb-container.is-stuck {
+        transition: transform 0.24s ease;
+    }
+
+    .dashboard-page-v3 .breadcrumb-container.is-stuck.is-header-hidden {
+        transform: translateY(calc(-100% - 12px));
     }
 }
 

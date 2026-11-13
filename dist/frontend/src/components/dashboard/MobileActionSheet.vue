@@ -74,13 +74,33 @@ export default {
         sharedNoDelete: { type: Boolean, default: false }
     },
     emits: ['update:modelValue', 'action'],
+    data() {
+        return {
+            /*
+             * v1.1.9.4：面板打开的时刻。
+             * 长按 500ms 弹面板，手指一抬起，浏览器会在抬起点的元素上补一次 click ——
+             * 那个元素此刻正是刚渲染出来的 .bottom-sheet-overlay，
+             * 于是「长按弹出 → 松手瞬间又被遮罩关掉」，用户完全看不到菜单。
+             * 这里给一个很短的静默窗（350ms），期间遮罩点击不生效；
+             * 人手不可能在 350ms 内既长按又去点遮罩，所以不会影响正常关闭。
+             */
+            openedAt: 0
+        };
+    },
+    watch: {
+        modelValue(v) {
+            if (v) this.openedAt = Date.now();
+        }
+    },
     methods: {
         close() {
+            if (Date.now() - this.openedAt < 350) return;
             this.$emit('update:modelValue', false);
         },
         handleAction(action) {
             this.$emit('action', action);
-            this.close();
+            // 选项是真实点击，不受静默窗限制 —— 直接关闭
+            this.$emit('update:modelValue', false);
         }
     }
 }

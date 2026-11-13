@@ -623,7 +623,14 @@ export default {
                 { kind: 'todo', icon: 'check-square', color: '#67c23a', ready: false, label: this.$t('notes.typeTodo') },
                 { kind: 'nav', icon: 'globe', color: '#e6a23c', ready: false, label: this.$t('notes.typeNav') },
                 { kind: 'article', icon: 'book', color: '#909399', ready: false, label: this.$t('notes.typeArticle') },
-                { kind: 'collection', icon: 'images', color: '#f56c6c', ready: false, label: this.$t('notes.typeCollection') }
+                { kind: 'collection', icon: 'images', color: '#f56c6c', ready: false, label: this.$t('notes.typeCollection') },
+                /*
+                 * v1.1.9.4（需求）：在「登记」后面补一个「笔记」应用图标。
+                 * 笔记是登记之后的第六种笔记类型（kind = 'memo'），
+                 * 数据库表结构与既有类型完全一致，只是多一个 kind 取值。
+                 * 编辑页尚未实装，先按既有约定置 ready:false（点了给「未开放」提示）。
+                 */
+                { kind: 'memo', icon: 'edit', color: '#14b8a6', ready: false, label: this.$t('notes.typeMemo') }
             ];
         },
         /**
@@ -883,7 +890,7 @@ export default {
         },
         /** v1.1.6：右下角「笔记」—— 与「文件管理」同样的新标签打开方式 */
         handleNotesManage() {
-            window.open('/notes', '_blank', 'noopener')
+            window.open('/post', '_blank', 'noopener')
         },
         /** 更多菜单 → 系统管理：新标签打开系统状态页 */
         openSystemManage() {
