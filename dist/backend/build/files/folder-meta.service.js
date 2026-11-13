@@ -3,6 +3,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.FOLDER_TYPE_FILE = void 0;
 exports.sha256Hex = sha256Hex;
 exports.normalizeFolderPath = normalizeFolderPath;
+exports.extraFolderCreatorKey = extraFolderCreatorKey;
+exports.folderCreatorsOf = folderCreatorsOf;
 exports.extraFoldersKey = extraFoldersKey;
 exports.extraFoldersOf = extraFoldersOf;
 exports.parseSharedUsers = parseSharedUsers;
@@ -31,6 +33,31 @@ function normalizeFolderPath(p) {
         .replace(/\\/g, '/')
         .replace(/\/{2,}/g, '/')
         .replace(/^\/+|\/+$/g, '');
+}
+function extraFolderCreatorKey(owner, instanceId) {
+    return `${owner || ''}::${instanceId || ''}`;
+}
+function folderCreatorsOf(map, owner, instanceId) {
+    const out = {};
+    const prefix = `${owner || ''}::`;
+    for (const [k, v] of Object.entries(map || {})) {
+        if (String(instanceId) === '*') {
+            if (!k.startsWith(prefix))
+                continue;
+        }
+        else if (k !== extraFolderCreatorKey(owner, instanceId)) {
+            continue;
+        }
+        for (const [p, entry] of Object.entries(v || {})) {
+            if (!entry)
+                continue;
+            const prev = out[p];
+            const t = Number(entry.createdAt) || 0;
+            if (!prev || (t && (!prev.createdAt || t < prev.createdAt)))
+                out[p] = entry;
+        }
+    }
+    return out;
 }
 function extraFoldersKey(owner, instanceId) {
     const inst = String(instanceId || '');

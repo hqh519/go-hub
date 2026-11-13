@@ -483,6 +483,9 @@ import { CHANNEL_TYPES, CHANNEL_SHORT_LABEL } from '@/components/config/channel-
 import DateRangeCalendar from '@/components/DateRangeCalendar.vue';
 import { bindDialogLayers } from '@/utils/layerStack';
 
+/** v1.1.9.2：每个筛选弹窗实例一个层 id（同一页面里可能同时存在多份） */
+let filterSeq = 0;
+
 const EMPTY_FILTERS = {
     accessStatus: [],
     listType: [],
@@ -1118,8 +1121,16 @@ export default {
      * 不会把下面的灯箱或详情页一起带走。
      */
     mounted() {
+        /*
+         * v1.1.9.2：层 id 加实例序号。
+         * 以前写死 'dashboard-filter'，而本组件在图床管理页和「瞬间 → 选择文件 → 筛选」
+         * 里会各实例化一份；两份同时存在时后注册的会顶掉先注册的，
+         * 结果按一次 Esc 可能关错那一份（或被顶掉的那份关不掉）。
+         */
+        filterSeq += 1;
+        this._layerId = `dashboard-filter-${filterSeq}`;
         this._unbindLayers = bindDialogLayers(this, {
-            modelValue: { id: 'dashboard-filter', close: () => this.$emit('update:modelValue', false) }
+            modelValue: { id: this._layerId, close: () => this.$emit('update:modelValue', false) }
         });
     },
     beforeUnmount() {

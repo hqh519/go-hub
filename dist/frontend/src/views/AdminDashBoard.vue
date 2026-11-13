@@ -281,6 +281,17 @@
                         >
                             <font-awesome-icon icon="list" class="breadcrumb-view-icon"></font-awesome-icon>
                         </button>
+                        <!-- v1.1.9.2：相册视图（排在列表视图之后）—— 群晖 / Immich 式图墙 -->
+                        <button
+                            class="breadcrumb-view-button"
+                            :class="{ 'is-active': viewMode === 'album' }"
+                            type="button"
+                            :title="$t('dashboard.albumView')"
+                            :aria-pressed="viewMode === 'album'"
+                            @click="setViewMode('album')"
+                        >
+                            <font-awesome-icon icon="images" class="breadcrumb-view-icon"></font-awesome-icon>
+                        </button>
                     </div>
                     <!--
                         v3.0.0：内容展示方式（展示文件夹 = 按目录分层，默认 / 直接展开文件 = 当前目录递归平铺）。
@@ -600,7 +611,7 @@
             </div>
             <!-- 列表视图 -->
             <div
-                v-else
+                v-else-if="viewMode === 'list'"
                 class="list-view"
                 :class="{ 'is-drag-selecting': isDragging }"
                 ref="listContainerRef"
@@ -649,6 +660,56 @@
                     />
                 </template>
             </div>
+            <!--
+                v1.1.9.2：相册视图 —— 参考群晖相册 / Immich 的图墙布局。
+                · 移动端 1:1 方格、平板 1:1 方格，桌面端按可用宽度自动算列、保持两边对齐；
+                · 无圆角 / 无边框 / 无下方信息区，间隔 2px、左右直接贴边；
+                · 图片直接铺满；文件夹显示图标 + 名称（名称在图标下方）；
+                · 点击文件进灯箱、点击文件夹进目录；滚动到底自动加载。
+            -->
+            <div
+                v-else
+                ref="albumContainerRef"
+                class="album-view"
+            >
+                <!-- 骨架：只占位，不套卡片样式，避免与图墙的「无边框」冲突 -->
+                <template v-if="loading">
+                    <div v-for="n in albumSkeletonCount" :key="`album-skeleton-${n}`" class="album-cell is-skeleton"></div>
+                </template>
+                <div v-else-if="paginatedTableData.length === 0" class="empty-state">
+                    <font-awesome-icon icon="folder-open" class="empty-icon" />
+                    <p class="empty-text">{{ hasSearchOrFilter ? $t('dashboard.noMatchingFiles') : $t('dashboard.currentDirEmpty') }}</p>
+                    <p class="empty-hint">{{ hasSearchOrFilter ? $t('dashboard.adjustSearchHint') : $t('dashboard.uploadHint') }}</p>
+                </div>
+                <template v-else>
+                    <div
+                        v-for="(item, index) in paginatedTableData"
+                        :key="`album:${item.isFolder ? 'folder' : 'file'}:${item.name}`"
+                        class="album-cell"
+                        :class="{ 'is-folder': isFolder(item) }"
+                        :title="albumTitle(item)"
+                        @click="handleAlbumOpen(item, index)"
+                    >
+                        <template v-if="isFolder(item)">
+                            <font-awesome-icon icon="folder" class="album-folder-icon" />
+                            <span class="album-folder-name">{{ item.displayName || item.name }}</span>
+                        </template>
+                        <img
+                            v-else-if="isImage(item)"
+                            class="album-thumb"
+                            :src="albumThumb(item)"
+                            alt=""
+                            loading="lazy"
+                            decoding="async"
+                        />
+                        <font-awesome-icon
+                            v-else
+                            :icon="albumFallbackIcon(item)"
+                            class="album-file-icon"
+                        />
+                    </div>
+                </template>
+            </div>
             
             <!-- 选区矩形覆盖层 -->
             <div
@@ -667,7 +728,8 @@
             <!-- v3.0.0：底部哨兵 —— 滚动到底自动追加下一页（与「加载更多」同一加载函数） -->
             <div v-if="!tagModeActive" ref="bottomSentinel" class="list-sentinel"></div>
 
-            <div v-if="!tagModeActive" class="pagination-container">
+            <!-- v1.1.9.2：相册视图只走「滚动到底自动加载」，不显示分页条与「加载更多」 -->
+            <div v-if="!tagModeActive && viewMode !== 'album'" class="pagination-container">
                 <div class="pagination-center">
                     <!-- v3.0.0：分页按后端总数（listTotal）计算，翻页时用该页数据替换列表 -->
                     <el-pagination
@@ -997,7 +1059,7 @@ import { fileManager } from '@/utils/fileManager';
 // v1.1.3：实例切换密码守卫（三个页面共用同一份实现）
 import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
 import { thumbUrl } from '@/utils/thumb';
-import { registerLayer, unregisterLayer, bindDialogLayers, trackMessageBox } from '@/utils/layerStack';
+import { registerLayer, unregisterLayer, bindDialogLayers, trackMessageBox, setEmptyStackBackHandler } from '@/utils/layerStack';
 // 文件详情通用数据构造器（与「历史记录」页共用同一套模板 + 同一套链接拼装逻辑）
 import {
     buildFileDetailUrls as buildFileDetailUrlsUtil,
@@ -1183,7 +1245,13 @@ data() {
         showTagDialog: false, // 标签管理对话框
         showBatchTagDialog: false, // 批量标签管理对话框
         currentTagFile: '', // 当前标签管理的文件
-        viewMode: 'card', // 视图模式：card 或 list
+        viewMode: 'card', // 视图模式：card / list / album（v1.1.9.2 新增相册视图）
+        /*
+         * v1.1.9.2：视口尺寸，供相册视图的「一次拉多少条」（手机 48 / 其余 72）使用。
+         * 列数与单格比例不再由 JS 计算 —— 桌面固定 8 列 + 1:1，全部交给 CSS。
+         */
+        viewportWidth: typeof window !== 'undefined' ? window.innerWidth : 1440,
+        viewportHeight: typeof window !== 'undefined' ? window.innerHeight : 900,
         // v3.0.0（R4）：移动端「全选 / 视图切换」工具栏是否已吸附到顶栏下方（仅用于附加背景，不影响定位）
         breadcrumbStuck: false,
         // v3.0.0（R14）：第二行吸附的复位阈值（未吸附时测量并缓存，避免吸附期间布局变化导致提前复位）
@@ -1388,7 +1456,34 @@ computed: {
     },
     /** v3.0.0（R12）：分页条实际使用的每页条数 —— 回收站 48，普通列表 24 */
     effectivePageSize() {
+        // v1.1.9.2：相册视图按手机 48 / 平板·桌面 72 计算
+        if (this.viewMode === 'album') return this.albumPageSize;
         return this.trashMode ? TRASH_PAGE_SIZE : this.pageSize;
+    },
+    /* ── v1.1.9.2 相册视图 ─────────────────────────────────────────
+     * 列数与比例全部交给 CSS（见样式里的 4 组断点）：
+     *   · 手机（≤768）：每行 4 个（竖屏）/ 8 个（横屏），单格 1:1，初始 48 个；
+     *   · 平板（769~1199）：每行 6 个（竖屏）/ 12 个（横屏），单格 1:1，初始 72 个；
+     *   · 桌面（≥1200）：每行固定 8 个、单格 1:1，格子尺寸随页面宽度等比缩放。
+     * 这里只负责「一次拉多少条」（手机 48 / 其余 72）。
+     */
+    albumPageSize() {
+        /*
+         * 手机 48 / 平板·桌面 72。横屏手机宽度常超过 768（844 / 896 / 932），
+         * 单看宽度会被当平板，所以再用「高度 ≤ 500」兜一下（与 CSS 断点同一口径）。
+         */
+        const w = Number(this.viewportWidth) || 1440;
+        const h = Number(this.viewportHeight) || 0;
+        const isPhone = w <= 768 || (h > 0 && h <= 500);
+        return isPhone ? 48 : 72;
+    },
+    /** 列表窗口尺寸：相册视图换档，其它视图维持原来的 24 */
+    listWindowSize() {
+        return this.viewMode === 'album' ? this.albumPageSize : this.pageSize;
+    },
+    /** 骨架格数量：别按 72 个画，最多 60 个，避免首屏 DOM 太多 */
+    albumSkeletonCount() {
+        return Math.min(this.listWindowSize, 60);
     },
     /** 加载更多按钮上的「(＋N)」剩余条数 */
     loadedRows() {
@@ -1857,13 +1952,68 @@ methods: {
     onPageActivate() {
         // v3.0.0（R16）：禁止自动刷新 —— 内容仅在点击刷新按钮 / 主动操作后更新
     },
+    /**
+     * v1.1.9.2：没有浮层可关时的「返回」兜底 —— 批量选中状态下取消选中。
+     * layerStack（桌面 Esc）与 edgeSwipeGuard（移动端边缘横滑）都会回调这里；
+     * 返回 true 表示这次返回已被消费，不会再继续退页面 / 回上级目录。
+     */
+    handleEmptyStackBack() {
+        if (this.selectedFiles && this.selectedFiles.length) {
+            this.clearSelection();
+            return true;
+        }
+        return false;
+    },
     // 切换视图模式
     setViewMode(mode) {
         if (this.viewMode === mode) {
             return;
         }
+        const wasAlbum = this.viewMode === 'album';
         this.viewMode = mode;
         localStorage.setItem('viewMode', this.viewMode);
+        /*
+         * v1.1.9.2：相册视图的「每页数量」与卡片/列表不同（48 或 72），
+         * 进出相册都要按新尺寸重新拉第一页，否则仍会按 24 条切窗口。
+         */
+        if (wasAlbum || mode === 'album') {
+            this.currentPage = 1;
+            this.fileWindowStart = 0;
+            this.fileWindowCount = 0;
+            this.$nextTick(() => {
+                this.setupListObservers();
+            });
+            this.loadListWindow({ page: 1, force: true });
+        }
+    },
+    /* ── v1.1.9.2 相册视图：渲染辅助 ───────────────────────────── */
+    /** 相册缩略图：走本站 /file 代理 + thumb 参数 */
+    albumThumb(item) {
+        return thumbUrl(this.getFileLink(item && item.name), 480);
+    },
+    albumTitle(item) {
+        return (item && (item.displayName || item.name)) || '';
+    },
+    /** 非图片文件的占位图标（相册视图里没有信息区，只能靠图标识别类型） */
+    albumFallbackIcon(item) {
+        const t = String(item?.metadata?.FileType || '').toLowerCase();
+        if (t.includes('video')) return 'film';
+        if (t.includes('audio')) return 'music';
+        if (t.includes('pdf')) return 'file-pdf';
+        return 'file';
+    },
+    /** 相册里点一下：文件进灯箱，文件夹进目录（回收站里文件改开详情，便于恢复） */
+    handleAlbumOpen(item, index) {
+        if (!item) return;
+        if (this.isFolder(item)) {
+            this.enterFolderItem(item);
+            return;
+        }
+        if (this.trashMode) {
+            this.openDetailDialog(index, item.name);
+            return;
+        }
+        this.openMediaPreview(item);
     },
     // 列表视图全选当前页
     handleSelectAllPage(val) {
@@ -2632,8 +2782,13 @@ methods: {
              * 后端只返回该层的子目录 + 直接子文件，进入子目录后文件才可见。
              */
             const dirQ = `&dir=${encodeURIComponent(this.trashPath || '')}`;
+            /*
+             * v1.1.9.2：回收站同样跟随「内容展示方式」——
+             * folders = 按层级展示文件夹+文件；expanded = 不显示文件夹，递归平铺文件。
+             */
+            const flatQ = `&flat=${this.searchResultDisplay === 'expanded' ? 'true' : 'false'}`;
             const resp = await fetchWithAuth(
-                `/api/manage/trash?1=1${filterParams}${searchQ}${instanceQ}${pageQ}${dirQ}`
+                `/api/manage/trash?1=1${filterParams}${searchQ}${instanceQ}${pageQ}${dirQ}${flatQ}`
             );
             if (!resp.ok) throw new Error('Request failed');
             const data = await resp.json();
@@ -2762,23 +2917,26 @@ methods: {
      * 未开启 2FA 的账户不会走到这里（后端直接放行），交互与「输入确认删除」保持一致。
      */
     askTrashTotp(message) {
-        return this.$prompt(message || this.$t('dashboard.trashTotpPrompt'), this.$t('dashboard.trashTotpTitle'), {
+        // v1.1.9.2：2FA 验证码输入框也纳入层叠监测（属于回收站删除流程的一层）
+        return this.trackLayer('dashboard-trash-totp', this.$prompt(message || this.$t('dashboard.trashTotpPrompt'), this.$t('dashboard.trashTotpTitle'), {
             confirmButtonText: this.$t('dashboard.deleteConfirmOk'),
             cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
             inputPattern: /^\s*\d{6,8}\s*$/,
             inputErrorMessage: this.$t('dashboard.trashTotpInvalid'),
             inputPlaceholder: this.$t('dashboard.trashTotpPlaceholder'),
             type: 'warning'
-        });
+        }));
     },
     /** 恢复（撤销软删除标记，文件回到普通列表） */
     trashRestoreItems(items) {
         if (!items.length) return;
-        this.$confirm(
+        // v1.1.9.2：回收站「恢复」确认框纳入层叠监测（Esc / 边缘横滑先关它）
+        const pending = this.trackLayer('dashboard-trash-restore', this.$confirm(
             this.$t('dashboard.trashRestoreConfirm', { count: items.length }),
             this.$t('dashboard.trashTitle'),
             { confirmButtonText: this.$t('dashboard.trashRestore'), cancelButtonText: this.$t('dashboard.deleteConfirmCancel'), type: 'info' }
-        ).then(async () => {
+        ));
+        pending.then(async () => {
             // v3.0.0（R12，需求 43）：恢复期间同样显示转圈（回收站条目用 trashId 作 key）
             const keys = items.map((it) => it.trashId || it.name);
             this.setDeleting(keys, true);
@@ -3331,7 +3489,8 @@ methods: {
             return;
         }
         try {
-            await this.$confirm(
+            // v1.1.9.2：批量备份确认框纳入层叠监测
+            await this.trackLayer('dashboard-batch-backup', this.$confirm(
                 this.$t('dashboard.backupSelectedConfirm', { count: files.length }),
                 this.$t('dashboard.backupSelected'),
                 {
@@ -3339,7 +3498,7 @@ methods: {
                     cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
                     type: 'warning'
                 }
-            );
+            ));
         } catch {
             return;
         }
@@ -3644,11 +3803,12 @@ methods: {
         }
     },
     handleBatchBlock(){
-        this.$confirm(this.$t('dashboard.batchBlockConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
+        // v1.1.9.2：批量黑名单确认框纳入层叠监测
+        this.trackLayer('dashboard-batch-block', this.$confirm(this.$t('dashboard.batchBlockConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
             confirmButtonText: this.$t('dashboard.deleteConfirmOk'),
             cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
             type: 'warning'
-        }).then(() => {
+        })).then(() => {
             // 跳过文件夹
             const promises = this.selectedFiles.map(file => {
                 if (file.isFolder) {
@@ -3673,11 +3833,12 @@ methods: {
         }).catch(() => console.log('Batch block cancelled'));
     },
     handleBatchWhite(){
-        this.$confirm(this.$t('dashboard.batchWhiteConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
+        // v1.1.9.2：批量白名单确认框纳入层叠监测
+        this.trackLayer('dashboard-batch-white', this.$confirm(this.$t('dashboard.batchWhiteConfirm'), this.$t('dashboard.deleteConfirmTitle'), {
             confirmButtonText: this.$t('dashboard.deleteConfirmOk'),
             cancelButtonText: this.$t('dashboard.deleteConfirmCancel'),
             type: 'warning'
-        }).then(() => {
+        })).then(() => {
             // 跳过文件夹
             const promises = this.selectedFiles.map(file => {
                 if (file.isFolder) {
@@ -3945,6 +4106,12 @@ methods: {
     updateResponsivePageSize() {
         // v2.8.2：全终端统一每页 24（含文件夹一起计数），不再按视口降为 18/16
         const nextPageSize = 24;
+        /*
+         * v1.1.9.2：记下视口尺寸 —— 相册视图的「一次拉多少条」按宽度/高度判定手机还是平板；
+         * 列数是纯 CSS 的 8 列 1:1，窗口变宽只会让格子等比变大，不需要重算。
+         */
+        this.viewportWidth = typeof window !== 'undefined' ? window.innerWidth : this.viewportWidth;
+        this.viewportHeight = typeof window !== 'undefined' ? window.innerHeight : this.viewportHeight;
         // v3.0.0（R4）：窗口尺寸变化时重算第二行工具栏的吸顶态
         this.updateBreadcrumbStuck();
         if (this.pageSize === nextPageSize) return;
@@ -4715,7 +4882,8 @@ methods: {
          * 刷新时强制进入，且请求带 cache:'no-store' 绕过浏览器 HTTP 缓存。
          */
         if (this.listLoading && !force) return;
-        const size = this.pageSize;
+        // v1.1.9.2：相册视图的窗口尺寸更大（48 / 72），其余视图仍是 24
+        const size = this.listWindowSize;
         let start = 0;
         if (page !== null) start = Math.max(0, (page - 1) * size);
         else if (append) start = this.fileWindowStart + this.fileWindowCount;
@@ -4859,7 +5027,6 @@ methods: {
     setupListObservers() {
         if (typeof IntersectionObserver === 'undefined') return;
         this.teardownListObservers();
-        const options = { root: null, rootMargin: '160px 0px', threshold: 0 };
         /*
          * v3.0.0：底部哨兵的「滚动到底自动追加」已按需求移除 ——
          * 拉到底部也不会自动加载，「加载更多」按钮必须手动点击，点一次加载一页，
@@ -4867,7 +5034,16 @@ methods: {
          * v3.0.0（R9）：顶部哨兵的「往上滚自动补载前面的页」同样移除 ——
          * 翻到非第一页后往回滚动时不再自动加载前三页 / 上一页，加载一律只认「加载更多」按钮
          * （loadPreviousPage 函数保留但不再有自动触发入口）。
+         *
+         * v1.1.9.2：相册视图例外 —— 需求明确要求「拉动到底部自动加载」。
+         * 这里只给相册视图挂底部哨兵；卡片 / 列表视图维持「必须手动点加载更多」。
          */
+        if (this.viewMode === 'album' && this.$refs.bottomSentinel) {
+            this.bottomObserver = new IntersectionObserver((entries) => {
+                if (entries.some((e) => e.isIntersecting)) this.loadMoreData(true);
+            }, { root: null, rootMargin: '400px 0px', threshold: 0 });
+            this.bottomObserver.observe(this.$refs.bottomSentinel);
+        }
     },
     teardownListObservers() {
         if (this.bottomObserver) {
@@ -5212,8 +5388,23 @@ mounted() {
      */
     this._unbindLayerDialogs = bindDialogLayers(this, {
         showUrlDialog: 'dashboard-link-format',
-        showInstanceDialog: 'dashboard-instance'
+        showInstanceDialog: 'dashboard-instance',
+        /*
+         * v1.1.9.2：把图床管理页的这批弹窗全部纳入层叠监测 ——
+         * 层 id 用「dashboard-」前缀，与笔记 / 瞬间里的同名弹窗区分开。
+         * 关掉它们都只是把本页 data 里的开关置 false，所以用字符串写法即可。
+         */
+        showFolderProps: 'dashboard-folder-props',
+        showMoveDialog: 'dashboard-move-file',
+        showBatchNameDialog: 'dashboard-batch-name',
+        showBatchTagDialog: 'dashboard-batch-tag',
+        showBatchExpiryDialog: 'dashboard-batch-expiry'
     });
+    /*
+     * v1.1.9.2：批量选中时，Esc / 屏幕边缘横滑改为「取消选中」。
+     * 没有浮层可关的时候由浮层栈回调到这里（见 utils/layerStack + edgeSwipeGuard）。
+     */
+    setEmptyStackBackHandler(() => this.handleEmptyStackBack());
     // 初始化背景图
     this.initializeBackground('adminBkImg', '.container', false, true);
     this.updateResponsivePageSize();
@@ -5268,6 +5459,16 @@ mounted() {
         }
     }
 
+    /*
+     * v1.1.9.2：视图模式偏好必须在首次拉列表之前恢复 ——
+     * 否则 mounted 先用卡片视图的 pageSize 拉一次（手机 24 条），
+     * 恢复成相册后又要按 48/72 再拉一次，白白多一次请求。
+     */
+    const savedViewMode = localStorage.getItem('viewMode');
+    if (savedViewMode === 'card' || savedViewMode === 'list' || savedViewMode === 'album') {
+        this.viewMode = savedViewMode;
+    }
+
     this.loading = true;
     // 路由守卫已通过 /api/auth/sessionCheck 验证认证状态
     this.showLogoutButton = this.$store.state.adminLoggedIn;
@@ -5290,11 +5491,7 @@ mounted() {
     this.customUrlPrefix = this.adminUrlSettings.customUrlPrefix;
     this.useCustomUrl = this.adminUrlSettings.useCustomUrl;
 
-    // 恢复视图模式偏好
-    const savedViewMode = localStorage.getItem('viewMode');
-    if (savedViewMode === 'card' || savedViewMode === 'list') {
-        this.viewMode = savedViewMode;
-    }
+    // 视图模式偏好已在上面（首次拉列表之前）恢复；相册视图的列数是纯 CSS，无需再算
 
     // 上传用户筛选下拉（仅管理员）
     this.fetchUserOptions();
@@ -5327,6 +5524,8 @@ beforeUnmount() {
     unregisterLayer('file-detail');
     // v1.1.9：详情页内的二级层也一并摘掉（标签 / 黑白名单 / 删除确认）
     ['file-detail-tags', 'file-detail-block', 'file-detail-white', 'file-detail-delete'].forEach((id) => unregisterLayer(id));
+    // v1.1.9.2：摘掉本页注册的「空栈返回兜底」，避免离开页面后还拦着 Esc
+    setEmptyStackBackHandler(null);
     this.clearDirHoverTimer();
     this.teardownListObservers();
     window.removeEventListener('resize', this.updateResponsivePageSize);
@@ -6590,6 +6789,150 @@ html.dark .trash-btn.is-active,
     flex-grow: 1;
     min-height: 80vh;
     align-content: start;
+}
+
+/* ── v1.1.9.2 相册视图 ─────────────────────────────────────────────
+ * 参照群晖相册 / Immich 的图墙：无圆角、无边框、无下方信息区，间隔 2px，
+ * 左右两侧直接贴到页面边缘（用负 margin 抵掉主容器的内边距）。
+ *  · 手机：每行 4（竖屏）/ 8（横屏），单格 1:1；
+ *  · 平板：每行 6（竖屏）/ 12（横屏），单格 1:1；
+ *  · 桌面：每行固定 8 个、单格 1:1，格子尺寸随页面宽度等比缩放（纯 CSS，无需 JS 算列数）。
+ */
+.album-view {
+    display: grid;
+    /* 基础档 = 桌面：固定 8 列，格子宽度 = (页宽 - 7×2px) ÷ 8，两边天然对齐 */
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 2px;
+    padding: 0;
+    /*
+     * 贴边靠「负 margin 抵掉主容器内边距」，补偿量随断点走（--album-bleed）：
+     * 手机 10px / 平板 24px / 桌面 60px —— 与 .main-container 的 padding 完全对应。
+     */
+    margin: 0 calc(-1 * var(--album-bleed, 60px));
+    align-content: start;
+    align-items: start;
+}
+.album-cell {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    background: var(--el-fill-color-light);
+    overflow: hidden;
+    cursor: pointer;
+    border: 0;
+    border-radius: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    transition: filter 0.16s ease;
+}
+.album-cell:hover {
+    filter: brightness(0.94);
+}
+/*
+ * v1.1.9.2：缩略图的 alt 一律留空。
+ * 相册里没有信息区，缩略图加载失败时浏览器会把 alt（也就是长文件名）画在格子中间，
+ * 一串哈希会横向溢出、把整个图墙撑乱；名称已经挂在格子的 title 上，无障碍信息不丢。
+ */
+.album-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.album-cell.is-folder {
+    flex-direction: column;
+    gap: 3px;
+    color: var(--el-color-primary);
+    background: var(--el-fill-color-lighter);
+}
+.album-folder-icon {
+    font-size: 34px;
+    opacity: 0.85;
+}
+.album-folder-name {
+    max-width: 92%;
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--admin-container-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: center;
+}
+.album-file-icon {
+    font-size: 30px;
+    color: var(--admin-container-color);
+    opacity: 0.45;
+}
+.album-cell.is-skeleton {
+    background: linear-gradient(90deg, var(--el-fill-color-light) 25%, var(--el-fill-color) 37%, var(--el-fill-color-light) 63%);
+    background-size: 400% 100%;
+    animation: album-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes album-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+}
+.album-view .empty-state {
+    grid-column: 1 / -1;
+}
+
+/*
+ * 断点口径（与需求一一对应）：
+ *   · 手机竖屏 4 / 横屏 8    —— 横屏时宽度常超过 768（844、896…），所以横屏用「高度 ≤ 500」识别；
+ *   · 平板竖屏 6 / 横屏 12   —— 竖屏靠宽度 + orientation:portrait，横屏靠宽度 + landscape；
+ *   · 桌面（≥1200）走基础档：固定 8 列 + 1:1，格子随页宽缩放。
+ */
+
+/* 手机竖屏：4 个，1:1 */
+@media (max-width: 768px) and (orientation: portrait) {
+    .album-view {
+        --album-bleed: 10px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        margin-top: 15px;
+    }
+    .album-folder-icon { font-size: 26px; }
+    .album-file-icon { font-size: 24px; }
+    .album-folder-name { font-size: 10px; }
+}
+
+/* 手机横屏：8 个（高度上限用来区分「横屏手机」与「横屏平板」） */
+@media (orientation: landscape) and (max-height: 500px) {
+    .album-view {
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+        margin-top: 0;
+    }
+    .album-folder-icon { font-size: 24px; }
+    .album-file-icon { font-size: 22px; }
+    .album-folder-name { font-size: 10px; }
+}
+@media (orientation: landscape) and (max-height: 500px) and (max-width: 768px) {
+    .album-view { --album-bleed: 10px; }
+}
+@media (orientation: landscape) and (max-height: 500px) and (min-width: 769px) {
+    .album-view { --album-bleed: 24px; }
+}
+
+/* 平板竖屏：6 个，1:1（min-height 501 把横屏手机排除在外） */
+@media (min-width: 769px) and (max-width: 1199px) and (orientation: portrait) and (min-height: 501px) {
+    .album-view {
+        --album-bleed: 24px;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+    .album-folder-icon { font-size: 30px; }
+    .album-file-icon { font-size: 26px; }
+}
+
+/* 平板横屏：12 个（min-height 501 把横屏手机排除在外） */
+@media (min-width: 769px) and (max-width: 1199px) and (orientation: landscape) and (min-height: 501px) {
+    .album-view {
+        --album-bleed: 24px;
+        grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+    .album-folder-icon { font-size: 26px; }
+    .album-file-icon { font-size: 22px; }
+    .album-folder-name { font-size: 10px; }
 }
 
 .content.is-drag-selecting,

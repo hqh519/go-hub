@@ -688,6 +688,7 @@ import QRCodeBox from '@/components/common/QRCodeBox.vue';
 import FloatingSaveButton from '@/components/FloatingSaveButton.vue';
 import backgroundManager from '@/mixins/backgroundManager';
 import { copyText } from '@/utils/clipboard';
+import { bindDialogLayers, trackMessageBox } from '@/utils/layerStack';
 
 /**
  * 用户编辑独立页（v202610221824）。
@@ -886,10 +887,25 @@ export default {
     },
     beforeUnmount() {
         if (this.resendTimer) window.clearInterval(this.resendTimer);
+        // v1.1.9.2：本页实例模块的弹窗层
+        if (this._unbindLayerDialogs) {
+            this._unbindLayerDialogs();
+            this._unbindLayerDialogs = null;
+        }
     },
     mounted() {
         this.userId = this.$route.params.id;
         this.load();
+        /*
+         * v1.1.9.2：实例模块的 5 个弹层全部纳入层叠监测 ——
+         * 加入实例 / 创建实例 / 邀请 / 属性 / 删除（删除是 $confirm，在调用处登记）。
+         */
+        this._unbindLayerDialogs = bindDialogLayers(this, {
+            showCreateInstance: 'user-edit-instance-create',
+            showJoinInstance: 'user-edit-instance-join',
+            showInviteDialog: 'user-edit-instance-invite',
+            showAttrDialog: 'user-edit-instance-attr'
+        });
         /*
          * v3.0.0（R16）：本页也使用和后台其它页面一样的「背景图」样式 ——
          * 取 userConfig.adminBkImg（账户自定义优先，否则系统「网页设置 → 管理页背景图」）。
@@ -1533,7 +1549,8 @@ export default {
         },
         /** 删除实例：实例下仍有文件（含回收站）时后端拒绝，错误文案原样展示 */
         deleteInstance(row) {
-            this.$confirm(
+            // v1.1.9.2：实例「删除」确认框纳入层叠监测
+            trackMessageBox('user-edit-instance-delete', this.$confirm(
                 this.$t('userEdit.instanceDeleteConfirm', { name: row.name }),
                 this.$t('common.warning'),
                 {
@@ -1541,7 +1558,7 @@ export default {
                     cancelButtonText: this.$t('common.cancel'),
                     type: 'warning',
                 },
-            )
+            ))
                 .then(async () => {
                     this.instanceBusy = true;
                     try {

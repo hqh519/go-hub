@@ -75,9 +75,11 @@ import { userInInstance } from '../common/instance-access';
 import { TAG_TYPE_FILE, findOrCreateTag } from '../common/tags';
 import {
   FOLDER_TYPE_FILE,
+  extraFolderCreatorKey,
   extraFoldersKey,
   extraFoldersOf,
   findFolderMeta,
+  folderCreatorsOf,
   folderSharedPermission,
   folderSharedWithUser,
   listFoldersSharedBy,
@@ -2391,6 +2393,23 @@ export class ManageController {
           createdAt,
         };
       }
+      /*
+       * v1.1.9.2：「新建目录」登记的创建者优先。
+       * 上面那段是「拿目录内最早文件顶替」，空目录永远算不出创建者；
+       * 建目录时已经单独记了一份，这里覆盖上去（没有记录的目录保持原样）。
+       */
+      if (directories.length) {
+        const creatorMeta = await this.folderCreators(
+          String(session?.user || ''),
+          allInstances ? '*' : instanceFilter,
+        );
+        for (const d of directories) {
+          const meta = creatorMeta[d];
+          if (!meta) continue;
+          if (meta.creator) directoryStats[d].creator = meta.creator;
+          if (meta.createdAt) directoryStats[d].createdAt = meta.createdAt;
+        }
+      }
     }
 
     const totalCount = files.length;
@@ -3147,6 +3166,11 @@ export class ManageController {
      */
     const dirParam = String(q.dir || '').replace(/^\/+|\/+$/g, '');
     const parentOf = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+    /*
+     * v1.1.9.2：回收站支持「直接展示文件」—— flat=true 时不返回文件夹条目，
+     * 把当前目录（含子目录）里的已删文件平铺出来，与文件管理列表的 flat 口径一致。
+     */
+    const flat = String(q.flat || '').toLowerCase() === 'true';
 
     let folderEntries: { path: string; instanceId?: string; deletedAt: any }[] = [];
     try {
@@ -3181,7 +3205,7 @@ export class ManageController {
       return latest ? new Date(latest) : null;
     };
 
-    const folderItems = children.map((p) => {
+    const folderItems = flat ? [] : children.map((p) => {
       const base = p.split('/').pop() || p;
       return {
         id: `folder:${p}`,
@@ -3203,7 +3227,13 @@ export class ManageController {
     });
 
     // 当前层的文件：folder 正好等于当前目录（不是「以它开头」，保证只显示直接子项）
-    const levelFiles = mapped.filter((m) => String((m as any).folder || '') === dirParam);
+    // v1.1.9.2：flat 模式改为「当前目录及其子目录下的全部文件」，不再区分层级
+    const levelFiles = flat
+      ? mapped.filter((m) => {
+          const f = String((m as any).folder || '');
+          return !dirParam || f === dirParam || f.startsWith(`${dirParam}/`);
+        })
+      : mapped.filter((m) => String((m as any).folder || '') === dirParam);
     const merged = [
       ...(folderItems as unknown as typeof mapped),
       ...levelFiles,
@@ -5005,6 +5035,12 @@ export class ManageController {
     // v1.0.0：目录归属到「当前实例」—— body 优先，其次 query（前端切实例后必须带上）
     const instanceId = String(body?.instanceId ?? q?.instanceId ?? '');
     await this.registerFolder(req, full, instanceId);
+    /*
+     * v1.1.9.2：顺手登记「创建者 / 创建时间」。
+     * 目录没有独立数据行，属性里的创建者原本取「目录内最早文件的上传者」——
+     * 于是刚建好的空目录创建者恒为空。这里单独记一份，列表接口优先读它。
+     */
+    await this.recordFolderCreator(currentSession(req)?.user || '', instanceId, full);
     appLog.info('file', `新建目录：${full}`, `实例=${instanceId || '默认'}`);
     return { success: true, data: { path: full } };
   }
@@ -5056,8 +5092,43 @@ export class ManageController {
   }
 
   /**
+   * v1.1.9.2：登记某个「新建目录」的创建者与创建时间。
+   * 只写第一次（已有记录不覆盖），避免重名目录在不同时间被建多次时把创建时间改掉。
+   */
+  private async recordFolderCreator(owner: string, instanceId: string, path: string) {
+    const p = String(path || '').replace(/^\/+|\/+$/g, '');
+    if (!p) return;
+    try {
+      const raw = await this.settings.get('extraFolderCreator', '{}');
+      let map: Record<string, Record<string, { creator: string; createdAt: number }>> = {};
+      try {
+        map = raw ? JSON.parse(raw) : {};
+      } catch {
+        map = {};
+      }
+      const key = extraFolderCreatorKey(owner, instanceId);
+      const bucket = map[key] || (map[key] = {});
+      if (!bucket[p]) bucket[p] = { creator: owner || '', createdAt: Date.now() };
+      await this.settings.set('extraFolderCreator', JSON.stringify(map));
+    } catch (err) {
+      // 创建者只是展示信息，登记失败不能拖累「建目录」本身
+      appLog.warn('file', '目录创建者登记失败', `${p}：${(err as Error).message}`);
+    }
+  }
+
+  /** v1.1.9.2：读取某账户在某实例下的目录创建者表（instanceId='*' 合并全部实例） */
+  private async folderCreators(owner: string, instanceId: string) {
+    try {
+      const raw = await this.settings.get('extraFolderCreator', '{}');
+      const map = raw ? JSON.parse(raw) : {};
+      return folderCreatorsOf(map, owner, instanceId);
+    } catch {
+      return {};
+    }
+  }
+
+  /**
    * 读取当前用户在当前实例下可见的额外（空）目录列表。
-   * v1.0.0：instanceId 为 '*' 时合并该账户全部实例（历史记录页「全部实例」用）。
    * v1.0.3：管理员额外合并旧版「空 owner 键」里的登记（升级后不会丢历史空目录）。
    */
   private async extraFolders(req: Request, instanceId = ''): Promise<string[]> {

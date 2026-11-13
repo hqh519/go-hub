@@ -43,6 +43,52 @@ export function normalizeFolderPath(p?: string | null): string {
 }
 
 /**
+ * v1.1.9.2：「新建目录」的创建者 / 创建时间登记（settings.extraFolderCreator）。
+ *
+ * 背景：目录在本系统里是逻辑概念（settings.extraFolders 里的路径字符串），
+ * 没有自己的数据行，所以「创建用户」一直是拿「目录内最早一条文件记录的上传者」顶替。
+ * 结果就是空目录永远没有创建者 —— 用户从图床管理新建的目录，属性里创建者一栏是空的。
+ *
+ * 现在建目录时把创建者单独记一份：**账户::实例 → { 路径: { creator, createdAt } }**。
+ * 键恒带 `::`，默认实例也写 `owner::`，避免与 extraFolders 的旧键格式混淆。
+ * 存量目录没有这条记录，读取时仍回落到「最早文件的上传者」，行为不变。
+ */
+export function extraFolderCreatorKey(owner: string, instanceId: string): string {
+  return `${owner || ''}::${instanceId || ''}`;
+}
+
+/** 单条目录创建信息 */
+export type FolderCreatorEntry = { creator: string; createdAt: number };
+
+/**
+ * 从 extraFolderCreator 映射里取某账户在某实例下的创建者表。
+ * instanceId = '*' 表示「全部实例」：合并该账户所有实例键。
+ */
+export function folderCreatorsOf(
+  map: Record<string, Record<string, FolderCreatorEntry>>,
+  owner: string,
+  instanceId: string,
+): Record<string, FolderCreatorEntry> {
+  const out: Record<string, FolderCreatorEntry> = {};
+  const prefix = `${owner || ''}::`;
+  for (const [k, v] of Object.entries(map || {})) {
+    if (String(instanceId) === '*') {
+      if (!k.startsWith(prefix)) continue;
+    } else if (k !== extraFolderCreatorKey(owner, instanceId)) {
+      continue;
+    }
+    for (const [p, entry] of Object.entries(v || {})) {
+      if (!entry) continue;
+      // 同名目录在多个实例下都有时，保留创建时间最早的那条（与「合并全部实例」的展示口径一致）
+      const prev = out[p];
+      const t = Number(entry.createdAt) || 0;
+      if (!prev || (t && (!prev.createdAt || t < prev.createdAt))) out[p] = entry;
+    }
+  }
+  return out;
+}
+
+/**
  * v1.0.0：settings.extraFolders（「新建目录」登记的空目录）的存储键。
  *
  * 旧格式是「账户 → 目录数组」，没有实例维度 —— 于是在 A 实例新建的目录，

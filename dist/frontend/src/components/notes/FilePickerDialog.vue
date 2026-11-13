@@ -366,6 +366,7 @@ import { fetchStorageChannels } from '@/utils/storageChannels';
 import FilterDialog from '@/components/dashboard/FilterDialog.vue';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import { defaultUploadFolder } from '@/utils/uploadTarget';
+import { bindDialogLayers } from '@/utils/layerStack';
 
 /** 预览浮层最长边 */
 const PREVIEW_MAX = 300;
@@ -1251,6 +1252,21 @@ export default {
     },
     beforeUnmount() {
         this.clearEyeTimer();
+        if (this._unbindLayerDialogs) {
+            this._unbindLayerDialogs();
+            this._unbindLayerDialogs = null;
+        }
+    },
+    mounted() {
+        /*
+         * v1.1.9.2：选择文件弹窗纳入层叠监测。
+         * 它上面还会压「筛选」（FilterDialog 自己登记）和
+         * 「上传到图床 → 选择目录」（UploadTargetDialog / DirectoryTreePicker 自己登记），
+         * 这里只管自己这一层，从右到左关闭时顺序才正确。
+         */
+        this._unbindLayerDialogs = bindDialogLayers(this, {
+            visible: { id: 'note-file-picker', close: () => { this.visible = false; } }
+        });
     },
     watch: {
         visible(v) {

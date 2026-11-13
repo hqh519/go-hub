@@ -28,7 +28,7 @@
  * 页面 / 组件不需要各自监听 touch。
  */
 
-import { closePageOrder, hasOpenLayer } from './layerStack'
+import { closePageOrder, hasOpenLayer, runEmptyStackBack } from './layerStack'
 
 /** 触发区宽度：从这条边缘带起手，位移门槛降到 MIN_DECIDE_PX */
 const EDGE_PX = 28
@@ -235,8 +235,13 @@ export function setupEdgeSwipeGuard() {
          * 没有浮层时保持原样（什么都不做）—— 页面顶部已经由 overscroll 兜住，
          * 不能在这里自己 history.back()，否则会误退页面。
          */
-        if (backGesture && hasOpenLayer() && Math.abs(lastDx) >= BACK_TRIGGER_PX) {
-            closePageOrder()
+        if (backGesture && Math.abs(lastDx) >= BACK_TRIGGER_PX) {
+            /*
+             * v1.1.9.2：没有浮层时也回调页面一次 ——
+             * 文件管理页在「批量选中」状态下，边缘横滑应当取消选中（而不是毫无反应）。
+             */
+            if (hasOpenLayer()) closePageOrder()
+            else runEmptyStackBack()
         }
         active = false
         decided = false

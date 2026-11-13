@@ -312,6 +312,7 @@
 
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
+import { bindDialogLayers, trackMessageBox } from '@/utils/layerStack';
 
 /**
  * v3.0.0 标签管理模式面板
@@ -423,6 +424,21 @@ export default {
     mounted() {
         this.load();
         this.loadSharePermission();
+        /*
+         * v1.1.9.2：标签属性 / 合并 / 拆分三个弹窗纳入层叠监测
+         * （标签管理模式下 Esc / 边缘横滑先关最上面那一层）。
+         */
+        this._unbindLayerDialogs = bindDialogLayers(this, {
+            showProps: 'tag-props',
+            showMerge: 'tag-merge',
+            showSplit: 'tag-split'
+        });
+    },
+    beforeUnmount() {
+        if (this._unbindLayerDialogs) {
+            this._unbindLayerDialogs();
+            this._unbindLayerDialogs = null;
+        }
     },
     methods: {
         /** GET /api/tags/manage?instanceId=&sort=&order= */
@@ -714,11 +730,11 @@ export default {
         /** DELETE /api/tags/:id —— 只删标签与关联，不删文件 */
         deleteTag(tag) {
             if (!tag) return;
-            this.$confirm(
+            trackMessageBox('tag-delete', this.$confirm(
                 this.$t('fileManager.tagDeleteConfirm', { name: tag.name }),
                 this.$t('fileManager.tagDelete'),
                 { confirmButtonText: this.$t('common.delete'), cancelButtonText: this.$t('common.cancel'), type: 'warning' }
-            ).then(async () => {
+            )).then(async () => {
                 try {
                     const res = await fetchWithAuth(`/api/tags/${encodeURIComponent(tag.id)}`, { method: 'DELETE' });
                     const json = await res.json().catch(() => ({}));
@@ -735,11 +751,11 @@ export default {
         batchDelete() {
             const ids = [...this.selectedIds];
             if (!ids.length) return;
-            this.$confirm(
+            trackMessageBox('tag-batch-delete', this.$confirm(
                 this.$t('fileManager.tagBatchDeleteConfirm', { count: ids.length }),
                 this.$t('fileManager.tagBatchDelete'),
                 { confirmButtonText: this.$t('common.delete'), cancelButtonText: this.$t('common.cancel'), type: 'warning' }
-            ).then(async () => {
+            )).then(async () => {
                 try {
                     for (const id of ids) {
                         await fetchWithAuth(`/api/tags/${encodeURIComponent(id)}`, { method: 'DELETE' });

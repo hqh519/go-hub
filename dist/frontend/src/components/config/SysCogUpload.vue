@@ -610,6 +610,7 @@ import CustomSelect from './CustomSelect.vue';
 import { CHANNEL_TYPES, ADDABLE_CHANNEL_TYPES, SUMMARY_KEYS, TYPE_TIPS, fieldsOf, buildDefaults, buildDefaultsFrom, visibleFields, LOCAL_CHANNEL_CODE, LOCAL_FILES_CHANNEL_CODE, LOCAL_BUILTIN_FIELDS, LOCAL_CUSTOM_FIELDS, LOCAL_FILES_BUILTIN_FIELDS } from './channel-schema';
 import { copyText } from '@/utils/clipboard';
 import { invalidateStorageChannels } from '@/utils/storageChannels';
+import { bindDialogLayers } from '@/utils/layerStack';
 
 export default {
     name: 'SysCogUpload',
@@ -1279,6 +1280,23 @@ export default {
     mounted() {
         this.loadChannels();
         this.loadStorage();
+        /*
+         * v1.1.9.2：渠道设置的四个弹窗纳入层叠监测 ——
+         * 添加渠道 / 渠道详情 / 渠道编辑 / 渠道授权。
+         * 「渠道详情」可以从「编辑」里再打开，所以层级顺序按注册先后由栈自动处理。
+         */
+        this._unbindLayerDialogs = bindDialogLayers(this, {
+            showAddDialog: 'sys-channel-add',
+            showDetailDialog: 'sys-channel-detail',
+            showEditDialog: 'sys-channel-edit',
+            showAuthDialog: 'sys-channel-auth'
+        });
+    },
+    beforeUnmount() {
+        if (this._unbindLayerDialogs) {
+            this._unbindLayerDialogs();
+            this._unbindLayerDialogs = null;
+        }
     }
 };
 </script>

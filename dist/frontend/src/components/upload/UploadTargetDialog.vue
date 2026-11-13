@@ -90,6 +90,10 @@ import fetchWithAuth from '@/utils/fetchWithAuth';
 import { fetchStorageChannels, channelLabel } from '@/utils/storageChannels';
 import DirectoryTreePicker from '@/components/DirectoryTreePicker.vue';
 import DirectorySuggestionInput from '@/components/DirectorySuggestionInput.vue';
+import { bindDialogLayers } from '@/utils/layerStack';
+
+/** v1.1.9.2：每个「上传到图床」实例一个层 id（同一页面可能有多个） */
+let uploadTargetSeq = 0;
 
 export default {
     name: 'UploadTargetDialog',
@@ -163,6 +167,24 @@ export default {
                 instanceId: this.form.instanceId || '',
                 uploadFolder: String(this.form.uploadFolder || '').trim()
             });
+        }
+    },
+    mounted() {
+        /*
+         * v1.1.9.2：「上传到图床」弹窗纳入层叠监测。
+         * 本组件会在瞬间编辑页、首页、本地文件页等多处实例化，层 id 必须带序号，
+         * 否则后打开的实例会把先打开的顶掉（那一层就再也关不掉了）。
+         */
+        uploadTargetSeq += 1;
+        this._layerId = `upload-target-${uploadTargetSeq}`;
+        this._unbindLayers = bindDialogLayers(this, {
+            visible: { id: this._layerId, close: () => { this.visible = false; } }
+        });
+    },
+    beforeUnmount() {
+        if (this._unbindLayers) {
+            this._unbindLayers();
+            this._unbindLayers = null;
         }
     }
 };

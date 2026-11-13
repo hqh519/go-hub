@@ -405,6 +405,7 @@
     "linkFormat": "链接格式",
     "listView": "列表视图",
     "cardView": "卡片视图",
+    "albumView": "相册视图",
     "logout": "退出登录",
     "myAccount": "我的账户",
     "systemManage": "系统管理",
@@ -2429,7 +2430,7 @@
   "fileManager": {
     "displayMode": "内容展示方式",
     "showFolders": "展示文件夹",
-    "expandFiles": "直接展开文件",
+    "expandFiles": "直接展示文件",
     "clear": "清除",
     "uploadSourceRecord": "登记文件 (Record)",
     "instanceDefault": "默认实例",

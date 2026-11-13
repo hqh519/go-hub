@@ -612,6 +612,7 @@ import DateRangeCalendar from '@/components/DateRangeCalendar.vue'
 import FileDetailUnified from '@/components/dashboard/FileDetailUnified.vue'
 import { fileLink } from '@/utils/fileLink'
 import { loadFileDetail } from '@/utils/fileDetailLoader'
+import { bindDialogLayers } from '@/utils/layerStack'
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, Filler)
 
@@ -1102,11 +1103,19 @@ export default {
     this.clockTimer = window.setInterval(() => {
       this.currentTime = new Date()
     }, 1000)
+    // v1.1.9.2：趋势预览的「选择日期」弹窗纳入层叠监测
+    this._unbindLayerDialogs = bindDialogLayers(this, {
+      trendDatePickerVisible: 'sys-status-trend-date'
+    })
   },
   beforeUnmount() {
     if (this.clockTimer) {
       window.clearInterval(this.clockTimer)
       this.clockTimer = null
+    }
+    if (this._unbindLayerDialogs) {
+      this._unbindLayerDialogs()
+      this._unbindLayerDialogs = null
     }
   },
   methods: {

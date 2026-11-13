@@ -131,8 +131,35 @@ function orderedLayers() {
         .sort((a, b) => (b.z - a.z) || (b.seq - a.seq))
 }
 
+/**
+ * v1.1.9.2：清掉「已经不在屏幕上」的层。
+ *
+ * 背景：backGuard 用 MutationObserver 盯 body 的 childList，给未显式登记的
+ * `.el-overlay` 自动补一层。但 Element Plus 关弹窗多数是 `v-show`（只改 display），
+ * 不会触发 childList 变更 —— sync() 不跑，那一层就永远留在栈里。
+ * 表现：弹窗关掉后按 Esc / 边缘横滑，第一次被这个「死层」白吃（什么都不发生），
+ * 文件管理页「批量选中后按 Esc 取消选中」也因此失效。
+ *
+ * 现在登记时可以带一个 alive 回调（见 registerLayer 的 opts.alive），
+ * 每次判定栈顶 / 判断有没有层之前先剪掉死层。
+ */
+function pruneDead() {
+    for (let i = layers.length - 1; i >= 0; i -= 1) {
+        const l = layers[i]
+        if (typeof l.alive !== 'function') continue
+        let ok = true
+        try {
+            ok = l.alive() !== false
+        } catch (e) {
+            ok = true
+        }
+        if (!ok) layers.splice(i, 1)
+    }
+}
+
 /** 当前最上面一层 */
 function topLayer() {
+    pruneDead()
     const list = orderedLayers()
     return list.length ? list[0] : null
 }
@@ -164,6 +191,7 @@ function closeTop() {
  * @returns {boolean} 是否真的关掉了一层
  */
 export function closePageOrder(opts) {
+    pruneDead()
     if (!layers.length) {
         if (!(opts && opts.silent)) closing = false
         return false
@@ -173,7 +201,40 @@ export function closePageOrder(opts) {
 
 /** 当前是否存在任何层叠页面（灯箱 / 弹窗 / 抽屉…） */
 export function hasOpenLayer() {
+    pruneDead()
     return layers.length > 0
+}
+
+/**
+ * v1.1.9.2：空栈时的「返回」兜底。
+ *
+ * 场景：文件管理页批量选中了若干文件 / 文件夹（此时没有任何浮层），
+ * 用户按 Esc 或在移动端从屏幕边缘横滑 —— 期望是「取消选中」，而不是没反应、
+ * 更不是退出页面。页面把这段逻辑注册进来，浮层栈在「没有层可关」时调用它。
+ *
+ * 约定：回调返回 true 表示这次返回已被消费（Esc 会被阻止默认行为）。
+ */
+let emptyStackBackHandler = null
+
+/** 注册空栈兜底（传 null 取消） */
+export function setEmptyStackBackHandler(fn) {
+    emptyStackBackHandler = typeof fn === 'function' ? fn : null
+    /*
+     * v1.1.9.2：这里必须自己把监听装上。
+     * install() 原本只在 registerLayer() 里调用 —— 一个从没打开过弹窗的页面
+     * 根本不会注册任何层，于是 Esc 监听压根不存在，「批量选中按 Esc 取消」就永远不生效。
+     */
+    if (emptyStackBackHandler) install()
+}
+
+/** 执行空栈兜底；返回是否消费了这次返回 */
+export function runEmptyStackBack() {
+    if (!emptyStackBackHandler) return false
+    try {
+        return emptyStackBackHandler() === true
+    } catch (e) {
+        return false
+    }
 }
 
 function install() {
@@ -205,7 +266,18 @@ function install() {
     document.addEventListener('keydown', (e) => {
         if (closing) return
         if (e.key !== 'Escape' && e.keyCode !== 27) return
-        if (!layers.length) return
+        pruneDead()
+        /*
+         * v1.1.9.2：没有浮层时，Esc 交给页面的「空栈兜底」——
+         * 文件管理页批量选中状态下按 Esc = 取消选中（需求：批量选中时 Esc 取消选中）。
+         */
+        if (!layers.length) {
+            if (runEmptyStackBack()) {
+                e.preventDefault()
+                e.stopPropagation()
+            }
+            return
+        }
         const top = topLayer()
         if (!top) return
         /*
@@ -254,6 +326,8 @@ export function registerLayer(id, close, opts) {
         esc: !(opts && opts.esc === false),
         // v1.1.8：允许调用方上报层级（z-index），未上报时按注册顺序排
         z: Number(opts && opts.z) || 0,
+        // v1.1.9.2：可选存活判定，返回 false 时这一层会被自动剪掉（见 pruneDead）
+        alive: opts && typeof opts.alive === 'function' ? opts.alive : null,
         seq: ++seqCounter
     })
     // 新层压上来了：取消可能正在等待的「归还哨兵」

@@ -162,7 +162,8 @@ export default {
     width: 100%;
     position: relative;
     background: var(--toolbar-button-bg-color);
-    border-radius: 12px;
+    /* v1.1.9.2：与文件卡片（FileCard 的 5px）统一，原先 12px 显得更「厚」 */
+    border-radius: 5px;
     overflow: hidden;
     border: 1px solid var(--glass-border);
     box-shadow: var(--toolbar-button-shadow);

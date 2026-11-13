@@ -405,6 +405,7 @@
     "linkFormat": "Link Format",
     "listView": "List View",
     "cardView": "Card View",
+    "albumView": "Album View",
     "logout": "Logout",
     "myAccount": "My Account",
     "systemManage": "System Admin",
@@ -2434,7 +2435,7 @@
   "fileManager": {
     "displayMode": "Display mode",
     "showFolders": "Show folders",
-    "expandFiles": "Directly Expand Files",
+    "expandFiles": "Show Files Directly",
     "clear": "Clear",
     "uploadSourceRecord": "Record",
     "instanceDefault": "默认实例",

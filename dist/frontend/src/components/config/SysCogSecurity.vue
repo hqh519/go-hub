@@ -702,6 +702,7 @@ import ChannelSelect from '@/components/config/ChannelSelect.vue';
 import { computeExpiresAt, getTokenStatus } from '@/utils/tokenExpiration';
 import { copyText } from '@/utils/clipboard';
 import unsavedSettings from '@/mixins/unsavedSettings';
+import { bindDialogLayers, trackMessageBox } from '@/utils/layerStack';
 
 export default {
 mixins: [unsavedSettings],
@@ -1445,11 +1446,12 @@ methods: {
     
     async deleteToken(tokenId) {
         try {
-            await this.$confirm(this.$t('sysSecurity.tokenDeleteConfirm'), this.$t('sysSecurity.tokenDeleteConfirmTitle'), {
+            // v1.1.9.2：Token 删除确认框纳入层叠监测
+            await trackMessageBox('sys-token-delete', this.$confirm(this.$t('sysSecurity.tokenDeleteConfirm'), this.$t('sysSecurity.tokenDeleteConfirmTitle'), {
                 confirmButtonText: this.$t('sysSecurity.tokenDeleteConfirmOk'),
                 cancelButtonText: this.$t('sysSecurity.tokenDeleteConfirmCancel'),
                 type: 'warning'
-            });
+            }));
             
             const response = await fetchWithAuth(`/api/manage/apiTokens?id=${tokenId}`, {
                 method: 'DELETE'
@@ -1629,6 +1631,17 @@ mounted() {
     // 导致加载配置的 mounted 从未执行，页面永远停在 v-loading 转圈。
     // 现在合并为一个：先挂 resize 监听，再加载配置。
     window.addEventListener('resize', this.handleWindowResize);
+    /*
+     * v1.1.9.2：API Token 管理的四个弹层纳入层叠监测 ——
+     * 创建 / 接入信息 / 编辑 / 删除（删除是 $confirm，在调用处登记）。
+     * 「创建成功」的结果页也一并登记：它同样是压在最上面的一页，Esc 应当先关它。
+     */
+    this._unbindLayerDialogs = bindDialogLayers(this, {
+        showCreateTokenDialog: 'sys-token-create',
+        showTokenResultDialog: 'sys-token-result',
+        showCredentialDialog: 'sys-token-credential',
+        showEditTokenDialog: 'sys-token-edit'
+    });
     this.loading = true;
     // v2.6.0 #301：qqwry.dat 数据包状态
     this.fetchIpQueryDatStatus();
@@ -1681,6 +1694,10 @@ mounted() {
 },
 beforeUnmount() {
     window.removeEventListener('resize', this.handleWindowResize);
+    if (this._unbindLayerDialogs) {
+        this._unbindLayerDialogs();
+        this._unbindLayerDialogs = null;
+    }
 }
 };
 </script>

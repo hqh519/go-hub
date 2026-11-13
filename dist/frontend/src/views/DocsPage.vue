@@ -907,6 +907,22 @@ const ZH = {
         { t: '上传到图床：可直接选目录 + 记住历史', d: '「上传目录」输入框左侧新增目录选择器，列出当前所选实例下的目录，选中即回填；输入框同时记住最近用过的目录，光标进入即可直接挑，与首页上传设置共用同一份历史。' },
         { t: '两处文案', d: '留言按钮由「发布留言」改为「发表留言」；瞬间输入框提示改为「记录瞬间，汇聚点滴」。' }
       ]
+    },
+    {
+      id: 'whatsnew-1192',
+      title: '四十二、v1.1.9.2 更新要点',
+      intro: 'v1.1.9.2 新增了一个「相册视图」——参照群晖相册与 Immich 的图墙：没有圆角、没有边框、没有下方信息区，图片直接铺满，间隔 2px 并左右贴边。同时把二十九张弹出页全部接进层叠关闭体系，并让「批量选中」也能用 Esc / 边缘横滑取消。',
+      items: [
+        { t: '新增相册视图', d: '视图切换按钮从两个变三个，相册在前两个之后，图标是叠放的照片。进入后整页只有格子：图片直接加载缩略图铺满，文件夹显示图标 + 名称（名称在图标下方），点图片开灯箱、点文件夹进目录。' },
+        { t: '相册的尺寸口径', d: '所有格子都没有圆角、没有外边框、没有下方信息区，间隔 2px，最左最右直接贴屏幕边缘。手机竖屏每行 4 个、横屏 8 个（单格 1:1）；平板竖屏 6 个、横屏 12 个；桌面端固定每行 8 个、单格 1:1，窗口变宽时格子等比变大，两边始终对齐。' },
+        { t: '相册按屏宽决定一次加载多少', d: '手机（含横屏）首次加载 48 个，平板与桌面首次加载 72 个；滑到底部自动追加，不用点「加载更多」。' },
+        { t: '回收站也能切换展示方式', d: '回收站原先固定按文件夹分组显示。现在与普通列表一样有「展示文件夹 / 直接展示文件」两种方式，切到直接展示时，回收站里所有文件平铺成一条列表，不再出现文件夹卡片。' },
+        { t: '两处界面细节', d: '「直接展开文件」文案改为「直接展示文件」；卡片视图的文件夹卡片圆角由 12px 收到 5px，与文件卡片一致。' },
+        { t: '创建目录会记录创建人', d: '以前从「创建目录」建出来的文件夹，属性里看不到创建用户 —— 因为目录本身只是一条路径，没有数据行可挂。现在建目录时会把操作人写进账户 / 实例维度的目录登记表，属性里能正常显示创建人与创建时间（空目录也有）。' },
+        { t: '批量选中：Esc / 边缘横滑 = 取消选中', d: '选中一批文件或文件夹后，桌面按 Esc、手机在屏幕边缘横滑，会先取消选中，而不是退出页面或回到上级目录。没有弹窗可关时才会走到这一步。' },
+        { t: '二十九张弹出页纳入层叠关闭', d: '回收站删除、文件夹属性、删除文件 / 文件夹、批量备份、批量编辑原名、批量标签、批量设置（限时 / 加密 / 重定向）、黑名单 / 白名单、移动文件、标签属性 / 合并 / 拆分 / 删除、发布瞬间里的选择文件与筛选、上传到图床时的选择目录、用户管理的实例加入 / 创建 / 邀请 / 属性 / 删除、系统状态的趋势选日期、渠道设置的添加 / 详情 / 编辑 / 授权、API Token 的创建 / 接入信息 / 编辑 / 删除 —— 打开后一次 Esc 或一次横滑只关最上面那一层。' },
+        { t: '顺带修掉两个底层缺陷', d: '一是「从没开过弹窗的页面根本不监听 Esc」——关闭逻辑只在登记弹窗时安装，于是批量选中按 Esc 毫无反应；二是「弹窗用 v-show 关掉后，它的层还留在栈里」——这类死层会把第一次 Esc 白白吃掉。现在分别补上安装时机与死层清理。' }
+      ]
     }
   ]
 };
@@ -1752,6 +1768,22 @@ const EN = {
         { t: 'Editor and crop page: 10px off header and footer', d: 'Padding on the header and footer rows is reduced by 10px each, giving the text area and the image stage 20px back. Both fixed blocks measure exactly 10px shorter than before.' },
         { t: 'Upload to library: pick a folder, keep the history', d: 'A folder picker now sits left of the upload folder field and lists folders of the selected instance. The field also remembers recently used folders and offers them on focus, sharing the same history as the upload settings on the home page.' },
         { t: 'Two labels', d: 'The comment button reads Post comment instead of Post, and the moment placeholder now reads Capture the moment, gather the little things.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1192',
+      title: '42. What is new in v1.1.9.2',
+      intro: 'v1.1.9.2 adds an Album view modelled on Synology Photos and Immich: square tiles with no corners, no borders and no caption area, images filling the tile, a 2px gap and the grid running edge to edge. Twenty-nine popups also join the layered close order, and a batch selection can now be cleared with Esc or an edge swipe.',
+      items: [
+        { t: 'New: Album view', d: 'The view switcher goes from two buttons to three, with Album after the first two and a stacked-photos icon. The page is nothing but tiles: images load their thumbnail and fill the tile, folders show an icon with the name underneath, a tap on an image opens the lightbox and a tap on a folder enters it.' },
+        { t: 'Album sizing', d: 'No rounded corners, no outer border, no caption area, 2px between tiles, and the grid runs to both screen edges. Phones get 4 per row in portrait and 8 in landscape (square tiles); tablets get 6 and 12; the desktop is fixed at 8 square tiles per row, so widening the window simply makes every tile bigger while both edges stay flush.' },
+        { t: 'How many the album loads at once', d: 'Phones (landscape included) start with 48 tiles, tablets and desktops with 72; reaching the bottom appends more automatically, with no Load more button.' },
+        { t: 'The recycle bin follows the display mode too', d: 'The recycle bin used to be fixed to folder grouping. It now offers the same Show folders / Show files directly pair as the normal list, and in the flat mode everything is a single list with no folder cards.' },
+        { t: 'Two interface details', d: 'Directly Expand Files now reads Show Files Directly, and folder cards in card view drop from 12px corners to 5px to match file cards.' },
+        { t: 'Creating a folder records who created it', d: 'Folders made from Create folder used to show no creator in their properties, because a folder is only a path with no row to attach one to. The account and instance now keep a folder registry written at creation time, so the properties show the creator and the creation time, empty folders included.' },
+        { t: 'Clear a batch selection with Esc or an edge swipe', d: 'With files or folders selected, pressing Esc on a desktop or swiping from the screen edge on a phone clears the selection instead of leaving the page or going up a folder. This only happens when there is no popup left to close.' },
+        { t: 'Twenty-nine popups joined the layer stack', d: 'Delete from the recycle bin, folder properties, delete file or folder, batch backup, batch rename, batch tags, batch limits (expiry, encryption, redirect), blacklist and whitelist, move file, tag properties / merge / split / delete, the file picker and its filters inside the moment editor, the target folder picker during an upload, the instance join / create / invite / properties / delete dialogs in user management, the trend date picker in system status, the channel add / detail / edit / authorize dialogs, and API token create / credentials / edit / delete - one Esc or one swipe now closes only the topmost of them.' },
+        { t: 'Two underlying bugs fixed along the way', d: 'First, a page that had never opened a popup did not listen for Esc at all, because the listener was only installed when a popup registered; clearing a batch selection therefore did nothing. Second, a popup closed with v-show left its layer in the stack, and such a dead layer silently swallowed the first Esc. Both the install point and dead-layer pruning are fixed.' }
       ]
     }
   ]

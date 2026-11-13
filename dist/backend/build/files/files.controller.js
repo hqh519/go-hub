@@ -1724,6 +1724,18 @@ let ManageController = ManageController_1 = class ManageController {
                     createdAt,
                 };
             }
+            if (directories.length) {
+                const creatorMeta = await this.folderCreators(String(session?.user || ''), allInstances ? '*' : instanceFilter);
+                for (const d of directories) {
+                    const meta = creatorMeta[d];
+                    if (!meta)
+                        continue;
+                    if (meta.creator)
+                        directoryStats[d].creator = meta.creator;
+                    if (meta.createdAt)
+                        directoryStats[d].createdAt = meta.createdAt;
+                }
+            }
         }
         const totalCount = files.length;
         if (sumOnly)
@@ -2295,6 +2307,7 @@ let ManageController = ManageController_1 = class ManageController {
         const page = Math.max(1, Number(q.page) || 1);
         const dirParam = String(q.dir || '').replace(/^\/+|\/+$/g, '');
         const parentOf = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+        const flat = String(q.flat || '').toLowerCase() === 'true';
         let folderEntries = [];
         try {
             folderEntries = (await this.listDeletedFoldersFor(req, owner)).filter((e) => (e.instanceId || '') === instanceFilter);
@@ -2329,7 +2342,7 @@ let ManageController = ManageController_1 = class ManageController {
             }
             return latest ? new Date(latest) : null;
         };
-        const folderItems = children.map((p) => {
+        const folderItems = flat ? [] : children.map((p) => {
             const base = p.split('/').pop() || p;
             return {
                 id: `folder:${p}`,
@@ -2348,7 +2361,12 @@ let ManageController = ManageController_1 = class ManageController {
                 channels: [],
             };
         });
-        const levelFiles = mapped.filter((m) => String(m.folder || '') === dirParam);
+        const levelFiles = flat
+            ? mapped.filter((m) => {
+                const f = String(m.folder || '');
+                return !dirParam || f === dirParam || f.startsWith(`${dirParam}/`);
+            })
+            : mapped.filter((m) => String(m.folder || '') === dirParam);
         const merged = [
             ...folderItems,
             ...levelFiles,
@@ -3716,6 +3734,7 @@ let ManageController = ManageController_1 = class ManageController {
         const full = base ? `${base}/${name}` : name;
         const instanceId = String(body?.instanceId ?? q?.instanceId ?? '');
         await this.registerFolder(req, full, instanceId);
+        await this.recordFolderCreator((0, auth_guard_1.currentSession)(req)?.user || '', instanceId, full);
         app_log_1.appLog.info('file', `新建目录：${full}`, `实例=${instanceId || '默认'}`);
         return { success: true, data: { path: full } };
     }
@@ -3749,6 +3768,39 @@ let ManageController = ManageController_1 = class ManageController {
             }
         }
         await this.settings.set('extraFolders', JSON.stringify(map));
+    }
+    async recordFolderCreator(owner, instanceId, path) {
+        const p = String(path || '').replace(/^\/+|\/+$/g, '');
+        if (!p)
+            return;
+        try {
+            const raw = await this.settings.get('extraFolderCreator', '{}');
+            let map = {};
+            try {
+                map = raw ? JSON.parse(raw) : {};
+            }
+            catch {
+                map = {};
+            }
+            const key = (0, folder_meta_service_1.extraFolderCreatorKey)(owner, instanceId);
+            const bucket = map[key] || (map[key] = {});
+            if (!bucket[p])
+                bucket[p] = { creator: owner || '', createdAt: Date.now() };
+            await this.settings.set('extraFolderCreator', JSON.stringify(map));
+        }
+        catch (err) {
+            app_log_1.appLog.warn('file', '目录创建者登记失败', `${p}：${err.message}`);
+        }
+    }
+    async folderCreators(owner, instanceId) {
+        try {
+            const raw = await this.settings.get('extraFolderCreator', '{}');
+            const map = raw ? JSON.parse(raw) : {};
+            return (0, folder_meta_service_1.folderCreatorsOf)(map, owner, instanceId);
+        }
+        catch {
+            return {};
+        }
     }
     async extraFolders(req, instanceId = '') {
         const owner = (0, auth_guard_1.currentSession)(req)?.user || '';

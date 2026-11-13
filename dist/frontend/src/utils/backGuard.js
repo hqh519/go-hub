@@ -91,8 +91,21 @@ export function setupBackGuard() {
             if (tracked.has(el)) return
             const id = `overlay:${++seq}`
             tracked.set(el, id)
-            // esc:false —— Esc 交给 Element Plus 自己处理（它会先收下拉框再关弹窗）
-            registerLayer(id, () => closeOverlay(el), { esc: false })
+            /*
+             * esc:false —— Esc 交给 Element Plus 自己处理（它会先收下拉框再关弹窗）。
+             * v1.1.9.2：附带 alive 判定。EP 关弹窗只把 display 改成 none（v-show），
+             * body 的 childList 不变 → sync() 不跑 → 这一层会永远留在栈里，
+             * 之后每次 Esc / 边缘横滑都被这个「死层」白吃一次。
+             */
+            registerLayer(id, () => closeOverlay(el), {
+                esc: false,
+                alive: () => {
+                    if (!el || !el.isConnected) return false
+                    if (el.getClientRects().length === 0) return false
+                    const st = window.getComputedStyle(el)
+                    return st.display !== 'none' && st.visibility !== 'hidden'
+                }
+            })
         })
 
         // 已经消失的浮层：注销
