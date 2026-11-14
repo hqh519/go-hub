@@ -158,14 +158,26 @@ export function logLocalFileError(action: string, detail: string, err?: unknown)
   appLog.error('localfiles', `本地文件${action}失败`, `${detail}${msg ? ` ｜ ${msg}` : ''}`);
 }
 
-/** 把目录条目排序（默认按名称；支持 name/size/mtime） */
+/** 把目录条目排序（默认按名称；支持 name/size/mtime/type） */
 export function sortEntries(list: LocalEntry[], sort = 'name', order = 'asc'): LocalEntry[] {
   const dir = order === 'desc' ? -1 : 1;
-  const key = sort === 'size' ? 'size' : sort === 'mtime' ? 'mtime' : 'name';
+  const key = sort === 'size' ? 'size' : sort === 'mtime' ? 'mtime' : sort === 'type' ? 'type' : 'name';
   return [...list].sort((a, b) => {
     // 目录恒排在最前（无论升序降序）
     if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1;
     if (key === 'name') return a.name.localeCompare(b.name, 'zh-CN') * dir;
+    /*
+     * v1.2.1（需求：选文件器支持按类型排序）：
+     * 粗分类（image / video / audio / pdf / text / other）相同的再按扩展名聚一次，
+     * 否则「按类型」在图片之间看不出任何顺序。
+     */
+    if (key === 'type') {
+      const byType = String(a.type || '').localeCompare(String(b.type || ''));
+      if (byType !== 0) return byType * dir;
+      const byExt = String(a.ext || '').localeCompare(String(b.ext || ''));
+      if (byExt !== 0) return byExt * dir;
+      return a.name.localeCompare(b.name, 'zh-CN');
+    }
     if (a[key] === b[key]) return a.name.localeCompare(b.name, 'zh-CN');
     return (a[key] - b[key]) * dir;
   });

@@ -45,16 +45,20 @@ function writeAll(instanceId, next) {
     }
 }
 
-/** 读「上次停在哪里」：{ source, type, mountChannelId, mountDir } */
+/** 读「上次停在哪里」：{ source, type, mountChannelId, mountDir, sortField, sortOrder } */
 export function readPickMemory(instanceId) {
     const o = readAll(instanceId);
     const m = (o && o.memory) || {};
     return {
         source: m.source === 'mount' ? 'mount' : 'bed',
         // v1.1.8：新增「全部」分类，白名单里也要带上，否则记住的 all 会被改回 image
-        type: ['all', 'image', 'video', 'audio', 'other'].includes(m.type) ? m.type : 'image',
+        // v1.2.1（需求）：首次进入的默认分类由「图片」改为「全部」；有记忆时照记忆来
+        type: ['all', 'image', 'video', 'audio', 'other'].includes(m.type) ? m.type : 'all',
         mountChannelId: String(m.mountChannelId || ''),
-        mountDir: String(m.mountDir || '')
+        mountDir: String(m.mountDir || ''),
+        // v1.2.1（需求）：选文件器加了排序，一并记住
+        sortField: ['time', 'size', 'name', 'type'].includes(m.sortField) ? m.sortField : 'time',
+        sortOrder: m.sortOrder === 'asc' ? 'asc' : 'desc'
     };
 }
 

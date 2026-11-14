@@ -293,8 +293,8 @@
                 @keydown.enter.meta.prevent="post"
             ></textarea>
             <div class="mc-composer-foot">
-                <span class="mc-composer-count" :class="{ 'is-over': charCount > commentMaxChars }">
-                    {{ charCount }} / {{ commentMaxChars }}
+                <span class="mc-composer-count" :class="{ 'is-over': charCount > charLimit }">
+                    {{ charCount }} / {{ charLimit }}
                 </span>
                 <div class="mc-composer-btns">
                     <button type="button" class="mc-composer-btn" @click.stop="closeComposer">
@@ -392,20 +392,26 @@ export default {
         },
         /**
          * v1.2.0（需求）：广场里的发布者信息。
-         * 优先昵称，没有昵称回落用户名（与后台「用户管理」的展示口径一致）。
+         * v1.2.1（需求）：展示格式改为 `用户名(昵称)`，例如 `xiaoming(小明)`；
+         *   没有昵称时只显示用户名；括号用英文半角（中文全角括号在等宽字体里会撑宽）。
          */
         authorName() {
+            const user = String((this.note && this.note.author) || '').trim();
             const nick = String((this.note && this.note.authorNickname) || '').trim();
-            if (nick) return nick;
-            return String((this.note && this.note.author) || '').trim();
+            if (nick && user) return `${user}(${nick})`;
+            return user || nick;
         },
         /** 头像地址：后端下发带版本戳的 URL，空串表示该账户没设过头像 */
         authorAvatarUrl() {
             return String((this.note && this.note.authorAvatarUrl) || '');
         },
-        /** 没有头像时的文字占位：取昵称/用户名首字 */
+        /**
+         * 没有头像时的文字占位：优先昵称首字（昵称才是「名字」），没有昵称再取用户名首字。
+         * 注意不能直接用 authorName —— 它现在是 `用户名(昵称)` 的展示串，首字会永远是用户名。
+         */
         authorInitial() {
-            const s = this.authorName;
+            const nick = String((this.note && this.note.authorNickname) || '').trim();
+            const s = nick || String((this.note && this.note.author) || '').trim();
             return s ? s.slice(0, 1).toUpperCase() : '?';
         },
         /**
@@ -473,19 +479,32 @@ export default {
         },
         /**
          * 真正会提交的正文。
-         * 回复时后端存的是一条带「回复 @某某：」前缀的完整留言，
-         * 所以字数也要按**带前缀**的口径算 —— 否则用户写满 500 字会突然被后端拒掉。
+         * 回复时后端存的是一条带「回复 @某某：」前缀的完整留言。
          */
         effectiveContent() {
             return this.replyTarget ? buildReplyContent(this.replyTarget, this.draft) : this.draft;
         },
+        /**
+         * v1.2.1（需求）：字数只统计**自己输入的内容**。
+         * 之前这里算的是 effectiveContent，于是点「回复」刚展开输入框就显示「4 / 500」——
+         * 「回复 @张三：」这段不是用户打的字，不该占字数。空输入必须显示 0。
+         */
         charCount() {
-            return countTextChars(this.effectiveContent);
+            return countTextChars(this.draft);
+        },
+        /**
+         * 回复时真正还能输入的字数 = 上限 − 前缀占掉的字数。
+         * 分母跟着前缀走，而不是固定 500 —— 否则用户看到「498 / 500」还没到上限却被拦下来，
+         * 会以为是 bug（后端按完整正文校验，前缀确实占了额度）。
+         */
+        charLimit() {
+            const prefix = this.replyTarget ? countTextChars(buildReplyContent(this.replyTarget, '')) : 0;
+            return Math.max(0, this.commentMaxChars - prefix);
         },
         canPost() {
             if (this.posting) return false;
             if (!this.draft.trim()) return false;
-            return this.charCount <= this.commentMaxChars;
+            return this.charCount <= this.charLimit;
         }
     },
     watch: {

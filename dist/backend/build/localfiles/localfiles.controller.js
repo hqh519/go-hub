@@ -53,6 +53,8 @@ const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const auth_guard_1 = require("../auth/auth.guard");
 const channel_access_1 = require("../common/channel-access");
+const file_view_1 = require("../common/file-view");
+const dedup_1 = require("../common/dedup");
 const settings_service_1 = require("../settings/settings.service");
 const sysconfig_service_1 = require("../settings/sysconfig.service");
 const upload_service_1 = require("../upload/upload.service");
@@ -547,7 +549,7 @@ let LocalFilesController = class LocalFilesController {
         try {
             rows = await prisma_1.prisma.fileRecord.findMany({
                 where: { status: 'active', OR: [{ size: { in: sizes } }, { originalSize: { in: sizes } }] },
-                select: { name: true, size: true, originalSize: true, md5: true },
+                select: { name: true, size: true, originalSize: true, md5: true, originalMd5: true },
                 take: 500,
             });
         }
@@ -558,12 +560,21 @@ let LocalFilesController = class LocalFilesController {
             return out;
         const bySize = new Map();
         for (const r of rows) {
-            for (const s of new Set([r.size, r.originalSize])) {
+            const cand = {
+                name: r.name,
+                size: Number(r.size) || 0,
+                originalSize: Number(r.originalSize) || 0,
+                md5: r.md5 || '',
+                originalMd5: r.originalMd5 || '',
+            };
+            for (const s of new Set([cand.size, cand.originalSize])) {
                 if (!s)
                     continue;
                 if (!bySize.has(s))
                     bySize.set(s, []);
-                bySize.get(s).push({ name: r.name, md5: r.md5 || '' });
+                const bucket = bySize.get(s);
+                if (!bucket.some((c) => c.name === cand.name && c.md5 === cand.md5))
+                    bucket.push(cand);
             }
         }
         for (const f of files) {
@@ -578,7 +589,8 @@ let LocalFilesController = class LocalFilesController {
                 continue;
             try {
                 const md5 = await (0, localfiles_util_1.hashFile)(abs);
-                const match = cands.find((c) => c.md5 && c.md5 === md5);
+                const probe = { size: f.size, md5 };
+                const match = cands.find((c) => (0, dedup_1.isDuplicateFile)(probe, c));
                 if (match)
                     out.set(f.path, match.name);
             }
@@ -792,7 +804,9 @@ let LocalFilesController = class LocalFilesController {
                     ip,
                     uploadFolder: String(body?.uploadFolder || '') || undefined,
                     instanceId: String(body?.instanceId || '') || undefined,
-                    uploadSource: 'Default',
+                    uploadSource: (0, file_view_1.isClientUploadSource)(body?.uploadSource)
+                        ? (0, file_view_1.normalizeUploadSource)(body?.uploadSource)
+                        : 'Default',
                     extraTags: ['本地上传'],
                     skipFileLimits: true,
                 });
@@ -802,7 +816,8 @@ let LocalFilesController = class LocalFilesController {
                 }
                 else {
                     results.push({ path: rel, name, success: true, id: res.id, dedup: !!res.dedup });
-                    app_log_1.appLog.info('localfiles', `本地文件已上传到图床：${name}`, `${rel} ｜ 文件ID=${res.id}${res.dedup ? ' ｜ 命中已有内容（去重）' : ''}`, ip);
+                    app_log_1.appLog.info('localfiles', `本地文件已上传到图床：${name}`, `${rel} ｜ 文件ID=${res.id} ｜ 来源=${(0, file_view_1.isClientUploadSource)(body?.uploadSource) ? (0, file_view_1.normalizeUploadSource)(body?.uploadSource) : 'Default'}` +
+                        (res.dedup ? ' ｜ 命中已有内容（去重）' : ''), ip);
                 }
             }
             catch (err) {

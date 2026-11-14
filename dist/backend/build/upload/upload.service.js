@@ -31,6 +31,7 @@ const adapter_factory_1 = require("../adapters/adapter.factory");
 const local_adapter_1 = require("../adapters/local.adapter");
 const adapter_interface_1 = require("../adapters/adapter.interface");
 const file_view_1 = require("../common/file-view");
+const dedup_1 = require("../common/dedup");
 const app_log_1 = require("../common/app-log");
 const path_template_1 = require("../common/path-template");
 const compress_1 = require("../common/compress");
@@ -1002,9 +1003,24 @@ let UploadService = class UploadService {
                 where: { fileId_channelId: { fileId: job.recordId, channelId: ch.id } },
                 data: { ...writeData, metas: JSON.stringify({ ...prevMetas, ...JSON.parse(writeData.metas) }), status: 'active' },
             });
+            const MD5_REFRESH_MAX = 512 * 1024 * 1024;
+            let actualMd5 = '';
+            if (r.size > 0 && r.size <= MD5_REFRESH_MAX) {
+                try {
+                    actualMd5 = await this.md5OfFile(r.path);
+                }
+                catch {
+                    actualMd5 = '';
+                }
+            }
             await prisma_1.prisma.fileRecord.update({
                 where: { id: job.recordId },
-                data: { size: r.size, mime: r.mime || job.mime, originalName: newName },
+                data: {
+                    size: r.size,
+                    mime: r.mime || job.mime,
+                    originalName: newName,
+                    ...(actualMd5 ? { md5: actualMd5 } : {}),
+                },
             });
             if (copy && (copy.remoteKey || copy.remoteUrl) && !this.sameObjectKey(up.remoteKey, copy.remoteKey)) {
                 try {
@@ -1319,20 +1335,24 @@ let UploadService = class UploadService {
         const md5 = srcPath ? await this.hashFile(srcPath) : (0, crypto_1.createHash)('md5').update(buffer).digest('hex');
         if (await this.dedupEnabled()) {
             const scope = await this.dedupScope();
-            const dups = await prisma_1.prisma.fileRecord.findMany({
+            const probe = { size: Number(originalSize) || 0, md5 };
+            const dups = (await prisma_1.prisma.fileRecord.findMany({
                 where: {
                     status: 'active',
-                    md5,
-                    OR: [{ originalSize }, { size: originalSize }],
+                    OR: (0, dedup_1.dedupCandidateWhere)(md5),
                 },
                 take: 50,
                 select: {
                     name: true,
                     originalName: true,
+                    size: true,
+                    originalSize: true,
+                    md5: true,
+                    originalMd5: true,
                     instanceId: true,
                     copies: { select: { channelId: true, status: true, isPrimary: true, channel: { select: { name: true, type: true } } } },
                 },
-            });
+            })).filter((d) => (0, dedup_1.isDuplicateFile)(probe, d));
             const primaryCopyOf = (d) => d.copies.find((c) => c.isPrimary) || d.copies[0];
             const scopeHit = (d) => {
                 if (scope === 'all')
@@ -1545,6 +1565,7 @@ let UploadService = class UploadService {
                 originalSize,
                 mime,
                 md5,
+                originalMd5: md5,
                 folder,
                 uploader: opts.uploader || '',
                 uploadSource: (0, file_view_1.normalizeUploadSource)(opts.uploadSource),

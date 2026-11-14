@@ -199,7 +199,15 @@ model FileRecord {
   originalSize Int       @default(0) // 压缩前的初始文件大小（字节）；未压缩时与 size 相同
   mime         String    @default("")
   hash         String    @default("") // sha256，用于秒传/去重
-  md5          String    @default("") // md5，用于去重（配合 size）与搜索
+  md5          String    @default("") // md5，用于去重（配合 size）与搜索；**当前实际内容**的 md5
+  // v1.2.1：最初的 md5 —— 上传那一刻原文件内容的 md5，之后**永不改变**。
+  //   为什么要单列：md5 会在「原位编辑 / 压缩 / 转码」后被刷新成新内容的 md5，
+  //   一旦如此，用户再上传那个原始文件就再也匹配不上「同一个文件」了。
+  //   去重时两组都认：①原始大小+原始 md5 ②实际大小+实际 md5（见 common/dedup.ts）。
+  originalMd5  String    @default("")
+  // v1.2.1：被「剪辑处理页」处理过（裁剪 / 旋转 / 涂鸦 / 文字 → 保存并替换）的时间；
+  //   null = 从未剪辑过。筛选页的「文件剪辑」按这一列判断（独立成列才能走库级筛选）。
+  editedAt     DateTime?
   folder       String    @default("") // 逻辑分类目录（可后台移动，仅改库不改真实路径）
   uploader     String    @default("") // 上传者用户名（用户账户体系：文件按此归集给用户）
   // 上传渠道（上传来源入口）：

@@ -43,6 +43,10 @@ export interface FileFilterOpts {
   access: string[];
   validity: string[];
   nameChanged: string[];
+  /** v1.2.1：剪辑状态筛选（edited / unedited），依据 FileRecord.editedAt */
+  edited: string[];
+  /** v1.2.1：MD5 变化筛选（changed / unchanged），依据 md5 与 originalMd5 是否一致 */
+  md5Changed: string[];
   users: string[];
   fromMs: number;
   toMs: number;
@@ -107,6 +111,9 @@ export function parseFileFilterQuery(q: Record<string, string | undefined>): Fil
     access: splitCsv(q.accessStatus),
     validity: splitCsv(q.validity).map((v) => v.toLowerCase()),
     nameChanged: splitCsv(q.nameChanged).map((v) => v.toLowerCase()),
+    // v1.2.1：剪辑 / MD5 变化两组筛选（参数名与前端 query 键一致）
+    edited: splitCsv(q.edited).map((v) => v.toLowerCase()),
+    md5Changed: splitCsv(q.md5Changed).map((v) => v.toLowerCase()),
     users: splitCsv(q.filterUsers),
     fromMs: dateFrom ? dayStartMs(dateFrom) : 0,
     toMs: dateTo ? dayStartMs(dateTo) + 86_400_000 - 1 : 0,
@@ -143,6 +150,8 @@ export function isEmptyFileFilter(f: FileFilterOpts): boolean {
     !f.access.length &&
     !f.validity.length &&
     !f.nameChanged.length &&
+    !f.edited.length &&
+    !f.md5Changed.length &&
     !f.users.length &&
     !f.fromMs &&
     !f.toMs &&
@@ -336,6 +345,25 @@ export function fileFilterGroups(
   if (f.nameChanged.length) {
     const renamed = !!String(r.prevName || '');
     pushGroup(f.nameChanged, (v) => (v === 'changed' ? renamed : !renamed));
+  }
+
+  /*
+   * v1.2.1（需求）：
+   *   edited     —— 剪辑状态。编辑页「保存并替换」成功时写 FileRecord.editedAt，
+   *                 所以「剪辑过」= editedAt 有值，老数据为 null 一律算未剪辑。
+   *   md5Changed —— 内容是否变化过。实际 md5 ≠ 原始 md5 即变化过；
+   *                 原始 md5 缺失（v1.2.1 之前的老记录）时回落用实际 md5，判为未变化，
+   *                 避免把历史文件整批误标成「变化过」。
+   */
+  if (f.edited.length) {
+    const edited = !!r.editedAt;
+    pushGroup(f.edited, (v) => (v === 'edited' ? edited : !edited));
+  }
+  if (f.md5Changed.length) {
+    const cur = String(r.md5 || '').trim().toLowerCase();
+    const origin = String(r.originalMd5 || '').trim().toLowerCase() || cur;
+    const changed = !!cur && cur !== origin;
+    pushGroup(f.md5Changed, (v) => (v === 'changed' ? changed : !changed));
   }
 
   if (f.dimPreset.length || f.widthMin || f.widthMax || f.heightMin || f.heightMax) {

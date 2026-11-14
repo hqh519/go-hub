@@ -126,12 +126,21 @@ function logLocalFileError(action, detail, err) {
 }
 function sortEntries(list, sort = 'name', order = 'asc') {
     const dir = order === 'desc' ? -1 : 1;
-    const key = sort === 'size' ? 'size' : sort === 'mtime' ? 'mtime' : 'name';
+    const key = sort === 'size' ? 'size' : sort === 'mtime' ? 'mtime' : sort === 'type' ? 'type' : 'name';
     return [...list].sort((a, b) => {
         if (a.kind !== b.kind)
             return a.kind === 'dir' ? -1 : 1;
         if (key === 'name')
             return a.name.localeCompare(b.name, 'zh-CN') * dir;
+        if (key === 'type') {
+            const byType = String(a.type || '').localeCompare(String(b.type || ''));
+            if (byType !== 0)
+                return byType * dir;
+            const byExt = String(a.ext || '').localeCompare(String(b.ext || ''));
+            if (byExt !== 0)
+                return byExt * dir;
+            return a.name.localeCompare(b.name, 'zh-CN');
+        }
         if (a[key] === b[key])
             return a.name.localeCompare(b.name, 'zh-CN');
         return (a[key] - b[key]) * dir;

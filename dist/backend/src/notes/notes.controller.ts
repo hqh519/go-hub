@@ -144,6 +144,8 @@ export class NotesController {
       isAdmin,
       filterQuery: q,
       matchMode: q.matchMode,
+      sortBy: q.sortBy,
+      order: q.order,
     });
   }
 

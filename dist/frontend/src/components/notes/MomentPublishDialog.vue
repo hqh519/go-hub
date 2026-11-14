@@ -35,7 +35,7 @@
         @open="onOpen"
         @closed="onClosed"
     >
-        <div class="mp-body">
+        <div class="mp-body" ref="bodyEl">
             <!-- 草稿恢复提示：只在「新建 + 有草稿」时出现一次 -->
             <div v-if="draftRestored" class="mp-draft-tip">
                 <font-awesome-icon icon="history" class="mp-draft-icon" />
@@ -526,6 +526,8 @@ export default {
             window.clearTimeout(this._pressTimer);
             this._pressTimer = null;
         }
+        // v1.2.1：弹窗高度的观察者要跟着销毁，避免弹窗关掉后还在算
+        this.teardownEditorObserver();
         if (this._layerUnbind) {
             this._layerUnbind();
             this._layerUnbind = null;
@@ -555,8 +557,48 @@ export default {
                 this.restoreDraft();
             }
             this.loadTags();
-            // v1.1.7：上次拉伸过的高度不要带到下一次
-            this.$nextTick(() => this.resetEditorHeight());
+            /*
+             * v1.1.7：上次拉伸过的高度不要带到下一次
+             * v1.2.1：先量一次「编辑页高度的 70%」，再清掉上次拉伸留下的行内高度 ——
+             *         顺序反了会让 min-height 短暂沿用上一轮的旧值。
+             */
+            this.$nextTick(() => {
+                this.updateEditorMin();
+                this.resetEditorHeight();
+                this.setupEditorObserver();
+            });
+        },
+        /**
+         * v1.2.1（需求）：正文输入框的收缩下限 = **编辑页（弹窗）当前高度的 70%**。
+         *
+         * 为什么不能用 vh：原来写的是 max(180px, 45vh)，45vh 是「视口」的 45%，
+         * 而弹窗高度是 96vh（手机 98vh），两者不同源；手机上弹出输入法后视口变矮、
+         * 弹窗跟着变矮，45vh 依然按视口算 —— 结果就是输入框收缩得远比 70% 小，
+         * 只剩一小条。这里改成实测弹窗高度再乘 0.7，键盘弹出/收起/转屏都会重算。
+         */
+        updateEditorMin() {
+            const body = this.$refs.bodyEl;
+            if (!body) return;
+            const dlg = body.closest('.el-dialog');
+            const h = dlg ? dlg.clientHeight : 0;
+            if (!h) return;
+            body.style.setProperty('--mp-editor-min', `${Math.round(h * 0.7)}px`);
+        },
+        /** 盯着弹窗高度变化（软键盘弹出、旋屏、窗口缩放都会触发） */
+        setupEditorObserver() {
+            if (typeof ResizeObserver === 'undefined') return;
+            const body = this.$refs.bodyEl;
+            const dlg = body && body.closest('.el-dialog');
+            if (!dlg) return;
+            this.teardownEditorObserver();
+            this._editorRO = new ResizeObserver(() => this.updateEditorMin());
+            this._editorRO.observe(dlg);
+        },
+        teardownEditorObserver() {
+            if (this._editorRO) {
+                this._editorRO.disconnect();
+                this._editorRO = null;
+            }
         },
         /**
          * v1.1.7：正文输入框允许用户从右下角自由拉伸。
@@ -1296,8 +1338,11 @@ export default {
     /*
      * v1.1.7：正文区最小收缩高度 30vh → 45vh（需求原文）。
      * 矮屏（横屏手机 / 分屏）按 180px 兜底，否则 45vh 会小到没法写字。
+     * v1.2.1（需求）：下限改为「编辑页（弹窗）高度的 70%」——
+     *   由 updateEditorMin() 实测后写进 --mp-editor-min；
+     *   拿不到实测值时（首帧 / 老浏览器）仍回落到原来的 45vh 口径。
      */
-    min-height: max(180px, 45vh);
+    min-height: var(--mp-editor-min, max(180px, 45vh));
 }
 
 .mp-textarea {
@@ -1305,7 +1350,8 @@ export default {
     width: 100%;
     height: 100%;
     /* v1.1.7：收缩下限与父容器一致 —— 视口 45%，保底 180px */
-    min-height: max(180px, 45vh);
+    /* v1.2.1：与父容器同源，统一走 --mp-editor-min（弹窗高度的 70%） */
+    min-height: var(--mp-editor-min, max(180px, 45vh));
     padding: 10px 12px 26px;
     border: 1px solid var(--el-border-color);
     border-radius: 8px;
@@ -1621,10 +1667,15 @@ export default {
 }
 
 @media (max-width: 768px) {
-    /* v1.1.7：移动端同样按视口 45% 起算（原来压到 130px，与桌面端口径不一致） */
+    /*
+     * v1.1.7：移动端同样按视口 45% 起算（原来压到 130px，与桌面端口径不一致）
+     * v1.2.1（需求）：改为沿用 --mp-editor-min（弹窗高度的 70%）。
+     *   键盘弹出时桌面端没变化、移动端才是真正被压缩的那一端，
+     *   所以这里不能再用 45vh 把桌面那套值搬过来。
+     */
     .mp-editor-wrap,
     .mp-textarea {
-        min-height: max(160px, 45vh);
+        min-height: var(--mp-editor-min, max(160px, 45vh));
     }
 
     .mp-asset {

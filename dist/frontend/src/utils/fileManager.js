@@ -295,6 +295,23 @@ class FileManager {
         if (filters.nameChanged && filters.nameChanged.length > 0) {
             params += `&nameChanged=${encodeURIComponent(filters.nameChanged.join(','))}`;
         }
+        /*
+         * v1.2.1：文件剪辑 / 文件MD5 两组筛选。
+         * 写法与上面的「文件引用 / 文件共用」一致 —— 只勾一个才传参，两个都勾等于不筛。
+         * 这样在「同时(all)」模式下不会变成一个永不可能满足的条件。
+         */
+        if (filters.edited && filters.edited.length > 0) {
+            const yes = filters.edited.includes('edited');
+            const no = filters.edited.includes('unedited');
+            if (yes && !no) params += '&edited=edited';
+            else if (no && !yes) params += '&edited=unedited';
+        }
+        if (filters.md5Changed && filters.md5Changed.length > 0) {
+            const changed = filters.md5Changed.includes('changed');
+            const unchanged = filters.md5Changed.includes('unchanged');
+            if (changed && !unchanged) params += '&md5Changed=changed';
+            else if (unchanged && !changed) params += '&md5Changed=unchanged';
+        }
         // v2.8.9：尺寸筛选（快捷预设 + 自定义宽高）
         if (filters.dimPreset) params += `&dimPreset=${encodeURIComponent(filters.dimPreset)}`;
         if ((Number(filters.widthMin) || 0) > 0) params += `&widthMin=${Number(filters.widthMin)}`;

@@ -271,13 +271,15 @@
             <!-- v3.0.0 长按手势：屏蔽长按弹出的系统「保存视频」菜单，否则系统菜单会抢占手势并触发 touchcancel -->
             <div v-else-if="current.kind === 'video'" class="mv-video-wrap" @click.stop @contextmenu.prevent>
                 <!-- v3.0.0 自动播放改为脚本控制（muted 起播 → 尝试取消静音），不再用 autoplay 属性 -->
+                <!-- v1.2.1（需求）：controls 改由 videoControls 计算，桌面端不再来回切属性（黑屏根因） -->
                 <video
                     ref="videoEl"
                     @timeupdate="onVideoTimeUpdate"
                     :src="current.url"
                     class="mv-video"
+                    :class="{ 'is-zoomed': !!videoStyle }"
                     :style="videoStyle"
-                    :controls="!isIdle"
+                    :controls="videoControls"
                     playsinline
                     @ended="handleVideoEnded"
                     @volumechange="syncVideoMuted"
@@ -851,6 +853,28 @@ export default {
          */
         isIdle() {
             return !this.controlsVisible || this.silent
+        },
+        /**
+         * v1.2.1（需求）：「隐藏控件时视频黑屏、声音还在播」的最终处理。
+         *
+         * v1.1.9.4 的处理是给视频灯箱关掉 backdrop-filter（见下方 .media-viewer.is-video
+         * 的样式注释），那一步解决的是「祖先模糊层在播放器控件层重建时把画面烘成静态快照」。
+         * 但反馈里有一台老浏览器仍然黑屏 —— 说明还有第二个触发器：
+         *   `:controls="!isIdle"` 会在每次控件隐藏 / 显示时增删 <video> 的 controls 属性，
+         *   浏览器必须拆掉再重建整条原生播放器控件层；<video> 又是独立合成层，
+         *   在部分显卡驱动 / 旧版 Chromium 上这次重建会让视频层停止提交新帧（画面定格纯黑，
+         *   音频轨不受影响所以声音还在）。这类问题只在特定 GPU 路径上出现，
+         *   所以「换一个浏览器就正常」，与 CSS 缓存无关。
+         *
+         * 处理办法：桌面端（有真实鼠标）让 controls 常驻 —— 原生控件条本身就会在鼠标静止
+         * 两三秒后自动淡出，观感与原来「我们主动去掉属性」几乎一致，但整条重建路径不再发生。
+         * 触屏端保留原行为（触屏没有 hover 指针，原生控件不会自己淡出，
+         * 且常驻的控件条会和双指缩放手势抢事件）。
+         */
+        videoControls() {
+            if (this.current.kind !== 'video') return false
+            if (this.isTouch) return !this.isIdle
+            return true
         },
         /** v1.1.9.3：底部小圆点里「当前这张」的下标（只在图片灯箱用） */
         dotIndex() {
@@ -2945,6 +2969,13 @@ export default {
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
     /* v1.0.0：双指缩放以画面中心为原点，与图片灯箱同一套数学 */
     transform-origin: center center;
+    /*
+     * v1.2.1（需求）：will-change 只在真的被缩放时才加 —— 常驻的 will-change
+     * 会把 <video> 永久提升为独立合成层，配合原生控件层的增删更容易触发
+     * 「画面停止提交新帧」的合成问题（同上方 black-frame 注释）。
+     */
+}
+.mv-video.is-zoomed {
     will-change: transform;
 }
 /* v3.0.0 视频全屏化：去圆角与阴影，贴近满窗 */
@@ -3864,18 +3895,31 @@ export default {
     opacity: 0.7;
 }
 .mv-dot {
-    flex: 0 0 auto;
+    /*
+     * v1.2.1（需求）：当前页那颗"实心圆点"看起来是椭圆的，要求改成正圆。
+     * 原因：此前用 `transform: scale(1.25)` 放大当前点 —— scale 是**按原尺寸缩放**的，
+     *   5px 的方块放大到 6.25px 会落在亚像素上，加上 flex 行里 `flex: 0 0 auto` 只约束主轴、
+     *   交叉轴上 span 的默认行高会把它撑成「宽 5 / 高 6」的扁圆。
+     * 现在：宽高一起给死 + aspect-ratio 锁 1:1 + display: block（span 默认是 inline），
+     *   放大改成直接写宽高而不是 scale，四边始终等长。
+     */
+    display: block;
+    flex: 0 0 5px;
     width: 5px;
     height: 5px;
+    aspect-ratio: 1 / 1;
     border-radius: 50%;
     background: rgba(255, 255, 255, 0.42);
     /* 深色底上白点够清楚；保留这圈极淡描边，浅色图片下方也不会糊成一片 */
     box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28);
-    transition: background 0.18s ease, transform 0.18s ease;
+    transition: background 0.18s ease, width 0.18s ease, height 0.18s ease, flex-basis 0.18s ease;
 }
 .mv-dot.is-active {
     background: #fff;
-    transform: scale(1.25);
+    /* 与原 scale(1.25) 的观感一致：5 → 6px，但宽高等量变化，不会变椭圆 */
+    flex: 0 0 6px;
+    width: 6px;
+    height: 6px;
 }
 /*
  * v1.1.9.4：图片超过 20 张时圆点会横向溢出屏幕，改用它 —— 「当前 / 总数」。

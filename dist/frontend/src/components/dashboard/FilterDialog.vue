@@ -93,6 +93,24 @@
                             </el-checkbox-group>
                         </div>
                     </div>
+                    <!-- v1.2.1：文件剪辑（编辑页「保存并替换」成功即写入 editedAt 标记） -->
+                    <div class="filter-section">
+                        <div class="filter-title">{{ $t('filter.fileEditedState') }}</div>
+                        <div class="filter-options">
+                            <el-checkbox-group v-model="draft.edited">
+                                <el-checkbox v-for="option in editedOptions" :key="'edited-' + option.value" :label="option.value">{{ option.label }}</el-checkbox>
+                            </el-checkbox-group>
+                        </div>
+                    </div>
+                    <!-- v1.2.1：文件MD5（实际 md5 与原始 md5 是否一致） -->
+                    <div class="filter-section">
+                        <div class="filter-title">{{ $t('filter.fileMd5State') }}</div>
+                        <div class="filter-options">
+                            <el-checkbox-group v-model="draft.md5Changed">
+                                <el-checkbox v-for="option in md5ChangedOptions" :key="'md5Changed-' + option.value" :label="option.value">{{ option.label }}</el-checkbox>
+                            </el-checkbox-group>
+                        </div>
+                    </div>
                     <div class="filter-section">
                         <div class="filter-title">{{ $t('filter.backupStatus') }}</div>
                         <div class="filter-options">
@@ -502,6 +520,9 @@ const EMPTY_FILTERS = {
     /* v2.8.9：有效期 / 名称状态 */
     validity: [],
     nameChanged: [],
+    /* v1.2.1：文件剪辑 / 文件MD5（edited = 剪辑过 / unedited = 未剪辑；changed = 变化过 / unchanged = 未变化） */
+    edited: [],
+    md5Changed: [],
     tags: [],
     tagNames: [],
     /* v3.0.0：用户共享（mine = 我共享的 / tome = 共享给我的；单选，空数组 = 不筛） */
@@ -687,6 +708,20 @@ export default {
                 { label: this.$t('filter.nameChangedNo'), value: 'unchanged' }
             ];
         },
+        /** v1.2.1：文件剪辑（edited 剪辑过 / unedited 未剪辑） */
+        editedOptions() {
+            return [
+                { label: this.$t('filter.editedYes'), value: 'edited' },
+                { label: this.$t('filter.editedNo'), value: 'unedited' }
+            ];
+        },
+        /** v1.2.1：文件MD5（changed 变化过 / unchanged 未变化） */
+        md5ChangedOptions() {
+            return [
+                { label: this.$t('filter.md5ChangedYes'), value: 'changed' },
+                { label: this.$t('filter.md5ChangedNo'), value: 'unchanged' }
+            ];
+        },
         /** v2.8.9：尺寸快捷项（值与后端 matchDimPreset 一致） */
         dimPresetOptions() {
             return [
@@ -771,7 +806,7 @@ export default {
         tabHasValue() {
             const d = this.draft;
             return {
-                filter: ['accessStatus', 'listType', 'label', 'fileType', 'channel', 'channelName', 'uploadSource', 'backup', 'redirect', 'validity', 'nameChanged', 'shareScope']
+                filter: ['accessStatus', 'listType', 'label', 'fileType', 'channel', 'channelName', 'uploadSource', 'backup', 'redirect', 'validity', 'nameChanged', 'edited', 'md5Changed', 'shareScope']
                     .some((k) => (d[k] || []).length > 0),
                 tags: (d.tags || []).length > 0 || (d.tagNames || []).length > 0,
                 user: (d.userNames || []).length > 0,
@@ -793,7 +828,7 @@ export default {
         draftCount() {
             const d = this.draft;
             let n = 0;
-            for (const k of ['accessStatus', 'listType', 'label', 'fileType', 'channel', 'channelName', 'uploadSource', 'backup', 'redirect', 'validity', 'nameChanged', 'tags', 'tagNames', 'userNames', 'shareScope']) {
+            for (const k of ['accessStatus', 'listType', 'label', 'fileType', 'channel', 'channelName', 'uploadSource', 'backup', 'redirect', 'validity', 'nameChanged', 'edited', 'md5Changed', 'tags', 'tagNames', 'userNames', 'shareScope']) {
                 n += (d[k] || []).length;
             }
             /*
@@ -853,6 +888,9 @@ export default {
                 // v2.8.9
                 validity: Array.isArray(s.validity) ? [...s.validity] : [],
                 nameChanged: Array.isArray(s.nameChanged) ? [...s.nameChanged] : [],
+                // v1.2.1：剪辑 / MD5 变化
+                edited: Array.isArray(s.edited) ? [...s.edited] : [],
+                md5Changed: Array.isArray(s.md5Changed) ? [...s.md5Changed] : [],
                 sizeMode: s.sizeMode === 'original' ? 'original' : 'actual',
                 dimPreset: s.dimPreset || '',
                 widthMin: Number(s.widthMin) || 0,
@@ -1078,6 +1116,9 @@ export default {
                 // v2.8.9
                 validity: [...(this.draft.validity || [])],
                 nameChanged: [...(this.draft.nameChanged || [])],
+                // v1.2.1：剪辑 / MD5 变化
+                edited: [...(this.draft.edited || [])],
+                md5Changed: [...(this.draft.md5Changed || [])],
                 sizeMode: this.draft.sizeMode === 'original' ? 'original' : 'actual',
                 dimPreset: this.draft.dimPreset || '',
                 widthMin: Number(this.draft.widthMin) || 0,

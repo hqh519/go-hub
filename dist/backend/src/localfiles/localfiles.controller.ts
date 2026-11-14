@@ -24,6 +24,11 @@ import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
 import { currentSession } from '../auth/auth.guard';
 import { channelVisibleTo } from '../common/channel-access';
+// v1.2.1：挂载文件上传到图床时要能带上「附件上传」这类来源
+import { isClientUploadSource, normalizeUploadSource } from '../common/file-view';
+// v1.2.1（需求）：文件去重口径统一 —— 「已落库」标记与上传去重必须用同一套比对规则，
+// 否则剪辑过的文件在挂载页会被标成「未落库」而重复上传。
+import { isDuplicateFile } from '../common/dedup';
 import { SettingsService } from '../settings/settings.service';
 import { SysConfigService } from '../settings/sysconfig.service';
 import { UploadService } from '../upload/upload.service';
@@ -694,6 +699,12 @@ export class LocalFilesController {
    * 策略：先按 size 查库（走文件表索引，代价低），只对「大小能对上」的文件算 MD5，
    * 因此绝大多数目录只需一次 SQL，不会把整个目录的文件都哈希一遍。
    * v3.0.0（R8）：path 带浏览目录名前缀，先映射回真实绝对路径再哈希。
+   *
+   * v1.2.1（需求）：比对口径改成与上传去重完全一致的 `isDuplicateFile` ——
+   *   · 剪辑过的文件「原始大小 + 原始 md5」和「实际大小 + 实际 md5」都可能对上磁盘上的那份，
+   *     所以候选记录必须带上 originalSize / originalMd5；
+   *   · 索引桶同时登记 size 与 originalSize（同一行可能落在两个桶里，去重后不影响结果）；
+   *   · 具体命中判定交给 isDuplicateFile，避免这里再维护一份漂移的比对规则。
    */
   private async markInLibrary(
     roots: { name: string; real: string }[],
@@ -704,23 +715,39 @@ export class LocalFilesController {
     const files = entries.filter((e) => e.kind === 'file' && e.size > 0).slice(0, Math.max(1, limit));
     if (!files.length) return out;
     const sizes = Array.from(new Set(files.map((f) => f.size)));
-    let rows: { name: string; size: number; originalSize: number; md5: string }[] = [];
+    let rows: {
+      name: string;
+      size: number;
+      originalSize: number;
+      md5: string;
+      originalMd5: string;
+    }[] = [];
     try {
       rows = await prisma.fileRecord.findMany({
         where: { status: 'active', OR: [{ size: { in: sizes } }, { originalSize: { in: sizes } }] },
-        select: { name: true, size: true, originalSize: true, md5: true },
+        select: { name: true, size: true, originalSize: true, md5: true, originalMd5: true },
         take: 500,
       });
     } catch {
       return out;
     }
     if (!rows.length) return out;
-    const bySize = new Map<number, { name: string; md5: string }[]>();
+    type Cand = { name: string; size: number; originalSize: number; md5: string; originalMd5: string };
+    const bySize = new Map<number, Cand[]>();
     for (const r of rows) {
-      for (const s of new Set([r.size, r.originalSize])) {
+      const cand: Cand = {
+        name: r.name,
+        size: Number(r.size) || 0,
+        originalSize: Number(r.originalSize) || 0,
+        md5: r.md5 || '',
+        originalMd5: r.originalMd5 || '',
+      };
+      for (const s of new Set([cand.size, cand.originalSize])) {
         if (!s) continue;
         if (!bySize.has(s)) bySize.set(s, []);
-        bySize.get(s)!.push({ name: r.name, md5: r.md5 || '' });
+        const bucket = bySize.get(s)!;
+        // 同一行可能因 size === originalSize 被两次 set 命中，这里只登记一次
+        if (!bucket.some((c) => c.name === cand.name && c.md5 === cand.md5)) bucket.push(cand);
       }
     }
     for (const f of files) {
@@ -732,7 +759,8 @@ export class LocalFilesController {
       if (!abs) continue;
       try {
         const md5 = await hashFile(abs);
-        const match = cands.find((c) => c.md5 && c.md5 === md5);
+        const probe = { size: f.size, md5 };
+        const match = cands.find((c) => isDuplicateFile(probe, c));
         if (match) out.set(f.path, match.name);
       } catch {
         /* 单个文件读不到不影响整页 */
@@ -939,6 +967,12 @@ export class LocalFilesController {
       targetChannelId?: string;
       instanceId?: string;
       uploadFolder?: string;
+      /**
+       * v1.2.1（需求）：上传来源。此前这里写死 'Default'，导致「发布笔记 → 选择文件 →
+       * 挂载文件 → 上传到图床」进来的附件，在文件详情里显示成「默认」而不是「附件上传」。
+       * 只接受白名单内的前端来源（Upload / Fetch / Attachment），其余一律回落 Default。
+       */
+      uploadSource?: string;
     },
     @Req() req: Request,
   ) {
@@ -982,7 +1016,9 @@ export class LocalFilesController {
             ip,
             uploadFolder: String(body?.uploadFolder || '') || undefined,
             instanceId: String(body?.instanceId || '') || undefined,
-            uploadSource: 'Default',
+            uploadSource: isClientUploadSource(body?.uploadSource)
+              ? normalizeUploadSource(body?.uploadSource)
+              : 'Default',
             // v3.0.0（R14）：本地文件管理页上传的文件自动加「本地上传」标签
             extraTags: ['本地上传'],
             // 本地文件是外部已有文件，不做「白名单格式 / 大小上限」拦截（与 WebDAV 通道同口径）
@@ -997,7 +1033,9 @@ export class LocalFilesController {
           appLog.info(
             'localfiles',
             `本地文件已上传到图床：${name}`,
-            `${rel} ｜ 文件ID=${res.id}${res.dedup ? ' ｜ 命中已有内容（去重）' : ''}`,
+            // v1.2.1：带上来源 —— 「详情里为什么显示成默认」这类问题看这一行就能定位
+            `${rel} ｜ 文件ID=${res.id} ｜ 来源=${isClientUploadSource(body?.uploadSource) ? normalizeUploadSource(body?.uploadSource) : 'Default'}` +
+              (res.dedup ? ' ｜ 命中已有内容（去重）' : ''),
             ip,
           );
         }

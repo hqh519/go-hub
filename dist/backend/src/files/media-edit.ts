@@ -188,6 +188,8 @@ async function commitEdit(
     height?: number;
     /** 压缩类操作才需要把「压缩前大小」记进 originalSize */
     recordOriginal?: boolean;
+    /** v1.2.1：「剪辑处理页」（裁剪 / 旋转 / 涂鸦 / 文字）保存并替换时打标记 */
+    markEdited?: boolean;
     kind: string;
   },
 ): Promise<{ md5: string }> {
@@ -216,8 +218,31 @@ async function commitEdit(
     size: opts.size,
     metas: JSON.stringify(metas),
   };
+  /*
+   * v1.2.1（需求）：编辑前后的两套指纹都要留一份。
+   *   · originalMd5 / originalSize —— 只在**第一次**编辑时写入，之后永不覆盖；
+   *     它们代表「用户手里那个原始文件」，去重时靠它们认出「原文件被重新上传」。
+   *   · md5 / size —— 跟着当前文件走（下面这一行），代表「现在这份内容」。
+   * 由于覆盖写盘之后已经读不到旧内容，原始值只能从库里取。
+   */
+  try {
+    const prev = await prisma.fileRecord.findUnique({
+      where: { id: target.id },
+      select: { md5: true, originalMd5: true, size: true, originalSize: true },
+    });
+    if (prev) {
+      if (!String(prev.originalMd5 || '') && String(prev.md5 || '')) data.originalMd5 = String(prev.md5);
+      if (!Number(prev.originalSize)) {
+        const pristine = Number(prev.size) || Number(target.size) || 0;
+        if (pristine > 0) data.originalSize = pristine;
+      }
+    }
+  } catch {
+    /* 读不到就不补，主流程不能因为这一条附加信息失败 */
+  }
   if (md5) data.md5 = md5;
   if (opts.mime) data.mime = opts.mime;
+  if (opts.markEdited) data.editedAt = new Date();
   if (opts.recordOriginal && !target.compressedBefore) {
     data.originalSize = target.size;
   } else if (opts.recordOriginal && target.compressedBefore) {
@@ -317,6 +342,8 @@ async function renameExtToWebp(target: MediaTarget): Promise<boolean> {
       mime: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
       width: meta.width,
       height: meta.height,
+      // v1.2.1（需求）：裁剪 / 旋转 / 涂鸦 / 文字都在这个页面里完成，保存并替换即「剪辑过」
+      markEdited: true,
       kind: '裁剪',
     });
     return { ok: true, size: encoded.length, width: meta.width, height: meta.height, md5, elapsedMs: Date.now() - started };

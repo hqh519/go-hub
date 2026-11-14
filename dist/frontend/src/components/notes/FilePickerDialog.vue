@@ -38,6 +38,42 @@
             >
                 <font-awesome-icon icon="folder-open" />{{ $t('notes.pickSourceMount') }}
             </button>
+
+            <!--
+                v1.2.1（需求）：数据源右侧补一个排序按钮，下拉结构与图床管理页的排序一致
+                （升序 / 降序 + 按时间 / 大小 / 名称 / 类型四项带勾选）。
+                排序对两种数据源都生效 —— 各自下推到后端，翻页后顺序才对。
+            -->
+            <el-dropdown
+                class="np-sort-drop"
+                trigger="click"
+                placement="bottom-end"
+                @command="onSortField"
+            >
+                <button type="button" class="np-sort-btn" :title="$t('notes.pickSort')">
+                    <font-awesome-icon :icon="sortOrder === 'desc' ? 'sort-amount-down' : 'sort-amount-up'" />
+                </button>
+                <template #dropdown>
+                    <el-dropdown-menu class="sort-dropdown-menu">
+                        <div class="sort-order-wrapper">
+                            <el-radio-group v-model="sortOrder" size="small" @change="onSortOrder">
+                                <el-radio-button label="asc">{{ $t('dashboard.sortAsc') }}</el-radio-button>
+                                <el-radio-button label="desc">{{ $t('dashboard.sortDesc') }}</el-radio-button>
+                            </el-radio-group>
+                        </div>
+                        <el-divider class="sort-divider" />
+                        <el-dropdown-item
+                            v-for="o in pickSortOptions"
+                            :key="o.value"
+                            :command="o.value"
+                            :class="{ 'is-selected': sortField === o.value }"
+                        >
+                            <span>{{ $t(o.label) }}</span>
+                            <font-awesome-icon v-if="sortField === o.value" icon="check" class="sort-field-check" />
+                        </el-dropdown-item>
+                    </el-dropdown-menu>
+                </template>
+            </el-dropdown>
         </div>
 
         <div class="np-toolbar">
@@ -409,6 +445,9 @@ function emptyFilters() {
         sizeMode: 'actual',
         validity: [],
         nameChanged: [],
+        // v1.2.1：剪辑状态 / MD5 变化（与图床管理筛选同一套口径）
+        edited: [],
+        md5Changed: [],
         userNames: [],
         shareScope: '',
         matchMode: 'and',
@@ -431,15 +470,28 @@ export default {
         modelValue: { type: Boolean, default: false },
         instanceId: { type: String, default: '' },
         /** 已经加进瞬间的文件 id —— 不允许重复选（后端也有唯一约束兜底） */
-        excludeIds: { type: Array, default: () => [] }
+        excludeIds: { type: Array, default: () => [] },
+        /**
+         * v1.2.1：从这里「上传到图床」的文件，上传来源记什么。
+         * 面板目前只服务内容发布，所以默认就是 Attachment（文件详情显示「附件上传」）；
+         * 以后别处复用时显式传别的值即可。
+         */
+        uploadSource: { type: String, default: 'Attachment' }
     },
     emits: ['update:modelValue', 'confirm'],
     data() {
         return {
             /** 数据源：bed = 图床文件（默认），mount = 挂载文件 */
             source: 'bed',
-            // 默认「图片」：绝大多数场景就是找图，少点一次
-            type: 'image',
+            /*
+             * v1.2.1（需求）：初始分类由「图片」改为「全部」。
+             * 真正的默认值在 readPickMemory 里兜底，这里只是首帧值；
+             * 打开面板时会被 restoreMemory() 用浏览器记忆覆盖。
+             */
+            type: 'all',
+            /* v1.2.1（需求）：排序（两种数据源共用同一套设置） */
+            sortField: 'time',
+            sortOrder: 'desc',
             search: '',
             searchScope: 'all',
             list: [],
@@ -483,6 +535,26 @@ export default {
         };
     },
     computed: {
+        /** 排序是否还是出厂值（时间倒序）—— 列表缓存按这个条件才允许读写 */
+        isDefaultSort() {
+            return this.sortField === 'time' && this.sortOrder === 'desc';
+        },
+        /** 图床侧排序字段 → 挂载侧字段名（挂载的「时间」是文件系统的 mtime） */
+        mountSortKey() {
+            if (this.sortField === 'size') return 'size';
+            if (this.sortField === 'name') return 'name';
+            if (this.sortField === 'type') return 'type';
+            return 'mtime';
+        },
+        /** 排序下拉的四个字段（与图床管理页同一套排序能力，只是收窄成四项） */
+        pickSortOptions() {
+            return [
+                { value: 'time', label: 'notes.pickSortTime' },
+                { value: 'size', label: 'notes.pickSortSize' },
+                { value: 'name', label: 'notes.pickSortName' },
+                { value: 'type', label: 'notes.pickSortType' }
+            ];
+        },
         visible: {
             get() {
                 return this.modelValue;
@@ -582,7 +654,9 @@ export default {
             let n = 0;
             const arrKeys = [
                 'accessStatus', 'listType', 'label', 'fileType', 'channel', 'channelName',
-                'backup', 'redirect', 'tags', 'tagNames', 'userNames', 'validity', 'nameChanged'
+                'backup', 'redirect', 'tags', 'tagNames', 'userNames', 'validity', 'nameChanged',
+                // v1.2.1：剪辑 / MD5 变化（筛选弹窗新增的两组）
+                'edited', 'md5Changed'
             ];
             for (const k of arrKeys) n += (f[k] || []).length;
             if (f.shareScope) n += 1;
@@ -668,8 +742,9 @@ export default {
              */
             this.restoreMemory();
             this.loaded = true;
+            // v1.2.1：非默认排序时不读缓存 —— 缓存里存的是默认顺序，贴上来会先闪一屏错序
             if (this.source === 'bed') {
-                const cached = readBedCache(this.instanceId, this.type);
+                const cached = this.isDefaultSort ? readBedCache(this.instanceId, this.type) : null;
                 if (cached && !this.search.trim()) {
                     this.list = cached.list;
                     this.total = cached.total;
@@ -678,7 +753,9 @@ export default {
                 }
                 this.reload(true);
             } else {
-                const cached = readMountCache(this.instanceId, this.mountChannelId, this.mountDir);
+                const cached = this.isDefaultSort
+                    ? readMountCache(this.instanceId, this.mountChannelId, this.mountDir)
+                    : null;
                 if (cached) {
                     this.mountAll = cached.files;
                     this.mountDirs = cached.dirs;
@@ -693,6 +770,8 @@ export default {
             const m = readPickMemory(this.instanceId);
             this.source = m.source;
             this.type = m.type;
+            this.sortField = m.sortField;
+            this.sortOrder = m.sortOrder;
             this.mountChannelId = m.mountChannelId;
             this.mountDir = m.mountDir;
             this.picked = [];
@@ -701,13 +780,15 @@ export default {
             this.mountAll = [];
             this.mountDirs = [];
         },
-        /** 记住当前停在哪里（切数据源 / 切类型 / 换渠道 / 进目录时各调一次） */
+        /** 记住当前停在哪里（切数据源 / 切类型 / 换排序 / 换渠道 / 进目录时各调一次） */
         rememberPosition() {
             savePickMemory(this.instanceId, {
                 source: this.source,
                 type: this.type,
                 mountChannelId: this.mountChannelId,
-                mountDir: this.mountDir
+                mountDir: this.mountDir,
+                sortField: this.sortField,
+                sortOrder: this.sortOrder
             });
         },
         onClosed() {
@@ -736,6 +817,30 @@ export default {
             this.closePreview();
             this.mountVisible = 60;
             if (this.source === 'bed') this.reload();
+        },
+        /* ── 排序（v1.2.1） ─────────────────────────────────────── */
+        /**
+         * 换排序字段。两种数据源都重新取数：
+         * 图床是服务端分页，不重取就只排了当前页；挂载是整目录取回，也要重排一次。
+         */
+        onSortField(field) {
+            if (this.sortField === field) return;
+            this.sortField = field;
+            this.applySort();
+        },
+        /** 切换升 / 降序 */
+        onSortOrder(order) {
+            const next = order === 'asc' ? 'asc' : 'desc';
+            if (this.sortOrder === next) return;
+            this.sortOrder = next;
+            this.applySort();
+        },
+        applySort() {
+            this.rememberPosition();
+            this.closePreview();
+            this.mountVisible = 60;
+            if (this.source === 'bed') this.reload();
+            else this.loadMount(true);
         },
 
         /* ── 图床文件：取数 ─────────────────────────────────────── */
@@ -789,6 +894,13 @@ export default {
                 qs.set('instanceId', this.instanceId || '');
                 // v1.1.8：「全部」= 不加类型限制，别把 all 当 mime 前缀发给后端
                 if (this.type && this.type !== 'all') qs.set('type', this.type);
+                /*
+                 * v1.2.1（需求）：排序下推到后端。
+                 * 不能在前端排 —— 图床是服务端分页的，前端只能排到「当前已加载的几页」，
+                 * 一翻页顺序就断，用户看到的是「排了但没排干净」。
+                 */
+                qs.set('sortBy', this.sortField);
+                qs.set('order', this.sortOrder);
                 if (this.search.trim()) qs.set('search', this.search.trim());
                 // 搜索范围 / 筛选：与图床管理页同名同义，后端同一份求值实现
                 if (this.searchScope && this.searchScope !== 'all') qs.set('searchType', this.searchScope);
@@ -800,7 +912,9 @@ export default {
                 this.total = Number(data.total) || 0;
                 this.list = reset ? rows : this.list.concat(rows);
                 // v1.1.7：只在「第一页 + 无搜索词 + 无额外筛选」时落缓存，否则缓存会串味
-                if (reset && !this.search.trim() && !fileManager.buildFilterParams(this.filters)) {
+                // v1.2.1：排序不是默认值时也不落 —— 缓存按「类型」存，不区分排序，
+                //          存进去下次按默认排序打开会闪一下错顺序
+                if (reset && !this.search.trim() && !fileManager.buildFilterParams(this.filters) && this.isDefaultSort) {
                     writeBedCache(this.instanceId, this.type, this.list, this.total);
                 }
                 this.$nextTick(() => {
@@ -898,8 +1012,10 @@ export default {
                         page: String(page),
                         pageSize: '200',
                         type: '',
-                        sort: 'name',
-                        order: 'asc',
+                        // v1.2.1：排序与图床文件共用同一套设置，挂载侧字段名映射一下
+                        // （时间是文件系统的 mtime，不是上传时间）
+                        sort: this.mountSortKey,
+                        order: this.sortOrder,
                         search: ''
                     });
                     const res = await fetchWithAuth(`/api/localfiles/list?${qs.toString()}`);
@@ -921,7 +1037,10 @@ export default {
                 this.mountDirs = dirs;
                 this.total = all.length;
                 // v1.1.7：记住这次的结果，下次进同一渠道 + 目录先拿它铺屏
-                writeMountCache(this.instanceId, this.mountChannelId, this.mountDir, all, dirs);
+                // v1.2.1：非默认排序时不落缓存（缓存键不含排序，存了顺序就是错的）
+                if (this.isDefaultSort) {
+                    writeMountCache(this.instanceId, this.mountChannelId, this.mountDir, all, dirs);
+                }
             } catch (e) {
                 this.mountAll = [];
                 this.mountDirs = [];
@@ -987,7 +1106,13 @@ export default {
                         targetChannelId: payload?.channelId || '',
                         // 没手选实例时仍然落到当前实例，避免上传到别的实例里去
                         instanceId: payload?.instanceId || this.instanceId || '',
-                        uploadFolder: payload?.uploadFolder || ''
+                        uploadFolder: payload?.uploadFolder || '',
+                        /*
+                         * v1.2.1（需求）：这条链路之前没带来源，后端写死 Default，
+                         * 于是「发布笔记 → 选择文件 → 挂载文件 → 上传到图床」的附件
+                         * 在文件详情里显示成「默认」。这里补上，与另外两条附件路径同口径。
+                         */
+                        uploadSource: this.uploadSource
                     })
                 });
                 const json = await res.json().catch(() => ({}));
@@ -1308,6 +1433,66 @@ export default {
     background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.1));
     color: var(--el-color-primary);
     font-weight: 600;
+}
+
+/*
+ * v1.2.1（需求）：排序按钮贴在数据源这一行的最右。
+ * 尺寸与 .np-source-btn 同高（33px = 5 + 5 内边距 + 21 行高 + 2 边框），
+ * 只保留图标、去掉文字，免得和两个数据源按钮抢注意力。
+ */
+.np-sort-drop {
+    margin-left: auto;
+}
+
+.np-sort-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 33px;
+    padding: 0;
+    border: 1px solid var(--el-border-color, #dcdfe6);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--el-text-color-regular);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.np-sort-btn:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+}
+
+/*
+ * 下拉面板的样式与图床管理页完全一致（那边是 scoped，下拉又被 teleport 到 body，
+ * 所以不能指望复用，这里照抄一份同口径的规则）。
+ */
+.np-sort-drop + .el-popper .sort-dropdown-menu,
+.sort-dropdown-menu {
+    min-width: 205px;
+}
+.sort-order-wrapper {
+    padding: 0 12px;
+    text-align: center;
+}
+
+.sort-divider {
+    margin: 8px 0 !important;
+}
+
+.sort-dropdown-menu :deep(.el-dropdown-menu__item) {
+    justify-content: space-between;
+}
+
+.sort-dropdown-menu :deep(.el-dropdown-menu__item.is-selected) {
+    color: var(--primary-color-accent, var(--el-color-primary));
+}
+
+.sort-field-check {
+    width: 12px;
+    margin-left: 16px;
 }
 
 .np-toolbar {

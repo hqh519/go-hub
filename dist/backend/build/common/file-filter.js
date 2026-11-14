@@ -45,6 +45,8 @@ function parseFileFilterQuery(q) {
         access: splitCsv(q.accessStatus),
         validity: splitCsv(q.validity).map((v) => v.toLowerCase()),
         nameChanged: splitCsv(q.nameChanged).map((v) => v.toLowerCase()),
+        edited: splitCsv(q.edited).map((v) => v.toLowerCase()),
+        md5Changed: splitCsv(q.md5Changed).map((v) => v.toLowerCase()),
         users: splitCsv(q.filterUsers),
         fromMs: dateFrom ? dayStartMs(dateFrom) : 0,
         toMs: dateTo ? dayStartMs(dateTo) + 86_400_000 - 1 : 0,
@@ -78,6 +80,8 @@ function isEmptyFileFilter(f) {
         !f.access.length &&
         !f.validity.length &&
         !f.nameChanged.length &&
+        !f.edited.length &&
+        !f.md5Changed.length &&
         !f.users.length &&
         !f.fromMs &&
         !f.toMs &&
@@ -216,6 +220,16 @@ function fileFilterGroups(r, f, matchMode = 'all') {
     if (f.nameChanged.length) {
         const renamed = !!String(r.prevName || '');
         pushGroup(f.nameChanged, (v) => (v === 'changed' ? renamed : !renamed));
+    }
+    if (f.edited.length) {
+        const edited = !!r.editedAt;
+        pushGroup(f.edited, (v) => (v === 'edited' ? edited : !edited));
+    }
+    if (f.md5Changed.length) {
+        const cur = String(r.md5 || '').trim().toLowerCase();
+        const origin = String(r.originalMd5 || '').trim().toLowerCase() || cur;
+        const changed = !!cur && cur !== origin;
+        pushGroup(f.md5Changed, (v) => (v === 'changed' ? changed : !changed));
     }
     if (f.dimPreset.length || f.widthMin || f.widthMax || f.heightMin || f.heightMax) {
         const w = Number(metas.Width || 0);

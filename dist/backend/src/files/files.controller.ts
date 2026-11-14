@@ -2006,6 +2006,9 @@ export class ManageController {
      */
     const fValidity = splitCsv(q.validity).map((v) => v.toLowerCase());
     const fNameChanged = splitCsv(q.nameChanged).map((v) => v.toLowerCase());
+    // v1.2.1：剪辑状态（editedAt）/ MD5 变化（md5 ≠ originalMd5）两组筛选
+    const fEdited = splitCsv(q.edited).map((v) => v.toLowerCase());
+    const fMd5Changed = splitCsv(q.md5Changed).map((v) => v.toLowerCase());
     const sizeMode = String(q.sizeMode || 'actual').toLowerCase() === 'original' ? 'original' : 'actual';
     const fDimPreset = splitCsv(q.dimPreset).map((v) => v.toLowerCase());
     const widthMin = Math.max(0, Number(q.widthMin) || 0);
@@ -2059,6 +2062,9 @@ export class ManageController {
       access: fAccess,
       validity: fValidity,
       nameChanged: fNameChanged,
+      // v1.2.1：剪辑 / MD5 变化
+      edited: fEdited,
+      md5Changed: fMd5Changed,
       users: fUsers,
       fromMs,
       toMs,
@@ -3103,6 +3109,9 @@ export class ManageController {
       access: splitCsv(q.accessStatus),
       validity: splitCsv(q.validity).map((v) => v.toLowerCase()),
       nameChanged: splitCsv(q.nameChanged).map((v) => v.toLowerCase()),
+      // v1.2.1：剪辑 / MD5 变化（回收站筛选与普通列表同一套口径）
+      edited: splitCsv(q.edited).map((v) => v.toLowerCase()),
+      md5Changed: splitCsv(q.md5Changed).map((v) => v.toLowerCase()),
       users: splitCsv(q.filterUsers),
       fromMs,
       toMs,

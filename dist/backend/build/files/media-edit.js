@@ -168,10 +168,29 @@ async function commitEdit(target, opts) {
         size: opts.size,
         metas: JSON.stringify(metas),
     };
+    try {
+        const prev = await prisma_1.prisma.fileRecord.findUnique({
+            where: { id: target.id },
+            select: { md5: true, originalMd5: true, size: true, originalSize: true },
+        });
+        if (prev) {
+            if (!String(prev.originalMd5 || '') && String(prev.md5 || ''))
+                data.originalMd5 = String(prev.md5);
+            if (!Number(prev.originalSize)) {
+                const pristine = Number(prev.size) || Number(target.size) || 0;
+                if (pristine > 0)
+                    data.originalSize = pristine;
+            }
+        }
+    }
+    catch {
+    }
     if (md5)
         data.md5 = md5;
     if (opts.mime)
         data.mime = opts.mime;
+    if (opts.markEdited)
+        data.editedAt = new Date();
     if (opts.recordOriginal && !target.compressedBefore) {
         data.originalSize = target.size;
     }
@@ -246,6 +265,7 @@ async function cropImage(target, buffer) {
             mime: `image/${ext === 'jpg' ? 'jpeg' : ext}`,
             width: meta.width,
             height: meta.height,
+            markEdited: true,
             kind: '裁剪',
         });
         return { ok: true, size: encoded.length, width: meta.width, height: meta.height, md5, elapsedMs: Date.now() - started };

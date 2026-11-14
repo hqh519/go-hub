@@ -67,6 +67,8 @@ import { faFilter } from '@fortawesome/free-solid-svg-icons/faFilter';
 import { faFolder } from '@fortawesome/free-solid-svg-icons/faFolder';
 import { faFolderOpen } from '@fortawesome/free-solid-svg-icons/faFolderOpen';
 import { faFileCirclePlus } from '@fortawesome/free-solid-svg-icons/faFileCirclePlus';
+// v1.2.1：首页「登记」应用图标由图片图标换成清单类图标
+import { faClipboardList } from '@fortawesome/free-solid-svg-icons/faClipboardList';
 import { faCamera } from '@fortawesome/free-solid-svg-icons/faCamera';
 import { faHeart } from '@fortawesome/free-solid-svg-icons/faHeart';
 // v1.1.2.1：笔记设置（分类图标 + 入口图标）
@@ -209,6 +211,7 @@ export default [
     faFolder,
     faFolderOpen,
     faFileCirclePlus,
+    faClipboardList,
     faCamera,
     faHeart,
     faFileImage,

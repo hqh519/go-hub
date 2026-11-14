@@ -1167,6 +1167,13 @@ export class NotesService {
     filterQuery?: Record<string, string | undefined>;
     /** 同时(all) / 任意(any)，语义同图床管理 */
     matchMode?: string;
+    /**
+     * v1.2.1（需求：选文件器加排序）：time | size | name | type
+     * 名称按「原始文件名」排（与图床管理页的「文件 ID」同口径）；
+     * 类型按 mime 排 —— 图 / 视 / 音天然聚在一起，比按扩展名字典序更有用。
+     */
+    sortBy?: string;
+    order?: string;
   }) {
     const page = Math.max(1, Math.floor(Number(input.page) || 1));
     const pageSize = Math.min(100, Math.max(1, Math.floor(Number(input.pageSize) || 24)));
@@ -1237,10 +1244,25 @@ export class NotesService {
     const filterOpts = parseFileFilterQuery(input.filterQuery || {});
     const mmRaw = String(input.matchMode || '').toLowerCase();
     const matchMode: 'all' | 'any' = mmRaw === 'any' || mmRaw === 'or' ? 'any' : 'all';
+    /*
+     * v1.2.1（需求）：选文件器的排序。
+     * 必须在**分页之前**生效（两条路径都在下面），否则只排当前页、翻页就乱。
+     * 默认仍是「时间倒序」—— 老调用方不传 sortBy 时行为与之前完全一致。
+     */
+    const sortBy = String(input.sortBy || 'time');
+    const sortDir: 'asc' | 'desc' = String(input.order || '').toLowerCase() === 'asc' ? 'asc' : 'desc';
+    const orderBy =
+      sortBy === 'size'
+        ? ({ size: sortDir } as any)
+        : sortBy === 'name'
+          ? ({ originalName: sortDir } as any)
+          : sortBy === 'type'
+            ? ({ mime: sortDir } as any)
+            : ({ createdAt: sortDir } as any);
     if (!isEmptyFileFilter(filterOpts)) {
       const rows = await prisma.fileRecord.findMany({
         where: where as any,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         take: 2000,
         include: {
           copies: { include: { channel: true } },
@@ -1260,7 +1282,8 @@ export class NotesService {
           (r as unknown as { shareCount: number }).shareCount = st.share;
         }
       }
-      const filtered = rows.filter((r) => passesFileFilters(r, filterOpts, matchMode));      const slice = filtered.slice((page - 1) * pageSize, page * pageSize);
+      const filtered = rows.filter((r) => passesFileFilters(r, filterOpts, matchMode));
+      const slice = filtered.slice((page - 1) * pageSize, page * pageSize);
       return {
         total: filtered.length,
         page,
@@ -1274,7 +1297,7 @@ export class NotesService {
       prisma.fileRecord.count({ where: where as any }),
       prisma.fileRecord.findMany({
         where: where as any,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
         select: { ...FILE_SELECT, createdAt: true },

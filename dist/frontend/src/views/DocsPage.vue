@@ -996,6 +996,30 @@ const ZH = {
         { t: '桌面端顶栏菜单改为悬停展开', d: '后台左上角的页面切换下拉，桌面端鼠标移上去就展开，移开自动收起，不用再点一下。判断依据不是屏幕宽度而是「这个设备有没有真正的鼠标」—— 触屏笔记本的平板模式、iPad 都是没有 hover 的，只按宽度判断会出现「手指点一下就闪开」的问题。鼠标移开时留了 120ms 宽限，按钮和面板之间那点空隙不会误关。手机上仍然保持点击展开。' },
         { t: '本版没有数据库变更', d: '灯箱透明度存在既有的系统配置 others 分区里，其余都是前端渲染与交互的调整。旧库直接覆盖升级即可；没写过这个配置的老库会自动补上 0.9 的默认值。' }
       ]
+    },
+    {
+      id: 'whatsnew-121',
+      title: '四十六、v1.2.1 更新要点',
+      intro: 'v1.2.1 是一次体验收口，没有新板块。发布中心的作者名、字数统计与输入框高度都按实际场景重新算过；图床管理补上了「上传文件」这个一直缺的入口；文件去重改成「原始 MD5 + 当前 MD5」双组比对，剪辑过的文件再也不会被当成新文件；筛选页新增「文件剪辑」与「文件MD5」两组条件。',
+      items: [
+        { t: '广场作者名改成「用户名(昵称)」', d: '广场里显示成 xiaoming(小明)，括号固定用英文括号；没设昵称时只显示用户名。同时把头像一个字拆出来单独取 —— 有昵称就用昵称首字，没有才回落用户名首字。不然改成「用户名(昵称)」之后，首字永远取到用户名，昵称等于没显示。' },
+        { t: '广场分类会被记住', d: '当前所在的分类写进浏览器本地存储（键 gohub_notes_kind），刷新页面后回到那个分类。读回来的值要过一遍分类白名单，否则以后删掉某个分类时，老用户本地还留着那个值，页面会停在一个不存在的分类上，看到空白列表还点不动发布。' },
+        { t: '选择文件默认「全部」，排序也可选', d: '进入「选择文件」时默认显示全部类型，浏览器有记忆时按记忆来。挂载文件按钮后面新增排序按钮，可按时间、大小、名称、类型升序或降序，图床文件与挂载文件两种加载源同时生效。排序是服务端排序 —— 图床是分页的，只在当前页排完再翻页就乱序了。' },
+        { t: '回复留言不再把前缀算进字数', d: '选中一条留言点回复时，原先的字数统计把「回复 @某人」这一段也算进去了，一进来就是十几字。现在分成两个数：已输入只统计你真正打的字，上限则从前缀长度里扣掉。框里干净地从 0 开始，提交时前端仍会拼上完整的回复前缀。' },
+        { t: '编辑框最小高度按弹窗自身高度算', d: '要求是不低于「编辑页被收缩之后高度」的 70%。这里不能用视口高度 —— 手机上键盘弹出时视口会变矮，但编辑页是弹窗，它的高度还受最大高度、安全区和弹窗自身拉伸逻辑影响。实现上用 ResizeObserver 盯弹窗元素本身，实时把实测高度乘 70% 写成 CSS 变量，输入框的 min-height 就跟着它走。' },
+        { t: '发布中心的回收站提示条', d: '回收站下新增一句「当前为回收站：这里的内容可进一步恢复或彻底删除(不可逆)」，样式与图床管理页的提示条一致：危险色、圆角、混色半透明底。两处观感统一，切页面不会觉得换了一套设计。' },
+        { t: '「发布中心」改名「我的发布」', d: '顶部页签与左侧页面切换里同时生效。这一版之后，广场才是全站公开内容的入口，「我的发布」只装自己的东西，名字与实际内容对上了。' },
+        { t: '图床管理新增「上传文件」', d: '「新建目录」后面多了一个按钮（手机上是图标）。选好文件后会先弹「上传到图床」选择页，确认目标渠道、归属实例与上传目录再开始传；上传目录自动填成当前所在目录，和「登记文件」的文件分类一样。多个文件按顺序逐个上传，某一个失败不影响后面的。' },
+        { t: '相册视图两处细节', d: '右上角的选中圆圈移到距上、右各 3px 的贴角位置 —— 原来偏内，手指划过卡片时很容易误选。文件夹名改成只显示当前目录名，不再把整条路径铺在卡片上；展示名优先于路径末段，因为挂载渠道的展示名与路径末段不一定相同。' },
+        { t: '附件上传来源修好了', d: '「发布笔记 → 选择文件 → 挂载文件 → 上传到图床」这条路以前上传来源是写死的「默认」，前端没机会声明。现在接口接受白名单内的来源，选择面板默认声明为附件上传，文件详情里统一显示「附件上传(Attachment)」。之前记成默认的记录属于历史数据，不会被追溯改写。' },
+        { t: '去重改成双组比对', d: '每个文件多存一条「最初的 MD5」，永久不变。判定时看两组：上传文件与原始大小 + 原始 MD5，或与当前大小 + 当前 MD5，任一组相同即算重复。这样即使原文件被压缩、转码、转 webp 或剪辑过（MD5 与大小都变了），再传原件依然能秒传。挂载管理里的「已落库」标记也用同一套判定，剪辑过的文件不会被标成未落库。' },
+        { t: '新增「文件剪辑」与「文件MD5」筛选', d: '筛选弹窗里「文件共用」后面是「文件剪辑」（剪辑过 / 未剪辑），紧接着是「文件MD5」（变化过 / 未变化）。剪辑过指在剪辑页点过保存并替换（裁剪、旋转、涂鸦、文字都算）；变化过指当前 MD5 与最初 MD5 不一致 —— 压缩、转码、转 webp 只算变化，不算剪辑。两组都只勾一个才生效，两个都勾等于不筛。' },
+        { t: '视频灯箱黑屏：不再反复切控件属性', d: '上一版给视频灯箱关掉了背景模糊，解决的是「模糊层在播放器控件层重建时把画面烘成静态快照」。仍有浏览器黑屏，说明还有第二个触发器：隐藏控件时把视频的 controls 属性删掉、动鼠标再加回来，浏览器要拆掉重建整条原生控件层，某些显卡驱动或旧版浏览器会在这次重建里让画面停止刷新（声音照旧，因为音轨不受影响）。现在桌面端让 controls 常驻，原生控件条本来就会在鼠标静止两三秒后自己淡出，观感不变，这条重建路径也不再发生。这类问题与 CSS 缓存无关，清缓存不会修好，换浏览器正常正是因为换了 GPU 走法。' },
+        { t: '灯箱当前圆点改成标准圆形', d: '原来用 transform: scale 放大当前圆点，放大落在亚像素上，加上 span 的默认行高把盒子撑成宽 5 高 6，看着就是个扁圆。现在直接改宽高，并给 flex-basis 与 aspect-ratio 兜底，怎么切都是正圆。' },
+        { t: '「登记」换了个图标', d: '首页「发布」模式下，「登记」原本用的是表示图片的图标，语义不对。换成清单类的图标，一眼能看出是「往台账里登记一条」。' },
+        { t: '浮层层叠管理补齐三处', d: '挂载管理的「上传结果」页与「文件详情」页、移动端图床管理的长按菜单，现在都是层叠栈里的正式一层：打开它们时会先关掉之前那一层，不会叠成一堆。上传结果页刻意不响应 Esc —— 误按一下把结果关掉，就看不到哪几个文件失败了。' },
+        { t: '数据库只加了两列', d: 'FileRecord 新增 originalMd5（最初的 MD5）与 editedAt（剪辑时间）。启动时会自动补齐，历史文件的 originalMd5 为空，比对时按「原始 = 当前」处理，不会把老文件整批误判成变化过；首次剪辑时会自动补写这两项。' }
+      ]
     }
   ]
 };
@@ -1930,6 +1954,30 @@ const EN = {
         { t: 'Mounted files: the batch bar joins the layer stack', d: 'In card and list view, the bottom batch bar that appears on selection is now a registered layer. Swiping from the screen edge on a phone closes it first and the page second, instead of leaving two levels at once. It sits below dialogs, so the order is naturally correct.' },
         { t: 'The desktop page switcher opens on hover', d: 'In the admin header, the page switcher opens when the pointer enters and closes when it leaves - no click needed. The check is not screen width but whether the device has a real pointer: touch laptops in tablet mode and iPads report no hover, and a width-only check makes the menu flash shut on tap. A 120ms grace period covers the small gap between the button and the panel. Phones keep tap-to-open.' },
         { t: 'No database changes in this release', d: 'The opacity is stored in the existing others section of the system config; everything else is rendering and interaction. Overwrite upgrade works on an existing database, and an older database without this key is filled with 0.9 automatically.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-121',
+      title: '46. What is new in v1.2.1',
+      intro: 'v1.2.1 is a polish release with no new sections. The Square author line, the comment counter and the editor height are all recalculated against the real cases; the file manager finally gets an Upload button next to New folder; dedup switches to a two-set comparison against the original MD5 and the current MD5, so an edited file is no longer treated as a brand-new upload; and the filter panel gains Edited files and File MD5 groups.',
+      items: [
+        { t: 'Square author shows as username(nickname)', d: 'Entries render as xiaoming(Ming), with ASCII parentheses. Without a nickname only the username is shown. The avatar initial is now taken separately: the nickname initial when there is one, the username initial otherwise. Folding it into the combined string would always pick up the username first letter, making the nickname invisible.' },
+        { t: 'The Square remembers the active category', d: 'The current category is written to local storage under gohub_notes_kind and restored on refresh. The stored value is checked against the category allowlist first: if a category is removed in a later release, an old value left behind would otherwise park the page on a category that no longer exists - an empty list with a publish button that does nothing.' },
+        { t: 'The file picker defaults to All, and sorts', d: 'The picker opens on the All type unless the browser remembers another one. A sort button now sits after the mounted-files button offering time, size, name and type in either direction, and it applies to both source tabs. Sorting happens on the server: the library is paginated, so sorting only the current page falls apart on page two.' },
+        { t: 'Replying no longer counts the prefix', d: 'Choosing a comment to reply to used to fold the reply-to prefix into the character count, so the box opened on a dozen characters. Now the counter tracks only what you typed, while the limit has the prefix length subtracted. Submission still prepends the prefix on the frontend, so the stored comment stays complete.' },
+        { t: 'Editor minimum height follows the dialog, not the viewport', d: 'The rule is at least 70% of the collapsed editor height. It cannot use viewport units: the keyboard shrinks the viewport on a phone, but the editor is a dialog whose height also answers to max-height, safe areas and its own stretch logic. A ResizeObserver watches the dialog element itself and writes 70% of its measured height into a CSS variable that drives the textarea minimum.' },
+        { t: 'A recycle bin banner in the publish centre', d: 'The bin now opens with this content can be restored or permanently deleted (irreversible), styled exactly like the file manager banner: warning colour, rounded corners, tinted translucent background. The two pages no longer feel like different designs.' },
+        { t: 'Publish Center is now My posts', d: 'Renamed in both the header tabs and the page switcher. After this release the Square is the only entry to public content, and My posts holds only your own - the name finally matches the content.' },
+        { t: 'An Upload button in the file manager', d: 'It sits right after New folder (an icon on phones). Picking files first opens the target dialog so you confirm channel, instance and folder before anything is sent, and the upload folder is prefilled with the folder you are currently in, exactly like the folder field when registering a file. Files upload one after another, so one failure does not take the rest down.' },
+        { t: 'Two album view fixes', d: 'The selection circle in the top-right corner moves to a 3px inset, because further in it was easy to hit by accident while scrolling. Folder cards show just the current folder name instead of the whole path; the display name wins over the last path segment, since a mounted channel can label a folder differently from its path.' },
+        { t: 'Attachment upload source is fixed', d: 'The route that goes publish a note, pick files, mounted files, upload to the library used to hard-code the source as Default, leaving the frontend no say. The endpoint now accepts an allowlisted source and the picker declares Attachment by default, so the detail dialog reads Attachment. Records already stored as Default are historical and are not rewritten.' },
+        { t: 'Dedup compares two sets', d: 'Every file now also stores the MD5 it arrived with, which never changes. A candidate counts as duplicate when the incoming file matches either the original size and MD5, or the current size and current MD5. So a file that was compressed, transcoded, turned into webp or edited can no longer be re-uploaded as new. The already-stored marker in mounted files uses the same test, so an edited file is no longer flagged as missing.' },
+        { t: 'New Edited files and File MD5 filters', d: 'In the filter dialog, Edited files (edited or not) follows Shared copies, and File MD5 (changed or unchanged) follows it. Edited means Save and replace was used on the editing page - crop, rotate, draw and text all count. Changed means the current MD5 differs from the original one, so compression and transcoding count as changed but not as edited. Each group only takes effect when exactly one option is ticked; both ticked means no filter.' },
+        { t: 'Video black screen: the controls attribute is no longer toggled', d: 'The previous release removed the backdrop blur from the video lightbox, which fixed a blurred ancestor baking the frame into a static snapshot while the native control layer was rebuilt. Some browsers still went black, pointing at a second trigger: hiding the controls removes the video controls attribute and moving the mouse adds it back, forcing the browser to tear down and rebuild the whole native control layer. On certain GPU drivers or older Chromium builds the video stops submitting new frames during that rebuild - audio keeps playing because the audio track is unaffected. On desktop the attribute now stays on; the native bar fades out by itself after a couple of idle seconds, the look is unchanged, and the rebuild path no longer exists. This has nothing to do with CSS caching, which is why clearing it did not help while a different browser did.' },
+        { t: 'The current dot is a real circle', d: 'The active dot used to be enlarged with transform: scale, which landed on sub-pixels and, combined with the default line height of a span, produced a 5 wide by 6 tall shape. It now changes width and height directly, with flex-basis and aspect-ratio as a backstop.' },
+        { t: 'A new icon for Log', d: 'In the publish section of the home page, Log used an image icon that said the wrong thing. It now uses a list icon that reads as writing an entry into a ledger.' },
+        { t: 'Three more layers in the layer stack', d: 'The upload result page and the file detail dialog in mounted files, plus the long-press menu in the mobile file manager, are registered layers now: opening one closes the one before it instead of stacking up. The result page deliberately ignores Esc - a stray key press would hide which files failed.' },
+        { t: 'Only two new columns', d: 'FileRecord gains originalMd5 (the MD5 the file arrived with) and editedAt (when it was edited). Both are added at startup. Historical files have an empty originalMd5 and are compared as original equals current, so old files are not mass-flagged as changed; the first edit backfills both values.' }
       ]
     }
   ]

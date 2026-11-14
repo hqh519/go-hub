@@ -351,6 +351,16 @@
             />
 
             <template v-else>
+                <!--
+                    v1.2.1（需求）：回收站提示条。
+                    与图床管理页的 `.trash-banner` 同一套观感（危险色、圆角 10px、
+                    左侧垃圾桶图标），只是文案里「文件」换成「内容」。
+                -->
+                <div v-if="trashMode" class="nt-trash-banner" role="status">
+                    <font-awesome-icon icon="trash-alt" class="nt-trash-banner-icon" />
+                    <span class="nt-trash-banner-text">{{ $t('notes.trashBanner') }}</span>
+                </div>
+
                 <div v-if="loading && !list.length" class="nt-loading">
                     <font-awesome-icon icon="spinner" spin />
                     <span>{{ $t('notes.loading') }}</span>
@@ -619,6 +629,12 @@ const SWIPE_EDGE_PX = 30;
 
 /** 类型轮播顺序：与功能栏一致，用于左右滑动循环 */
 const KIND_CYCLE = ['square', 'moment', 'todo', 'nav', 'article', 'collection', 'memo'];
+/**
+ * v1.2.1（需求：广场分类要记住，刷新后恢复）。
+ * 只有这七个值是合法分类，存进 localStorage 的值必须过一遍白名单再使用 ——
+ * 否则以后删掉某个分类时，老用户本地还留着那个值，页面会停在一个不存在的分类上。
+ */
+const KIND_STORAGE_KEY = 'gohub_notes_kind';
 
 export default {
     name: 'NotesManagePage',
@@ -891,6 +907,13 @@ export default {
     },
     created() {
         this.instanceId = this.readInstanceId();
+        /*
+         * v1.2.1（需求）：恢复上次停留的分类。
+         * 必须在 mounted 的首次 reload 之前决定，否则会先按「广场」拉一次列表再切，
+         * 白跑一个请求、还会闪一下内容。
+         */
+        const savedKind = this.readSavedKind();
+        if (savedKind) this.kind = savedKind;
         /*
          * v1.1.2.1：笔记设置（附件区大小 / 位置），按实例隔离。
          * 先同步贴 Cookie 缓存（首屏就是最终尺寸，不闪），再向服务端要最新值。
@@ -1186,10 +1209,29 @@ export default {
             }
         },
 
+        /* ── 分类记忆（v1.2.1） ─────────────────────────────────── */
+        /** 读上次停留的分类；不在白名单里就当没存过 */
+        readSavedKind() {
+            try {
+                const v = String(localStorage.getItem(KIND_STORAGE_KEY) || '');
+                return KIND_CYCLE.indexOf(v) >= 0 ? v : '';
+            } catch (e) {
+                return '';
+            }
+        },
+        /** 记住当前分类。写失败（隐私模式 / 配额满）就当没记住，不影响页面 */
+        saveKind() {
+            try {
+                localStorage.setItem(KIND_STORAGE_KEY, String(this.kind || ''));
+            } catch (e) {
+                /* ignore */
+            }
+        },
         /* ── 列表 ───────────────────────────────────────────────── */
         switchKind(v) {
             if (this.kind === v) return;
             this.kind = v;
+            this.saveKind();
             if (this.tagMode) return; // 标签管理模式由面板自己按 kind 过滤
             this.reload();
         },
@@ -1269,7 +1311,10 @@ export default {
                  * 从「广场」进回收站要先落到自己的分类上，否则会以为广场里有删除项。
                  * 目前只有「瞬间」实装，落到瞬间即可。
                  */
-                if (this.kind === 'square') this.kind = 'moment';
+                if (this.kind === 'square') {
+                    this.kind = 'moment';
+                    this.saveKind();
+                }
             }
             this.reload();
         },
@@ -2281,6 +2326,29 @@ export default {
     color: var(--el-text-color-secondary);
     font-size: 12px;
     line-height: 1.6;
+}
+
+/* v1.2.1（需求）：发布中心的回收站提示条 —— 与图床管理页 .trash-banner 同款 */
+.nt-trash-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--el-color-danger);
+    background: color-mix(in srgb, var(--el-color-danger) 18%, var(--toolbar-button-bg-color, #fff));
+    border: 1px solid color-mix(in srgb, var(--el-color-danger) 45%, transparent);
+}
+
+.nt-trash-banner-icon {
+    font-size: 13px;
+}
+
+.nt-trash-banner-text {
+    line-height: 1.4;
 }
 
 .nt-loading {

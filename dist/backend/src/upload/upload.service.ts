@@ -23,6 +23,8 @@ import { createAdapter, toCopyInfo } from '../adapters/adapter.factory';
 import { localFileAbsOf } from '../adapters/local.adapter';
 import { AdapterError, ChannelInfo, StorageAdapter } from '../adapters/adapter.interface';
 import { normalizeUploadSource, fileTypeOf, channelShort } from '../common/file-view';
+// v1.2.1：去重判定统一出口（原始 md5 / 实际 md5 两组比对）
+import { isDuplicateFile, dedupCandidateWhere } from '../common/dedup';
 import { appLog } from '../common/app-log';
 import { joinObjectKey, LOCAL_DEFAULT_PREFIX, renderFileName, renderObjectPrefix, supportsPrefix } from '../common/path-template';
 import { compressFile, compressMedia, readDimensions, readDimensionsFile } from '../common/compress';
@@ -1582,9 +1584,31 @@ export class UploadService {
         where: { fileId_channelId: { fileId: job.recordId, channelId: ch.id } },
         data: { ...writeData, metas: JSON.stringify({ ...prevMetas, ...JSON.parse(writeData.metas) }), status: 'active' },
       });
+      /*
+       * v1.2.1（需求）：后置压缩 / 转码换了文件内容，实际 md5 也应跟着刷新，
+       * 否则「实际大小 + 实际 md5」这一组去重条件永远对不上新内容。
+       * 原始 md5 不动（originalMd5），所以「再传一次原文件」照样能命中。
+       *
+       * 大文件跳过：这里本来就在后台队列里，再整份读一遍 2GB 视频只为算 md5 不划算；
+       * 跳过时 md5 仍是原始值 —— 对「原文件重传」没有影响，只是认不出「处理后的文件重传」。
+       */
+      const MD5_REFRESH_MAX = 512 * 1024 * 1024;
+      let actualMd5 = '';
+      if (r.size > 0 && r.size <= MD5_REFRESH_MAX) {
+        try {
+          actualMd5 = await this.md5OfFile(r.path);
+        } catch {
+          actualMd5 = '';
+        }
+      }
       await prisma.fileRecord.update({
         where: { id: job.recordId },
-        data: { size: r.size, mime: r.mime || job.mime, originalName: newName },
+        data: {
+          size: r.size,
+          mime: r.mime || job.mime,
+          originalName: newName,
+          ...(actualMd5 ? { md5: actualMd5 } : {}),
+        },
       });
 
       /*
@@ -2059,23 +2083,32 @@ export class UploadService {
        * 同一份内容可能在多个渠道各有一份副本，所以取候选集（而不是 findFirst 一条），
        * 逐个比对渠道属性 —— 否则第一条恰好不是目标渠道时就会漏判。
        */
-      const dups = await prisma.fileRecord.findMany({
+      /*
+       * v1.2.1（需求）：候选集改成「md5 或 originalMd5 命中」，再用 isDuplicateFile 精判。
+       * 之前只按 md5 查，且要求 (originalSize == 上传大小 || size == 上传大小)；
+       * 可是 md5 在原位编辑后会被刷成新内容的 md5，原始文件就再也比不上了。
+       */
+      const probe = { size: Number(originalSize) || 0, md5 };
+      const dups = (await prisma.fileRecord.findMany({
         where: {
           status: 'active',
-          md5,
-          // 原始大小优先；老数据 originalSize 缺省为 0 时用 size 兜底（未压缩时两者相同）
-          OR: [{ originalSize }, { size: originalSize }],
+          OR: dedupCandidateWhere(md5),
         },
         take: 50,
         select: {
           name: true,
           originalName: true,
+          // v1.2.1：去重判定需要的四个字段（原始 / 实际 各一对）
+          size: true,
+          originalSize: true,
+          md5: true,
+          originalMd5: true,
           // v1.1.5：同实例 / 跨实例走两套规则，必须知道候选记录归属哪个实例
           instanceId: true,
           // v2.8.7b：附带渠道信息 —— 「同一渠道名称内 / 同一渠道类型内」两种范围都需要比对渠道属性
           copies: { select: { channelId: true, status: true, isPrimary: true, channel: { select: { name: true, type: true } } } },
         },
-      });
+      })).filter((d) => isDuplicateFile(probe, d));
       /** 取某条记录的「主渠道」副本（没有 isPrimary 标记时退化为第一份副本） */
       const primaryCopyOf = (d: (typeof dups)[number]) =>
         d.copies.find((c) => c.isPrimary) || d.copies[0];
@@ -2409,6 +2442,8 @@ export class UploadService {
         originalSize,
         mime,
         md5,
+        // v1.2.1：最初的 md5 —— 上传这一刻就是原始文件的 md5，之后任何处理都不再改它
+        originalMd5: md5,
         folder, // 逻辑分类（无指定目录时按 年份/月份 自动创建）
         uploader: opts.uploader || '',
         // 上传渠道（Default / WebDAV / API-S3 / API-Web）—— 后台文件详情里展示

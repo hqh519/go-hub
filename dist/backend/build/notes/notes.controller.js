@@ -77,6 +77,8 @@ let NotesController = class NotesController {
             isAdmin,
             filterQuery: q,
             matchMode: q.matchMode,
+            sortBy: q.sortBy,
+            order: q.order,
         });
     }
     async tagAdmin(req, instanceId, kind) {

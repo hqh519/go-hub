@@ -623,7 +623,12 @@ export default {
                 { kind: 'todo', icon: 'check-square', color: '#67c23a', ready: false, label: this.$t('notes.typeTodo') },
                 { kind: 'nav', icon: 'globe', color: '#e6a23c', ready: false, label: this.$t('notes.typeNav') },
                 { kind: 'article', icon: 'book', color: '#909399', ready: false, label: this.$t('notes.typeArticle') },
-                { kind: 'collection', icon: 'images', color: '#f56c6c', ready: false, label: this.$t('notes.typeCollection') },
+                /*
+                 * v1.2.1（需求）：「登记」的图标原来是 images（图片图标），
+                 * 与「登记」这个动作没关系 —— 登记是把一条已有的数据记进系统，
+                 * 换成清单类图标 clipboard-list 更贴切。
+                 */
+                { kind: 'collection', icon: 'clipboard-list', color: '#f56c6c', ready: false, label: this.$t('notes.typeCollection') },
                 /*
                  * v1.1.9.4（需求）：在「登记」后面补一个「笔记」应用图标。
                  * 笔记是登记之后的第六种笔记类型（kind = 'memo'），

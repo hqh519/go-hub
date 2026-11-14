@@ -308,6 +308,14 @@
                                     muted
                                     playsinline
                                 ></video>
+                                <!--
+                                    v1.2.1（需求）：视频缩略图右下角补一个小播放角标 ——
+                                    首帧画面有时是一片纯色（片头 / 黑场），没有角标根本看不出是视频。
+                                    尺寸刻意做小（18px），不压画面主体。
+                                -->
+                                <span v-if="f.type === 'video'" class="lf-play-badge" aria-hidden="true">
+                                    <font-awesome-icon icon="play" />
+                                </span>
                                 <font-awesome-icon v-else :icon="iconOf(f)" class="lf-thumb-icon" />
                             </div>
                             <div class="lf-name" :title="f.name" @click="onEntryNameClick(f)">
@@ -944,6 +952,8 @@ export default {
         window.removeEventListener('resize', this.measureTopbar);
         // v1.1.0：离开页面时把详情页这一层从浮层栈摘掉（否则栈里会残留一个关不掉的层）
         unregisterLayer('lf-file-detail');
+        // v1.2.1：上传结果页同样要摘干净
+        unregisterLayer('lf-upload-result');
         // v1.2.0：批量操作栏这一层同样要摘干净，并停止监听选中数量
         if (this._unwatchBatchBarLayer) {
             try { this._unwatchBatchBarLayer(); } catch (e) { /* 忽略 */ }
@@ -994,6 +1004,18 @@ export default {
             if (!v) {
                 this.uploadFromLightbox = false;
                 this.lightboxUploadTarget = null;
+            }
+        },
+        /**
+         * v1.2.1（需求）：「上传文件」完成后的结果弹出页纳入层叠监测。
+         * 结果页是后开的，必须排在栈顶 —— 否则手机边缘滑动会先把底下的页面 / 上传弹窗关掉，
+         * 结果页反而留在屏幕上。
+         */
+        showResult(v) {
+            if (v) {
+                registerLayer('lf-upload-result', () => { this.showResult = false; }, { esc: false });
+            } else {
+                unregisterLayer('lf-upload-result');
             }
         },
     },
@@ -2266,6 +2288,7 @@ export default {
     display: flex;
     align-items: center;
     justify-content: center;
+    position: relative;
     aspect-ratio: 1 / 1;
     width: 100%;
     border-radius: 8px;
@@ -2288,6 +2311,22 @@ export default {
 .lf-thumb-icon {
     font-size: 30px;
     color: var(--el-text-color-secondary);
+}
+/* v1.2.1（需求）：视频缩略图右下角的小播放角标 */
+.lf-play-badge {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 8px;
+    pointer-events: none;
 }
 .lf-dir-thumb {
     color: var(--el-color-warning);

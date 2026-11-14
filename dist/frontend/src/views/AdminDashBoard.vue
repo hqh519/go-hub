@@ -494,6 +494,19 @@
                             <font-awesome-icon icon="plus" class="new-folder-icon"/>
                             <span class="new-folder-text">{{ $t('dashboard.newFolder') }}</span>
                         </el-button>
+                        <!--
+                            v1.2.1（需求）：「新建目录」后面补一个「上传文件」。
+                            流程：选文件 → 「上传到图床」选择页（目标渠道 / 归属实例 / 上传目录）
+                            → 上传并刷新当前目录。上传目录自动填当前所在目录，
+                            与「登记文件」把当前目录填进「文件分类」同一口径。
+                            移动端复用 .new-folder-btn 的规则，只留图标。
+                        -->
+                        <el-button class="new-folder-btn" size="small" :title="$t('dashboard.uploadFile')" :aria-label="$t('dashboard.uploadFile')" @click="pickUploadFiles">
+                            <font-awesome-icon icon="upload" class="new-folder-icon"/>
+                            <span class="new-folder-text">{{ $t('dashboard.uploadFile') }}</span>
+                        </el-button>
+                        <!-- 隐藏的文件选择器：点按钮触发，选完立刻弹「上传到图床」 -->
+                        <input ref="uploadInput" type="file" multiple class="hidden-file-input" @change="onUploadFilesPicked" />
                         <!-- v2.8.8：登记文件（与前台共用同一弹窗）—— 把一个已在别处的文件登记进系统，不重复上传
                              v2.9.0：打开时把「当前所在目录」代入弹窗的「文件分类」 -->
                         <el-button class="new-folder-btn record-file-btn" size="small" :title="$t('recordFile.title')" :aria-label="$t('recordFile.title')" @click="openRecordDialog">
@@ -700,7 +713,7 @@
                     >
                         <template v-if="isFolder(item)">
                             <font-awesome-icon icon="folder" class="album-folder-icon" />
-                            <span class="album-folder-name">{{ item.displayName || item.name }}</span>
+                            <span class="album-folder-name">{{ albumFolderLabel(item) }}</span>
                         </template>
                         <img
                             v-else-if="isImage(item)"
@@ -964,6 +977,19 @@
             @registered="handleRecorded"
         />
 
+        <!--
+            v1.2.1（需求）：图床管理页「上传文件」的目标选择页。
+            与笔记附件、灯箱抓拍共用同一个 UploadTargetDialog，三个字段完全一致；
+            上传目录由 prefill 带进来（= 当前所在目录）。
+        -->
+        <UploadTargetDialog
+            v-model="uploadTargetVisible"
+            :busy="uploadBusy"
+            :prefill="uploadTargetPrefill"
+            :hint="uploadTargetHint"
+            @confirm="doUploadFiles"
+        />
+
         <!-- v2.9.0：媒体预览浮层（点缩略图触发）—— 图片灯箱 / 视频播放器 / 音频播放器 / 通用弹窗 -->
         <MediaPreviewOverlay
             v-model="showMediaPreview"
@@ -1098,6 +1124,9 @@ import FilterDialog from '@/components/dashboard/FilterDialog.vue';
 import LanguageSwitcher from '@/components/LanguageSwitcher.vue';
 // v2.8.8：登记文件弹窗（与前台共用同一组件）
 import RecordFileDialog from '@/components/upload/RecordFileDialog.vue';
+// v1.2.1：「上传文件」的目标选择页与上传动作（与笔记附件、灯箱抓拍共用同一套）
+import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
+import { uploadOne } from '@/utils/uploadTarget';
 import { fileManager } from '@/utils/fileManager';
 // v1.1.3：实例切换密码守卫（三个页面共用同一份实现）
 import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
@@ -1163,6 +1192,9 @@ function createEmptyFilters() {
         sizeMode: 'actual',
         validity: [],
         nameChanged: [],
+        // v1.2.1：剪辑状态（edited/unedited）与 MD5 变化（changed/unchanged）
+        edited: [],
+        md5Changed: [],
         userNames: [],
         // v3.0.0：用户共享单选项（'mine' | 'tome' | ''）
         shareScope: '',
@@ -1330,6 +1362,8 @@ data() {
             ,sizeMode: 'actual'  // 'actual'（实际大小）| 'original'（原始大小）
             ,validity: []        // 有效期: 'limited' | 'expired' | 'permanent'
             ,nameChanged: []     // 名称状态: 'changed'（已改名） | 'unchanged'（未改名）
+            ,edited: []          // v1.2.1 文件剪辑: 'edited'（剪辑过） | 'unedited'（未剪辑）
+            ,md5Changed: []      // v1.2.1 文件MD5: 'changed'（变化过） | 'unchanged'（未变化）
             ,userNames: []       // v2.9.0 用户页：上传用户（多选，命中任一即可）
             ,shareScope: ''      // v3.0.0 用户共享：'mine'（我共享的）| 'tome'（共享给我的）| ''
             ,matchMode: 'and'    // v3.0.0 条件组合方式: 'and'（且） | 'or'（或）
@@ -1350,6 +1384,15 @@ data() {
         showRecordDialog: false,
         // v2.9.0：打开登记弹窗时快照当前目录，作为「文件分类」默认值
         recordInitialFolder: '',
+        /* ── v1.2.1：「上传文件」── */
+        // 待上传的文件队列（选完文件先存着，等目标选择页确认）
+        uploadQueue: [],
+        // 「上传到图床」选择页显隐
+        uploadTargetVisible: false,
+        // 选择页回填：目标渠道 / 归属实例 / 上传目录
+        uploadTargetPrefill: { channelId: '', instanceId: '', uploadFolder: '' },
+        // 上传中（按钮转圈 + 禁止重复提交）
+        uploadBusy: false,
         // v2.9.0：媒体预览浮层（点缩略图打开；索引为当前页可预览媒体列表里的位置）
         showMediaPreview: false,
         mediaPreviewIndex: 0,
@@ -1432,7 +1475,9 @@ components: {
     FilterDialog,
     MoveFileDialog,
     LanguageSwitcher,
-    RecordFileDialog
+    RecordFileDialog,
+    // v1.2.1：「上传文件」的目标选择页
+    UploadTargetDialog
 },
 setup() {
     const cardContainerRef = ref(null);
@@ -1460,6 +1505,10 @@ setup() {
 },
 computed: {
     tagFileMetadata() { return this.tableData.find(file => file.name === this.currentTagFile)?.metadata || {}; },
+    /** v1.2.1：「上传文件」选择页下方的一行说明（本次将上传 N 个文件） */
+    uploadTargetHint() {
+        return this.uploadQueue.length ? this.$t('dashboard.uploadFileHint', { n: this.uploadQueue.length }) : '';
+    },
     ...mapGetters(['adminUrlSettings', 'userConfig']),
     /**
      * v3.0.0（R16）：当前账户是否开启两步验证 ——
@@ -1962,6 +2011,19 @@ watch: {
             unregisterLayer('file-detail-tags');
         }
     },
+    /**
+     * v1.2.1（需求）：移动端长按文件弹出的操作菜单纳入层叠监测。
+     * 它是自绘的 bottom sheet（不是 el-dialog），本身没有 Esc / 返回键处理，
+     * 不登记的话手机边缘横滑会直接把整个页面退掉、菜单还留在屏幕上。
+     * z 与批量操作栏同档（1200），都排在弹窗类之下。
+     */
+    showMobileActionModal(v) {
+        if (v) {
+            registerLayer('dashboard-mobile-actions', () => { this.showMobileActionModal = false; }, { z: 1200 });
+        } else {
+            unregisterLayer('dashboard-mobile-actions');
+        }
+    },
     customUrlPrefix(val) {
         this.$store.commit('setAdminUrlSettings', { key: 'customUrlPrefix', value: val })
     },
@@ -2060,6 +2122,18 @@ methods: {
     },
     albumTitle(item) {
         return (item && (item.displayName || item.name)) || '';
+    },
+    /**
+     * v1.2.1（需求）：相册里的文件夹只显示**当前目录名**（路径末段），不显示全路径。
+     * 相册格子没有信息区，路径一长整行就被挤出去，看起来像一串省略号。
+     * 目录属性里自定义过名称的（displayName）仍然优先 —— 那是用户自己起的名字。
+     */
+    albumFolderLabel(item) {
+        const custom = String((item && item.displayName) || '').trim();
+        if (custom) return custom;
+        const p = String((item && item.name) || '');
+        const segs = p.split('/').filter(Boolean);
+        return segs.length ? segs[segs.length - 1] : p;
     },
     /** 非图片文件的占位图标（相册视图里没有信息区，只能靠图标识别类型） */
     albumFallbackIcon(item) {
@@ -2800,6 +2874,62 @@ methods: {
         // 去掉结尾斜杠：/2026/ → 2026，避免后端把空段当成路径层级
         this.recordInitialFolder = String(this.currentPath || '').replace(/^\/+|\/+$/g, '');
         this.showRecordDialog = true;
+    },
+
+    /* ── v1.2.1：上传文件 ───────────────────────────────────────── */
+    /** 点「上传文件」= 触发隐藏的 file input（支持多选） */
+    pickUploadFiles() {
+        const el = this.$refs.uploadInput;
+        if (!el) return;
+        // 每次清空，否则选同一个文件第二次不触发 change
+        el.value = '';
+        el.click();
+    },
+    /** 选完文件：先存队列，再弹「上传到图床」让用户确认目标 */
+    onUploadFilesPicked(e) {
+        const files = Array.from((e && e.target && e.target.files) || []);
+        if (!files.length) return;
+        this.uploadQueue = files;
+        /*
+         * 上传目录 = 当前所在目录（与「登记文件」把当前目录填进「文件分类」同一口径）。
+         * 根目录时留空 —— 后端按默认目录落盘，不会在根上硬造一层空目录。
+         */
+        this.uploadTargetPrefill = {
+            channelId: '',
+            instanceId: this.instanceId || '',
+            uploadFolder: String(this.currentPath || '').replace(/^\/+|\/+$/g, '')
+        };
+        this.uploadTargetVisible = true;
+    },
+    /** 目标选择页确认 → 逐个上传（串行，避免同时打满带宽把进度搞乱） */
+    async doUploadFiles(target) {
+        const files = this.uploadQueue.slice();
+        this.uploadTargetVisible = false;
+        if (!files.length || this.uploadBusy) return;
+        this.uploadBusy = true;
+        let ok = 0;
+        const failed = [];
+        try {
+            for (const f of files) {
+                try {
+                    await uploadOne(f, target || {}, { source: 'Upload' });
+                    ok += 1;
+                } catch (err) {
+                    failed.push(`${f.name}：${(err && err.message) || '上传失败'}`);
+                }
+            }
+        } finally {
+            this.uploadBusy = false;
+            this.uploadQueue = [];
+        }
+        if (ok) {
+            this.$message.success(this.$t('dashboard.uploadFileDone', { n: ok }));
+        }
+        if (failed.length) {
+            this.$message.error(this.$t('dashboard.uploadFileFail', { n: failed.length, msg: failed.slice(0, 3).join('；') }));
+        }
+        // 回到第一页并刷新，新文件按「时间倒序」就在最前面
+        if (ok && typeof this.handleRefreshFiles === 'function') this.handleRefreshFiles();
     },
     /**
      * 登记文件成功回调（v2.8.8）
@@ -5589,6 +5719,8 @@ beforeUnmount() {
     unregisterLayer('file-detail');
     // v1.1.9：详情页内的二级层也一并摘掉（标签 / 黑白名单 / 删除确认）
     ['file-detail-tags', 'file-detail-block', 'file-detail-white', 'file-detail-delete'].forEach((id) => unregisterLayer(id));
+    // v1.2.1：移动端长按菜单这一层也要摘掉
+    unregisterLayer('dashboard-mobile-actions');
     // v1.1.9.4：摘掉底部批量操作栏这一层（含它的 watcher）
     if (this._unwatchBatchBarLayer) {
         this._unwatchBatchBarLayer();
@@ -6355,6 +6487,11 @@ html.dark .trash-btn.is-active,
     font-size: 11px;
 }
 
+/* v1.2.1：「上传文件」的隐藏 input —— 只作为选文件的入口，不占布局 */
+.hidden-file-input {
+    display: none;
+}
+
 /* v2.9.0：新建目录 / 登记文件 / 历史记录 —— 与「排序」按钮同款外观：
    玻璃底 + 1px 边框 + 10px 圆角 + 次要色文字，hover 时边框与文字转主题色 */
 .new-folder-btn,
@@ -6975,14 +7112,14 @@ html.dark .trash-btn.is-active,
 }
 /*
  * v1.1.9.4（需求）：相册格子的选中圆圈。
- * 几何与卡片视图的 .card-select 完全对齐（top 3px / right 8px / 18px 圆形），
- * 只是父级没有圆角、没有白色底，所以直接绝对定位到格子右上角。
+ * 几何与卡片视图的 .card-select 对齐（18px 圆形、top 3px），
+ * v1.2.1（需求）：右上角太靠里容易误触，右边距收到 3px，与上边距对称贴角。
  * 显隐三态：默认透明 → 悬停浮现 → 已有选中则常显。
  */
 .album-select {
     position: absolute;
     top: 3px;
-    right: 8px;
+    right: 3px;
     z-index: 3;
     margin: 0;
     opacity: 0;

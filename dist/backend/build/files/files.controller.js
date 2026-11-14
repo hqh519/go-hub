@@ -1445,6 +1445,8 @@ let ManageController = ManageController_1 = class ManageController {
         })();
         const fValidity = splitCsv(q.validity).map((v) => v.toLowerCase());
         const fNameChanged = splitCsv(q.nameChanged).map((v) => v.toLowerCase());
+        const fEdited = splitCsv(q.edited).map((v) => v.toLowerCase());
+        const fMd5Changed = splitCsv(q.md5Changed).map((v) => v.toLowerCase());
         const sizeMode = String(q.sizeMode || 'actual').toLowerCase() === 'original' ? 'original' : 'actual';
         const fDimPreset = splitCsv(q.dimPreset).map((v) => v.toLowerCase());
         const widthMin = Math.max(0, Number(q.widthMin) || 0);
@@ -1484,6 +1486,8 @@ let ManageController = ManageController_1 = class ManageController {
             access: fAccess,
             validity: fValidity,
             nameChanged: fNameChanged,
+            edited: fEdited,
+            md5Changed: fMd5Changed,
             users: fUsers,
             fromMs,
             toMs,
@@ -2243,6 +2247,8 @@ let ManageController = ManageController_1 = class ManageController {
             access: splitCsv(q.accessStatus),
             validity: splitCsv(q.validity).map((v) => v.toLowerCase()),
             nameChanged: splitCsv(q.nameChanged).map((v) => v.toLowerCase()),
+            edited: splitCsv(q.edited).map((v) => v.toLowerCase()),
+            md5Changed: splitCsv(q.md5Changed).map((v) => v.toLowerCase()),
             users: splitCsv(q.filterUsers),
             fromMs,
             toMs,

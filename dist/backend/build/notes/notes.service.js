@@ -822,10 +822,19 @@ let NotesService = class NotesService {
         const filterOpts = (0, file_filter_1.parseFileFilterQuery)(input.filterQuery || {});
         const mmRaw = String(input.matchMode || '').toLowerCase();
         const matchMode = mmRaw === 'any' || mmRaw === 'or' ? 'any' : 'all';
+        const sortBy = String(input.sortBy || 'time');
+        const sortDir = String(input.order || '').toLowerCase() === 'asc' ? 'asc' : 'desc';
+        const orderBy = sortBy === 'size'
+            ? { size: sortDir }
+            : sortBy === 'name'
+                ? { originalName: sortDir }
+                : sortBy === 'type'
+                    ? { mime: sortDir }
+                    : { createdAt: sortDir };
         if (!(0, file_filter_1.isEmptyFileFilter)(filterOpts)) {
             const rows = await prisma_1.prisma.fileRecord.findMany({
                 where: where,
-                orderBy: { createdAt: 'desc' },
+                orderBy,
                 take: 2000,
                 include: {
                     copies: { include: { channel: true } },
@@ -856,7 +865,7 @@ let NotesService = class NotesService {
             prisma_1.prisma.fileRecord.count({ where: where }),
             prisma_1.prisma.fileRecord.findMany({
                 where: where,
-                orderBy: { createdAt: 'desc' },
+                orderBy,
                 skip: (page - 1) * pageSize,
                 take: pageSize,
                 select: { ...FILE_SELECT, createdAt: true },
