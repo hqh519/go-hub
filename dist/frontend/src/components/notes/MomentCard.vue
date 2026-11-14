@@ -905,17 +905,17 @@ export default {
 .mc-layout {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
+    gap: 6px;
 }
 .mc-avatar-col {
     flex: 0 0 auto;
-    width: 40px;
+    width: 36px;
 }
 .mc-avatar {
     display: block;
-    width: 40px;
-    height: 40px;
-    border-radius: 8px;          /* 需求：头像圆角 8px，1:1 */
+    width: 36px;
+    height: 36px;
+    border-radius: 5px;          /* 需求：头像圆角 8px，1:1 */
     object-fit: cover;
     background: rgba(127, 127, 127, 0.12);
 }

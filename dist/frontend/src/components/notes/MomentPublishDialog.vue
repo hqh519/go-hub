@@ -133,6 +133,8 @@
                     v-model="form.content"
                     class="mp-textarea"
                     :placeholder="$t('notes.contentPlaceholder')"
+                    @focus="onEditorFocus"
+                    @blur="onEditorBlur"
                     @pointerup="syncEditorHeight"
                     @keyup="syncEditorHeight"
                 ></textarea>
@@ -548,6 +550,12 @@ export default {
         async onOpen() {
             this.skipDraftSave = false;
             this.draftRestored = false;
+            /*
+             * v1.2.2.1：每次打开都重新量一次「基准视口高度」——
+             * 上一轮可能是在键盘弹着的时候关掉的，那次记下的基准偏矮，
+             * 沿用下来的话这一轮就永远判不出「已经收缩」。
+             */
+            this._vpBase = 0;
             this.reset();
             // v1.1.7：位置候选每次打开都重新问后端，缓存只在本次弹窗内有效
             this.locationCache = {};
@@ -559,7 +567,7 @@ export default {
             this.loadTags();
             /*
              * v1.1.7：上次拉伸过的高度不要带到下一次
-             * v1.2.1：先量一次「编辑页高度的 70%」，再清掉上次拉伸留下的行内高度 ——
+             * v1.2.1：先量一次下限（现在是可见视口的 45%），再清掉上次拉伸留下的行内高度 ——
              *         顺序反了会让 min-height 短暂沿用上一轮的旧值。
              */
             this.$nextTick(() => {
@@ -569,29 +577,73 @@ export default {
             });
         },
         /**
-         * v1.2.1（需求）：正文输入框的收缩下限 = **编辑页（弹窗）当前高度的 70%**。
+         * v1.2.2.1（需求）：正文输入框高度改成**两档固定比例**，基准是「可见视口高度」：
+         *   · 正常状态：45%
+         *   · 页面收缩（软键盘弹出、可视区被顶掉一截）后：40%
          *
-         * v1.2.2（需求纠正）：70% 是上一版理解错了 —— 需求要的是「收缩后高度的 50%」，
-         * 不是「总高度的 70%」。现在改成 0.5。
+         * 为什么不用 100vh 算：
+         *   软键盘弹出时 vh 往往不重算（iOS 尤其明显），按 vh 算出来的高度会超出可见范围，
+         *   输入框下沿直接被键盘盖住。visualViewport.height 才是用户真正看得见的那一块。
          *
-         * 量谁的高度？取「弹窗高度」与「可见视口高度」里更小的那个：
-         *   · 弹窗高度是 96vh/98vh，正常情况下它才是编辑区的真实高度；
-         *   · 但有些移动浏览器弹出键盘后只缩 visualViewport，不重算 vh ——
-         *     此时弹窗仍按旧的 98vh 排版、下半截被键盘盖住，按弹窗算出来的 50% 就偏大，
-         *     输入框会缩不回去。所以再取一次 visualViewport.height 兜底，两者取小。
-         * 这样无论浏览器走哪种路径，下限都不会超过「用户真正看得见的高度」的一半。
+         * 怎么判断「页面收缩了」（v1.2.3 修正：手机生效、平板不生效）：
+         *   原判据是「触屏 + 可见高度掉到基准的 85% 以下」。手机上成立，
+         *   但 iPad 和「请求桌面版」的安卓平板，键盘是浮在页面上的独立图层，
+         *   visualViewport.height 根本不会变；再加上部分平板请求桌面版后
+         *   `(pointer: coarse)` 也报 false，两处一叠加就永远判不出收缩，一直停在 45%。
+         *   现在改成两条信号取「或」：
+         *     ① 可见高度确实变小了（手机这条最准）；
+         *     ② 正文输入框处于聚焦状态（键盘必然已经/即将占位，平板靠这条兜底）。
+         *   「是不是移动设备」的判据也从 `pointer: coarse` 换成
+         *   `(hover: none)`（没有鼠标）+ 有触摸点，桌面端与触屏笔记本仍然不切档。
          */
+        editorMinPx() {
+            if (typeof window === 'undefined') return 0;
+            const vv = window.visualViewport;
+            // 当前真正可见的视口高度（键盘弹出后就是「剩下的那块」）
+            const cur = Math.round((vv && vv.height) || window.innerHeight || 0);
+            if (!cur) return 0;
+            const winH = Math.round(window.innerHeight || 0);
+            if (!this._vpBase) {
+                // 基准 = 打开弹窗时的完整视口高度；与 innerHeight 取大，兼容「打开时键盘还在」的情况
+                this._vpBase = Math.max(cur, winH);
+            } else if (cur > this._vpBase) {
+                // 地址栏收起 / 旋屏变高 → 基准跟着涨，别把「变大」误判成收缩
+                this._vpBase = cur;
+            }
+            const mq = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
+            // 移动设备：没有悬停能力的指针（触屏）+ 真有触摸点。
+            // 桌面端 hover: hover；带触屏的笔记本主指针仍是鼠标，两者都不会命中。
+            const touch = (mq('(hover: none)') || mq('(pointer: coarse)')) && (navigator.maxTouchPoints || 0) > 0;
+            /*
+             * 聚焦状态直接读 DOM，不另存标记：
+             * 弹窗打开时会自动 focus 正文（watch visible → nextTick），
+             * 若用「focus 事件里写标记、onOpen 里重置」的写法，两者的执行顺序不保证，
+             * 一旦重置发生在 focus 之后，标记就被清掉 —— 平板又会退回收不到键盘信号的老问题。
+             */
+            const el = this.$refs.textarea;
+            const focused = !!(el && document.activeElement === el);
+            const shrunk = touch && (cur < this._vpBase * 0.85 || focused);
+            // 收缩档 40%：键盘顶起来之后，输入框只占「剩下那块」的四成，把空间让给正文预览
+            return Math.round(cur * (shrunk ? 0.4 : 0.45));
+        },
+        /**
+         * v1.2.3：正文聚焦 / 失焦时重算一次。
+         * 平板的键盘不改变 visualViewport，只能靠焦点事件知道「键盘来了 / 走了」。
+         */
+        onEditorFocus() {
+            this.updateEditorMin();
+        },
+        onEditorBlur() {
+            // 键盘收起有动画（约 200~300ms），等一小会儿再量，否则会量到还没恢复的视口高度
+            setTimeout(() => this.updateEditorMin(), 180);
+        },
+        /** 把算出来的下限写进 CSS 变量（.mp-editor-wrap / .mp-textarea 都读它） */
         updateEditorMin() {
             const body = this.$refs.bodyEl;
             if (!body) return;
-            const dlg = body.closest('.el-dialog');
-            const dlgH = dlg ? dlg.clientHeight : 0;
-            const vv = typeof window !== 'undefined' ? window.visualViewport : null;
-            const visibleH = vv && vv.height ? vv.height : 0;
-            // 两个都有值时取小；只有一个时用那个；都没有就放弃（交给 CSS 的 45vh 兜底）
-            const base = dlgH && visibleH ? Math.min(dlgH, visibleH) : dlgH || visibleH;
-            if (!base) return;
-            body.style.setProperty('--mp-editor-min', `${Math.round(base * 0.5)}px`);
+            const px = this.editorMinPx();
+            if (!px) return;
+            body.style.setProperty('--mp-editor-min', `${px}px`);
         },
         /**
          * 盯着高度变化：弹窗自身（ResizeObserver）+ 可见视口（visualViewport.resize）。
@@ -629,17 +681,18 @@ export default {
          * v1.1.7：正文输入框允许用户从右下角自由拉伸。
          * 原生 resize 只改 textarea 自己的行内高度，父容器不会跟着变高 ——
          * 后面的附件 / 标签就会压到输入框上。这里在松手（或打字）后把父容器的
-         * min-height 同步成实际高度；低于默认下限时清空，交还给样式表的 45vh。
+         * min-height 同步成实际高度；低于默认下限时清空，交还给我们算出来的下限。
+         * v1.2.2.1：下限口径与 editorMinPx 同源（45% / 收缩后 40%），不再各算一套。
          */
         syncEditorHeight() {
             const el = this.$refs.textarea;
             const wrap = el && el.parentElement;
             if (!el || !wrap) return;
-            const base = Math.max(180, window.innerHeight * 0.45);
+            const base = this.editorMinPx() || 180;
             const h = el.offsetHeight;
             wrap.style.minHeight = h > base + 1 ? `${Math.round(h)}px` : '';
         },
-        /** 重新打开弹窗时把上一次拉伸留下的行内高度清掉，回到 45vh 起点 */
+        /** 重新打开弹窗时把上一次拉伸留下的行内高度清掉，回到 45% 起点 */
         resetEditorHeight() {
             const el = this.$refs.textarea;
             if (el) el.style.height = '';
@@ -654,6 +707,8 @@ export default {
             this.pendingLink = '';
             this.dragIndex = -1;
             this.clearNameTip();
+            // v1.2.2.1：基准视口跟着弹窗一起失效，下次打开重新量
+            this._vpBase = 0;
         },
         reset() {
             this.form = {
@@ -1361,24 +1416,23 @@ export default {
     display: flex;
     flex: 1 1 auto;
     /*
-     * v1.1.7：正文区最小收缩高度 30vh → 45vh（需求原文）。
-     * 矮屏（横屏手机 / 分屏）按 180px 兜底，否则 45vh 会小到没法写字。
-     * v1.2.1（需求）：下限改为「编辑页（弹窗）高度的 70%」——
-     *   由 updateEditorMin() 实测后写进 --mp-editor-min；
-     *   拿不到实测值时（首帧 / 老浏览器）仍回落到原来的 45vh 口径。
-     * v1.2.2（需求纠正）：改为「弹窗**当前**高度的 50%」——键盘弹出、弹窗被压矮时
-     *   这个下限跟着变矮，输入框按比例收缩但始终占可见编辑区的一半。
+     * v1.1.7：正文区最小收缩高度 30vh → 45vh。
+     * v1.2.1（需求）：下限改为按编辑页实测高度算。
+     * v1.2.2：改为「弹窗当前高度的 50%」。
+     * v1.2.2.1（需求）：口径回到**可见视口高度**的两档固定比例 ——
+     *   正常 45%，页面收缩（软键盘弹出）后 40%，由 editorMinPx() 算好后写进 --mp-editor-min。
+     *   下面的 45vh 只是 JS 还没跑起来时的兜底，正好等于初始档，不会跳一下。
      */
-    min-height: var(--mp-editor-min, max(180px, 45vh));
+    min-height: var(--mp-editor-min, 45vh);
 }
 
 .mp-textarea {
     box-sizing: border-box;
     width: 100%;
     height: 100%;
-    /* v1.1.7：收缩下限与父容器一致 —— 视口 45%，保底 180px */
-    /* v1.2.1：与父容器同源，统一走 --mp-editor-min（弹窗当前高度的 50%） */
-    min-height: var(--mp-editor-min, max(180px, 45vh));
+    /* v1.1.7：收缩下限与父容器一致 —— 视口 45% */
+    /* v1.2.2.1：与父容器同源，统一走 --mp-editor-min（初始 45% / 收缩后 40%） */
+    min-height: var(--mp-editor-min, 45vh);
     padding: 10px 12px 26px;
     border: 1px solid var(--el-border-color);
     border-radius: 8px;
@@ -1696,13 +1750,13 @@ export default {
 @media (max-width: 768px) {
     /*
      * v1.1.7：移动端同样按视口 45% 起算（原来压到 130px，与桌面端口径不一致）
-     * v1.2.1（需求）：改为沿用 --mp-editor-min（弹窗高度的 70%）。
-     *   键盘弹出时桌面端没变化、移动端才是真正被压缩的那一端，
-     *   所以这里不能再用 45vh 把桌面那套值搬过来。
+     * v1.2.1（需求）：改为沿用 --mp-editor-min（按编辑页实测高度算）。
+     * v1.2.2.1：两端口径统一回「可见视口高度」——初始 45%，键盘弹起后 40%，
+     *   手机才是真正会被压缩的那一端，所以这里只保留同一个变量，不再单独写死数值。
      */
     .mp-editor-wrap,
     .mp-textarea {
-        min-height: var(--mp-editor-min, max(160px, 45vh));
+        min-height: var(--mp-editor-min, 45vh);
     }
 
     .mp-asset {

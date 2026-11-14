@@ -1041,6 +1041,18 @@ const ZH = {
         { t: '去重：剪辑过的记录只比当前内容', d: '一条记录被剪辑并保存替换后，它记着的「原始大小 + 原始 MD5」指向的内容在库里已经不存在了。继续拿它去认重复，等于把两个不同内容判成同一个。现在这类记录只按「当前大小 + 当前 MD5」比对；从未剪辑过的记录仍然两组都比，任一组相同即算重复。挂载页的「已落库」标记同步采用这套口径。' },
         { t: '本版没有数据库变更', d: '去重需要的两个字段是上一版加的列，本版只改判定逻辑与筛选求值，直接覆盖升级即可，不需要迁移。' }
       ]
+    },
+    {
+      id: 'whatsnew-123',
+      title: '四十八、v1.2.3 更新要点',
+      intro: 'v1.2.3 只收两处体验：瞬间编辑页的输入框高度在平板上也按「键盘弹起 → 收缩档」算了；移动端「我的发布」顶栏那一整组按钮改成靠右对齐。没有新板块、没有数据库变更。',
+      items: [
+        { t: '瞬间编辑框高度：平板也生效了', d: '上一版把「页面收缩」判成两档比例（正常 45%、收缩后 40%），但判据是「可见视口高度掉到基准的 85% 以下」。手机上成立，平板上一律不成立，所以只有手机端能看出变化。本版在视口判据之外补了一条：「正文输入框处于聚焦状态」也算收缩 —— 触屏上聚焦就意味着软键盘已经或即将占位，不需要等视口真的变小。' },
+        { t: '为什么平板一直判不出「收缩」', d: '两个原因叠加。其一，iPad 与「请求桌面版」的安卓平板上，软键盘是浮在页面上的独立图层，页面不重排，window.visualViewport.height 与 window.innerHeight 都不会变，比例判据永远为假。其二，部分平板请求桌面版之后，指针能力被报告成「有鼠标」，上一版用的 (pointer: coarse) 直接为假，连收缩档的开关都没打开。现在换成 (hover: none) 或 (pointer: coarse) 且存在触摸点来判断「是不是移动设备」，桌面端与带触屏的笔记本仍然不切档 —— 那两类设备把窗口拖小属于「窗口变小」，不是被键盘顶起来。' },
+        { t: '聚焦状态直接读 DOM，不另存标记', d: '弹窗打开时会自动聚焦正文输入框，如果写成「focus 事件里置标记、onOpen 里重置标记」，两者的执行先后没有保证；一旦重置落在 focus 之后，标记就被清掉，平板又退回收不到键盘信号的老问题。所以改成直接判断 document.activeElement 是不是这个 textarea —— 无状态、无竞态。focus 与 blur 仍然各自触发一次重算；blur 之后延迟约 180ms 再量，因为键盘收起有动画，立刻量会拿到还没恢复的视口高度。' },
+        { t: '移动端「我的发布」顶栏按钮靠右', d: '顶栏右侧那一组（发布、搜索、标签管理、刷新、回收站、更多菜单）在手机上原本从头排起，左侧留出一大段空白。现在整组靠右。实现上刻意没用 justify-content: flex-end —— 这个容器是 overflow-x: auto，flex-end 在内容超宽时会把左侧内容顶出可视区且滚不回去，窄屏手机上发布按钮会直接消失。改成给发布按钮加 margin-left: auto：放得下时吃掉左侧空隙（视觉贴右），放不下时 auto 归零、内容从左边起排，照样能左右滑动，一个按钮都不会丢。' },
+        { t: '本版没有数据库变更', d: '两项都是前端样式与判断逻辑的调整，直接覆盖升级即可。版本号显示在「系统设置 → 关于」，应为 1.2.3。' }
+      ]
     }
   ]
 };
@@ -2020,6 +2032,18 @@ const EN = {
         { t: 'Uploaded mark opens the file detail', d: 'The Uploaded label at the bottom-right of a card and in the status column of the list now opens the corresponding file detail page in the library - the same destination as clicking the file name. The click stops propagation so the local preview does not open as well.' },
         { t: 'Dedup: edited records compare current content only', d: 'Once a record has been edited and replaced, the original size and original MD5 it carries point at content that no longer exists in the library. Using them to detect duplicates would merge two different contents into one. Such records are now compared only against current size and current MD5; records never edited still try both sets, and either match counts. The Uploaded mark on the mounted page uses the same rule.' },
         { t: 'No database changes in this release', d: 'The two fields dedup needs were added in the previous release. This one only changes evaluation logic and filter handling, so an overwrite upgrade is enough.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-123',
+      title: '48. What is new in v1.2.3',
+      intro: 'v1.2.3 collects two experience fixes: the moment editor height now also reacts to the on-screen keyboard on tablets, and the whole button group in the mobile "My posts" header is right-aligned. No new sections, no database changes.',
+      items: [
+        { t: 'Editor height now works on tablets too', d: 'The previous release used two ratios (45% normally, 40% once the page is considered collapsed), but the trigger was "the visible viewport dropped below 85% of the baseline". That holds on phones and never holds on tablets, so only phones showed a change. This release adds a second signal: a focused body textarea counts as collapsed. On a touch device focus means the on-screen keyboard is already there or about to be, so we no longer wait for the viewport to shrink first.' },
+        { t: 'Why tablets never detected "collapsed"', d: 'Two causes stacked. First, on iPad and on Android tablets requesting the desktop site the keyboard is a separate floating layer: the page does not reflow, so neither window.visualViewport.height nor window.innerHeight changes, and the ratio test is permanently false. Second, some tablets in desktop mode report a mouse-like pointer, so the old (pointer: coarse) check was false and the collapsed branch never even armed. The device test is now (hover: none) or (pointer: coarse) plus real touch points; desktop and touchscreen laptops still stay on 45% - shrinking a window there is not the keyboard pushing the page up.' },
+        { t: 'Focus is read from the DOM, not mirrored in a flag', d: 'The dialog focuses the textarea automatically when it opens. Writing a flag on focus and resetting it in onOpen has no guaranteed order; if the reset lands after the focus event the flag is cleared and tablets fall back to the old broken behaviour. The check now asks document.activeElement directly - stateless, no race. Focus and blur still trigger a recalculation; after blur the measurement waits about 180ms because the keyboard animates out and measuring immediately returns a viewport that has not recovered yet.' },
+        { t: 'Mobile "My posts" header: buttons right-aligned', d: 'The group on the right (publish, search, tag management, refresh, trash, more) used to start from the left and leave a large gap. It is right-aligned now. Deliberately not with justify-content: flex-end - this container is overflow-x: auto, and flex-end pushes the left side out of reach when the content overflows, so the publish button would simply disappear on narrow phones. Instead the publish button gets margin-left: auto: it eats the free space when everything fits (visually right-aligned) and collapses to zero when it does not, so the row still scrolls and no button is lost.' },
+        { t: 'No database changes in this release', d: 'Both items are frontend styling and detection logic. An overwrite upgrade is enough. The version shown under System settings - About should read 1.2.3.' }
       ]
     }
   ]

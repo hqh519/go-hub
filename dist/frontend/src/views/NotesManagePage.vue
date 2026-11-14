@@ -2514,11 +2514,24 @@ export default {
 
     .nt-topbar-right {
         flex: 1 1 auto;
+        /*
+         * v1.2.3（需求：移动端整组按钮靠右对齐）：
+         *   这里刻意不写 justify-content: flex-end —— 本容器是 overflow-x: auto，
+         *   flex-end 在内容超宽时会把左侧内容顶出可视区且滚不回去（窄屏手机就是这种情况，
+         *   发布按钮会直接消失）。
+         *   改成给首个子项 margin-left: auto：放得下时 auto 吃掉左侧全部空隙（视觉贴右），
+         *   放不下时 auto 自动归零、内容从左边起排，仍可左右滑动，一个按钮都不会丢。
+         */
         justify-content: flex-start;
         gap: 6px;
         padding-bottom: 2px;
         overflow-x: auto;
         scroll-snap-type: none;
+    }
+
+    /* 首个子项（发布按钮）吃掉左侧全部空隙 → 整组靠右；溢出自带归零，不影响滑动 */
+    .nt-topbar-right > .nt-publish-btn {
+        margin-left: auto;
     }
 
     /* 手机上发布按钮只留图标，避免把顶栏撑爆 */
