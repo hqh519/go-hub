@@ -10,11 +10,14 @@ function isDuplicateFile(probe, rec) {
         return false;
     const actualSize = num(rec.size);
     const actualMd5 = norm(rec.md5);
-    const originSize = num(rec.originalSize) || actualSize;
-    const originMd5 = norm(rec.originalMd5) || actualMd5;
     const size = num(probe.size);
-    if (originMd5 && size === originSize && md5 === originMd5)
-        return true;
+    const edited = !!rec.editedAt;
+    if (!edited) {
+        const originSize = num(rec.originalSize) || actualSize;
+        const originMd5 = norm(rec.originalMd5) || actualMd5;
+        if (originMd5 && size === originSize && md5 === originMd5)
+            return true;
+    }
     if (actualMd5 && size === actualSize && md5 === actualMd5)
         return true;
     return false;

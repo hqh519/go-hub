@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.splitCsv = splitCsv;
+exports.splitYesNo = splitYesNo;
 exports.numOrNull = numOrNull;
 exports.parseFileFilterQuery = parseFileFilterQuery;
 exports.isEmptyFileFilter = isEmptyFileFilter;
@@ -10,6 +11,11 @@ exports.passesFileFilters = passesFileFilters;
 const file_view_1 = require("./file-view");
 function splitCsv(v) {
     return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+function splitYesNo(v) {
+    return splitCsv(v)
+        .map((s) => s.toLowerCase())
+        .filter((s) => s === 'yes' || s === 'no');
 }
 function numOrNull(raw, max) {
     if (raw === undefined || raw === null || raw === '')
@@ -29,9 +35,9 @@ function parseFileFilterQuery(q) {
         return Date.UTC(y, m - 1, d) + tzOffset * 60_000;
     };
     return {
-        hasTags: String(q.hasTags || '').toLowerCase(),
-        hasRef: String(q.hasRef || '').toLowerCase(),
-        hasShare: String(q.hasShare || '').toLowerCase(),
+        hasTags: splitYesNo(q.hasTags),
+        hasRef: splitYesNo(q.hasRef),
+        hasShare: splitYesNo(q.hasShare),
         filterTags: splitCsv(q.filterTags),
         tagMode: String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and',
         listType: splitCsv(q.listType),
@@ -65,9 +71,9 @@ function parseFileFilterQuery(q) {
     };
 }
 function isEmptyFileFilter(f) {
-    return (!f.hasTags &&
-        !f.hasRef &&
-        !f.hasShare &&
+    return (!f.hasTags.length &&
+        !f.hasRef.length &&
+        !f.hasShare.length &&
         !f.filterTags.length &&
         !f.listType.length &&
         !f.label.length &&
@@ -144,18 +150,12 @@ function fileFilterGroups(r, f, matchMode = 'all') {
     const tagNames = Array.isArray(r.tags)
         ? r.tags.map((t) => t?.tag?.name).filter(Boolean)
         : [];
-    if (f.hasTags === 'yes')
-        groups.push(tagNames.length > 0);
-    else if (f.hasTags === 'no')
-        groups.push(tagNames.length === 0);
-    if (f.hasRef === 'yes')
-        groups.push(Number(r.refCount || 0) > 0);
-    else if (f.hasRef === 'no')
-        groups.push(Number(r.refCount || 0) <= 0);
-    if (f.hasShare === 'yes')
-        groups.push(Number(r.shareCount || 0) > 0);
-    else if (f.hasShare === 'no')
-        groups.push(Number(r.shareCount || 0) <= 0);
+    const hasTagPred = (v) => (v === 'yes' ? tagNames.length > 0 : tagNames.length === 0);
+    const hasRefPred = (v) => (v === 'yes' ? Number(r.refCount || 0) > 0 : Number(r.refCount || 0) <= 0);
+    const hasSharePred = (v) => v === 'yes' ? Number(r.shareCount || 0) > 0 : Number(r.shareCount || 0) <= 0;
+    pushGroup(f.hasTags, hasTagPred);
+    pushGroup(f.hasRef, hasRefPred);
+    pushGroup(f.hasShare, hasSharePred);
     if (f.filterTags.length) {
         groups.push(f.tagMode === 'or'
             ? f.filterTags.some((t) => tagNames.includes(t))

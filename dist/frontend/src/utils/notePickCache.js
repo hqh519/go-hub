@@ -19,6 +19,19 @@ const STORE_KEY = (instanceId) => `gohub:note-pick:${instanceId || 'default'}`;
 /** 缓存最长可用 1 天：再久的东西基本必然是过期的，直接当没有 */
 const MAX_AGE = 24 * 60 * 60 * 1000;
 
+/**
+ * 记忆结构版本（v1.2.2）
+ * ----------------------------------------------------------------------------
+ * 为什么要加：v1.2.1 把「首次进入的默认分类」从「图片」改成「全部」，
+ * 但老浏览器的 localStorage 里存着 v1.1.x 时期写下的 `type: 'image'` ——
+ * 那个值不是用户主动选的，是旧版默认值被 rememberPosition 顺手存下来的。
+ * 结果就是升级后仍旧默认停在「图片」，看起来像"改了没生效"。
+ *
+ * 处理：没有版本号（或版本更低）的旧记忆，只丢弃 `type` 这一项，其余
+ * （数据源 / 排序 / 挂载目录）照旧保留 —— 那些确实是用户的操作结果。
+ */
+const MEMORY_VERSION = 2;
+
 const BED_MAX_ITEMS = 60;
 const MOUNT_MAX_ITEMS = 200;
 const MAX_BYTES = 500 * 1024;
@@ -49,11 +62,14 @@ function writeAll(instanceId, next) {
 export function readPickMemory(instanceId) {
     const o = readAll(instanceId);
     const m = (o && o.memory) || {};
+    // v1.2.2：旧版记忆里的 type 是「旧默认值」不是「用户选择」，一律作废重来
+    const staleType = (Number(m.v) || 0) < MEMORY_VERSION;
     return {
         source: m.source === 'mount' ? 'mount' : 'bed',
         // v1.1.8：新增「全部」分类，白名单里也要带上，否则记住的 all 会被改回 image
         // v1.2.1（需求）：首次进入的默认分类由「图片」改为「全部」；有记忆时照记忆来
-        type: ['all', 'image', 'video', 'audio', 'other'].includes(m.type) ? m.type : 'all',
+        // v1.2.2：记忆结构升级前的 type 不可信，直接按「全部」处理
+        type: !staleType && ['all', 'image', 'video', 'audio', 'other'].includes(m.type) ? m.type : 'all',
         mountChannelId: String(m.mountChannelId || ''),
         mountDir: String(m.mountDir || ''),
         // v1.2.1（需求）：选文件器加了排序，一并记住
@@ -65,7 +81,7 @@ export function readPickMemory(instanceId) {
 /** 记「上次停在哪里」（合并式：只传变的字段） */
 export function savePickMemory(instanceId, patch) {
     const o = readAll(instanceId) || {};
-    o.memory = { ...readPickMemory(instanceId), ...(patch || {}) };
+    o.memory = { ...readPickMemory(instanceId), ...(patch || {}), v: MEMORY_VERSION };
     writeAll(instanceId, o);
 }
 

@@ -1349,6 +1349,7 @@ let UploadService = class UploadService {
                     originalSize: true,
                     md5: true,
                     originalMd5: true,
+                    editedAt: true,
                     instanceId: true,
                     copies: { select: { channelId: true, status: true, isPrimary: true, channel: { select: { name: true, type: true } } } },
                 },

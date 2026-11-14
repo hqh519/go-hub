@@ -710,7 +710,7 @@ let NotesService = class NotesService {
         const content = String(input.content ?? '').trim();
         if (!content)
             return { error: '留言内容不能为空' };
-        const charCount = (0, notes_util_1.countTextChars)(content);
+        const charCount = (0, notes_util_1.countCommentChars)(content);
         if (charCount > notes_util_1.MAX_COMMENT_CHARS) {
             return { error: `留言超出上限：当前 ${charCount} 字，上限 ${notes_util_1.MAX_COMMENT_CHARS} 字（标点与符号不计入）` };
         }
@@ -841,7 +841,7 @@ let NotesService = class NotesService {
                     tags: { include: { tag: true } },
                 },
             });
-            if (filterOpts.hasRef || filterOpts.hasShare) {
+            if (filterOpts.hasRef.length || filterOpts.hasShare.length) {
                 const statsMap = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id), false);
                 for (const r of rows) {
                     const st = statsMap.get(r.id);

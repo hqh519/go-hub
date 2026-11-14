@@ -316,14 +316,37 @@
                                 <span v-if="f.type === 'video'" class="lf-play-badge" aria-hidden="true">
                                     <font-awesome-icon icon="play" />
                                 </span>
-                                <font-awesome-icon v-else :icon="iconOf(f)" class="lf-thumb-icon" />
+                                <!--
+                                    v1.2.2（需求）：图片右侧那个「伸出来把小图挤走」的东西，
+                                    就是这里的兜底图标 —— 上一版在 <video> 与它之间插了播放角标的
+                                    v-if，把 v-if/v-else 链断掉了：角标的 v-if 成了新的链头，
+                                    于是「图片」也会掉进 v-else 渲染出一个 30px 图标。
+                                    flex 行里 img 占 100%、图标再占 30px，图片被挤窄，图标溢出到卡片右侧。
+                                    修法：给兜底图标写明确条件，不再依赖 v-else 链。
+                                -->
+                                <font-awesome-icon
+                                    v-if="f.type !== 'image' && f.type !== 'video'"
+                                    :icon="iconOf(f)"
+                                    class="lf-thumb-icon"
+                                />
                             </div>
                             <div class="lf-name" :title="f.name" @click="onEntryNameClick(f)">
                                 <span class="name-start">{{ nameParts(f.name).start }}</span><span class="name-end">{{ nameParts(f.name).end }}</span>
                             </div>
                             <div class="lf-meta">
                                 <span>{{ formatSize(f.size) }}</span>
-                                <span v-if="f.inLibrary" class="lf-meta-inlib">{{ $t('localFiles.uploadedMark') }}</span>
+                                <!--
+                                    v1.2.2（需求）：右下角的「已落库」要能点进图床的文件详情页
+                                    （和点文件名同一个去处）。用 button 而不是 span，键盘也能触发；
+                                    点击必须 stop，否则会冒泡到卡片、把本地预览也一起打开。
+                                -->
+                                <button
+                                    v-if="f.inLibrary"
+                                    type="button"
+                                    class="lf-meta-inlib lf-meta-inlib-btn"
+                                    :title="$t('localFiles.uploadedMark')"
+                                    @click.stop="openInLibraryDetail(f)"
+                                >{{ $t('localFiles.uploadedMark') }}</button>
                                 <span v-else>{{ formatTime(f.mtime) }}</span>
                             </div>
                             <!-- v1.0.6：WebDAV 渠道才允许重命名 / 删除 -->
@@ -418,7 +441,14 @@
                             <span class="lf-col-size">{{ formatSize(f.size) }}</span>
                             <span class="lf-col-time">{{ formatTime(f.mtime) }}</span>
                             <span class="lf-col-state">
-                                <span v-if="f.inLibrary" class="lf-meta-inlib">{{ $t('localFiles.uploadedMark') }}</span>
+                                <!-- v1.2.2（需求）：列表视图的状态列「已落库」同样可点进文件详情页 -->
+                                <button
+                                    v-if="f.inLibrary"
+                                    type="button"
+                                    class="lf-meta-inlib lf-meta-inlib-btn"
+                                    :title="$t('localFiles.uploadedMark')"
+                                    @click.stop="openInLibraryDetail(f)"
+                                >{{ $t('localFiles.uploadedMark') }}</button>
                                 <span v-else class="lf-state-none">—</span>
                             </span>
                             <el-dropdown
@@ -1521,6 +1551,15 @@ export default {
             }
         },
         /**
+         * v1.2.2（需求）：「已落库」标记本身也是一个入口 —— 卡片视图右下角与列表视图状态列
+         * 都调这里，语义与点文件名完全一致（打开图床的文件详情页）。
+         * 只认 inLibrary 里存的 File_ID；拿不到就当没这回事，不做无声跳转。
+         */
+        async openInLibraryDetail(f) {
+            if (!f || !f.inLibrary) return;
+            await this.openResultDetail({ id: f.inLibrary, path: f.path });
+        },
+        /**
          * v3.0.0（R15）：点文件名 —— 已落库的文件直接打开它在【图床】里的文件详情页；
          * 未落库的文件保持原行为（打开本地预览）。缩略图点击仍是本地预览，不受影响。
          */
@@ -2269,7 +2308,8 @@ export default {
     position: relative;
     background: var(--glass-bg);
     border: 1px solid var(--glass-border);
-    border-radius: 10px;
+    /* v1.2.2（需求）：卡片（文件与文件夹同款）圆角由 10px 收到 5px */
+    border-radius: 5px;
     padding: 8px;
     cursor: pointer;
     transition: border-color 0.16s ease, box-shadow 0.16s ease;
@@ -2291,7 +2331,8 @@ export default {
     position: relative;
     aspect-ratio: 1 / 1;
     width: 100%;
-    border-radius: 8px;
+    /* v1.2.2（需求）：缩略图区（图片 / 视频 / 文件夹图标）圆角同步收成 5px */
+    border-radius: 5px;
     overflow: hidden;
     background: var(--el-fill-color-light);
 }
@@ -2301,11 +2342,25 @@ export default {
     object-fit: cover;
 }
 /* v3.0.0（R7）：视频缩略图（首帧画面）—— 与图片同样铺满缩略图区 */
+/*
+ * v1.2.2（需求）：卡片视图里视频四周出现黑边。
+ *   · 原来的写法是 width/height 100% + object-fit: cover，理论上已经铺满，
+ *     但 <video> 的高度在「父容器高度由 aspect-ratio 推导」时不一定能解析成确定值，
+ *     某些内核会退回内容高度（16:9），于是画面上/下或左/右留出空隙；
+ *   · 而这里又给了一个 background: #000 —— 空隙直接被涂成黑色，看起来就是「黑边」。
+ * 现在改成绝对定位铺满（inset: 0 不依赖父高的解析），cover 裁切，背景改为透明：
+ * 即便内核仍按内容高度渲染，露出来的也是缩略图底色，不会再是一条黑边。
+ * 若换成绝对定位后仍有黑边，那就是源视频自带画幅留白（片源自带的 black bar），
+ * CSS 无法消除，只能靠转码裁切。
+ */
 .lf-thumb-video {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
-    background: #000;
+    object-position: center;
+    background: transparent;
     pointer-events: none;
 }
 .lf-thumb-icon {
@@ -2368,6 +2423,30 @@ export default {
 /* v3.0.0（R12）：已落库文件右下角显示「已落库」替代时间 */
 .lf-meta-inlib {
     color: var(--el-color-success);
+}
+/*
+ * v1.2.2（需求）：「已落库」现在是可点入口（进图床文件详情页）。
+ * 用 button 就得把浏览器默认外观清干净，否则字号 / 边框 / 内边距都会跟旁边的时间对不上。
+ */
+.lf-meta-inlib-btn {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 11px;
+    line-height: inherit;
+    color: var(--el-color-success);
+    cursor: pointer;
+    text-align: right;
+}
+.lf-meta-inlib-btn:hover {
+    text-decoration: underline;
+}
+.lf-meta-inlib-btn:focus-visible {
+    outline: 2px solid var(--el-color-success);
+    outline-offset: 1px;
+    border-radius: 3px;
 }
 /*
  * v3.0.0（R12）：列表视图 ——

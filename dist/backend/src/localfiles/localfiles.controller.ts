@@ -721,18 +721,27 @@ export class LocalFilesController {
       originalSize: number;
       md5: string;
       originalMd5: string;
+      editedAt: Date | null;
     }[] = [];
     try {
       rows = await prisma.fileRecord.findMany({
         where: { status: 'active', OR: [{ size: { in: sizes } }, { originalSize: { in: sizes } }] },
-        select: { name: true, size: true, originalSize: true, md5: true, originalMd5: true },
+        // v1.2.2：剪辑过的记录只比「实际大小 + 实际 md5」，必须把 editedAt 取回来
+        select: { name: true, size: true, originalSize: true, md5: true, originalMd5: true, editedAt: true },
         take: 500,
       });
     } catch {
       return out;
     }
     if (!rows.length) return out;
-    type Cand = { name: string; size: number; originalSize: number; md5: string; originalMd5: string };
+    type Cand = {
+      name: string;
+      size: number;
+      originalSize: number;
+      md5: string;
+      originalMd5: string;
+      editedAt: Date | null;
+    };
     const bySize = new Map<number, Cand[]>();
     for (const r of rows) {
       const cand: Cand = {
@@ -741,8 +750,14 @@ export class LocalFilesController {
         originalSize: Number(r.originalSize) || 0,
         md5: r.md5 || '',
         originalMd5: r.originalMd5 || '',
+        editedAt: r.editedAt || null,
       };
-      for (const s of new Set([cand.size, cand.originalSize])) {
+      /*
+       * v1.2.2：剪辑过的记录不参与组①，所以它不该出现在「原始大小」的桶里 ——
+       * 否则那个桶会把磁盘上恰好同大小的文件都哈希一遍，最后还是判不中，纯浪费。
+       */
+      const buckets = cand.editedAt ? [cand.size] : [cand.size, cand.originalSize];
+      for (const s of new Set(buckets)) {
         if (!s) continue;
         if (!bySize.has(s)) bySize.set(s, []);
         const bucket = bySize.get(s)!;

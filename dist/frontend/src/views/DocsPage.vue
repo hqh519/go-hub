@@ -1020,6 +1020,27 @@ const ZH = {
         { t: '浮层层叠管理补齐三处', d: '挂载管理的「上传结果」页与「文件详情」页、移动端图床管理的长按菜单，现在都是层叠栈里的正式一层：打开它们时会先关掉之前那一层，不会叠成一堆。上传结果页刻意不响应 Esc —— 误按一下把结果关掉，就看不到哪几个文件失败了。' },
         { t: '数据库只加了两列', d: 'FileRecord 新增 originalMd5（最初的 MD5）与 editedAt（剪辑时间）。启动时会自动补齐，历史文件的 originalMd5 为空，比对时按「原始 = 当前」处理，不会把老文件整批误判成变化过；首次剪辑时会自动补写这两项。' }
       ]
+    },
+    {
+      id: 'whatsnew-122',
+      title: '四十七、v1.2.2 更新要点',
+      intro: 'v1.2.2 是一次集中修正，没有新板块。筛选器不再替用户判断「这样勾有没有意义」，所有条件都交给底部的「且 / 或」；发布中心返工了三处（作者名格式、选择文件默认分类、回复字数上限）；图床与挂载两个页面各修了若干细节；去重判定再收紧一步，剪辑过的文件不再拿已经不存在的原始内容去比对。',
+      items: [
+        { t: '所有筛选项统一交给「且 / 或」', d: '以前有几个分区做了「只勾一个才生效，两个都勾等于不筛」的特殊处理，理由是互斥的两项在「且」模式下永远不成立。但这是筛选器在替用户做决定 —— 勾了互斥项又选「且」，结果为空本来就是预期；选「或」，两项都该命中。现在所有分区一律「勾几个传几个」，组内怎么组合完全由底部模式决定：且 = 逐值都要满足，或 = 任一命中即可。' },
+        { t: '标签有无 / 文件引用 / 文件共用支持多选', d: '这三项以前只能二选一传一个值，参数本身表达不了「两个都勾」。现在和其余分区一样可以同时勾选：选「且」会筛不出内容（互斥），选「或」则全部命中 —— 与上面那条规则完全一致，不再有例外。' },
+        { t: '广场作者名：用户名后补一个空格', d: '显示成 xiaoming (小明)。同时处理了一种冗余：昵称与用户名相同（或只是大小写不同）时，只显示用户名，不再出现 xiaoming (xiaoming) 这种没有信息量的写法。' },
+        { t: '选择文件默认「全部」这次真的生效了', d: '上一版代码改对了，但老浏览器里存着旧版本写下的「图片」记忆 —— 那不是用户主动选的，是旧默认值被顺手存进了本地记忆，升级后又被原样还原，所以看起来像没改。这次给记忆加了结构版本：升级时只丢弃「分类」这一项，数据源、排序、上次所在目录照旧保留。迁移只发生一次。' },
+        { t: '回复留言：500 字上限真的还给用户', d: '上一版把「起始计数包含前缀」改成了「起始 0、上限减前缀」，等于把同一个损失换了个位置 —— 用户实际能打的字还是少了几个。现在前缀完全不占额度：计数只算你自己打的字，上限恒为 500。服务端同步改成剥掉「回复 @某某：」再计数，否则前端放行、后端仍会拒。' },
+        { t: '瞬间编辑框高度：可见区的一半', d: '上一版理解成「不小于编辑页总高度的 70%」，本版按需求改为「收缩之后高度的 50%」。关键仍然是量什么：用 ResizeObserver 盯弹窗自身的高度，而不是视口高度 —— 手机上键盘弹出时弹窗会被压矮，50% 跟着变小，输入框按比例收缩但始终占可见编辑区的一半。' },
+        { t: '挂载文件排序的升 / 降序修好了', d: '下拉里的升序与降序以前点了没反应。原因是绑定的写法：下拉先把值改成新值，再触发回调，而回调第一行判断「新值是否等于当前值」—— 永远是相等，于是直接返回，列表根本没重新取。现在切换后直接重新取数，两种加载源（图床文件 / 挂载文件）都会立即重排。' },
+        { t: '相册选中圆圈：贴角 2px，误触修掉', d: '位置移到距上、右各 2px。更重要的是热区：那是个复选框控件，默认盒子的高度比 18px 的圆圈大一圈，点圆圈外围其实也命中它，照样会选中。现在把盒子锁成圆圈大小、去掉内边距与多余的占位标签，只有点中圆圈本身才触发选中。' },
+        { t: '挂载卡片：图片右侧多出来的那个图标', d: '每张图片右边都凸出一小块，还把图片挤窄。根因是模板分支被插断了：视频的播放角标带了自己的条件判断，插在「视频」与「兜底图标」之间后，兜底图标就不再只属于「其它文件」，图片也会渲染出一个 30px 图标；缩略图区是横向排列，图片占满宽度后图标再占 30px，图片被挤窄、图标溢出到卡片外。现在兜底图标写明确条件，不再依赖分支链。' },
+        { t: '挂载卡片：视频四周的黑边', d: '缩略图区是正方形，视频按「裁切铺满」显示，理论上看不到黑边。但视频元素的高度在父容器高度由比例推导时不一定能算出来，部分浏览器会退回按视频自身比例（比如 16:9）显示，上下或左右就空出一条；偏偏又给了黑色背景，空隙直接变成了黑边。现在改成绝对定位铺满、背景透明，露出的是缩略图底色而不是黑色。如果个别视频仍有黑边，那是视频文件自带的画幅留白，与页面无关。' },
+        { t: '挂载卡片：圆角改为 5px', d: '卡片本身由 10px 收到 5px，缩略图区由 8px 收到 5px。文件卡片与文件夹卡片共用同一套样式，所以两类卡片同时生效。' },
+        { t: '「已落库」可以点开文件详情', d: '卡片视图右下角的「已落库」与列表视图状态列的「已落库」，现在都能直接打开它在图床里的文件详情页 —— 和点文件名是同一个去处。点击时会拦住冒泡，不会顺手把本地预览也一起打开。' },
+        { t: '去重：剪辑过的记录只比当前内容', d: '一条记录被剪辑并保存替换后，它记着的「原始大小 + 原始 MD5」指向的内容在库里已经不存在了。继续拿它去认重复，等于把两个不同内容判成同一个。现在这类记录只按「当前大小 + 当前 MD5」比对；从未剪辑过的记录仍然两组都比，任一组相同即算重复。挂载页的「已落库」标记同步采用这套口径。' },
+        { t: '本版没有数据库变更', d: '去重需要的两个字段是上一版加的列，本版只改判定逻辑与筛选求值，直接覆盖升级即可，不需要迁移。' }
+      ]
     }
   ]
 };
@@ -1978,6 +1999,27 @@ const EN = {
         { t: 'A new icon for Log', d: 'In the publish section of the home page, Log used an image icon that said the wrong thing. It now uses a list icon that reads as writing an entry into a ledger.' },
         { t: 'Three more layers in the layer stack', d: 'The upload result page and the file detail dialog in mounted files, plus the long-press menu in the mobile file manager, are registered layers now: opening one closes the one before it instead of stacking up. The result page deliberately ignores Esc - a stray key press would hide which files failed.' },
         { t: 'Only two new columns', d: 'FileRecord gains originalMd5 (the MD5 the file arrived with) and editedAt (when it was edited). Both are added at startup. Historical files have an empty originalMd5 and are compared as original equals current, so old files are not mass-flagged as changed; the first edit backfills both values.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-122',
+      title: '47. What is new in v1.2.2',
+      intro: 'v1.2.2 is a correction release with no new sections. The filter no longer decides on your behalf whether a combination makes sense - every selected value goes to the AND / OR switch at the bottom. The publish centre gets three fixes (author line, default category in the picker, reply limit). The library and mounted pages each get a handful of detail fixes. And dedup tightens one more step: an edited file is no longer compared against content that no longer exists.',
+      items: [
+        { t: 'Every filter group now obeys the AND / OR switch', d: 'A few groups used to be special-cased as only-one-selection-counts, because two mutually exclusive values under AND can never match. But that is the filter deciding for you: if you tick both and choose AND, an empty result is exactly what you asked for; choose OR and both should match. Now every group sends all of its selected values and the switch alone decides - AND means every value must hold, OR means any one is enough.' },
+        { t: 'Has tags / referenced / shared accept multiple values', d: 'These three could only send a single value, so the request format itself could not express both-selected. They now behave like every other group: AND gives nothing (the two are exclusive), OR matches everything. No more exceptions to the rule above.' },
+        { t: 'Square author line gains a space', d: 'Entries render as xiaoming (Ming). A redundant case is handled at the same time: when the nickname equals the username (case-insensitively included), only the username is shown, so xiaoming (xiaoming) never appears.' },
+        { t: 'The picker really defaults to All this time', d: 'The code was already right, but older browsers still held an Image value written by the previous version - not a choice the user made, just the old default caught by the position memory and faithfully restored after the upgrade. The memory format now carries a version: on upgrade only the category is dropped, while source, sort and last folder are kept. The migration happens once.' },
+        { t: 'Reply comments: the full 500 characters', d: 'The last release moved the loss around instead of removing it - the prefix became zero on the counter, but the limit shrank by the prefix length, so you could still type less. Now the prefix costs nothing: the counter only counts what you typed and the limit stays 500. The server strips the reply-to prefix before counting too, otherwise the frontend would allow text the backend still rejects.' },
+        { t: 'Editor height: half of the visible area', d: 'The previous release read the rule as 70% of the full editor height; this one follows the requirement at 50% of the collapsed height. What is measured still matters: a ResizeObserver watches the dialog itself rather than the viewport, so when the keyboard shrinks the dialog the 50% shrinks with it and the textarea keeps half of the visible editing area.' },
+        { t: 'Mounted-files sort direction works', d: 'Ascending and descending did nothing before. The dropdown updates the value first and fires the handler second, and the handler opened with "is the new value equal to the current one" - always true, so it returned early and the list was never refetched. The switch now triggers a refetch directly, for both source tabs.' },
+        { t: 'Album selection circle: 2px corners, no stray taps', d: 'The circle moves to 2px from the top and right. The hit area mattered more: it is a checkbox control whose default box is taller than the 18px circle, so tapping around the circle still toggled it. The box is now locked to the circle size with padding and the empty label removed, so only the circle itself reacts.' },
+        { t: 'Mounted cards: the icon that squeezed every image', d: 'A small block stuck out on the right of every image and narrowed it. The template branch chain had been broken: the video play badge carried its own condition and was inserted between the video branch and the fallback icon, so the fallback stopped belonging to other files and every image also rendered a 30px icon. The thumbnail row is horizontal, so the image filled the width, the icon took 30px more, and the overflow landed outside the card. The fallback icon now has an explicit condition instead of relying on the chain.' },
+        { t: 'Mounted cards: black edges around videos', d: 'The thumbnail area is square and videos are cropped to fill, so no black edge should be visible. But the video element height does not always resolve when the parent height comes from an aspect ratio; some browsers fall back to the video own ratio (16:9 say), leaving a strip at the top and bottom or on the sides - and a black background turned that strip into a black edge. The video is now absolutely positioned to fill the area with a transparent background, so any leftover shows the thumbnail colour instead of black. If a particular video still shows edges, they are baked into the file itself.' },
+        { t: 'Mounted cards: 5px corners', d: 'The card goes from 10px to 5px and the thumbnail area from 8px to 5px. File and folder cards share the same classes, so both change together.' },
+        { t: 'Uploaded mark opens the file detail', d: 'The Uploaded label at the bottom-right of a card and in the status column of the list now opens the corresponding file detail page in the library - the same destination as clicking the file name. The click stops propagation so the local preview does not open as well.' },
+        { t: 'Dedup: edited records compare current content only', d: 'Once a record has been edited and replaced, the original size and original MD5 it carries point at content that no longer exists in the library. Using them to detect duplicates would merge two different contents into one. Such records are now compared only against current size and current MD5; records never edited still try both sets, and either match counts. The Uploaded mark on the mounted page uses the same rule.' },
+        { t: 'No database changes in this release', d: 'The two fields dedup needs were added in the previous release. This one only changes evaluation logic and filter handling, so an overwrite upgrade is enough.' }
       ]
     }
   ]

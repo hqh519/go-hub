@@ -26,10 +26,16 @@ import {
 
 /** 筛选参数（与 FilesController 原签名逐字段一致） */
 export interface FileFilterOpts {
-  hasTags: string;
-  /** v1.1.6：引用 / 共用筛选（yes / no / 空串） */
-  hasRef: string;
-  hasShare: string;
+  /**
+   * v1.2.2：这三个曾经是单值字符串（yes / no），前端只勾一个才传。
+   * 现在统一成数组 —— 勾了几个就传几个，怎么组合完全交给「且/或」模式：
+   *   且(all) → 逐值成条件，yes+no 同时勾必然无结果（这是预期，不是 bug）；
+   *   或(any) → 分区内命中任一值即可，yes+no 同时勾则全部命中。
+   */
+  hasTags: string[];
+  /** v1.1.6：引用 / 共用筛选（yes / no，可多选） */
+  hasRef: string[];
+  hasShare: string[];
   filterTags: string[];
   tagMode: string;
   listType: string[];
@@ -70,6 +76,16 @@ export function splitCsv(v?: string): string[] {
 }
 
 /**
+ * v1.2.2：yes / no 型多选参数 —— 只保留合法值。
+ * 非法值如果留在数组里，在「或」模式下会把整个分区变成恒真，等于静默吞掉这条筛选。
+ */
+export function splitYesNo(v?: string): string[] {
+  return splitCsv(v)
+    .map((s) => s.toLowerCase())
+    .filter((s) => s === 'yes' || s === 'no');
+}
+
+/**
  * 数字区间参数：空 / 非数字 → null（= 该侧不限）。
  * 原样搬运 FilesController.numOrNullParam。
  */
@@ -95,9 +111,9 @@ export function parseFileFilterQuery(q: Record<string, string | undefined>): Fil
     return Date.UTC(y, m - 1, d) + tzOffset * 60_000;
   };
   return {
-    hasTags: String(q.hasTags || '').toLowerCase(),
-    hasRef: String(q.hasRef || '').toLowerCase(),
-    hasShare: String(q.hasShare || '').toLowerCase(),
+    hasTags: splitYesNo(q.hasTags),
+    hasRef: splitYesNo(q.hasRef),
+    hasShare: splitYesNo(q.hasShare),
     filterTags: splitCsv(q.filterTags),
     tagMode: String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and',
     listType: splitCsv(q.listType),
@@ -135,9 +151,9 @@ export function parseFileFilterQuery(q: Record<string, string | undefined>): Fil
 /** 是否「一个筛选值都没有」（用于决定要不要走内存筛选、列表如何提示） */
 export function isEmptyFileFilter(f: FileFilterOpts): boolean {
   return (
-    !f.hasTags &&
-    !f.hasRef &&
-    !f.hasShare &&
+    !f.hasTags.length &&
+    !f.hasRef.length &&
+    !f.hasShare.length &&
     !f.filterTags.length &&
     !f.listType.length &&
     !f.label.length &&
@@ -231,17 +247,23 @@ export function fileFilterGroups(
   const tagNames: string[] = Array.isArray(r.tags)
     ? r.tags.map((t: any) => t?.tag?.name).filter(Boolean)
     : [];
-  if (f.hasTags === 'yes') groups.push(tagNames.length > 0);
-  else if (f.hasTags === 'no') groups.push(tagNames.length === 0);
+  /*
+   * v1.2.2：这三组也改成 pushGroup —— 与其它多选分区完全同构。
+   * 勾了 yes 和 no 两个值时：且模式 → 两个条件互斥，必然筛不出（预期）；
+   * 或模式 → 任一命中，等价于不筛（也符合「有一个勾选项有内容就能筛出来」）。
+   */
+  const hasTagPred = (v: string) => (v === 'yes' ? tagNames.length > 0 : tagNames.length === 0);
+  const hasRefPred = (v: string) => (v === 'yes' ? Number(r.refCount || 0) > 0 : Number(r.refCount || 0) <= 0);
+  const hasSharePred = (v: string) =>
+    v === 'yes' ? Number(r.shareCount || 0) > 0 : Number(r.shareCount || 0) <= 0;
+  pushGroup(f.hasTags, hasTagPred);
   /*
    * v1.1.6：引用 / 共用筛选 —— 读 FileRecord 上的缓存列（refCount / shareCount）。
    * 调用方在启用这两项筛选时会先按需重算一遍统计（syncFileStats persist=false），
    * 所以这里可以直接用列值，不会因为缓存过期而筛错。
    */
-  if (f.hasRef === 'yes') groups.push(Number(r.refCount || 0) > 0);
-  else if (f.hasRef === 'no') groups.push(Number(r.refCount || 0) <= 0);
-  if (f.hasShare === 'yes') groups.push(Number(r.shareCount || 0) > 0);
-  else if (f.hasShare === 'no') groups.push(Number(r.shareCount || 0) <= 0);
+  pushGroup(f.hasRef, hasRefPred);
+  pushGroup(f.hasShare, hasSharePred);
   // 标签筛选有自己的「或/且」开关（tagMode），不参与这里的逐值拆分
   if (f.filterTags.length) {
     groups.push(

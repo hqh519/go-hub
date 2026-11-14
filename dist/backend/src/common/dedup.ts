@@ -28,7 +28,7 @@ export interface DedupProbe {
   md5: string;
 }
 
-/** 库里的一条候选项（只要这四个字段，别的地方不必为它多查一遍库） */
+/** 库里的一条候选项（只要这几个字段，别的地方不必为它多查一遍库） */
 export interface DedupCandidate {
   /** 当前实际大小 */
   size?: number | null;
@@ -38,6 +38,8 @@ export interface DedupCandidate {
   md5?: string | null;
   /** 最初的 md5（永不改变）；空 = 旧数据没这一列 */
   originalMd5?: string | null;
+  /** v1.2.2：剪辑过的时间；有值 = 这条记录的内容已被裁剪/旋转/涂鸦/文字覆盖过 */
+  editedAt?: Date | string | null;
 }
 
 const norm = (s?: string | null) => String(s || '').trim().toLowerCase();
@@ -48,6 +50,12 @@ const num = (n?: number | null) => (Number.isFinite(Number(n)) ? Number(n) : 0);
  *
  * 注意「回落」的方向：原始值缺失时才用实际值兜底，反过来不成立 ——
  * 实际值是新内容的指纹，拿它冒充原始值会让「原文件重传」永远判不中。
+ *
+ * v1.2.2（需求）：**剪辑过的记录不参与组①**。
+ *   一旦「保存并替换」把内容换成剪辑后的版本，这条记录的 originalSize / originalMd5
+ *   指向的就是一个库里已经不存在的字节序列了 —— 拿它去认「重复文件」等于把两个
+ *   不同内容判成同一个。所以有 editedAt 的记录只比对组②（实际大小 + 实际 md5）；
+ *   从未剪辑过的记录才两组都试，任一组命中即重复。
  */
 export function isDuplicateFile(probe: DedupProbe, rec: DedupCandidate): boolean {
   const md5 = norm(probe.md5);
@@ -55,13 +63,16 @@ export function isDuplicateFile(probe: DedupProbe, rec: DedupCandidate): boolean
 
   const actualSize = num(rec.size);
   const actualMd5 = norm(rec.md5);
-  const originSize = num(rec.originalSize) || actualSize;
-  const originMd5 = norm(rec.originalMd5) || actualMd5;
   const size = num(probe.size);
+  const edited = !!rec.editedAt;
 
-  // ① 原始文件：大小 + 最初的 md5
-  if (originMd5 && size === originSize && md5 === originMd5) return true;
-  // ② 已被处理过的内容：大小 + 当前实际 md5
+  // ① 原始文件：大小 + 最初的 md5 —— 剪辑过的记录跳过（见上）
+  if (!edited) {
+    const originSize = num(rec.originalSize) || actualSize;
+    const originMd5 = norm(rec.originalMd5) || actualMd5;
+    if (originMd5 && size === originSize && md5 === originMd5) return true;
+  }
+  // ② 库里当前实际内容：大小 + 当前实际 md5
   if (actualMd5 && size === actualSize && md5 === actualMd5) return true;
   return false;
 }

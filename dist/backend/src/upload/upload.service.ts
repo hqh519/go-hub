@@ -2103,6 +2103,8 @@ export class UploadService {
           originalSize: true,
           md5: true,
           originalMd5: true,
+          // v1.2.2：剪辑过的记录不参与「原始大小 + 原始 md5」比对，判定需要这个字段
+          editedAt: true,
           // v1.1.5：同实例 / 跨实例走两套规则，必须知道候选记录归属哪个实例
           instanceId: true,
           // v2.8.7b：附带渠道信息 —— 「同一渠道名称内 / 同一渠道类型内」两种范围都需要比对渠道属性

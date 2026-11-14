@@ -1396,7 +1396,7 @@ let ManageController = ManageController_1 = class ManageController {
         const excludeTags = splitCsv(q.excludeTags);
         const filterTags = splitCsv(q.filterTags);
         const tagMode = String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and';
-        const hasTags = String(q.hasTags || '').toLowerCase();
+        const hasTags = (0, file_filter_1.splitYesNo)(q.hasTags);
         const fListType = splitCsv(q.listType);
         const fAccess = splitCsv(q.accessStatus);
         if (q.encryptedOnly === '1' || q.encryptedOnly === 'true') {
@@ -1471,8 +1471,8 @@ let ManageController = ManageController_1 = class ManageController {
         const withDeleted = !onlyDeleted && fAccess.includes('deleted');
         const filterOpts = {
             hasTags,
-            hasRef: String(q.hasRef || '').toLowerCase(),
-            hasShare: String(q.hasShare || '').toLowerCase(),
+            hasRef: (0, file_filter_1.splitYesNo)(q.hasRef),
+            hasShare: (0, file_filter_1.splitYesNo)(q.hasShare),
             filterTags,
             tagMode,
             listType: fListType,
@@ -1541,7 +1541,7 @@ let ManageController = ManageController_1 = class ManageController {
             },
             orderBy: onlyDeleted ? { deletedAt: 'desc' } : { createdAt: 'desc' },
         });
-        if (filterOpts.hasRef || filterOpts.hasShare) {
+        if (filterOpts.hasRef.length || filterOpts.hasShare.length) {
             const statsMap = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id), false);
             for (const r of rows) {
                 const st = statsMap.get(r.id);
@@ -1629,7 +1629,7 @@ let ManageController = ManageController_1 = class ManageController {
             !!includeTags.length ||
             !!excludeTags.length ||
             !!filterTags.length ||
-            !!hasTags ||
+            !!hasTags.length ||
             !!fListType.length ||
             !!fAccess.length ||
             !!fLabel.length ||
@@ -2231,9 +2231,9 @@ let ManageController = ManageController_1 = class ManageController {
         const fromMs = dateFrom ? dayStartMs(dateFrom) : 0;
         const toMs = dateTo ? dayStartMs(dateTo) + 86_400_000 - 1 : 0;
         const filterOpts = {
-            hasTags: String(q.hasTags || '').toLowerCase(),
-            hasRef: String(q.hasRef || '').toLowerCase(),
-            hasShare: String(q.hasShare || '').toLowerCase(),
+            hasTags: (0, file_filter_1.splitYesNo)(q.hasTags),
+            hasRef: (0, file_filter_1.splitYesNo)(q.hasRef),
+            hasShare: (0, file_filter_1.splitYesNo)(q.hasShare),
             filterTags: splitCsv(q.filterTags),
             tagMode: String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and',
             listType: splitCsv(q.listType),
@@ -2265,7 +2265,7 @@ let ManageController = ManageController_1 = class ManageController {
             heightMin: Math.max(0, Number(q.heightMin) || 0),
             heightMax: Math.max(0, Number(q.heightMax) || 0),
         };
-        if (filterOpts.hasRef || filterOpts.hasShare) {
+        if (filterOpts.hasRef.length || filterOpts.hasShare.length) {
             const statsMap = await (0, file_share_stats_1.syncFileStats)(rows.map((r) => r.id), false);
             for (const r of rows) {
                 const st = statsMap.get(r.id);

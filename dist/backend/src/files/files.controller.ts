@@ -41,7 +41,7 @@ import { buildDirectoryTree, CHANNEL_LABEL, CopyWithChannel, fileExtOf, fileType
  * 「瞬间编辑页 → 选择文件 → 图床文件」模式要复刻与图床管理完全一致的筛选范围，
  * 两边各写一份必然漂移，故统一为同一份实现（本文件只保留薄委托方法）。
  */
-import { FileFilterOpts, fileFilterGroups, matchDimPreset } from '../common/file-filter';
+import { FileFilterOpts, fileFilterGroups, matchDimPreset, splitYesNo } from '../common/file-filter';
 // v1.1.2：文件被引用时禁止删除 / 详情页「文件引用」明细
 // v1.1.2.1：引用范围由「笔记」扩到全类型（笔记 + 分享链接），见 common/file-refs.ts
 import { batchReferenceBlockMessage, refsOfFile, countBySource } from '../common/file-refs';
@@ -1919,8 +1919,8 @@ export class ManageController {
     // 与搜索里的 #tag（includeTags，恒为 and 语义）分开传参，避免同名参数互相覆盖。
     const filterTags = splitCsv(q.filterTags);
     const tagMode = String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and';
-    // 是否含标签：yes = 只看有标签的文件，no = 只看没有标签的文件
-    const hasTags = String(q.hasTags || '').toLowerCase();
+    // 是否含标签：yes = 只看有标签的文件，no = 只看没有标签的文件（v1.2.2 起可多选）
+    const hasTags = splitYesNo(q.hasTags);
     const fListType = splitCsv(q.listType);
     const fAccess = splitCsv(q.accessStatus);
     /*
@@ -2046,9 +2046,9 @@ export class ManageController {
     const withDeleted = !onlyDeleted && fAccess.includes('deleted');
     const filterOpts = {
       hasTags,
-      // v1.1.6：引用 / 共用筛选
-      hasRef: String(q.hasRef || '').toLowerCase(),
-      hasShare: String(q.hasShare || '').toLowerCase(),
+      // v1.1.6：引用 / 共用筛选（v1.2.2 起 yes / no 可同时勾，由 matchMode 决定语义）
+      hasRef: splitYesNo(q.hasRef),
+      hasShare: splitYesNo(q.hasShare),
       filterTags,
       tagMode,
       listType: fListType,
@@ -2161,7 +2161,7 @@ export class ManageController {
      * 笔记增删附件不会立刻回写，直接拿来筛会出现「明明被引用却筛不到」。
      * 这里只在筛这两项时按需重算一遍（persist=false，只回填内存，不写库、不加写压力）。
      */
-    if (filterOpts.hasRef || filterOpts.hasShare) {
+    if (filterOpts.hasRef.length || filterOpts.hasShare.length) {
       const statsMap = await syncFileStats(
         rows.map((r) => r.id),
         false,
@@ -2309,7 +2309,7 @@ export class ManageController {
       !!includeTags.length ||
       !!excludeTags.length ||
       !!filterTags.length ||
-      !!hasTags ||
+      !!hasTags.length ||
       !!fListType.length ||
       !!fAccess.length ||
       !!fLabel.length ||
@@ -3092,10 +3092,10 @@ export class ManageController {
     const toMs = dateTo ? dayStartMs(dateTo) + 86_400_000 - 1 : 0;
 
     const filterOpts = {
-      hasTags: String(q.hasTags || '').toLowerCase(),
-      // v1.1.6：引用 / 共用筛选
-      hasRef: String(q.hasRef || '').toLowerCase(),
-      hasShare: String(q.hasShare || '').toLowerCase(),
+      hasTags: splitYesNo(q.hasTags),
+      // v1.1.6：引用 / 共用筛选（v1.2.2 起 yes / no 可同时勾，由 matchMode 决定语义）
+      hasRef: splitYesNo(q.hasRef),
+      hasShare: splitYesNo(q.hasShare),
       filterTags: splitCsv(q.filterTags),
       tagMode: String(q.tagMode || 'and').toLowerCase() === 'or' ? 'or' : 'and',
       listType: splitCsv(q.listType),
@@ -3130,7 +3130,7 @@ export class ManageController {
     };
 
     // v1.1.6：回收站里的「引用 / 共用」筛选同样按需重算，口径与普通列表一致
-    if (filterOpts.hasRef || filterOpts.hasShare) {
+    if (filterOpts.hasRef.length || filterOpts.hasShare.length) {
       const statsMap = await syncFileStats(
         rows.map((r) => r.id),
         false,

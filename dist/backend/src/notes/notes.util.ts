@@ -267,6 +267,21 @@ export function countTextChars(input: unknown): number {
   return n;
 }
 
+/**
+ * v1.2.2：留言字数只数「用户自己打的内容」，不数「回复 @某某：」这段前缀。
+ *
+ * 起因（需求原文）：前端把分母减掉了前缀长度，看起来数字变小了，本质还是被前缀占了额度。
+ * 正确的口径是：500 字上限永远给用户，前缀只是展示用的引子。
+ * 前缀格式由前端 `buildReplyContent` 拼出，正则必须与 `parseCommentContent` 一致。
+ */
+const REPLY_PREFIX_RE = /^回复 @[^：:\n]{1,40}[：:]/;
+
+export function countCommentChars(input: unknown): number {
+  const s = String(input ?? '');
+  if (!s) return 0;
+  return countTextChars(s.replace(REPLY_PREFIX_RE, ''));
+}
+
 /** 单个文件的媒体大类（用于九宫格排版与「媒体类型」聚合） */
 export function mediaKindOfMime(mime: string): 'image' | 'video' | 'audio' | 'file' {
   const m = String(mime || '').toLowerCase();

@@ -394,11 +394,13 @@ export default {
          * v1.2.0（需求）：广场里的发布者信息。
          * v1.2.1（需求）：展示格式改为 `用户名(昵称)`，例如 `xiaoming(小明)`；
          *   没有昵称时只显示用户名；括号用英文半角（中文全角括号在等宽字体里会撑宽）。
+         * v1.2.2（需求）：用户名与括号之间要有一个空格 → `用户名 (昵称)`；
+         *   昵称与用户名相同时不重复显示（`admin (admin)` 这种没有信息量），只留用户名。
          */
         authorName() {
             const user = String((this.note && this.note.author) || '').trim();
             const nick = String((this.note && this.note.authorNickname) || '').trim();
-            if (nick && user) return `${user}(${nick})`;
+            if (nick && user && nick.toLowerCase() !== user.toLowerCase()) return `${user} (${nick})`;
             return user || nick;
         },
         /** 头像地址：后端下发带版本戳的 URL，空串表示该账户没设过头像 */
@@ -493,13 +495,13 @@ export default {
             return countTextChars(this.draft);
         },
         /**
-         * 回复时真正还能输入的字数 = 上限 − 前缀占掉的字数。
-         * 分母跟着前缀走，而不是固定 500 —— 否则用户看到「498 / 500」还没到上限却被拦下来，
-         * 会以为是 bug（后端按完整正文校验，前缀确实占了额度）。
+         * v1.2.2（需求）：分母恒为 500，不再减去「回复 @某某：」的长度。
+         * 上一版把分子改成 0、分母减前缀，只是把同一个损失换了个位置 ——
+         * 用户实际能打的字还是 496。现在前缀完全不占额度，后端计数也同步剥掉前缀
+         * （见 backend/src/notes/notes.util.ts 的 countCommentChars）。
          */
         charLimit() {
-            const prefix = this.replyTarget ? countTextChars(buildReplyContent(this.replyTarget, '')) : 0;
-            return Math.max(0, this.commentMaxChars - prefix);
+            return this.commentMaxChars;
         },
         canPost() {
             if (this.posting) return false;

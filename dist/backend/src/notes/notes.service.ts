@@ -33,6 +33,7 @@ import {
   MAX_ASSETS_PER_NOTE,
   MAX_COMMENT_CHARS,
   NOTE_VISIBILITIES,
+  countCommentChars,
   countTextChars,
   fileUrlOf,
   mediaKindOf,
@@ -1066,7 +1067,11 @@ export class NotesService {
     if (!note) return { error: '瞬间不存在或无权留言' };
     const content = String(input.content ?? '').trim();
     if (!content) return { error: '留言内容不能为空' };
-    const charCount = countTextChars(content);
+    /*
+     * v1.2.2（需求）：500 字上限只约束「用户自己打的字」。
+     * 「回复 @某某：」是系统拼的引子，不该占用户额度，所以计数前先剥掉。
+     */
+    const charCount = countCommentChars(content);
     if (charCount > MAX_COMMENT_CHARS) {
       return { error: `留言超出上限：当前 ${charCount} 字，上限 ${MAX_COMMENT_CHARS} 字（标点与符号不计入）` };
     }
@@ -1270,7 +1275,7 @@ export class NotesService {
         },
       });
       // v1.1.6：筛「文件引用 / 文件共用」时按需重算统计，避免缓存滞后导致筛错
-      if (filterOpts.hasRef || filterOpts.hasShare) {
+      if (filterOpts.hasRef.length || filterOpts.hasShare.length) {
         const statsMap = await syncFileStats(
           rows.map((r) => r.id),
           false,

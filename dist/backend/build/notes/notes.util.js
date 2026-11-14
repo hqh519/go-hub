@@ -7,6 +7,7 @@ exports.normalizeGeneralSettings = normalizeGeneralSettings;
 exports.normalizeMomentSettings = normalizeMomentSettings;
 exports.normalizeNoteSettings = normalizeNoteSettings;
 exports.countTextChars = countTextChars;
+exports.countCommentChars = countCommentChars;
 exports.mediaKindOfMime = mediaKindOfMime;
 exports.mediaKindOf = mediaKindOf;
 exports.fileUrlOf = fileUrlOf;
@@ -132,6 +133,13 @@ function countTextChars(input) {
             n += 1;
     }
     return n;
+}
+const REPLY_PREFIX_RE = /^回复 @[^：:\n]{1,40}[：:]/;
+function countCommentChars(input) {
+    const s = String(input ?? '');
+    if (!s)
+        return 0;
+    return countTextChars(s.replace(REPLY_PREFIX_RE, ''));
 }
 function mediaKindOfMime(mime) {
     const m = String(mime || '').toLowerCase();

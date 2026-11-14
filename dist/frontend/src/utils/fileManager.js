@@ -221,20 +221,17 @@ class FileManager {
             params += `&label=${encodeURIComponent(filters.label.join(','))}`;
         }
         /*
-         * v1.1.6：文件引用 / 文件共用筛选。
-         * 与「标签有无」同一套写法：只勾「有」或只勾「没有」才传，两个都勾等于不筛。
+         * v1.2.2（需求）：所有筛选组一律「勾了几个就传几个」，怎么组由下方的「且/或」决定。
+         *   · 且(同时) → 逐值成条件（yes 与 no 同时勾 = 互斥 = 筛不出，属预期）；
+         *   · 或(任意) → 分区内命中任一值即可（yes 与 no 同时勾 = 全部命中）。
+         * 前端不再做「只勾一个才生效」的特殊处理，否则两组语义会不一致。
          */
+        const yesNoCsv = (arr) => arr.map((v) => (v === 'has' ? 'yes' : 'no')).join(',');
         if (filters.refState && filters.refState.length > 0) {
-            const has = filters.refState.includes('has');
-            const none = filters.refState.includes('none');
-            if (has && !none) params += '&hasRef=yes';
-            else if (none && !has) params += '&hasRef=no';
+            params += `&hasRef=${encodeURIComponent(yesNoCsv(filters.refState))}`;
         }
         if (filters.shareState && filters.shareState.length > 0) {
-            const has = filters.shareState.includes('has');
-            const none = filters.shareState.includes('none');
-            if (has && !none) params += '&hasShare=yes';
-            else if (none && !has) params += '&hasShare=no';
+            params += `&hasShare=${encodeURIComponent(yesNoCsv(filters.shareState))}`;
         }
         if (filters.fileType && filters.fileType.length > 0) {
             params += `&fileType=${encodeURIComponent(filters.fileType.join(','))}`;
@@ -257,12 +254,9 @@ class FileManager {
         if (filters.redirect && filters.redirect.length > 0) {
             params += `&redirect=${encodeURIComponent(filters.redirect.join(','))}`;
         }
-        // 标签有无：has（含标签）/ none（未含标签）
+        // 标签有无：has（含标签）/ none（未含标签）—— v1.2.2 起可同时勾，交给且/或
         if (filters.tags && filters.tags.length > 0) {
-            const has = filters.tags.includes('has');
-            const none = filters.tags.includes('none');
-            if (has && !none) params += '&hasTags=yes';
-            else if (none && !has) params += '&hasTags=no';
+            params += `&hasTags=${encodeURIComponent(yesNoCsv(filters.tags))}`;
         }
         // 标签筛选弹窗：过滤标签 + 「或/且」模式
         if (filters.tagNames && filters.tagNames.length > 0) {
@@ -297,20 +291,14 @@ class FileManager {
         }
         /*
          * v1.2.1：文件剪辑 / 文件MD5 两组筛选。
-         * 写法与上面的「文件引用 / 文件共用」一致 —— 只勾一个才传参，两个都勾等于不筛。
-         * 这样在「同时(all)」模式下不会变成一个永不可能满足的条件。
+         * v1.2.2（需求）：取消「只勾一个才传」的门槛 —— 与所有其它分区一样全量传参，
+         * 由下方「且/或」决定语义（且模式下两个都勾自然筛不出东西，那是用户的选择）。
          */
         if (filters.edited && filters.edited.length > 0) {
-            const yes = filters.edited.includes('edited');
-            const no = filters.edited.includes('unedited');
-            if (yes && !no) params += '&edited=edited';
-            else if (no && !yes) params += '&edited=unedited';
+            params += `&edited=${encodeURIComponent(filters.edited.join(','))}`;
         }
         if (filters.md5Changed && filters.md5Changed.length > 0) {
-            const changed = filters.md5Changed.includes('changed');
-            const unchanged = filters.md5Changed.includes('unchanged');
-            if (changed && !unchanged) params += '&md5Changed=changed';
-            else if (unchanged && !changed) params += '&md5Changed=unchanged';
+            params += `&md5Changed=${encodeURIComponent(filters.md5Changed.join(','))}`;
         }
         // v2.8.9：尺寸筛选（快捷预设 + 自定义宽高）
         if (filters.dimPreset) params += `&dimPreset=${encodeURIComponent(filters.dimPreset)}`;

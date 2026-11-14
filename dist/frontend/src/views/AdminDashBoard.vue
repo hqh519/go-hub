@@ -7112,16 +7112,27 @@ html.dark .trash-btn.is-active,
 }
 /*
  * v1.1.9.4（需求）：相册格子的选中圆圈。
- * 几何与卡片视图的 .card-select 对齐（18px 圆形、top 3px），
- * v1.2.1（需求）：右上角太靠里容易误触，右边距收到 3px，与上边距对称贴角。
+ * 几何与卡片视图的 .card-select 对齐（18px 圆形），
+ * v1.2.1（需求）：右边距收到 3px，与上边距对称贴角。
+ * v1.2.2（需求）：上 / 右各 2px；**热区必须收成圆圈本身** ——
+ *   el-checkbox 默认是 32px 高的 label，比 18px 圆圈大一圈，
+ *   于是「点圆圈外围」也会命中 label 触发选中（移动端尤其容易误触）。
+ *   这里把 label 的盒子直接锁成 18×18，padding / min-height 全部清零，
+ *   并把内部的 input / label 占位一起收掉，保证只有圆圈本体可点。
  * 显隐三态：默认透明 → 悬停浮现 → 已有选中则常显。
  */
 .album-select {
     position: absolute;
-    top: 3px;
-    right: 3px;
+    top: 2px;
+    right: 2px;
     z-index: 3;
+    display: block;
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    min-height: 18px;
     margin: 0;
+    padding: 0;
     opacity: 0;
     /* 桌面端：看不见就不该被点到（鼠标移入后 opacity 变 1 才可点） */
     pointer-events: none;
@@ -7139,6 +7150,15 @@ html.dark .trash-btn.is-active,
     .album-select {
         pointer-events: auto;
     }
+}
+.album-select :deep(.el-checkbox__input) {
+    display: block;
+    width: 18px;
+    height: 18px;
+}
+/* el-checkbox 会额外渲染一个空 label 撑宽盒子，这里直接不占位 */
+.album-select :deep(.el-checkbox__label) {
+    display: none;
 }
 .album-select :deep(.el-checkbox__inner) {
     width: 18px !important;

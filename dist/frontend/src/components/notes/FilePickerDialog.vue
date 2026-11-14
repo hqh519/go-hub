@@ -56,7 +56,14 @@
                 <template #dropdown>
                     <el-dropdown-menu class="sort-dropdown-menu">
                         <div class="sort-order-wrapper">
-                            <el-radio-group v-model="sortOrder" size="small" @change="onSortOrder">
+                            <!--
+                                v1.2.2（需求）：升 / 降序切换不生效的修复。
+                                原来绑的是 onSortOrder，而 v-model 会先把 sortOrder 改成新值，
+                                方法里 `if (this.sortOrder === next) return` 永远成立 → 直接返回，
+                                列表根本没重取，看起来就是"只有一种顺序"。
+                                这里直接调 applySort（重取由它负责），不再做无意义的相等判断。
+                            -->
+                            <el-radio-group v-model="sortOrder" size="small" @change="applySort">
                                 <el-radio-button label="asc">{{ $t('dashboard.sortAsc') }}</el-radio-button>
                                 <el-radio-button label="desc">{{ $t('dashboard.sortDesc') }}</el-radio-button>
                             </el-radio-group>
@@ -828,13 +835,10 @@ export default {
             this.sortField = field;
             this.applySort();
         },
-        /** 切换升 / 降序 */
-        onSortOrder(order) {
-            const next = order === 'asc' ? 'asc' : 'desc';
-            if (this.sortOrder === next) return;
-            this.sortOrder = next;
-            this.applySort();
-        },
+        /**
+         * v1.2.2：升 / 降序由 @change 直接调 applySort —— 这里不再保留 onSortOrder。
+         * 参照物是「取数」，不是「值有没有变」：v-model 已经把值改掉了，再比一次必然相等。
+         */
         applySort() {
             this.rememberPosition();
             this.closePreview();

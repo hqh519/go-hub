@@ -549,7 +549,7 @@ let LocalFilesController = class LocalFilesController {
         try {
             rows = await prisma_1.prisma.fileRecord.findMany({
                 where: { status: 'active', OR: [{ size: { in: sizes } }, { originalSize: { in: sizes } }] },
-                select: { name: true, size: true, originalSize: true, md5: true, originalMd5: true },
+                select: { name: true, size: true, originalSize: true, md5: true, originalMd5: true, editedAt: true },
                 take: 500,
             });
         }
@@ -566,8 +566,10 @@ let LocalFilesController = class LocalFilesController {
                 originalSize: Number(r.originalSize) || 0,
                 md5: r.md5 || '',
                 originalMd5: r.originalMd5 || '',
+                editedAt: r.editedAt || null,
             };
-            for (const s of new Set([cand.size, cand.originalSize])) {
+            const buckets = cand.editedAt ? [cand.size] : [cand.size, cand.originalSize];
+            for (const s of new Set(buckets)) {
                 if (!s)
                     continue;
                 if (!bySize.has(s))
