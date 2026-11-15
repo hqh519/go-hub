@@ -693,6 +693,7 @@ let UploadService = class UploadService {
             channelType: q.channelType,
             uploader: q.uploader,
             tokenId: q.tokenId,
+            instanceId: q.instanceId,
         });
         if (q.preferredId && !list.some((c) => c.id === q.preferredId)) {
             const extra = await this.storageChannel.findById(q.preferredId);
@@ -713,6 +714,7 @@ let UploadService = class UploadService {
             explicitId: q.explicitId,
             uploader: q.uploader,
             tokenId: q.tokenId,
+            instanceId: q.instanceId,
         });
         if (q.preferredId && !list.some((c) => c.id === q.preferredId)) {
             const extra = await this.storageChannel.findById(q.preferredId);
@@ -1319,6 +1321,7 @@ let UploadService = class UploadService {
                 channelType: opts.uploadChannel,
                 uploader: opts.ignoreUploaderChannel ? undefined : opts.uploader,
                 tokenId: opts.tokenId,
+                instanceId: opts.instanceId,
             });
         }
         catch (err) {
@@ -1650,6 +1653,7 @@ let UploadService = class UploadService {
                     explicitId: opts.backupChannelId,
                     uploader: opts.ignoreUploaderChannel ? undefined : opts.uploader,
                     tokenId: opts.tokenId,
+                    instanceId: opts.instanceId,
                 });
                 if (!backup || backup.id === usedChannel.id)
                     return;
@@ -2102,14 +2106,15 @@ let UploadService = class UploadService {
             include: { copies: true },
         });
         const cache = new Map();
-        const backupFor = async (uploader) => {
-            const k = String(uploader || '');
-            if (!cache.has(k))
-                cache.set(k, await this.resolveBackupChannel({ uploader: k || undefined }));
+        const backupFor = async (uploader, instanceId) => {
+            const k = `${String(uploader || '')}\u0000${String(instanceId || '')}`;
+            if (!cache.has(k)) {
+                cache.set(k, await this.resolveBackupChannel({ uploader: uploader || undefined, instanceId: instanceId || undefined }));
+            }
             return cache.get(k) ?? null;
         };
         for (const rec of records) {
-            const backup = await backupFor(rec.uploader);
+            const backup = await backupFor(rec.uploader, rec.instanceId);
             if (!backup) {
                 fail += 1;
                 continue;
@@ -2456,15 +2461,16 @@ let UploadService = class UploadService {
             orderBy: { createdAt: 'desc' },
         });
         const cache = new Map();
-        const backupFor = async (uploader) => {
-            const k = String(uploader || '');
-            if (!cache.has(k))
-                cache.set(k, await this.resolveBackupChannel({ uploader: k || undefined }));
+        const backupFor = async (uploader, instanceId) => {
+            const k = `${String(uploader || '')}\u0000${String(instanceId || '')}`;
+            if (!cache.has(k)) {
+                cache.set(k, await this.resolveBackupChannel({ uploader: uploader || undefined, instanceId: instanceId || undefined }));
+            }
             return cache.get(k) ?? null;
         };
         const pending = [];
         for (const rec of records) {
-            const backup = await backupFor(rec.uploader);
+            const backup = await backupFor(rec.uploader, rec.instanceId);
             if (!backup)
                 continue;
             if (rec.copies.some((c) => c.channelId === backup.id && c.status === 'active'))

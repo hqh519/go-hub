@@ -6091,6 +6091,12 @@ export class UserConfigController {
     const s = this.settings;
     // 当前登录账户 —— 用于解析「用户管理」里为该账户指定的主/备存储渠道
     const uploader = currentSession(req)?.user || '';
+    /*
+     * v1.3.1.1：当前浏览实例（前端切换后放在 query 里带上，空 = 默认实例）。
+     * 实例属性里可以单独指定主/备渠道，优先级 实例 > 账户 > 全局 ——
+     * 上传设置页要展示"当前实际生效的是哪个渠道"，就必须知道实例这一层。
+     */
+    const cfgInstanceId = String((req.query as any)?.instanceId || '').trim();
     const domain = (await s.getServerDomain()) || signOrigin(req);
     /*
      * v3.0.0（R16）：当前账户是否开启两步验证。
@@ -6206,8 +6212,12 @@ export class UserConfigController {
        * 登录账户在「用户管理」里指定了渠道就用指定的，否则用后台「上传设置」里的全局渠道。
        * 上传页「上传设置」用它展示，并作为「未指定渠道」时的默认上传渠道。
        */
-      mainChannel: this.channelBrief(await this.storageChannel.getStorageChannel(uploader, 'main')),
-      backupChannel: this.channelBrief(await this.storageChannel.getStorageChannel(uploader, 'backup')),
+      mainChannel: this.channelBrief(
+        await this.storageChannel.getStorageChannel(uploader, 'main', { instanceId: cfgInstanceId }),
+      ),
+      backupChannel: this.channelBrief(
+        await this.storageChannel.getStorageChannel(uploader, 'backup', { instanceId: cfgInstanceId }),
+      ),
       allowUpload: await bool('allowUpload', true),
       // 上传默认值
       defaultUploadNameType: pv('defaultUploadNameType', 'default'),

@@ -1129,7 +1129,7 @@ import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import { uploadOne } from '@/utils/uploadTarget';
 import { fileManager } from '@/utils/fileManager';
 // v1.1.3：实例切换密码守卫（三个页面共用同一份实现）
-import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
+import { ensureInstanceUnlocked, revokeInstanceUnlock } from '@/utils/instanceSwitch';
 import { thumbUrl } from '@/utils/thumb';
 import { registerLayer, unregisterLayer, bindDialogLayers, trackMessageBox, setEmptyStackBackHandler } from '@/utils/layerStack';
 // 文件详情通用数据构造器（与「历史记录」页共用同一套模板 + 同一套链接拼装逻辑）
@@ -5308,6 +5308,8 @@ methods: {
         const next = id == null ? '' : String(id);
         const ok = await ensureInstanceUnlocked(next);
         if (!ok) return;
+        // v1.3.1.1：切走时作废离开实例的通行证（切回来要重新验证）
+        await revokeInstanceUnlock(this.instanceId);
         this.showInstanceDialog = false;
         this.applyInstance(next);
     },

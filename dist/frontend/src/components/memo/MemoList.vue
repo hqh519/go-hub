@@ -358,6 +358,19 @@ export default {
     border-radius: 6px;
     cursor: pointer;
 }
+/*
+ * v1.3.1.1（需求）：每篇笔记之间加一条分隔线。
+ * 用 border-bottom 而不是给容器加 gap：列表是连续阅读的，
+ * 分隔线要贴着条目走，选中态的高亮块才不会被切断。
+ * 最后一项不加线（否则列表底部会多出一条悬空的横线）。
+ */
+.ml-item {
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    border-radius: 0;
+}
+.ml-item:last-child {
+    border-bottom: none;
+}
 .ml-item:hover {
     background: var(--el-fill-color-light);
 }

@@ -632,8 +632,25 @@
         <el-form-item :label="$t('userEdit.attrName')">
           <el-input v-model="attrForm.name" maxlength="40" show-word-limit />
         </el-form-item>
-        <el-form-item :label="$t('userEdit.attrNote')">
-          <el-input v-model="attrForm.note" type="textarea" :rows="2" maxlength="200" show-word-limit />
+        <!--
+          v1.3.1.1（需求）：实例级默认存储渠道。
+          选项与「存储渠道」卡片里的账户级主/备渠道完全同一份（channelOptions，
+          只列当前账户有权的、且排除本地文件），加载逻辑也是同一个接口。
+          留空 = 跟随账户设置，账户也没配就落到系统全局渠道。
+        -->
+        <el-form-item :label="$t('userManage.mainChannel')">
+          <el-select v-model="attrForm.channelMain" class="full-width" clearable :placeholder="$t('userEdit.channelFollowGlobal')">
+            <el-option :label="$t('userEdit.channelFollowGlobal')" value="" />
+            <el-option v-for="c in channelOptions" :key="`im-${c.id}`" :label="`${c.code} · ${c.name}`" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="$t('userManage.backupChannel')">
+          <el-select v-model="attrForm.channelBackup" class="full-width" clearable :placeholder="$t('userEdit.channelFollowGlobal')">
+            <el-option :label="$t('userEdit.channelFollowGlobal')" value="" />
+            <el-option :label="$t('userEdit.channelNone')" value="none" />
+            <el-option v-for="c in channelOptions" :key="`ib-${c.id}`" :label="`${c.code} · ${c.name}`" :value="c.id" />
+          </el-select>
+          <p class="hint attr-hint">{{ $t('userEdit.attrChannelHint') }}</p>
         </el-form-item>
         <el-divider />
         <el-form-item :label="$t('userEdit.attrSwitchLock')">
@@ -659,6 +676,11 @@
           </el-form-item>
         </template>
         <p class="hint attr-hint">{{ $t('userEdit.attrSwitchLockHint') }}</p>
+        <!-- v1.3.1.1（需求）：备注移到最下面 —— 它是低频信息，不该占着最显眼的位置 -->
+        <el-divider />
+        <el-form-item :label="$t('userEdit.attrNote')">
+          <el-input v-model="attrForm.note" type="textarea" :rows="2" maxlength="200" show-word-limit />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showAttrDialog = false">{{ $t('common.cancel') }}</el-button>
@@ -1444,7 +1466,9 @@ export default {
                 note: row.note || '',
                 lockEnabled: false,
                 mode: 'custom',
-                password: ''
+                password: '',
+                channelMain: '',
+                channelBackup: ''
             };
             this.showAttrDialog = true;
             try {
@@ -1458,7 +1482,10 @@ export default {
                     note: it.note || '',
                     lockEnabled: !!it.switchLock?.enabled,
                     mode: it.switchLock?.mode || 'custom',
-                    password: ''
+                    password: '',
+                    // v1.3.1.1：实例级主/备渠道（空串 = 跟随账户/全局）
+                    channelMain: it.channelMain || '',
+                    channelBackup: it.channelBackup || ''
                 };
                 this.attrHasPassword = !!it.switchLock?.hasCustomPassword;
             } catch (e) {
@@ -1503,7 +1530,14 @@ export default {
             try {
                 const res = await axios.patch(
                     this.instanceUrl(`/api/instances/${encodeURIComponent(row.id)}/attributes`),
-                    { name, note: String(this.attrForm.note || ''), switchLock },
+                    {
+                        name,
+                        note: String(this.attrForm.note || ''),
+                        switchLock,
+                        // v1.3.1.1：实例默认存储渠道；空串会清掉该级配置，回落到账户/全局
+                        channelMain: String(this.attrForm.channelMain || ''),
+                        channelBackup: String(this.attrForm.channelBackup || ''),
+                    },
                     { withCredentials: true },
                 );
                 const it = res.data || {};

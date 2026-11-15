@@ -42,11 +42,16 @@
                     <el-switch v-else-if="setting.type === 'boolean'" v-model="setting.value" :disabled="setting.fixed"></el-switch>
                     <!-- 如果是textarea类型则使用可拖拽文本域 -->
                     <!-- 默认行高：公告 4 行、页脚传送门链接 8 行、其余 2 行 -->
+                    <!--
+                        v1.3.1.1：不再给公告单独设 maxRows —— 之前封顶 8 行，
+                        内容一长就在框里滚，和「上传页背景图」那种「写多少长多高」
+                        的手感不一致。现在全部按内容自动增高。
+                    -->
                     <el-input
                         v-else-if="setting.type === 'textarea'"
                         v-model="setting.value"
                         type="textarea"
-                        :autosize="{ minRows: textareaMinRows(setting), maxRows: setting.id === 'announcement' ? 8 : undefined }"
+                        :autosize="{ minRows: textareaMinRows(setting) }"
                         resize="vertical"
                         :disabled="setting.fixed"
                         :placeholder="localized(setting, 'placeholder')"
@@ -367,8 +372,9 @@ mounted() {
     --el-switch-on-color: var(--el-color-primary);
 }
 
+/* 手动拖拽出来的高度当「最小高度」用：内容更长时仍然可以继续长高 */
 .announcement-manual-height :deep(.el-textarea__inner) {
-    height: var(--announcement-manual-height) !important;
+    min-height: var(--announcement-manual-height) !important;
 }
 
 .announcement-refresh-option {

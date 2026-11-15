@@ -166,6 +166,87 @@ export class MemoController {
     return { success: true, data };
   }
 
+  /*
+   * ── 笔记标签（v1.3.1.1） ──
+   * 候选列表是静态段，必须排在 `:id/tags` 之前，否则 `candidates` 会被当成 id。
+   */
+  @Get('tags/candidates')
+  async tagCandidates(@Req() req: Request, @Query() q: Record<string, string>) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.noteTagCandidates(viewer, q.instanceId || '', q.keyword || '');
+    return { success: true, data };
+  }
+
+  @Get(':id/tags')
+  async listTags(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.listNoteTags(viewer, instanceId || '', id);
+    if ('error' in data && data.error) this.fail(String(data.error), HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  /** 覆盖式保存标签（整行提交） */
+  @Put(':id/tags')
+  async setTags(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.setNoteTags(viewer, String(body.instanceId ?? ''), id, body.tagNames);
+    if ('error' in data && data.error) this.fail(String(data.error), HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  /*
+   * ── 历史快照（v1.3.1.1） ──
+   * 同样排在 `@Get(':id')` 之前。`:id/history/:hid` 的静态段比 `:id` 更长，
+   * Nest 会优先匹配更具体的路由，但为稳妥仍统一放在前面。
+   */
+  @Post(':id/history')
+  async pushHistory(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const instanceId = String(body.instanceId ?? '');
+    const data = await this.memo.pushHistory(viewer, instanceId, id, {
+      title: body.title,
+      content: body.content,
+      version: body.version,
+    });
+    if ('error' in data && data.error) this.fail(String(data.error), HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  @Get(':id/history')
+  async listHistory(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.listHistory(viewer, instanceId || '', id);
+    if ('error' in data && data.error) this.fail(String(data.error), HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  @Get(':id/history/:hid')
+  async getHistory(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('hid') hid: string,
+    @Query('instanceId') instanceId?: string,
+  ) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.getHistory(viewer, instanceId || '', id, hid);
+    if ('error' in data && data.error) this.fail(String(data.error), HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  /** 用某一版历史覆盖当前内容（恢复前会把当前内容先存一条历史） */
+  @Post(':id/history/:hid/restore')
+  async restoreHistory(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('hid') hid: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.restoreHistory(viewer, String(body?.instanceId ?? ''), id, hid);
+    if ('error' in data && data.error) this.fail(String(data.error), HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
   /** 全量重建（运维用；正常保存会自动增量维护） */
   @Post('rebuild-index')
   async rebuildAll(@Req() req: Request, @Body() body: Record<string, unknown>) {

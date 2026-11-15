@@ -105,6 +105,8 @@ export class InstancesController {
       name?: string;
       note?: string;
       switchLock?: { enabled?: boolean; mode?: string; password?: string } | null;
+      channelMain?: string;
+      channelBackup?: string;
     },
     @Req() req: Request,
     @Res() res: Response,
@@ -135,6 +137,19 @@ export class InstancesController {
     const r = await this.svc.verifySwitch(id, this.me(req), body || {});
     if (r.error) return this.fail(res, r.error, 403);
     return res.json(r);
+  }
+
+  /**
+   * v1.3.1.1（需求）：切离实例时作废该实例的通行证。
+   *
+   * 「切出去再切回来要重新输密码」靠它落地 —— 前端在切换动作里对**离开的那个实例**
+   * 调一次，服务端把它从通行证表里摘掉，切回来时 switch-lock 就重新报 locked=true。
+   * 默认实例（空 id）没有实例记录，直接返回 ok。
+   */
+  @Post(':id/revoke-lock')
+  @HttpCode(200)
+  async revokeLock(@Param('id') id: string, @Req() req: Request) {
+    return this.svc.revokeUnlock(this.me(req), id);
   }
 
   /** 删除实例 —— 仅创建者；实例下仍有文件（含回收站）时 400 拒绝 */

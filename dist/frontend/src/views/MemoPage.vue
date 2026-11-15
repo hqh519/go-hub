@@ -6,10 +6,45 @@
         移动端（<=900px）改成「列表 → 编辑」两级，目录放进抽屉：
         硬塞三栏在手机上每栏只有 100px 宽，谁也看不清。
     -->
-    <div class="memo-page" :class="{ 'is-mobile': isMobile }">
+    <div
+        ref="pageEl"
+        class="memo-page"
+        :class="{ 'is-mobile': isMobile, 'is-topbar-hidden': topbarHidden }"
+    >
         <div class="memo-topbar">
-            <DashboardTabs active-tab="memo" />
+            <DashboardTabs active-tab="memo">
+                <!--
+                    v1.3.1.1（需求）：页面切换下拉尾部加「切换实例」，
+                    与「我的发布」/「瞬间管理」完全一致（同一条 .page-option + 序号角标）。
+                -->
+                <template #extra-item="{ close }">
+                    <div class="page-option-sep" aria-hidden="true"></div>
+                    <button
+                        type="button"
+                        class="page-option admin-page-instance-option"
+                        @click.stop="openInstanceFromPageSwitch(close)"
+                    >
+                        <span v-if="instanceSeq > 0" class="admin-page-instance-seq">{{ instanceSeq }}</span>
+                        <font-awesome-icon v-else icon="server" class="admin-page-instance-icon" />
+                        <span class="admin-page-instance-text">{{ $t('instancePicker.title') }}</span>
+                    </button>
+                </template>
+            </DashboardTabs>
             <div class="memo-topbar-right">
+                <!--
+                    v1.3.1.1：移动端编辑态原来靠顶栏下面那一条「返回 + 标题」回去，
+                    那条已被需求移除，所以把「返回列表」收进顶栏右侧 —— 不然手机上
+                    进到编辑器就再也回不到列表了。
+                -->
+                <button
+                    v-if="isMobile && editingId"
+                    type="button"
+                    class="memo-icon-btn"
+                    :title="$t('common.back')"
+                    @click="backToList"
+                >
+                    <font-awesome-icon icon="chevron-left" />
+                </button>
                 <button v-if="isMobile" type="button" class="memo-icon-btn" :title="$t('memo.folders')" @click="treeDrawer = true">
                     <font-awesome-icon icon="folder-tree" />
                 </button>
@@ -43,18 +78,14 @@
 
             <!-- 右：编辑器 -->
             <main v-show="!isMobile || editingId" class="memo-col memo-col-editor">
-                <div v-if="isMobile && editingId" class="memo-mobile-bar">
-                    <button type="button" class="memo-icon-btn" @click="backToList">
-                        <font-awesome-icon icon="chevron-left" />
-                    </button>
-                    <span class="memo-mobile-title">{{ currentNote?.title || $t('memo.untitled') }}</span>
-                </div>
+                <!-- v1.3.1.1（需求）：移动端这里原来有一条「返回 + 标题」的横条，已移除 -->
                 <MemoEditor
                     v-if="currentNote"
                     ref="editor"
                     :note="currentNote"
                     :instance-id="instanceId"
                     :toolbar-config="editorSettings.toolbarLines"
+                    :editor-config="editorSettings"
                     @saved="onSaved"
                     @reload="reloadNote"
                     @open-note="openNote"
@@ -74,6 +105,15 @@
             <MemoTree v-model:active="activeFolderDrawer" :instance-id="instanceId" @loaded="onTreeLoaded" />
         </el-drawer>
 
+        <!-- v1.3.1.1：切换实例弹窗（与「我的发布」/「瞬间管理」同一个组件） -->
+        <InstanceSwitchDialog
+            v-model="showInstanceDialog"
+            :instance-id="instanceId"
+            :instances="instances"
+            @switch="switchInstanceTo"
+            @manage="openInstanceManagement"
+        />
+
         <!-- 编辑器设置 -->
         <el-dialog v-model="settingsVisible" :title="$t('memo.editorSettings')" width="560px" append-to-body class="memo-settings-dialog">
             <div class="ms-field">
@@ -84,6 +124,34 @@
                     {{ $t('memo.toolbarAvail') }}：<code>{{ availableTokens }}</code>
                 </p>
             </div>
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.inputToolsConfig') }}</label>
+                <p class="ms-tip">{{ $t('memo.inputToolsTip') }}</p>
+                <textarea v-model="settingsDraft.inputTools" class="ms-textarea" rows="3" spellcheck="false"></textarea>
+            </div>
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.slashToolsConfig') }}</label>
+                <p class="ms-tip">{{ $t('memo.slashToolsTip') }}</p>
+                <textarea v-model="settingsDraft.slashTools" class="ms-textarea" rows="4" spellcheck="false"></textarea>
+            </div>
+            <div class="ms-field ms-row">
+                <div>
+                    <label class="ms-label">{{ $t('memo.colorMode') }}</label>
+                    <p class="ms-tip">{{ $t('memo.colorModeTip') }}</p>
+                </div>
+                <el-select v-model="settingsDraft.theme" style="width: 140px">
+                    <el-option :label="$t('memo.themeAuto')" value="auto" />
+                    <el-option :label="$t('memo.themeLight')" value="light" />
+                    <el-option :label="$t('memo.themeDark')" value="dark" />
+                </el-select>
+            </div>
+            <div class="ms-field ms-row">
+                <div>
+                    <label class="ms-label">{{ $t('memo.historyInterval') }}</label>
+                    <p class="ms-tip">{{ $t('memo.historyIntervalTip') }}</p>
+                </div>
+                <el-input-number v-model="settingsDraft.historyInterval" :min="1" :max="120" :step="1" controls-position="right" style="width: 140px" />
+            </div>
             <div class="ms-field ms-row">
                 <div>
                     <label class="ms-label">{{ $t('memo.blockIds') }}</label>
@@ -91,6 +159,7 @@
                 </div>
                 <el-switch v-model="settingsDraft.blockIds" />
             </div>
+            <p class="ms-tip ms-owner">{{ $t('memo.settingsPerUser') }}</p>
             <template #footer>
                 <el-button @click="settingsVisible = false">{{ $t('common.cancel') }}</el-button>
                 <el-button type="primary" :loading="settingsSaving" @click="saveSettings">{{ $t('common.confirm') }}</el-button>
@@ -103,18 +172,19 @@
 import { ElMessage } from 'element-plus';
 import axios from '@/utils/axios';
 import DashboardTabs from '@/components/DashboardTabs.vue';
+import InstanceSwitchDialog from '@/components/InstanceSwitchDialog.vue';
 import MemoTree from '@/components/memo/MemoTree.vue';
 import MemoList from '@/components/memo/MemoList.vue';
 import MemoEditor from '@/components/memo/MemoEditor.vue';
 import { DEFAULT_TOOLBAR_LINES, TOOLBAR_TOKENS } from '@/utils/memoEditorConfig';
 import { setMemoInstance, fetchNote, createNote as apiCreateNote, memoError } from '@/utils/memoApi';
 import { excerptOf } from '@/utils/markdown';
-import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
+import { ensureInstanceUnlocked, revokeInstanceUnlock } from '@/utils/instanceSwitch';
 import { setEmptyStackBackHandler } from '@/utils/layerStack';
 
 export default {
     name: 'MemoPage',
-    components: { DashboardTabs, MemoTree, MemoList, MemoEditor },
+    components: { DashboardTabs, MemoTree, MemoList, MemoEditor, InstanceSwitchDialog },
     data() {
         return {
             isMobile: false,
@@ -128,8 +198,28 @@ export default {
             treeDrawer: false,
             settingsVisible: false,
             settingsSaving: false,
-            editorSettings: { toolbarLines: DEFAULT_TOOLBAR_LINES.slice(), blockIds: false },
-            settingsDraft: { toolbar: '', blockIds: false },
+            editorSettings: {
+                toolbarLines: DEFAULT_TOOLBAR_LINES.slice(),
+                blockIds: false,
+                // v1.3.1.1：配色 / 输入工具 / 斜杠菜单 / 历史间隔（与后端 normalizeEditorSettings 同结构）
+                theme: 'auto',
+                inputLines: [],
+                slashLines: [],
+                historyInterval: 3,
+            },
+            settingsDraft: {
+                toolbar: '',
+                blockIds: false,
+                theme: 'auto',
+                inputTools: '',
+                slashTools: '',
+                historyInterval: 3,
+            },
+            /* ── v1.3.1.1：切换实例 + 顶栏随滚动显隐 ── */
+            showInstanceDialog: false,
+            instances: [],
+            topbarHidden: false,
+            lastScrollTop: 0,
         };
     },
     computed: {
@@ -157,6 +247,13 @@ export default {
         },
         editingId() {
             return this.currentNote?.id || '';
+        },
+        /** 当前实例在「创建时间升序」里的序号（1-based；默认实例为 0，不显示角标） */
+        instanceSeq() {
+            const cur = String(this.instanceId || '');
+            if (!cur) return 0;
+            const idx = this.instances.findIndex((i) => String(i.id) === cur);
+            return idx >= 0 ? idx + 1 : 0;
         },
     },
     watch: {
@@ -192,6 +289,12 @@ export default {
         // 不 await：实例锁的解锁弹窗可能等用户输入，等它会拖慢整页首屏
         ensureInstanceUnlocked(this.instance).catch(() => {});
         setMemoInstance(this.instance);
+        // v1.3.1.1：顶栏随滚动显隐 —— 用捕获阶段监听，滚动发生在列表/编辑器内部也能收到
+        this.$nextTick(() => {
+            const el = this.$refs.pageEl;
+            if (el) el.addEventListener('scroll', this.onPageScroll, true);
+        });
+        this.fetchInstances();
         await this.loadSettings();
         // 深链：/memo?id=xxx 直接打开某篇（分享链接、刷新后恢复）
         const id = String(this.$route?.query?.id || '');
@@ -199,6 +302,8 @@ export default {
     },
     beforeUnmount() {
         window.removeEventListener('resize', this.syncViewport);
+        const el = this.$refs.pageEl;
+        if (el) el.removeEventListener('scroll', this.onPageScroll, true);
         // 兜底是全局单例，离开页面必须摘掉 —— 否则别的页面按 Esc 会莫名其妙没反应
         setEmptyStackBackHandler(null);
     },
@@ -236,6 +341,93 @@ export default {
                 delete q.id;
                 this.$router.replace({ path: '/memo', query: q }).catch(() => {});
             }
+        },
+        /* ── v1.3.1.1：切换实例（复刻「我的发布」） ───────────────── */
+
+        /** 拉本人可见的实例列表（不含默认实例），按创建时间升序 —— 与瞬间页同一口径 */
+        async fetchInstances() {
+            try {
+                const res = await axios.get('/api/instances');
+                const list = Array.isArray(res.data) ? res.data : [];
+                this.instances = [...list].sort((a, b) => {
+                    const ta = new Date(a.createdAt).getTime() || 0;
+                    const tb = new Date(b.createdAt).getTime() || 0;
+                    return ta - tb;
+                });
+            } catch (e) {
+                this.instances = [];
+            }
+        },
+        openInstanceFromPageSwitch(closeFn) {
+            this.showInstanceDialog = true;
+            if (typeof closeFn === 'function') closeFn();
+        },
+        /**
+         * 切换实例。
+         *
+         * 与「我的发布」完全一致：先过切换密码守卫 → 作废离开实例的通行证 →
+         * 写 localStorage → 整页重载（所有与实例相关的数据重新按新实例拉一遍，
+         * 不做「局部刷新」，避免漏掉某处缓存导致串实例）。
+         */
+        async switchInstanceTo(id) {
+            const next = id == null ? '' : String(id);
+            if (next === this.instanceId) {
+                this.showInstanceDialog = false;
+                return;
+            }
+            const ok = await ensureInstanceUnlocked(next);
+            if (!ok) return;
+            await revokeInstanceUnlock(this.instanceId);
+            try {
+                localStorage.setItem('gohub_instance_id', next);
+            } catch (e) {
+                /* 隐私模式忽略 */
+            }
+            this.instance = next;
+            this.showInstanceDialog = false;
+            this.$message.success(this.$t('instancePicker.switchSuccess'));
+            setTimeout(() => window.location.reload(), 600);
+        },
+        /** 「实例管理」→ 用户编辑页的实例管理锚点（与瞬间页同一入口） */
+        async openInstanceManagement() {
+            const win = window.open('about:blank', '_blank');
+            let url = '/customerConfig';
+            try {
+                const res = await axios.get('/api/manage/users');
+                const list = Array.isArray(res.data) ? res.data : [];
+                const me = this.$store?.getters?.sessionUser || '';
+                const hit = me ? list.find((u) => u && u.username === me) : null;
+                if (hit && hit.id !== undefined && hit.id !== null && hit.id !== '') {
+                    url = `/customerConfig/edit/${encodeURIComponent(hit.id)}?anchor=instances`;
+                }
+            } catch (e) {
+                /* 取不到就退回用户管理列表 */
+            }
+            try {
+                win.location.href = url;
+            } catch (e) {
+                window.open(url, '_blank', 'noopener');
+            }
+        },
+        /**
+         * 顶栏随滚动显隐：下滑超过阈值收起，上滑立即展开。
+         *
+         * 滚动事件来自子容器（列表 / 编辑器正文），用捕获阶段统一收口；
+         * `scroll` 不冒泡，但捕获阶段可以看到 —— 这是不往每个子组件塞回调的最小代价。
+         */
+        onPageScroll(e) {
+            const el = e.target;
+            if (!el || typeof el.scrollTop !== 'number') return;
+            const top = el.scrollTop;
+            const last = el.__memoLastTop ?? 0;
+            if (Math.abs(top - last) < 8) return;
+            el.__memoLastTop = top;
+            // 顶部 40px 内一律展开，避免刚滚一点就抖
+            if (top <= 40) {
+                this.topbarHidden = false;
+                return;
+            }
+            this.topbarHidden = top > last;
         },
         async createNote() {
             try {
@@ -283,16 +475,34 @@ export default {
                 const lines = Array.isArray(editor.toolbarLines) && editor.toolbarLines.length
                     ? editor.toolbarLines.map((x) => String(x || ''))
                     : DEFAULT_TOOLBAR_LINES.slice();
-                this.editorSettings = { toolbarLines: lines, blockIds: editor.blockIds === true };
+                this.editorSettings = {
+                    toolbarLines: lines,
+                    blockIds: editor.blockIds === true,
+                    theme: editor.theme === 'light' || editor.theme === 'dark' ? editor.theme : 'auto',
+                    inputLines: Array.isArray(editor.inputLines) ? editor.inputLines.map((x) => String(x || '')) : [],
+                    slashLines: Array.isArray(editor.slashLines) ? editor.slashLines.map((x) => String(x || '')) : [],
+                    historyInterval: Number(editor.historyInterval) > 0 ? Number(editor.historyInterval) : 3,
+                };
             } catch (e) {
                 // 读不到就用默认值，不打扰用户
-                this.editorSettings = { toolbarLines: DEFAULT_TOOLBAR_LINES.slice(), blockIds: false };
+                this.editorSettings = {
+                    toolbarLines: DEFAULT_TOOLBAR_LINES.slice(),
+                    blockIds: false,
+                    theme: 'auto',
+                    inputLines: [],
+                    slashLines: [],
+                    historyInterval: 3,
+                };
             }
         },
         openSettings() {
             this.settingsDraft = {
                 toolbar: this.editorSettings.toolbarLines.join('\n'),
                 blockIds: this.editorSettings.blockIds,
+                theme: this.editorSettings.theme || 'auto',
+                inputTools: (this.editorSettings.inputLines || []).join('\n'),
+                slashTools: (this.editorSettings.slashLines || []).join('\n'),
+                historyInterval: this.editorSettings.historyInterval || 3,
             };
             this.settingsVisible = true;
         },
@@ -303,15 +513,21 @@ export default {
                 .filter(Boolean)
                 .slice(0, 4);
             this.settingsSaving = true;
+            const splitLines = (v) => String(v || '').split('\n').map((x) => x.trim()).filter(Boolean);
+            const editor = {
+                toolbarLines: lines.length ? lines : DEFAULT_TOOLBAR_LINES.slice(),
+                blockIds: !!this.settingsDraft.blockIds,
+                theme: ['auto', 'light', 'dark'].includes(this.settingsDraft.theme) ? this.settingsDraft.theme : 'auto',
+                inputLines: splitLines(this.settingsDraft.inputTools).slice(0, 8),
+                slashLines: splitLines(this.settingsDraft.slashTools).slice(0, 12),
+                historyInterval: Math.min(120, Math.max(1, Number(this.settingsDraft.historyInterval) || 3)),
+            };
             try {
                 await axios.put('/api/notes/settings', {
                     instanceId: this.instanceId,
-                    editor: { toolbarLines: lines.length ? lines : DEFAULT_TOOLBAR_LINES.slice(), blockIds: !!this.settingsDraft.blockIds },
+                    editor,
                 });
-                this.editorSettings = {
-                    toolbarLines: lines.length ? lines : DEFAULT_TOOLBAR_LINES.slice(),
-                    blockIds: !!this.settingsDraft.blockIds,
-                };
+                this.editorSettings = { ...editor };
                 this.settingsVisible = false;
                 ElMessage.success(this.$t('memo.settingsSaved'));
             } catch (e) {
@@ -342,6 +558,74 @@ export default {
     background: var(--el-bg-color);
     border-bottom: 1px solid var(--el-border-color-lighter);
 }
+/* ── v1.3.1.1：顶栏随滚动显隐（下滑收起，上滑展开） ───────────── */
+.memo-topbar {
+    /*
+     * 用 max-height 收起来而不是 transform：transform 只是视觉上移走，
+     * 列表区上方仍留着一条与页面底色不同的空带，看着像「页面坏了」。
+     * 收起时 padding / 边框一起归零，三栏就能顶到窗口最上面。
+     */
+    overflow: hidden;
+    max-height: 64px;
+    transition: max-height 0.22s ease, padding 0.22s ease, opacity 0.18s ease;
+}
+.memo-page.is-topbar-hidden .memo-topbar {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    opacity: 0;
+    border-bottom-color: transparent;
+}
+
+/* ── 页面切换下拉里的「切换实例」条目（与瞬间管理页 / 图床管理页同款） ── */
+.memo-page :deep(.page-option-sep) {
+    flex: 0 0 auto;
+    height: 1px;
+    margin: 6px 4px;
+    background: var(--el-border-color-lighter);
+    opacity: 0.9;
+}
+.memo-page :deep(.admin-page-instance-option) {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    box-sizing: border-box;
+    height: var(--page-option-height, 37px);
+    padding: 0 12px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--el-text-color-primary);
+    font-family: inherit;
+    font-size: var(--page-option-font-size, 15px);
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.memo-page :deep(.admin-page-instance-option:hover) {
+    color: var(--el-color-primary);
+}
+.memo-page :deep(.admin-page-instance-seq) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: var(--el-color-primary);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 16px;
+}
+.memo-page :deep(.admin-page-instance-icon) {
+    font-size: 13px;
+    opacity: 0.75;
+}
+
 .memo-topbar-right {
     margin-left: auto;
     display: flex;

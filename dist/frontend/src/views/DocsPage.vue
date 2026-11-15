@@ -1070,6 +1070,25 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1311',
+      title: '五十一、v1.3.1.1 更新要点',
+      intro: '这一版把编辑器当成主战场：历史快照、标签、配色、工具配置体系全部补齐，编辑区新增对齐 / 缩进 / 换行 / 段落 / 链接提取与整套表格操作；笔记管理页支持切换实例、顶栏随滚动显隐、目录树关系线；实例可以单独指定存储渠道；图片剪辑页补齐翻转 / 图形 / 马赛克。',
+      items: [
+        { t: '历史记录', d: '编辑过程中会按设定间隔自动存快照，每篇最多 100 条，超出自动删最旧的。点标题下方的版本号打开历史，可以预览任意一版并一键恢复 —— 恢复前会把当前内容先存成一条，所以「恢复」本身也能再撤回来。间隔在编辑器设置里改。' },
+        { t: '标题区重排 + 标签', d: '标题移到工具栏下方，下面依次是「版本 / 更新时间 / 字数 / 字符数」和标签行。字数只数中文与英文字母（不含数字、标点、表情）。标签交互与瞬间发布页一致：输入即查候选，空格或回车成标签，退格删最后一个。这三块都随正文滚动，不吸附。' },
+        { t: '编辑器设置升级', d: '新增配色模式（跟随全局 / 白天 / 黑夜）、输入工具配置、/ 菜单工具配置、历史保存间隔。设置改为按账户保存，同实例里不同成员互不影响。工具栏配置支持 pc= / m= 前缀（只对某一端生效）与 [工具组] 下拉按钮。' },
+        { t: '输入工具与斜杠菜单', d: '光标停在空行时，上方浮出一排「输入工具」；输入 / 弹出的菜单会按上下剩余空间自动朝上或朝下展开，内容与分隔线都来自设置。' },
+        { t: '编辑区新工具', d: '段落左对齐 / 居中 / 右对齐（写成 &lt;p align&gt; 存进 markdown）、增加 / 减少缩进、换行、清除格式、链接提取（填直链转存到图床再插入）。表格插入后可直接在工具组里加删行列、合并拆分、删除表格。' },
+        { t: '输入即转换', d: '中文输入法下打「【】」+ 空格得到任务列表、「》」+ 空格得到引述、「··」变成行内代码；半角的 - / &gt; / 反引号围栏沿用原有规则。' },
+        { t: '上传与右键', d: '上传按钮改成上传图标、不再限制文件类型，选完文件先弹「上传到图床」面板（选渠道 / 实例 / 目录）再上传；插入文件不再出现「选了但没插进去」；笔记编辑区完全屏蔽浏览器右键菜单（标题与标签输入框除外）。' },
+        { t: '笔记管理页', d: '页面切换下拉新增「切换实例」，切换后目录 / 笔记 / 标签全部按新实例隔离；顶栏随页面下滚隐藏、回滚显示；移动端去掉顶部第二条「返回 + 标题」，返回收进顶栏；左侧目录缩进减半并画出层级关系线；笔记列表用分隔线隔开每篇。' },
+        { t: '实例与渠道', d: '实例属性页可以单独指定主 / 备份存储渠道（留空则跟随账户、再跟随全局），优先级为「上传面板选择 &gt; 实例 &gt; 账户 &gt; 全局」。另外：从某实例切走再切回来，需要重新输入一次实例密码。' },
+        { t: '图片剪辑', d: '新增水平翻转、垂直翻转、箭头、椭圆、矩形、马赛克；工具并入一行可左右滑动；撤销 / 恢复 / 重置移到右上角关闭按钮左侧；左转 / 右转 / 角度移到底部「取消」旁边并去掉复位按钮；顶部标题行与底部按钮行更矮，图片区更宽；「保存并替换」改名为「保存」。' },
+        { t: '其它', d: '网页设置的「公告」输入框改为随内容自动增高（手动拖拽的高度作为最小高度）；视频灯箱在「目录」与「设置」之间显示数量圆点（超过 20 个改显示 x/总数），跟随控件显隐；瞬间编辑框文案改为「发一条瞬间，存一份记忆…」，触屏设备的正文框随内容自适应（聚焦时最高 40% 视口）。' },
+        { t: '升级兼容', d: '只新增一张历史快照表（note_histories），不改任何既有表；编辑器设置从「实例级」平滑升级到「用户级」—— 读过用户级没有再读实例级，老配置继续生效。' }
+      ]
+    },
+    {
       id: 'whatsnew-131',
       title: '五十、v1.3.1 更新要点',
       intro: 'v1.3.1 是笔记板块的「补齐版」：把 v1.3.0 遗留的五个毛病（图片传不上、文件插了不显示、正文没左对齐、选中文字弹原生菜单、手机上边缘滑动会退出）逐条修掉，编辑器补上表格 / 提示块 / 视频音频附件 / 大纲 / 折叠 / 图片缩放，并落地了引用体系（块索引、块引用、反向链接）。数据库只新增两张辅助表。',
@@ -2090,6 +2109,25 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'whatsnew-1311',
+      title: '51. What is new in v1.3.1.1',
+      intro: 'This release focuses on the editor: history snapshots, tags, colour modes and a full tool-configuration system, plus alignment / indent / line break / paragraph / link extraction and a complete table toolbar. The notes page gains instance switching, a scroll-aware header and a folder tree with guide lines; instances can pin their own storage channels; the image editor gains flips, shapes and mosaic.',
+      items: [
+        { t: 'History', d: 'Snapshots are taken while you edit (interval configurable), up to 100 per note with the oldest removed first. Click the version chip under the title to browse and restore any snapshot - the current content is snapshotted first, so a restore can itself be undone.' },
+        { t: 'New header layout and tags', d: 'The title sits below the toolbar, followed by version / updated time / word and character counts and a tag row. Word count covers only Chinese characters and Latin letters. Tag editing matches the moment composer: type to search, space or Enter to confirm, Backspace to remove the last one. None of these stick to the top while scrolling.' },
+        { t: 'Editor settings', d: 'New colour mode (follow global / light / dark), input tools, slash-menu tools and history interval. Settings are now stored per account. Toolbar lines support pc= / m= prefixes and [group] dropdowns.' },
+        { t: 'Input tools and slash menu', d: 'An inline tool row appears when the cursor sits on an empty line; the slash menu flips above or below depending on available space, and both are driven by your settings.' },
+        { t: 'New editing tools', d: 'Paragraph align left / centre / right (stored as &lt;p align&gt; in markdown), indent / outdent, line break, clear formatting, link extraction, and a table group with add/remove row and column, merge, split and delete.' },
+        { t: 'Type-to-convert', d: 'With a Chinese IME, typing the full-width bracket pair plus space creates a task list, the full-width angle bracket plus space creates a quote, and the double middle dot becomes inline code.' },
+        { t: 'Upload and context menu', d: 'The upload button is now an upload icon, accepts any file type, and opens the upload target panel (channel / instance / folder) before uploading. Inserted files no longer go missing. The editor blocks the browser context menu entirely (title and tag inputs excepted).' },
+        { t: 'Notes page', d: 'The page switcher gains instance switching with full data isolation, the header hides while scrolling down and returns on scroll up, the mobile second row is gone (back moved into the header), folder indentation is halved with guide lines, and notes are separated by dividers.' },
+        { t: 'Instances and channels', d: 'Instance attributes can pin main / backup storage channels (empty falls back to the account, then global). Priority is upload panel &gt; instance &gt; account &gt; global. Switching away from an instance and back now asks for the switch password again.' },
+        { t: 'Image editor', d: 'Adds horizontal / vertical flip, arrow, ellipse, rectangle and mosaic; tools live in one scrollable row; undo / redo / reset moved next to the close button; rotate and angle moved next to Cancel and the reset button is gone; header and footer are slimmer and the canvas is wider; "Save & replace" is now "Save".' },
+        { t: 'Other', d: 'The announcement textarea grows with its content; the video lightbox shows a count badge between Directory and Settings (x/total above 20) that follows the controls; the moment placeholder reads "Post a moment - keep a memory...", and touch devices get a content-aware body height capped at 40% of the viewport while focused.' },
+        { t: 'Upgrade compatibility', d: 'Only one new table (note_histories) is added; no existing table changes. Editor settings upgrade smoothly from instance-level to user-level - user-level is read first, then the instance-level value, so old configuration keeps working.' }
       ]
     },
     {

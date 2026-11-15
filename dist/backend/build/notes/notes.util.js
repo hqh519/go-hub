@@ -1,10 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_EDITOR_TOOLBAR_LINES = exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = exports.EDITOR_TOOLBAR_MAX_LINES = exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_CONTENT_FORMATS = exports.NOTE_KINDS = void 0;
+exports.DEFAULT_EDITOR_TOOLBAR_LINES = exports.DEFAULT_HISTORY_INTERVAL = exports.HISTORY_INTERVAL_MAX = exports.HISTORY_INTERVAL_MIN = exports.EDITOR_THEMES = exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = exports.EDITOR_TOOLBAR_MAX_LINES = exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_CONTENT_FORMATS = exports.NOTE_KINDS = void 0;
 exports.normalizeNoteKind = normalizeNoteKind;
 exports.attachHeightFactorOf = attachHeightFactorOf;
 exports.normalizeToolbarLines = normalizeToolbarLines;
 exports.normalizeEditorSettings = normalizeEditorSettings;
+exports.normalizeToolLines = normalizeToolLines;
 exports.normalizeNotePageBg = normalizeNotePageBg;
 exports.normalizeGeneralSettings = normalizeGeneralSettings;
 exports.normalizeMomentSettings = normalizeMomentSettings;
@@ -67,9 +68,13 @@ exports.NOTE_PAGE_BG_MAX_ITEMS = 20;
 exports.NOTE_PAGE_BG_MAX_URL_LENGTH = 2000;
 exports.EDITOR_TOOLBAR_MAX_LINES = 4;
 exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = 400;
+exports.EDITOR_THEMES = ['auto', 'light', 'dark'];
+exports.HISTORY_INTERVAL_MIN = 1;
+exports.HISTORY_INTERVAL_MAX = 120;
+exports.DEFAULT_HISTORY_INTERVAL = 3;
 exports.DEFAULT_EDITOR_TOOLBAR_LINES = [
-    'h1 h2 h3 | bold italic strike underline code | bulletList orderedList taskList | blockquote codeBlock hr',
-    'image file link | clear | undo redo',
+    'h1 h2 h3 | bold italic strike underline code highlight | bulletList orderedList taskList | blockquote codeBlock hr',
+    'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
 ];
 function normalizeToolbarLines(raw) {
     let lines = [];
@@ -85,10 +90,29 @@ function normalizeToolbarLines(raw) {
 }
 function normalizeEditorSettings(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
+    const themeRaw = String(o.theme || 'auto');
+    const interval = Math.round(Number(o.historyInterval));
     return {
         toolbarLines: normalizeToolbarLines(o.toolbarLines),
         blockIds: o.blockIds === true,
+        theme: themeRaw === 'light' || themeRaw === 'dark' ? themeRaw : 'auto',
+        inputLines: normalizeToolLines(o.inputLines, 8),
+        slashLines: normalizeToolLines(o.slashLines, 12),
+        historyInterval: Number.isFinite(interval)
+            ? Math.min(exports.HISTORY_INTERVAL_MAX, Math.max(exports.HISTORY_INTERVAL_MIN, interval))
+            : exports.DEFAULT_HISTORY_INTERVAL,
     };
+}
+function normalizeToolLines(raw, maxLines) {
+    let lines = [];
+    if (Array.isArray(raw))
+        lines = raw;
+    else if (typeof raw === 'string')
+        lines = raw.split(/\r?\n/);
+    return lines
+        .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim().slice(0, exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH))
+        .filter(Boolean)
+        .slice(0, maxLines);
 }
 function normalizeNotePageBg(raw) {
     let arr = [];

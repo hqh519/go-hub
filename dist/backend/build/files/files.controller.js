@@ -4943,6 +4943,7 @@ let UserConfigController = class UserConfigController {
     async userConfig(req) {
         const s = this.settings;
         const uploader = (0, auth_guard_1.currentSession)(req)?.user || '';
+        const cfgInstanceId = String(req.query?.instanceId || '').trim();
         const domain = (await s.getServerDomain()) || (0, request_origin_1.signOrigin)(req);
         let accountTotpEnabled = false;
         let accountUploadBk = [];
@@ -5028,8 +5029,8 @@ let UserConfigController = class UserConfigController {
             urlPrefix: await s.getLinkPrefix(domain),
             customDomain: await s.getCustomDomain(),
             defaultChannel: this.channelBrief(await this.storageChannel.getStorageChannel('', 'main')),
-            mainChannel: this.channelBrief(await this.storageChannel.getStorageChannel(uploader, 'main')),
-            backupChannel: this.channelBrief(await this.storageChannel.getStorageChannel(uploader, 'backup')),
+            mainChannel: this.channelBrief(await this.storageChannel.getStorageChannel(uploader, 'main', { instanceId: cfgInstanceId })),
+            backupChannel: this.channelBrief(await this.storageChannel.getStorageChannel(uploader, 'backup', { instanceId: cfgInstanceId })),
             allowUpload: await bool('allowUpload', true),
             defaultUploadNameType: pv('defaultUploadNameType', 'default'),
             defaultUploadFolder: pv('defaultUploadFolder', ''),

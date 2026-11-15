@@ -71,6 +71,9 @@ let InstancesController = class InstancesController {
             return this.fail(res, r.error, 403);
         return res.json(r);
     }
+    async revokeLock(id, req) {
+        return this.svc.revokeUnlock(this.me(req), id);
+    }
     async remove(id, req, res) {
         const r = await this.svc.remove(id, this.me(req));
         if (r.error)
@@ -181,6 +184,15 @@ __decorate([
     __metadata("design:paramtypes", [String, Object, Object, Object]),
     __metadata("design:returntype", Promise)
 ], InstancesController.prototype, "verifySwitch", null);
+__decorate([
+    (0, common_1.Post)(':id/revoke-lock'),
+    (0, common_1.HttpCode)(200),
+    __param(0, (0, common_1.Param)('id')),
+    __param(1, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], InstancesController.prototype, "revokeLock", null);
 __decorate([
     (0, common_1.Delete)(':id'),
     __param(0, (0, common_1.Param)('id')),

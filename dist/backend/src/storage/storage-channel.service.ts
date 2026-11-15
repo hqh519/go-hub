@@ -28,8 +28,9 @@ import { channelVisibleTo } from '../common/channel-access';
  *   1) explicitId —— 本次请求显式指定的渠道 ID（前端上传设置里选的渠道、
  *                    API 的 bucket/backup 参数、S3 的 bucket 段）
  *   2) tokenId    —— API Token 上配置的默认存储/备份渠道（仅 API 场景）
- *   3) uploader   —— 「用户管理」里为该账户指定的主/备渠道
- *   4) 全局        —— 后台「上传设置」里指定的主渠道（isMain）/ 备份渠道（isBackup）
+ *   3) instanceId —— 实例属性里为该实例指定的主/备渠道（v1.3.1.1）
+ *   4) uploader   —— 「用户管理」里为该账户指定的主/备渠道
+ *   5) 全局        —— 后台「上传设置」里指定的主渠道（isMain）/ 备份渠道（isBackup）
  *
  * 说明：渠道一律按【渠道 ID】匹配 —— 6 位 `code`（后台渠道列表展示的渠道 ID）
  * 或数据库主键 `id`。渠道名（name）只是给人看的标识，改名后按名匹配会静默失配。
@@ -49,6 +50,12 @@ export interface StorageChannelQuery {
   uploader?: string;
   /** API Token 主键 id —— 用于读取 Token 上配置的默认主/备渠道 */
   tokenId?: string;
+  /**
+   * v1.3.1.1：归属实例（空 = 默认实例）。
+   * 实例属性里可以单独指定「主渠道 / 备份渠道」，优先级高于账户级配置 ——
+   * 一个用户想做「工作库传 A 渠道、私人库传 B 渠道」时靠的就是它。
+   */
+  instanceId?: string;
 }
 
 export interface StorageChannelInfo {
@@ -190,7 +197,19 @@ export class StorageChannelService {
       }
     }
 
-    // 3) 「用户管理」里为该账户指定的主/备渠道
+    // 3) v1.3.1.1：实例属性里指定的主/备渠道（实例 > 账户 > 全局）
+    if (q.instanceId) {
+      try {
+        const inst = await prisma.instance.findUnique({ where: { id: q.instanceId } });
+        const metas = JSON.parse(inst?.metas || '{}') as { channelMain?: string; channelBackup?: string };
+        const raw = String((kind === 'backup' ? metas.channelBackup : metas.channelMain) || '').trim();
+        if (raw && !NO_BACKUP_VALUES.includes(raw.toLowerCase())) push(await this.findById(raw));
+      } catch {
+        /* 实例不存在 / metas 损坏都只是「这一级没配」，继续往下走 */
+      }
+    }
+
+    // 4) 「用户管理」里为该账户指定的主/备渠道
     if (q.uploader) {
       try {
         const u = await prisma.user.findUnique({ where: { username: q.uploader } });
@@ -203,14 +222,14 @@ export class StorageChannelService {
       }
     }
 
-    // 4) 全局：后台「上传设置」里指定的主渠道 / 备份渠道
+    // 5) 全局：后台「上传设置」里指定的主渠道 / 备份渠道
     const globals = await prisma.channel.findMany({
       where: kind === 'backup' ? { isBackup: true, enabled: true } : { isMain: true, enabled: true },
       orderBy: { sortOrder: 'asc' },
     });
     for (const g of globals) push({ id: g.id, code: g.code, name: g.name, type: g.type, config: g.config, authorizedUsers: g.authorizedUsers });
 
-    // 5) 兜底：上面都没取到时，按「渠道类型」在本类型内选（主渠道优先、再按排序）
+    // 6) 兜底：上面都没取到时，按「渠道类型」在本类型内选（主渠道优先、再按排序）
     if (out.length === 0 && q.channelType) {
       const byType = await prisma.channel.findMany({
         where: { type: q.channelType, enabled: true },

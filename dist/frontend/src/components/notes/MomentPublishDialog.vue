@@ -135,6 +135,9 @@
                     :placeholder="$t('notes.contentPlaceholder')"
                     @pointerup="syncEditorHeight"
                     @keyup="syncEditorHeight"
+                    @focus="onEditorFocus"
+                    @blur="onEditorBlur"
+                    @input="syncEditorHeight"
                 ></textarea>
                 <div class="mp-counter" :class="{ 'is-over': charCount > maxChars }">
                     {{ charCount }} / {{ maxChars }}
@@ -351,6 +354,19 @@ const LOCATION_MAX = 20;
 /** 心情 / 天气名称提示的显示时长（需求：2 秒后消失） */
 const NAME_TIP_MS = 2000;
 
+/**
+ * 是否触屏设备（手机 / 平板，含开了「请求桌面网站」的平板）。
+ *
+ * 三个条件取**或**：只要有触摸点、或主指针是粗指针、或没有悬停能力。
+ * 早先版本用「(hover:none || coarse) && maxTouchPoints>0」，平板桌面模式报
+ * pointer:fine 时整体为假 —— 「平板端一直不生效」就是这个原因。
+ */
+function isTouchDevice() {
+    if (typeof window === 'undefined') return false;
+    const mq = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
+    return (navigator.maxTouchPoints || 0) > 0 || mq('(hover: none)') || mq('(pointer: coarse)');
+}
+
 export default {
     name: 'MomentPublishDialog',
     components: { UploadTargetDialog, FilePickerDialog },
@@ -401,7 +417,13 @@ export default {
             // v1.1.7：位置候选（来自数据表），按查询词做一层会话内缓存
             locationCache: {},
             /** 本次打开是否恢复过草稿 */
-            draftRestored: false
+            draftRestored: false,
+            /**
+             * v1.3.1.1：正文是否处于聚焦态。
+             * 触屏自适应高度用它决定上限 —— 聚焦时被软键盘占掉半屏，只能给到视口 40%；
+             * 失焦时页面空间是完整的，可以放到 80%。
+             */
+            editorFocused: false
         };
     },
     computed: {
@@ -566,6 +588,8 @@ export default {
                 this.updateEditorMin();
                 this.resetEditorHeight();
                 this.setupEditorObserver();
+                // 恢复草稿 / 编辑已有内容时正文可能已经很长，先按内容量一次高度
+                this.syncEditorHeight();
             });
         },
         /**
@@ -603,14 +627,9 @@ export default {
              * v1.2.3 用的是「(hover:none) || (pointer:coarse)」并且再 && maxTouchPoints>0，
              * 平板开「请求桌面网站」时会报 hover:hover + pointer:fine，第一层就为假 ——
              * 这正是「平板端一直没生效」的原因。
-             * 现在三项取或：只要有触摸点(>0)、或主指针是粗指针、或无悬停能力，
-             * 就按移动端口径算。桌面机 maxTouchPoints 恒为 0 且 hover:hover，不会误判。
+             * 现在统一走 isTouchDevice()：只要有触摸点、或粗指针、或无悬停，就按移动端口径算。
              */
-            const mq = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
-            const touch =
-                (navigator.maxTouchPoints || 0) > 0 ||
-                mq('(hover: none)') ||
-                mq('(pointer: coarse)');
+            const touch = isTouchDevice();
             // v1.3.1（需求）：移动端一律最小 30%，不再区分聚焦/失焦与档位
             return Math.round(cur * (touch ? 0.3 : 0.45));
         },
@@ -621,6 +640,8 @@ export default {
             const px = this.editorMinPx();
             if (!px) return;
             body.style.setProperty('--mp-editor-min', `${px}px`);
+            // 视口变了（键盘弹起 / 旋屏 / 地址栏收起）以后，上限也跟着变，重算一次内容高度
+            this.syncEditorHeight();
         },
         /**
          * 盯着高度变化：弹窗自身（ResizeObserver）+ 可见视口（visualViewport.resize）。
@@ -660,21 +681,66 @@ export default {
          * 后面的附件 / 标签就会压到输入框上。这里在松手（或打字）后把父容器的
          * min-height 同步成实际高度；低于默认下限时清空，交还给我们算出来的下限。
          * v1.2.2.1：下限口径与 editorMinPx 同源（v1.2.4：触屏 30% / 桌面 45%），不再各算一套。
+         *
+         * v1.3.1.1（需求）：**触屏设备改成随内容自动增高**。
+         *   · 内容没超过当前高度 → 保持 editorMinPx() 算出的下限（30%）；
+         *   · 内容超过 → 跟着内容长高，直到撞上「上限」；
+         *   · 上限：聚焦时是可见视口的 40%（再高会被软键盘顶出屏幕），
+         *          失焦时由页面决定（这里取可见视口的 80%，剩下的交给弹窗滚动）。
+         * 桌面端保持原样（固定高度 + 手动拖拽），需求只点名了移动端。
          */
         syncEditorHeight() {
             const el = this.$refs.textarea;
             const wrap = el && el.parentElement;
             if (!el || !wrap) return;
             const base = this.editorMinPx() || 180;
-            const h = el.offsetHeight;
-            wrap.style.minHeight = h > base + 1 ? `${Math.round(h)}px` : '';
+            if (!isTouchDevice()) {
+                const h = el.offsetHeight;
+                wrap.style.minHeight = h > base + 1 ? `${Math.round(h)}px` : '';
+                return;
+            }
+            /*
+             * 先量「内容真正需要多高」：把行内 height 清成 auto 才不会读到上一次的高度。
+             * scrollHeight 含 padding，正好可以直接当 height 用（box-sizing: border-box）。
+             */
+            const prev = el.style.height;
+            el.style.height = 'auto';
+            const natural = el.scrollHeight;
+            el.style.height = prev;
+            const max = this.editorMaxPx();
+            const target = Math.max(base, Math.min(natural, max));
+            el.style.height = `${Math.round(target)}px`;
+            // 父容器跟着长，否则附件 / 标签会叠在输入框上
+            wrap.style.minHeight = `${Math.round(target)}px`;
+            // 撞到上限时内部滚动，用户仍然能看到自己写的最后一行
+            el.style.overflowY = natural > max ? 'auto' : 'hidden';
+        },
+        /** 触屏正文框的高度上限：聚焦 40%，失焦按页面给（留出标题/工具栏/底栏） */
+        editorMaxPx() {
+            if (typeof window === 'undefined') return 400;
+            const vv = window.visualViewport;
+            const cur = Math.round((vv && vv.height) || window.innerHeight || 0);
+            if (!cur) return 400;
+            return Math.round(cur * (this.editorFocused ? 0.4 : 0.8));
+        },
+        onEditorFocus() {
+            this.editorFocused = true;
+            this.syncEditorHeight();
+        },
+        onEditorBlur() {
+            this.editorFocused = false;
+            this.syncEditorHeight();
         },
         /** 重新打开弹窗时把上一次拉伸留下的行内高度清掉，回到默认下限起点 */
         resetEditorHeight() {
             const el = this.$refs.textarea;
-            if (el) el.style.height = '';
+            if (el) {
+                el.style.height = '';
+                el.style.overflowY = '';
+            }
             const wrap = el && el.parentElement;
             if (wrap) wrap.style.minHeight = '';
+            this.editorFocused = false;
         },
         onClosed() {
             // 关闭（含 Esc / 点遮罩 / 点取消）都留草稿；只有「发布成功」才跳过

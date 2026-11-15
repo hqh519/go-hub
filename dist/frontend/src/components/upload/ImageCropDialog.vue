@@ -9,6 +9,47 @@
         @update:model-value="$emit('update:modelValue', $event)"
         @opened="onOpened"
     >
+        <!--
+            v1.3.1.1（需求）：撤销 / 恢复 / 重置 三个图标挪到右上角关闭按钮左侧。
+            关掉 el-dialog 自带标题栏样式、自己排一行，高度比原来矮一半。
+        -->
+        <template #header>
+            <div class="crop-head">
+                <span class="crop-head-title">{{ $t(titleKey) }}</span>
+                <div class="crop-head-actions">
+                    <button
+                        type="button"
+                        class="crop-icon-btn"
+                        :disabled="!canUndo"
+                        :title="$t('uploadCrop.undo')"
+                        :aria-label="$t('uploadCrop.undo')"
+                        @click="undoAnnotation"
+                    >
+                        <font-awesome-icon icon="undo" />
+                    </button>
+                    <button
+                        type="button"
+                        class="crop-icon-btn"
+                        :disabled="!canRedo"
+                        :title="$t('uploadCrop.redo')"
+                        :aria-label="$t('uploadCrop.redo')"
+                        @click="redoAnnotation"
+                    >
+                        <font-awesome-icon icon="redo" />
+                    </button>
+                    <button
+                        type="button"
+                        class="crop-icon-btn"
+                        :disabled="!canReset"
+                        :title="$t('uploadCrop.resetAll')"
+                        :aria-label="$t('uploadCrop.resetAll')"
+                        @click="resetAll"
+                    >
+                        <font-awesome-icon icon="rotate-left" />
+                    </button>
+                </div>
+            </div>
+        </template>
         <div
             ref="stage"
             class="crop-stage"
@@ -67,7 +108,7 @@
             </div>
         </div>
 
-        <!-- 工具切换：框选裁剪 / 画笔 / 文字 -->
+        <!-- 工具切换：裁剪 / 画笔 / 文字 / 形状 / 马赛克（一行，可横向滑动）+ 翻转 -->
         <div class="crop-toolbar">
             <div class="crop-modes">
                 <button
@@ -79,6 +120,26 @@
                     @click="setTool(m.key)"
                 >
                     <font-awesome-icon :icon="m.icon" class="crop-mode-icon" />{{ $t(m.label) }}
+                </button>
+                <span class="crop-modes-sep"></span>
+                <!-- 翻转是「一次性动作」，不是工具模式，所以没有 is-active -->
+                <button
+                    type="button"
+                    class="crop-mode is-action"
+                    :class="{ 'is-active': flipH }"
+                    :title="$t('uploadCrop.flipH')"
+                    @click="flipHorizontal"
+                >
+                    <font-awesome-icon icon="arrows-left-right" class="crop-mode-icon" />{{ $t('uploadCrop.flipH') }}
+                </button>
+                <button
+                    type="button"
+                    class="crop-mode is-action"
+                    :class="{ 'is-active': flipV }"
+                    :title="$t('uploadCrop.flipV')"
+                    @click="flipVertical"
+                >
+                    <font-awesome-icon icon="arrows-up-down" class="crop-mode-icon" />{{ $t('uploadCrop.flipV') }}
                 </button>
             </div>
             <div class="crop-paint" v-if="tool !== 'crop' || annotations.length">
@@ -93,7 +154,7 @@
                         @click="brushColor = c"
                     ></button>
                 </span>
-                <span class="crop-widths" v-if="tool === 'brush'">
+                <span class="crop-widths" v-if="tool === 'brush' || isShapeTool">
                     <button
                         v-for="w in brushSizes"
                         :key="w.key"
@@ -122,51 +183,35 @@
             </div>
         </div>
 
-        <div class="crop-tools">
-            <span class="crop-size" v-if="outputSize">{{ $t('uploadCrop.outputSize', { w: outputSize.w, h: outputSize.h }) }}</span>
-            <!--
-                v1.0.5：旋转方向 —— 手机上拍的竖图经常带着 EXIF 方向，进到裁剪页是歪的。
-                每次都从**原始文件**重新渲染（而不是在上一次结果上叠 90°），
-                这样连点四次回到 0° 不会有任何画质损失。
-                v1.1.7：涂鸦/文字的坐标也随之转 90°，跟着图一起转，不会错位。
-            -->
-            <div class="crop-rotate">
-                <el-button size="small" :disabled="rotating" :title="$t('uploadCrop.rotateLeft')" @click="rotate(-1)">
-                    <font-awesome-icon icon="undo" style="margin-right: 3px;"></font-awesome-icon>{{ $t('uploadCrop.rotateLeft') }}
-                </el-button>
-                <el-button size="small" :disabled="rotating" :title="$t('uploadCrop.rotateRight')" @click="rotate(1)">
-                    <font-awesome-icon icon="redo" style="margin-right: 3px;"></font-awesome-icon>{{ $t('uploadCrop.rotateRight') }}
-                </el-button>
-                <span class="crop-angle">{{ rotation }}°</span>
-                <el-button size="small" text :disabled="rotating || rotation === 0" @click="resetRotation">{{ $t('uploadCrop.rotateReset') }}</el-button>
-            </div>
-        </div>
-        <p class="crop-hint">{{ hintText }}</p>
+        <!--
+            v1.3.1.1（需求）：原来这一整行「输出尺寸 + 左转 / 右转 / 度数 / 复位」被拆掉 ——
+            · 输出尺寸并进下面那行提示文字（信息还在，只是不单独占一行）；
+            · 左转 / 右转 / 度数挪到底部「取消」按钮左侧；
+            · 「复位」按钮取消（重置统一走右上角的「重置」）。
+        -->
+        <p class="crop-hint">
+            <span v-if="outputSize" class="crop-size">{{ $t('uploadCrop.outputSize', { w: outputSize.w, h: outputSize.h }) }}</span>
+            <span class="crop-hint-text">{{ hintText }}</span>
+        </p>
 
         <template #footer>
             <!--
-                v1.1.9.3（需求）：「重置选区 / 撤销 / 清空」统一放到「取消」左侧。
-                按当前工具二选一（不再两组同时出现）：
-                  · 裁剪模式 → 只显示「重置选区」；
-                  · 画笔 / 文字模式 → 只显示「撤销」「清空」。
+                v1.3.1.1（需求）底部固定区只留两件东西：
+                  左：左转 / 右转 / 当前角度（度数）
+                  右：取消 / 保存
+                撤销、恢复、重置已经挪到右上角，底部不再重复。
             -->
             <div class="crop-footer">
                 <div class="crop-footer-left">
-                    <el-button
-                        v-if="tool === 'crop'"
-                        size="small"
-                        text
-                        :disabled="!sel.w || !sel.h"
-                        @click="resetSelection"
-                    >{{ $t('uploadCrop.reset') }}</el-button>
-                    <template v-else>
-                        <el-button size="small" text :disabled="!annotations.length" @click="undoAnnotation">
-                            {{ $t('uploadCrop.undo') }}
-                        </el-button>
-                        <el-button size="small" text :disabled="!annotations.length" @click="clearAnnotations">
-                            {{ $t('uploadCrop.clear') }}
-                        </el-button>
-                    </template>
+                    <button type="button" class="crop-rot-btn" :disabled="rotating" :title="$t('uploadCrop.rotateLeft')" @click="rotate(-1)">
+                        <font-awesome-icon icon="undo" />
+                        <span>{{ $t('uploadCrop.rotateLeft') }}</span>
+                    </button>
+                    <button type="button" class="crop-rot-btn" :disabled="rotating" :title="$t('uploadCrop.rotateRight')" @click="rotate(1)">
+                        <font-awesome-icon icon="redo" />
+                        <span>{{ $t('uploadCrop.rotateRight') }}</span>
+                    </button>
+                    <span class="crop-angle">{{ rotation }}°</span>
                 </div>
                 <div class="crop-footer-right">
                     <el-button @click="$emit('update:modelValue', false)">{{ $t('common.cancel') }}</el-button>
@@ -266,6 +311,19 @@ export default {
             /** 文字输入浮层的位置（归一化）与内容 */
             textDraft: null,
             textValue: '',
+            /* ── v1.3.1.1 新增 ─────────────────────────────────── */
+            /** 水平 / 垂直翻转（渲染源是 rawUrl，所以这两个是「绝对状态」） */
+            flipH: false,
+            flipV: false,
+            /**
+             * 撤销 / 恢复：存的是 annotations 的 JSON 快照。
+             * 只覆盖标注类操作（涂鸦 / 形状 / 文字 / 马赛克）—— 旋转和翻转是
+             * 「重新渲染整张图」，走自己的复位路径，混进同一条历史栈会让撤销语义变糊。
+             */
+            history: ['[]'],
+            historyIndex: 0,
+            /** 形状工具的鼠标起始点（拖动中） */
+            shapeColor: '#ff3b30',
         };
     },
     computed: {
@@ -278,13 +336,38 @@ export default {
             if (this.allowAnnotate) {
                 list.push({ key: 'brush', icon: 'paintbrush', label: 'uploadCrop.toolBrush' });
                 list.push({ key: 'text', icon: 'font', label: 'uploadCrop.toolText' });
+                list.push({ key: 'arrow', icon: 'arrow-right', label: 'uploadCrop.toolArrow' });
+                list.push({ key: 'ellipse', icon: 'circle', label: 'uploadCrop.toolEllipse' });
+                list.push({ key: 'rect', icon: 'square', label: 'uploadCrop.toolRect' });
+                list.push({ key: 'mosaic', icon: 'marker', label: 'uploadCrop.toolMosaic' });
             }
             return list;
         },
         hintText() {
             if (this.tool === 'brush') return this.$t('uploadCrop.brushHint');
             if (this.tool === 'text') return this.$t('uploadCrop.textHint');
+            if (this.tool === 'mosaic') return this.$t('uploadCrop.mosaicHint');
+            if (['arrow', 'ellipse', 'rect'].includes(this.tool)) return this.$t('uploadCrop.shapeHint');
             return this.$t('uploadCrop.hint');
+        },
+        /* 撤销 / 恢复 / 重置 的可用态（在 header 里控制按钮禁用） */
+        canUndo() {
+            return this.historyIndex > 0;
+        },        canRedo() {
+            return this.historyIndex < this.history.length - 1;
+        },
+        canReset() {
+            return (
+                this.annotations.length > 0 ||
+                this.rotation !== 0 ||
+                this.flipH ||
+                this.flipV ||
+                !this.isFullSelection()
+            );
+        },
+        /** 形状类工具（箭头 / 椭圆 / 矩形），统一用画笔的颜色与粗细 */
+        isShapeTool() {
+            return ['arrow', 'ellipse', 'rect'].includes(this.tool);
         },
         selectionStyle() {
             const d = this.disp;
@@ -361,6 +444,10 @@ export default {
             this.rawUrl = URL.createObjectURL(this.file);
             this.objectUrl = this.rawUrl;
             this.rotation = 0;
+            this.flipH = false;
+            this.flipV = false;
+            this.history = ['[]'];
+            this.historyIndex = 0;
             this.natural = { w: 0, h: 0 };
             // v1.1.7：换图后旧的涂鸦/文字一律作废，工具回到框选
             this.annotations = [];
@@ -388,7 +475,8 @@ export default {
             this.commitText();
             this.rotation = (this.rotation + (dir > 0 ? 90 : 270)) % 360;
             this.rotateAnnotations(dir);
-            if (this.rotation === 0) {
+            const identity = this.rotation === 0 && !this.flipH && !this.flipV;
+            if (identity) {
                 // 回到原位：直接用原图，重新编码这一步都省掉
                 if (this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
                 this.objectUrl = this.rawUrl;
@@ -397,7 +485,7 @@ export default {
             }
             this.rotating = true;
             try {
-                const url = await this.renderRotated(this.rotation);
+                const url = await this.renderTransformed(this.rotation, this.flipH, this.flipV);
                 if (!url) return;
                 if (this.objectUrl && this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
                 this.objectUrl = url;
@@ -405,8 +493,12 @@ export default {
                 this.rotating = false;
             }
         },
-        /** 把原图按 angle 旋转后画到 canvas，返回新的 blob URL */
-        renderRotated(angle) {
+        /**
+         * 把原图按 angle 旋转 + flip 后画到 canvas，返回新的 blob URL。
+         * v1.3.1.1：加入翻转 —— 旋转与翻转都在这一步合成，所以连点任意组合
+         * 都是从 rawUrl 重新算，不会一层层糊上去。
+         */
+        renderTransformed(angle, flipH, flipV) {
             return new Promise((resolve) => {
                 const base = new Image();
                 base.onload = () => {
@@ -419,6 +511,7 @@ export default {
                     const ctx = canvas.getContext('2d');
                     ctx.translate(canvas.width / 2, canvas.height / 2);
                     ctx.rotate((angle * Math.PI) / 180);
+                    ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
                     ctx.drawImage(base, -w / 2, -h / 2, w, h);
                     // png / webp 保透明；其余走 jpeg 高质量
                     const keepAlpha = /png|webp|gif/i.test(this.file?.type || '');
@@ -431,16 +524,6 @@ export default {
                 base.onerror = () => resolve('');
                 base.src = this.rawUrl;
             });
-        },
-        resetRotation() {
-            if (this.rotation === 0) return;
-            this.commitText();
-            // 反向转回去，涂鸦也跟着回来（转四次 = 回到初始状态，不累积误差）
-            this.rotateAnnotations(-1);
-            this.rotation = 0;
-            if (this.objectUrl && this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
-            this.objectUrl = this.rawUrl;
-            this.$nextTick(() => this.renderAnnotations());
         },
         onOpened() {
             this.onImgLoad();
@@ -492,7 +575,7 @@ export default {
             this.tool = key;
             this.$nextTick(() => this.renderAnnotations());
         },
-        /** 舞台按下：按当前工具分发（框选 / 画笔 / 文字） */
+        /** 舞台按下：按当前工具分发（框选 / 画笔 / 文字 / 形状 / 马赛克） */
         onStagePointerDown(evt) {
             if (!this.disp.w) return;
             if (this.tool === 'brush') {
@@ -509,7 +592,36 @@ export default {
                 else this.placeText(evt);
                 return;
             }
+            if (['arrow', 'ellipse', 'rect', 'mosaic'].includes(this.tool)) {
+                this.startShape(evt);
+                return;
+            }
             this.onPointerDown(evt, null);
+        },
+        /* ------------------- v1.3.1.1 形状 / 马赛克 ------------------- */
+        /**
+         * 从按下点拖到松手点画一个形状。
+         *
+         * 与画笔共用 drawing / onDrawMove / onDrawUp 这条链路：
+         * 画笔往 points 里追加点，形状只更新 to —— 松手时的并入、重绘、历史上栈
+         * 都走同一处，不用维护第二套状态机。
+         */
+        startShape(evt) {
+            if (evt.cancelable) evt.preventDefault();
+            const p = this.toNorm(evt);
+            this.drawing = {
+                type: this.tool === 'mosaic' ? 'mosaic' : 'shape',
+                shape: this.tool,
+                color: this.brushColor,
+                width: this.brushSize,
+                from: { x: p.x, y: p.y },
+                to: { x: p.x, y: p.y },
+            };
+            try { evt.currentTarget?.setPointerCapture?.(evt.pointerId); } catch { /* 忽略 */ }
+            window.addEventListener('pointermove', this.onDrawMove);
+            window.addEventListener('pointerup', this.onDrawUp);
+            window.addEventListener('pointercancel', this.onDrawUp);
+            this.renderAnnotations();
         },
         /* -------------------------- 画笔（涂鸦） -------------------------- */
         startStroke(evt) {
@@ -533,16 +645,23 @@ export default {
         onDrawMove(evt) {
             if (!this.drawing) return;
             if (evt.cancelable) evt.preventDefault();
-            const p = this.toNorm(evt, false);
+            const p = this.toNorm(evt);
+            // 形状只更新终点（允许贴边，所以这里用 clamp 过的 toNorm）
+            if (this.drawing.from) {
+                this.drawing.to = { x: p.x, y: p.y };
+                this.renderAnnotations();
+                return;
+            }
+            const raw = this.toNorm(evt, false);
             // 手指/鼠标划出图片外时暂停记录（否则会在边缘糊出一圈直线）
-            if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return;
+            if (raw.x < 0 || raw.x > 1 || raw.y < 0 || raw.y > 1) return;
             const pts = this.drawing.points;
             const last = pts[pts.length - 1];
-            const dx = (p.x - last.x) * (this.disp.w || 1);
-            const dy = (p.y - last.y) * (this.disp.h || 1);
+            const dx = (raw.x - last.x) * (this.disp.w || 1);
+            const dy = (raw.y - last.y) * (this.disp.h || 1);
             // 采样：2px 以内的点丢弃，笔迹看不出来，点数量却能少一个量级
             if (dx * dx + dy * dy < 4) return;
-            pts.push({ x: p.x, y: p.y });
+            pts.push({ x: raw.x, y: raw.y });
             this.renderAnnotations();
         },
         onDrawUp() {
@@ -550,8 +669,17 @@ export default {
             window.removeEventListener('pointerup', this.onDrawUp);
             window.removeEventListener('pointercancel', this.onDrawUp);
             if (!this.drawing) return;
-            if (this.drawing.points.length) this.annotations.push(this.drawing);
+            // 形状太小（手抖点一下）就不落库，免得留一个看不见的点
+            if (this.drawing.from) {
+                const { from, to } = this.drawing;
+                const w = Math.abs(to.x - from.x) * (this.disp.w || 1);
+                const h = Math.abs(to.y - from.y) * (this.disp.h || 1);
+                if (w >= 4 || h >= 4) this.annotations.push(this.drawing);
+            } else if (this.drawing.points.length) {
+                this.annotations.push(this.drawing);
+            }
             this.drawing = null;
+            this.pushHistory();
             this.renderAnnotations();
         },
         /* ---------------------------- 文字 ---------------------------- */
@@ -646,6 +774,7 @@ export default {
                     y: draft.y,
                     rot: 0,
                 });
+                this.pushHistory();
             }
             this.renderAnnotations();
         },
@@ -654,16 +783,63 @@ export default {
             this.textValue = '';
             this.renderAnnotations();
         },
-        /* ---------------------------- 撤销/清空 ---------------------------- */
-        undoAnnotation() {
-            if (!this.annotations.length) return;
-            this.annotations.pop();
+        /* ---------------------------- 撤销/恢复/重置 ---------------------------- */
+        /** 把当前标注状态压进历史栈（任何一次「已落定」的标注改动之后调用） */
+        pushHistory() {
+            const snap = JSON.stringify(this.annotations);
+            // 与栈顶相同就不重复入栈，避免「点一下空白也占一格撤销」
+            if (this.history[this.historyIndex] === snap) return;
+            this.history = this.history.slice(0, this.historyIndex + 1);
+            this.history.push(snap);
+            // 只留最近 60 步，长会话不会一直吃内存
+            if (this.history.length > 60) this.history.shift();
+            this.historyIndex = this.history.length - 1;
+        },
+        applyHistory() {
+            try {
+                this.annotations = JSON.parse(this.history[this.historyIndex] || '[]');
+            } catch {
+                this.annotations = [];
+            }
             this.renderAnnotations();
         },
-        clearAnnotations() {
-            if (!this.annotations.length) return;
+        undoAnnotation() {
+            if (!this.canUndo) return;
+            this.commitText();
+            this.historyIndex -= 1;
+            this.applyHistory();
+        },
+        redoAnnotation() {
+            if (!this.canRedo) return;
+            this.commitText();
+            this.historyIndex += 1;
+            this.applyHistory();
+        },
+        /**
+         * 重置：回到「刚打开这张图」的样子 —— 清空所有标注、选区恢复整图、
+         * 旋转与翻转归零。旋转 / 翻转归零要重新渲染图像源，所以是异步的。
+         */
+        async resetAll() {
+            this.commitText();
             this.annotations = [];
-            this.renderAnnotations();
+            this.drawing = null;
+            this.sel = { x: 0, y: 0, w: 1, h: 1 };
+            this.history = ['[]'];
+            this.historyIndex = 0;
+            const needRebuild = this.rotation !== 0 || this.flipH || this.flipV;
+            this.rotation = 0;
+            this.flipH = false;
+            this.flipV = false;
+            if (needRebuild) {
+                if (this.objectUrl && this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
+                this.objectUrl = this.rawUrl;
+                this.$nextTick(() => {
+                    this.measure();
+                    this.renderAnnotations();
+                });
+            } else {
+                this.renderAnnotations();
+            }
         },
         /**
          * 旋转时同步旋转涂鸦/文字的坐标 —— 它们绑在「图片」上，图转就得跟着转。
@@ -679,6 +855,11 @@ export default {
                         points: a.points.map((p) => (cw ? { x: 1 - p.y, y: p.x } : { x: p.y, y: 1 - p.x })),
                     };
                 }
+                // v1.3.1.1：形状 / 马赛克是「两个点」，两个点都要转
+                if (a.from && a.to) {
+                    const map = (p) => (cw ? { x: 1 - p.y, y: p.x } : { x: p.y, y: 1 - p.x });
+                    return { ...a, from: map(a.from), to: map(a.to) };
+                }
                 return {
                     ...a,
                     x: cw ? 1 - a.y : a.y,
@@ -686,17 +867,147 @@ export default {
                     rot: (a.rot || 0) + (cw ? Math.PI / 2 : -Math.PI / 2),
                 };
             });
+            this.pushHistory();
+        },
+        /**
+         * 水平 / 垂直翻转（v1.3.1.1）。
+         *
+         * 与旋转同一套路：图像源从 rawUrl 重新渲染，标注坐标同步镜像，
+         * 这样「翻转的是整张图」，标注仍然贴在它原来框住的那块内容上。
+         * 连点两次翻转回到原样，不会累积重编码损失。
+         */
+        flipHorizontal() {
+            this.flipH = !this.flipH;
+            this.mirrorAnnotations('x');
+            this.rebuildImage();
+        },
+        flipVertical() {
+            this.flipV = !this.flipV;
+            this.mirrorAnnotations('y');
+            this.rebuildImage();
+        },
+        /** 水平翻转镜像 x，垂直翻转镜像 y；形状要同时镜像两个端点 */
+        mirrorAnnotations(axis) {
+            if (!this.annotations.length) return;
+            const m = (p) => (axis === 'x' ? { x: 1 - p.x, y: p.y } : { x: p.x, y: 1 - p.y });
+            this.annotations = this.annotations.map((a) => {
+                if (a.type === 'stroke') return { ...a, points: a.points.map(m) };
+                if (a.from && a.to) return { ...a, from: m(a.from), to: m(a.to) };
+                const p = m({ x: a.x, y: a.y });
+                return { ...a, x: p.x, y: p.y };
+            });
+            this.pushHistory();
+        },
+        /** 按当前 rotation / flip 状态重新渲染图像源（回到原样时直接用原图，零重编码） */
+        async rebuildImage() {
+            if (!this.rawUrl) return;
+            const identity = this.rotation === 0 && !this.flipH && !this.flipV;
+            if (identity) {
+                if (this.objectUrl && this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
+                this.objectUrl = this.rawUrl;
+                this.$nextTick(() => {
+                    this.measure();
+                    this.renderAnnotations();
+                });
+                return;
+            }
+            const url = await this.renderTransformed(this.rotation, this.flipH, this.flipV);
+            if (!url) return;
+            if (this.objectUrl && this.objectUrl !== this.rawUrl) URL.revokeObjectURL(this.objectUrl);
+            this.objectUrl = url;
+            this.$nextTick(() => {
+                this.measure();
+                this.renderAnnotations();
+            });
         },
         /**
          * 把叠加层画到任意 canvas 上 —— W/H 是目标绘制区尺寸。
          * 预览用 display 尺寸，导出用原图分辨率，同一函数，视觉完全一致。
          */
-        paintItems(ctx, W, H, items) {
+        paintItems(ctx, W, H, items, srcImg) {
             if (!items || !items.length) return;
             const base = Math.min(W, H);
             const font = (size) => `600 ${size}px system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`;
             items.forEach((a) => {
                 ctx.save();
+                /* v1.3.1.1：箭头 / 椭圆 / 矩形 —— 三个形状共用一套「两点定框 + 描边」 */
+                if (a.type === 'shape' && a.from && a.to) {
+                    const x1 = a.from.x * W;
+                    const y1 = a.from.y * H;
+                    const x2 = a.to.x * W;
+                    const y2 = a.to.y * H;
+                    const lw = Math.max(1, (a.width || 0.006) * base * 2);
+                    ctx.strokeStyle = a.color;
+                    ctx.fillStyle = a.color;
+                    ctx.lineWidth = lw;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    if (a.shape === 'rect') {
+                        ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+                    } else if (a.shape === 'ellipse') {
+                        ctx.beginPath();
+                        ctx.ellipse(
+                            (x1 + x2) / 2,
+                            (y1 + y2) / 2,
+                            Math.abs(x2 - x1) / 2,
+                            Math.abs(y2 - y1) / 2,
+                            0,
+                            0,
+                            Math.PI * 2,
+                        );
+                        ctx.stroke();
+                    } else if (a.shape === 'arrow') {
+                        // 从按下点指向松手点，箭头大小随线宽走
+                        ctx.beginPath();
+                        ctx.moveTo(x1, y1);
+                        ctx.lineTo(x2, y2);
+                        ctx.stroke();
+                        const ang = Math.atan2(y2 - y1, x2 - x1);
+                        const head = Math.max(10, lw * 4);
+                        ctx.beginPath();
+                        ctx.moveTo(x2, y2);
+                        ctx.lineTo(x2 - head * Math.cos(ang - Math.PI / 7), y2 - head * Math.sin(ang - Math.PI / 7));
+                        ctx.lineTo(x2 - head * Math.cos(ang + Math.PI / 7), y2 - head * Math.sin(ang + Math.PI / 7));
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                    ctx.restore();
+                    return;
+                }
+                /* v1.3.1.1：马赛克 —— 把该区域缩到很小再放大回去，用最近邻保持硬边 */
+                if (a.type === 'mosaic' && a.from && a.to && srcImg) {
+                    const x = Math.min(a.from.x, a.to.x) * W;
+                    const y = Math.min(a.from.y, a.to.y) * H;
+                    const w = Math.abs(a.to.x - a.from.x) * W;
+                    const h = Math.abs(a.to.y - a.from.y) * H;
+                    if (w < 2 || h < 2) { ctx.restore(); return; }
+                    // 源图坐标与绘制区同比例，所以直接用同一个归一化矩形取像素
+                    const sw = srcImg.naturalWidth || srcImg.width;
+                    const sh = srcImg.naturalHeight || srcImg.height;
+                    const block = Math.max(6, Math.round(Math.min(w, h) / 10));
+                    const cols = Math.max(1, Math.round(w / block));
+                    const rows = Math.max(1, Math.round(h / block));
+                    const off = document.createElement('canvas');
+                    off.width = cols;
+                    off.height = rows;
+                    const octx = off.getContext('2d');
+                    if (!octx) { ctx.restore(); return; }
+                    octx.drawImage(
+                        srcImg,
+                        (x / W) * sw,
+                        (y / H) * sh,
+                        (w / W) * sw,
+                        (h / H) * sh,
+                        0,
+                        0,
+                        cols,
+                        rows,
+                    );
+                    ctx.imageSmoothingEnabled = false;
+                    ctx.drawImage(off, 0, 0, cols, rows, x, y, w, h);
+                    ctx.restore();
+                    return;
+                }
                 if (a.type === 'stroke') {
                     const pts = a.points || [];
                     if (!pts.length) { ctx.restore(); return; }
@@ -755,7 +1066,7 @@ export default {
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
             ctx.clearRect(0, 0, W, H);
             const list = this.drawing ? [...this.annotations, this.drawing] : this.annotations;
-            this.paintItems(ctx, W, H, list);
+            this.paintItems(ctx, W, H, list, this.$refs.img);
         },
         /* ------------------------- 原有的框选交互 ------------------------- */
         onPointerDown(evt, mode) {
@@ -841,13 +1152,15 @@ export default {
             this.exporting = true;
             try {
                 /*
-                 * v1.0.7：选区就是整图时不走 canvas —— 直接交出「原文件」或「已旋转的那份」。
+                 * v1.0.7：选区就是整图时不走 canvas —— 直接交出「原文件」或「已处理的那份」。
                  * 原因：canvas 重绘对 jpg 是有损的（哪怕质量 0.94），只转个方向却掉画质
                  * 完全没必要；png/webp 也会被重新编码一遍、体积变大。
                  * v1.1.7：有涂鸦/文字时必须走 canvas，否则叠加层会丢。
+                 * v1.3.1.1：翻转同旋转 —— objectUrl 已经是「转+翻」后的结果，取它即可。
                  */
                 if (this.isFullSelection() && !this.annotations.length) {
-                    const src = this.rotation === 0 ? this.file : await this.rotatedFile();
+                    const identity = this.rotation === 0 && !this.flipH && !this.flipV;
+                    const src = identity ? this.file : await this.rotatedFile();
                     if (src) {
                         this.$emit('done', src);
                         this.$emit('update:modelValue', false);
@@ -886,7 +1199,7 @@ export default {
                 if (this.annotations.length) {
                     ctx.save();
                     ctx.translate(-Math.round(s.x * n.w), -Math.round(s.y * n.h));
-                    this.paintItems(ctx, n.w, n.h, this.annotations);
+                    this.paintItems(ctx, n.w, n.h, this.annotations, img);
                     ctx.restore();
                 }
                 const mime = keepAlpha ? 'image/png' : 'image/jpeg';
@@ -1053,18 +1366,39 @@ export default {
     justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px;
-    margin-top: 10px;
+    margin-top: 8px;
 }
 
+/*
+ * v1.3.1.1（需求）：裁剪 / 画笔 / 文字 / 箭头 / 椭圆 / 矩形 / 马赛克 + 两个翻转
+ * 全部挤在一行，放不下就横向滑动（不换行、不再把最后几个按钮折到第二行）。
+ */
 .crop-modes {
-    display: inline-flex;
+    display: flex;
+    flex: 1 1 100%;
+    align-items: center;
     gap: 2px;
     padding: 2px;
     border-radius: 8px;
     background: var(--el-fill-color-light, #f5f7fa);
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
 }
-
+.crop-modes::-webkit-scrollbar {
+    display: none;
+}
+.crop-modes-sep {
+    flex: 0 0 auto;
+    width: 1px;
+    height: 16px;
+    margin: 0 4px;
+    background: var(--el-border-color, #dcdfe6);
+}
 .crop-mode {
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     gap: 5px;
@@ -1078,6 +1412,11 @@ export default {
     line-height: 1;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
+}
+.crop-mode.is-action.is-active {
+    color: var(--el-color-primary, #409eff);
+    background: var(--el-color-primary-light-9, #ecf5ff);
+    box-shadow: none;
 }
 
 .crop-mode:hover {
@@ -1194,10 +1533,90 @@ export default {
 }
 
 .crop-hint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin: 6px 0 0;
     font-size: 12px;
     line-height: 1.5;
     color: var(--el-text-color-secondary);
+}
+.crop-hint-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── v1.3.1.1：自定义标题栏（撤销 / 恢复 / 重置 贴右上） ───────── */
+.crop-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    /* el-dialog 自带的关闭按钮绝对定位在右上角，留出它的位置 */
+    padding-right: 28px;
+    min-height: 24px;
+}
+.crop-head-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+}
+.crop-head-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+.crop-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--el-text-color-regular, #606266);
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.crop-icon-btn:hover:not(:disabled) {
+    background: var(--el-fill-color-light, #f5f7fa);
+    color: var(--el-color-primary, #409eff);
+}
+.crop-icon-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+/* 底部旋转按钮：比 el-button 矮一点，别把底部行撑高 */
+.crop-rot-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid var(--el-border-color, #dcdfe6);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--el-text-color-regular, #606266);
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+}
+.crop-rot-btn:hover:not(:disabled) {
+    border-color: var(--el-color-primary, #409eff);
+    color: var(--el-color-primary, #409eff);
+}
+.crop-rot-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 /* 移动端：舞台吃掉 header/footer/工具行之外的全部空间；选点加大易触 */
@@ -1254,20 +1673,26 @@ export default {
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    /*
+     * v1.3.1.1（需求）：内容加载区加宽 —— 左右内边距从全局的 20px 收到 6px，
+     * 上下也压到 4px/6px，省出来的空间全部给图片。
+     */
+    padding: 4px 6px 6px !important;
 }
 
 /*
  * v1.1.9.1（需求：剪辑页顶部标题行 / 底部保存按钮行各减 10px）
  * 全局把 .el-dialog__header / __footer 的 padding 统一改成了 !important，
- * 所以这里同样用 !important + 双类限定把内边距各压掉 10px（16→6 / 12→2）。
- * 注意 body 高度是 flex:1 撑开的，头/尾一矮，图片区自然多出 20px。
+ * 所以这里同样用 !important + 双类限定把内边距压掉。
+ * v1.3.1.1（需求）：再矮一点 —— 顶部 4/2，底部 2/4（原来 6 / 2，还带着全局的左右 20）。
  */
 .image-crop-dialog .el-dialog__header {
-    padding-bottom: 6px !important;
+    padding: 6px 6px 2px !important;
+    margin-right: 0 !important;
 }
 
 .image-crop-dialog .el-dialog__footer {
-    padding-top: 2px !important;
+    padding: 2px 6px 6px !important;
 }
 
 /*

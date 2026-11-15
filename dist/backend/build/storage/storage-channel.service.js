@@ -109,6 +109,17 @@ let StorageChannelService = class StorageChannelService {
             catch {
             }
         }
+        if (q.instanceId) {
+            try {
+                const inst = await prisma_1.prisma.instance.findUnique({ where: { id: q.instanceId } });
+                const metas = JSON.parse(inst?.metas || '{}');
+                const raw = String((kind === 'backup' ? metas.channelBackup : metas.channelMain) || '').trim();
+                if (raw && !exports.NO_BACKUP_VALUES.includes(raw.toLowerCase()))
+                    push(await this.findById(raw));
+            }
+            catch {
+            }
+        }
         if (q.uploader) {
             try {
                 const u = await prisma_1.prisma.user.findUnique({ where: { username: q.uploader } });

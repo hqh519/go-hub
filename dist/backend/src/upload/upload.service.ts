@@ -1096,6 +1096,8 @@ export class UploadService {
     uploader?: string;
     tokenId?: string;
     preferredId?: string;
+    /** v1.3.1.1：归属实例 —— 实例指定的渠道优先于账户级配置 */
+    instanceId?: string;
   } = {}): Promise<StorageChannelInfo | null> {
     /*
      * v2.8.6：显式指定的渠道被停用 → 直接报错，绝不静默改投别的渠道。
@@ -1114,6 +1116,7 @@ export class UploadService {
       channelType: q.channelType,
       uploader: q.uploader,
       tokenId: q.tokenId,
+      instanceId: q.instanceId,
     });
     // 兼容旧调用方传入的「账户级渠道 ID」
     if (q.preferredId && !list.some((c) => c.id === q.preferredId)) {
@@ -1139,11 +1142,14 @@ export class UploadService {
     uploader?: string;
     tokenId?: string;
     preferredId?: string;
+    /** v1.3.1.1：归属实例 —— 实例指定的备份渠道优先于账户级配置 */
+    instanceId?: string;
   } = {}): Promise<StorageChannelInfo | null> {
     const list = await this.storageChannel.getStorageChannelCandidates('backup', {
       explicitId: q.explicitId,
       uploader: q.uploader,
       tokenId: q.tokenId,
+      instanceId: q.instanceId,
     });
     if (q.preferredId && !list.some((c) => c.id === q.preferredId)) {
       const extra = await this.storageChannel.findById(q.preferredId);
@@ -2044,6 +2050,7 @@ export class UploadService {
         channelType: opts.uploadChannel,
         uploader: opts.ignoreUploaderChannel ? undefined : opts.uploader,
         tokenId: opts.tokenId,
+        instanceId: opts.instanceId,
       });
     } catch (err) {
       return { id: '', error: (err as Error).message };
@@ -2572,6 +2579,7 @@ export class UploadService {
           explicitId: opts.backupChannelId,
           uploader: opts.ignoreUploaderChannel ? undefined : opts.uploader,
           tokenId: opts.tokenId,
+          instanceId: opts.instanceId,
         });
         if (!backup || backup.id === usedChannel.id) return;
         await this.enqueueLowPriority(async () => {
@@ -3182,13 +3190,16 @@ export class UploadService {
     // 备份渠道按「文件所属用户」解析 —— 用户管理里为该账户指定了备份渠道就用它，
     // 没指定则回退到后台「上传设置」里的全局备份渠道。
     const cache = new Map<string, StorageChannelInfo | null>();
-    const backupFor = async (uploader?: string) => {
-      const k = String(uploader || '');
-      if (!cache.has(k)) cache.set(k, await this.resolveBackupChannel({ uploader: k || undefined }));
+    // v1.3.1.1：缓存键带上实例 —— 同一账户下不同实例可能指定了不同的备份渠道
+    const backupFor = async (uploader?: string, instanceId?: string) => {
+      const k = `${String(uploader || '')}\u0000${String(instanceId || '')}`;
+      if (!cache.has(k)) {
+        cache.set(k, await this.resolveBackupChannel({ uploader: uploader || undefined, instanceId: instanceId || undefined }));
+      }
       return cache.get(k) ?? null;
     };
     for (const rec of records) {
-      const backup = await backupFor(rec.uploader);
+      const backup = await backupFor(rec.uploader, (rec as any).instanceId);
       if (!backup) {
         fail += 1;
         continue;
@@ -3678,14 +3689,17 @@ export class UploadService {
     //   用户管理里为该账户指定了备份渠道 → 用指定渠道；
     //   未指定 → 后台「上传设置」里的全局备份渠道。
     const cache = new Map<string, StorageChannelInfo | null>();
-    const backupFor = async (uploader?: string) => {
-      const k = String(uploader || '');
-      if (!cache.has(k)) cache.set(k, await this.resolveBackupChannel({ uploader: k || undefined }));
+    // v1.3.1.1：缓存键带上实例，理由同 rebackup()
+    const backupFor = async (uploader?: string, instanceId?: string) => {
+      const k = `${String(uploader || '')}\u0000${String(instanceId || '')}`;
+      if (!cache.has(k)) {
+        cache.set(k, await this.resolveBackupChannel({ uploader: uploader || undefined, instanceId: instanceId || undefined }));
+      }
       return cache.get(k) ?? null;
     };
     const pending: { rec: (typeof records)[number]; backup: StorageChannelInfo }[] = [];
     for (const rec of records) {
-      const backup = await backupFor(rec.uploader);
+      const backup = await backupFor(rec.uploader, (rec as any).instanceId);
       if (!backup) continue; // 该文件没有可用备份渠道，跳过
       if (rec.copies.some((c) => c.channelId === backup.id && c.status === 'active')) continue; // 已有备份
       pending.push({ rec, backup });

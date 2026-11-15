@@ -152,5 +152,9 @@ eq('代码块里的 ^blk 原样保留', idBack.includes('blk_33333333'), true);
 const widthMd = '![图](/file/x){width=600}';
 roundtrip('图片宽度', widthMd);
 
+// v1.3.1.1：段级对齐走 `<p align>`，往返必须稳定
+roundtrip('段落居中', '<p align="center">居中的一段</p>');
+roundtrip('段落右对齐', '<p align="right">靠右一段</p>');
+
 console.log(`\n结果：通过 ${pass} / 失败 ${fail}`);
 process.exit(fail ? 1 : 0);

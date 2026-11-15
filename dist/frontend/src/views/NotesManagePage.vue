@@ -608,7 +608,7 @@ import { buildFileDetail } from '@/utils/fileDetail';
 import { loadNoteSettings, applyCachedSettings, noteSettings, parsePageBg } from '@/utils/noteSettings';
 import { writeThemeCookie } from '@/utils/themeCookie';
 // v1.1.3：实例切换密码守卫（与图床管理页 / 首页同一份实现）
-import { ensureInstanceUnlocked } from '@/utils/instanceSwitch';
+import { ensureInstanceUnlocked, revokeInstanceUnlock } from '@/utils/instanceSwitch';
 import { registerLayer, unregisterLayer, bindDialogLayers, trackMessageBox } from '@/utils/layerStack';
 import { bindScrollDismiss } from '@/utils/scrollDismiss';
 import recordBrowse from '@/utils/browseRecord';
@@ -1045,6 +1045,8 @@ export default {
             const next = id == null ? '' : String(id);
             const ok = await ensureInstanceUnlocked(next);
             if (!ok) return;
+            // v1.3.1.1：切走时作废离开实例的通行证（切回来要重新验证）
+            await revokeInstanceUnlock(this.instanceId);
             this.showInstanceDialog = false;
             this.instanceId = next;
             this.applyInstance();

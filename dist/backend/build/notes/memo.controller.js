@@ -116,6 +116,58 @@ let MemoController = class MemoController {
         const data = await this.memo.rebuildNoteIndex(id, String(note?.content || ''), viewer, instanceId);
         return { success: true, data };
     }
+    async tagCandidates(req, q) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.noteTagCandidates(viewer, q.instanceId || '', q.keyword || '');
+        return { success: true, data };
+    }
+    async listTags(req, id, instanceId) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.listNoteTags(viewer, instanceId || '', id);
+        if ('error' in data && data.error)
+            this.fail(String(data.error), common_1.HttpStatus.NOT_FOUND);
+        return { success: true, data };
+    }
+    async setTags(req, id, body) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.setNoteTags(viewer, String(body.instanceId ?? ''), id, body.tagNames);
+        if ('error' in data && data.error)
+            this.fail(String(data.error), common_1.HttpStatus.NOT_FOUND);
+        return { success: true, data };
+    }
+    async pushHistory(req, id, body) {
+        const { viewer } = this.ctx(req);
+        const instanceId = String(body.instanceId ?? '');
+        const data = await this.memo.pushHistory(viewer, instanceId, id, {
+            title: body.title,
+            content: body.content,
+            version: body.version,
+        });
+        if ('error' in data && data.error)
+            this.fail(String(data.error), common_1.HttpStatus.NOT_FOUND);
+        return { success: true, data };
+    }
+    async listHistory(req, id, instanceId) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.listHistory(viewer, instanceId || '', id);
+        if ('error' in data && data.error)
+            this.fail(String(data.error), common_1.HttpStatus.NOT_FOUND);
+        return { success: true, data };
+    }
+    async getHistory(req, id, hid, instanceId) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.getHistory(viewer, instanceId || '', id, hid);
+        if ('error' in data && data.error)
+            this.fail(String(data.error), common_1.HttpStatus.NOT_FOUND);
+        return { success: true, data };
+    }
+    async restoreHistory(req, id, hid, body) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.restoreHistory(viewer, String(body?.instanceId ?? ''), id, hid);
+        if ('error' in data && data.error)
+            this.fail(String(data.error), common_1.HttpStatus.NOT_FOUND);
+        return { success: true, data };
+    }
     async rebuildAll(req, body) {
         const { viewer } = this.ctx(req);
         const data = await this.memo.rebuildAllIndex(viewer, String(body.instanceId ?? ''));
@@ -269,6 +321,70 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, Object]),
     __metadata("design:returntype", Promise)
 ], MemoController.prototype, "rebuildIndex", null);
+__decorate([
+    (0, common_1.Get)('tags/candidates'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "tagCandidates", null);
+__decorate([
+    (0, common_1.Get)(':id/tags'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "listTags", null);
+__decorate([
+    (0, common_1.Put)(':id/tags'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "setTags", null);
+__decorate([
+    (0, common_1.Post)(':id/history'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "pushHistory", null);
+__decorate([
+    (0, common_1.Get)(':id/history'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "listHistory", null);
+__decorate([
+    (0, common_1.Get)(':id/history/:hid'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Param)('hid')),
+    __param(3, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, String]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "getHistory", null);
+__decorate([
+    (0, common_1.Post)(':id/history/:hid/restore'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Param)('hid')),
+    __param(3, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, Object]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "restoreHistory", null);
 __decorate([
     (0, common_1.Post)('rebuild-index'),
     __param(0, (0, common_1.Req)()),

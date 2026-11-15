@@ -67,8 +67,26 @@ export function readSwitchLock(metas: string): SwitchLockConfig | null {
   }
 }
 
-/** 生成 8 位邀请码（大小写字母 + 数字，crypto 随机） */
-function makeInviteCode(): string {
+/**
+ * 实例级默认存储渠道（v1.3.1.1）。
+ *
+ * 存在 metas 里：`{ channelMain: '渠道ID', channelBackup: '渠道ID' }`。
+ * 与「用户管理 → 默认存储渠道」并列，优先级 **实例 > 账户 > 全局**。
+ * 取不到 / JSON 坏了都返回空串 —— 当作「这一级没配」，继续往下回落。
+ */
+export function readInstanceChannels(metas: string): { main: string; backup: string } {
+  try {
+    const parsed = JSON.parse(metas || '{}');
+    return {
+      main: String(parsed?.channelMain || '').trim(),
+      backup: String(parsed?.channelBackup || '').trim(),
+    };
+  } catch {
+    return { main: '', backup: '' };
+  }
+}
+
+/** 生成 8 位邀请码（大小写字母 + 数字，crypto 随机） */function makeInviteCode(): string {
   const buf = randomBytes(INVITE_CODE_LEN);
   let code = '';
   for (let i = 0; i < INVITE_CODE_LEN; i += 1) code += INVITE_CHARS[buf[i] % INVITE_CHARS.length];
@@ -409,6 +427,23 @@ export class InstancesService {
   }
 
   /**
+   * v1.3.1.1（需求）：撤销某个实例的通行证。
+   *
+   * 原来的规则是「验证一次，12 小时内随便用」。需求改成「切到别的实例再切回来，
+   * 必须重新输一次密码」—— 于是切走时要主动把离开的那个实例的通行证作废，
+   * 否则服务端仍认为已解锁，切回来就不再问了。
+   * 只作废「离开的那一个」，其他实例的通行证不受影响。
+   */
+  revokeUnlock(username: string, instanceId: string) {
+    const key = String(username || '');
+    const bucket = InstancesService.unlocked.get(key);
+    if (!bucket) return { ok: true };
+    bucket.delete(String(instanceId || ''));
+    appLog.info('instance', `${key} 切离实例 ${instanceId || '(默认)'}，已作废该实例通行证`, '', '');
+    return { ok: true };
+  }
+
+  /**
    * 读取实例属性（仅创建者）。
    * 不返回自定义密码的哈希 —— 前端只需要知道「有没有设过」。
    */
@@ -421,11 +456,15 @@ export class InstancesService {
     const myId = await this.ownerIdOf(username);
     if (inst.ownerId !== myId) return { error: '仅创建者可查看实例属性' };
     const lock = readSwitchLock(inst.metas);
+    const ch = readInstanceChannels(inst.metas);
     return {
       item: {
         id: inst.id,
         name: inst.name,
         note: inst.note,
+        /** v1.3.1.1：实例级默认存储渠道（空 = 跟随账户 / 全局） */
+        channelMain: ch.main,
+        channelBackup: ch.backup,
         switchLock: {
           enabled: !!lock,
           mode: lock?.mode || 'custom',
@@ -449,6 +488,9 @@ export class InstancesService {
       name?: string;
       note?: string;
       switchLock?: { enabled?: boolean; mode?: string; password?: string } | null;
+      /** v1.3.1.1：实例级主 / 备渠道（渠道 ID；空 = 不指定，回落到账户级） */
+      channelMain?: string;
+      channelBackup?: string;
     },
   ): Promise<{ item?: Record<string, unknown>; error?: string }> {
     const inst = await prisma.instance.findUnique({ where: { id } });
@@ -477,6 +519,27 @@ export class InstancesService {
       }
     }
     if (body.note !== undefined) data.note = String(body.note || '').slice(0, 200);
+
+    // ── v1.3.1.1：实例级主 / 备渠道 ──
+    /*
+     * 存进 metas 而不是加列：渠道只是两个字符串，加列要 db push 改表结构，
+     * 而 metas 本来就是「实例的扩展配置」，读写都走同一个 JSON 最省事，
+     * 旧库升级也不用动表。取值时按「渠道 ID」存，改名不影响。
+     */
+    if (body.channelMain !== undefined || body.channelBackup !== undefined) {
+      const pick = (v: string | undefined) => (v === undefined ? undefined : String(v || '').trim().slice(0, 64));
+      const main = pick(body.channelMain);
+      const backup = pick(body.channelBackup);
+      if (main !== undefined) {
+        if (main) metas.channelMain = main;
+        else delete metas.channelMain;
+      }
+      if (backup !== undefined) {
+        if (backup && backup !== 'none') metas.channelBackup = backup;
+        else delete metas.channelBackup;
+      }
+      data.metas = JSON.stringify(metas);
+    }
 
     // ── 切换密码 ──
     if (body.switchLock !== undefined) {
@@ -531,11 +594,14 @@ export class InstancesService {
     });
     appLog.info('instance', `创建者 ${username} 更新了实例「${updated.name}」的属性`, '', '');
     const lock = readSwitchLock(updated.metas);
+    const ch = readInstanceChannels(updated.metas);
     return {
       item: {
         id: updated.id,
         name: updated.name,
         note: updated.note,
+        channelMain: ch.main,
+        channelBackup: ch.backup,
         switchLock: { enabled: !!lock, mode: lock?.mode || 'custom', hasCustomPassword: !!lock?.hash },
       },
     };

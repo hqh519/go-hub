@@ -51,6 +51,7 @@
                 ref="tree"
                 :data="treeData"
                 node-key="id"
+                :indent="0"
                 :props="{ label: 'name', children: 'children' }"
                 :expand-on-click-node="false"
                 :current-node-key="currentKey"
@@ -295,6 +296,44 @@ export default {
     overflow: auto;
     padding: 0 6px 12px;
 }
+/*
+ * ── v1.3.1.1（需求）：目录缩进减半 + 关系线 ─────────────────────────
+ *
+ * 缩进从 el-tree 自带的 16px 改成 **8px**，并且不再用它的 padding-left，
+ * 而是给每一层「子节点容器」加 8px 左内边距 —— 好处是 DOM 的嵌套本身就累积出
+ * 层级缩进，CSS 不需要知道「当前是第几级」，也就能把竖线画在固定位置：
+ *   · 竖线 = 子容器左内边距的中线（left: 4px），从父项中心往下一路延伸；
+ *   · 横枝 = 每个子项左侧 8px 的一小段，指向自己的图标。
+ * 如果用 el-tree 的 padding-left 实现，缩进落在 content 上、容器仍在 0，
+ * 竖线的位置就得按层级算，纯 CSS 做不到。
+ */
+.mt-tree :deep(.el-tree-node__children) {
+    position: relative;
+    padding-left: 8px;
+}
+.mt-tree :deep(.el-tree-node__children)::before {
+    content: '';
+    position: absolute;
+    left: 4px;
+    top: 0;
+    /* 最后一项的下半行不需要竖线，留出行高的一半 */
+    bottom: 13px;
+    width: 1px;
+    background: var(--el-border-color-lighter, #e4e7ed);
+}
+.mt-tree :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content) {
+    position: relative;
+}
+.mt-tree :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content)::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 50%;
+    width: 8px;
+    height: 1px;
+    background: var(--el-border-color-lighter, #e4e7ed);
+}
+
 .mt-node {
     display: flex;
     align-items: center;

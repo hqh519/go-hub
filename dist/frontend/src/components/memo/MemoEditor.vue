@@ -10,29 +10,34 @@
         「md 是真源」的落地方式：任何一次切换 / 保存都先取当前视图的 md，
         再把它喂给另一个视图 —— 富文本里的 JSON 只是派生缓存，从不单独落库。
     -->
-    <div class="me-root">
-        <!-- 标题区 -->
-        <div class="me-head">
-            <input
-                v-model="title"
-                class="me-title"
-                :placeholder="$t('memo.untitled')"
-                maxlength="200"
-                @input="scheduleSave"
-            />
-            <div class="me-status">
-                <span v-if="saving" class="me-status-text">{{ $t('memo.saving') }}</span>
-                <span v-else-if="dirty" class="me-status-text is-dirty">{{ $t('memo.unsaved') }}</span>
-                <span v-else class="me-status-text">{{ $t('memo.saved') }}</span>
-                <span class="me-chars">{{ charCount }}</span>
-            </div>
-        </div>
-
+    <div class="me-root" :class="`theme-${editorTheme}`">
         <!-- 工具栏：按设置里的行配置渲染，`|` 生成分隔线 -->
         <div class="me-toolbar-wrap">
             <div v-for="(line, li) in toolbarLines" :key="`tl-${li}`" class="me-toolbar">
                 <template v-for="(token, ti) in line" :key="`${li}-${ti}`">
                     <span v-if="token === '|'" class="me-sep"></span>
+                    <!--
+                        v1.3.1.1：工具组 —— 配置里写 `[bold italic underline]` 时，
+                        这一整组渲染成一个下拉按钮，点开才是组内工具，省工具条宽度。
+                    -->
+                    <el-dropdown
+                        v-else-if="Array.isArray(token)"
+                        trigger="click"
+                        placement="bottom-start"
+                        @command="(cmd) => runTool(cmd)"
+                    >
+                        <button type="button" class="me-btn me-btn-group" :title="$t('memo.toolGroup')" @mousedown.prevent>
+                            <font-awesome-icon icon="ellipsis-h" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item v-for="g in token" :key="`g-${li}-${ti}-${g}`" :command="g">
+                                    <font-awesome-icon v-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
+                                    <span class="me-group-label">{{ toolsOf(g) ? $t(toolsOf(g).label) : g }}</span>
+                                </el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
                     <button
                         v-else-if="toolsOf(token)"
                         type="button"
@@ -40,7 +45,7 @@
                         :class="{ 'is-active': toolsOf(token).active ? toolsOf(token).active(editor) : false }"
                         :title="$t(toolsOf(token).label)"
                         @mousedown.prevent
-                        @click="runTool(token)"
+                        @click="runTool(token, $event)"
                     >
                         <span v-if="token.startsWith('h') && /^h[1-6]$/.test(token)" class="me-hlabel">{{ token.toUpperCase() }}</span>
                         <font-awesome-icon v-else-if="toolsOf(token).icon" :icon="toolsOf(token).icon" />
@@ -65,8 +70,67 @@
             </div>
         </div>
 
-        <!-- 编辑区 -->
+        <!-- 编辑区（标题 / 时间 / 标签都在里面，跟着正文一起滚） -->
         <div ref="bodyEl" class="me-body" @contextmenu="onContextMenu" @click="onBodyClick">
+            <!--
+                v1.3.1.1（需求）：标题从工具栏上方挪到工具栏下方，并补两行元信息与标签。
+                这三块都**不做吸附** —— 放在滚动容器里，随正文一起滚上去。
+            -->
+            <div class="me-head">
+                <input
+                    v-model="title"
+                    class="me-title"
+                    :placeholder="$t('memo.untitled')"
+                    maxlength="200"
+                    @input="scheduleSave"
+                />
+                <div class="me-meta">
+                    <button type="button" class="me-meta-btn" :title="$t('memo.historyOpen')" @click="openHistory">
+                        <font-awesome-icon icon="history" class="me-meta-icon" />
+                        {{ $t('memo.versionNo', { n: version || 1 }) }}
+                    </button>
+                    <span class="me-meta-item">
+                        <font-awesome-icon icon="clock" class="me-meta-icon" />
+                        {{ updatedText }}
+                    </span>
+                    <span class="me-meta-item">{{ $t('memo.wordCount', { n: wordCount }) }}</span>
+                    <span class="me-meta-item">{{ $t('memo.charCountAll', { n: charCount }) }}</span>
+                    <span class="me-status">
+                        <span v-if="saving" class="me-status-text">{{ $t('memo.saving') }}</span>
+                        <span v-else-if="dirty" class="me-status-text is-dirty">{{ $t('memo.unsaved') }}</span>
+                        <span v-else class="me-status-text">{{ $t('memo.saved') }}</span>
+                    </span>
+                </div>
+                <!-- 标签行：交互与瞬间发布页一致（输入即查候选，空格 / 回车成标签） -->
+                <div class="me-tags">
+                    <span v-for="(t, i) in tags" :key="`tg-${t.name}-${i}`" class="me-tag">
+                        {{ t.name }}
+                        <button type="button" class="me-tag-x" @click="removeTag(i)">
+                            <font-awesome-icon icon="times" />
+                        </button>
+                    </span>
+                    <input
+                        v-model="tagInput"
+                        class="me-tag-input"
+                        :placeholder="tags.length ? '' : $t('memo.tagPlaceholder')"
+                        @keydown.enter.prevent="commitTag"
+                        @keydown.space.prevent="commitTag"
+                        @keydown.delete="onTagBackspace"
+                        @input="onTagInput"
+                        @focus="loadTagCandidates"
+                    />
+                    <div v-if="tagCandidates.length" class="me-tag-suggest">
+                        <button
+                            v-for="c in tagCandidates"
+                            :key="`tc-${c.id}`"
+                            type="button"
+                            class="me-tag-sug-item"
+                            @mousedown.prevent="pickTag(c.name)"
+                        >{{ c.name }}</button>
+                    </div>
+                </div>
+            </div>
+
             <EditorContent v-show="mode === 'wysiwyg'" :editor="editor" class="me-wysiwyg" />
             <div v-show="mode === 'source'" ref="sourceEl" class="me-source"></div>
             <!-- 预览：内容来自 renderMarkdownSafe（marked + DOMPurify 白名单） -->
@@ -123,22 +187,37 @@
             现在按钮只负责触发它。
         -->
         <input ref="fileInput" type="file" accept="image/*" multiple hidden @change="onFileInputChange" />
+        <!--
+            v1.3.1.1（需求）：上传按钮不再限图片，也不直接上传 ——
+            选完文件先弹「上传到图床」面板（选渠道 / 实例 / 目录），确认后才真正上传。
+        -->
+        <input ref="anyFileInput" type="file" multiple hidden @change="onAnyFileChange" />
+
+        <UploadTargetDialog
+            v-model="uploadTargetVisible"
+            :busy="uploadBusy"
+            :title="$t('memo.uploadToBed')"
+            :hint="$t('memo.uploadHint', { n: pendingUploadFiles.length })"
+            @confirm="confirmUploadTarget"
+        />
 
         <!-- 斜杠菜单 -->
         <Teleport to="body">
             <div v-if="slash.open" class="me-slash" :style="slash.style" @mousedown.prevent>
-                <div
-                    v-for="(cmd, i) in slash.items"
-                    :key="cmd.id"
-                    class="me-slash-item"
-                    :class="{ 'is-active': i === slash.index }"
-                    @mouseenter="slash.index = i"
-                    @click="applySlash(cmd)"
-                >
+                <template v-for="(cmd, i) in slash.items" :key="cmd.id">
+                    <div v-if="cmd.separator" class="me-slash-sep"></div>
+                    <div
+                        v-else
+                        class="me-slash-item"
+                        :class="{ 'is-active': i === slash.index }"
+                        @mouseenter="slash.index = i"
+                        @click="applySlash(cmd)"
+                    >
                     <font-awesome-icon :icon="cmd.icon" class="me-slash-icon" />
                     <span class="me-slash-label">{{ $t(cmd.label) }}</span>
-                    <span class="me-slash-hint">{{ cmd.hint }}</span>
-                </div>
+                        <span class="me-slash-hint">{{ cmd.hint }}</span>
+                    </div>
+                </template>
                 <div v-if="!slash.items.length" class="me-slash-empty">{{ $t('memo.slashEmpty') }}</div>
             </div>
         </Teleport>
@@ -200,6 +279,71 @@
             </div>
         </Teleport>
 
+        <!-- 输入工具条：光标停在空行时浮出（内容来自「编辑器设置 → 输入工具配置」） -->
+        <Teleport to="body">
+            <div v-if="inputBar.open && inputTools.length" class="me-inputbar" :style="inputBar.style" @mousedown.prevent>
+                <button
+                    v-for="t in inputTools"
+                    :key="`ib-${t}`"
+                    type="button"
+                    class="me-btn"
+                    :title="$t(toolsOf(t).label)"
+                    @click="runTool(t, $event)"
+                >
+                    <span v-if="/^h[1-6]$/.test(t)" class="me-hlabel">{{ t.toUpperCase() }}</span>
+                    <font-awesome-icon v-else-if="toolsOf(t).icon" :icon="toolsOf(t).icon" />
+                </button>
+            </div>
+        </Teleport>
+
+        <!-- 工具栏按钮名称浮层（点击后 2 秒消失） -->
+        <Teleport to="body">
+            <div
+                v-if="toolTip.show"
+                class="me-tooltip"
+                :style="{ left: `${toolTip.left}px`, top: `${toolTip.top}px` }"
+            >{{ toolTip.text }}</div>
+        </Teleport>
+
+        <!-- 历史记录（点击版本号打开） -->
+        <el-dialog v-model="historyVisible" :title="$t('memo.historyTitle')" width="720px" append-to-body class="me-history-dialog">
+            <div class="me-hist-wrap">
+                <div class="me-hist-list" v-loading="historyLoading">
+                    <button
+                        v-for="h in historyItems"
+                        :key="h.id"
+                        type="button"
+                        class="me-hist-item"
+                        :class="{ 'is-active': historyPreview && historyPreview.id === h.id }"
+                        @click="viewHistory(h)"
+                    >
+                        <span class="me-hist-time">{{ formatHistoryTime(h.createdAt) }}</span>
+                        <span class="me-hist-meta">v{{ h.version }} · {{ h.charCount }}{{ $t('memo.charUnit') }}</span>
+                        <span class="me-hist-title">{{ h.title || $t('memo.untitled') }}</span>
+                    </button>
+                    <div v-if="!historyItems.length && !historyLoading" class="me-hist-empty">
+                        {{ $t('memo.historyEmpty') }}
+                    </div>
+                </div>
+                <div class="me-hist-preview">
+                    <template v-if="historyPreview">
+                        <div class="me-hist-preview-head">
+                            <span>{{ formatHistoryTime(historyPreview.createdAt) }}</span>
+                            <el-button size="small" type="primary" plain @click="restoreHistoryItem(historyPreview)">
+                                {{ $t('memo.historyRestore') }}
+                            </el-button>
+                        </div>
+                        <div class="me-hist-preview-body gh-md" v-safe-html="renderHistoryPreview"></div>
+                    </template>
+                    <div v-else class="me-hist-empty">{{ $t('memo.historyPick') }}</div>
+                </div>
+            </div>
+            <template #footer>
+                <span class="me-hist-tip">{{ $t('memo.historyTip', { n: 100 }) }}</span>
+                <el-button @click="historyVisible = false">{{ $t('common.close') }}</el-button>
+            </template>
+        </el-dialog>
+
         <!-- 图床选文件 -->
         <FilePickerDialog
             v-model="pickerVisible"
@@ -212,7 +356,7 @@
 <script>
 import { markRaw } from 'vue';
 import { Editor, EditorContent } from '@tiptap/vue-3';
-import { Node, mergeAttributes } from '@tiptap/core';
+import { Node, Extension, mergeAttributes } from '@tiptap/core';
 import { Plugin, PluginKey, NodeSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
@@ -228,11 +372,52 @@ import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';import { ElMessage, ElMessageBox } from 'element-plus';
 import FilePickerDialog from '@/components/notes/FilePickerDialog.vue';
+import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import { docToMd, mdToDoc, renderMarkdownSafe, plainTextOf } from '@/utils/markdown';
-import { saveNote, memoError, fetchNotes, fetchNoteBlocks, fetchBacklinks, resolveBlock } from '@/utils/memoApi';
-import { uploadOne, defaultUploadFolder } from '@/utils/uploadTarget';
+import {
+    saveNote,
+    memoError,
+    fetchNotes,
+    fetchNoteBlocks,
+    fetchBacklinks,
+    resolveBlock,
+    fetchNoteTags,
+    saveNoteTags,
+    fetchTagCandidates,
+    fetchNoteHistory,
+    fetchNoteHistoryItem,
+    restoreNoteHistory,
+    pushNoteHistory,
+} from '@/utils/memoApi';
+import { uploadOne, defaultUploadFolder, importUrlToBed } from '@/utils/uploadTarget';
 import { mediaKindOfMime } from '@/utils/notes';
 import { DEFAULT_TOOLBAR_LINES } from '@/utils/memoEditorConfig';
+
+/**
+ * 段落 / 标题对齐（v1.3.1.1）。
+ *
+ * 没用官方的 @tiptap/extension-text-align：它写的是行内 `style="text-align:..."`，
+ * 而全站预览走 DOMPurify 白名单、`style` 在禁用清单里 —— 预览会和编辑态不一致。
+ * 这里改用 HTML 的 `align` 属性（白名单放行），md 侧对应 `<p align="center">…</p>`，
+ * 往返稳定，且在别的 markdown 查看器里也能看出对齐。
+ */
+const BlockAlign = Extension.create({
+    name: 'blockAlign',
+    addGlobalAttributes() {
+        return [
+            {
+                types: ['paragraph', 'heading'],
+                attributes: {
+                    align: {
+                        default: null,
+                        parseHTML: (el) => el.getAttribute('align') || null,
+                        renderHTML: (attrs) => (attrs.align ? { align: attrs.align } : {}),
+                    },
+                },
+            },
+        ];
+    },
+});
 
 /**
  * 图片扩一个 `width`（v1.4.0）。
@@ -521,6 +706,49 @@ const TOOLS = {
     hr: { icon: 'minus', label: 'memo.toolHr', run: (e) => e.chain().focus().setHorizontalRule().run() },
     link: { icon: 'link', label: 'memo.toolLink', run: null, active: (e) => e && e.isActive('link') },
     image: { icon: 'image', label: 'memo.toolImage', run: null },
+    /** v1.3.1.1：上传（任意类型；先选目标再上传） */
+    upload: { icon: 'upload', label: 'memo.toolUpload', run: null },
+    /* ── v1.3.1.1 需求新增：对齐 / 缩进 / 换行 / 段落 / 链接提取 ── */
+    alignLeft: {
+        icon: 'align-left',
+        label: 'memo.toolAlignLeft',
+        run: (e) => e.chain().focus().updateAttributes('paragraph', { align: null }).run(),
+        active: (e) => e && e.isActive('paragraph', { align: null }),
+    },
+    alignCenter: {
+        icon: 'align-center',
+        label: 'memo.toolAlignCenter',
+        run: (e) => e.chain().focus().updateAttributes('paragraph', { align: 'center' }).run(),
+        active: (e) => e && e.isActive('paragraph', { align: 'center' }),
+    },
+    alignRight: {
+        icon: 'align-right',
+        label: 'memo.toolAlignRight',
+        run: (e) => e.chain().focus().updateAttributes('paragraph', { align: 'right' }).run(),
+        active: (e) => e && e.isActive('paragraph', { align: 'right' }),
+    },
+    indent: {
+        icon: 'indent',
+        label: 'memo.toolIndent',
+        // 列表里就是「降一级」；不在列表里时把段落包进引用做视觉缩进（md 有对应写法）
+        run: (e) => (e.isActive('listItem') ? e.chain().focus().sinkListItem('listItem').run() : e.chain().focus().toggleBlockquote().run()),
+    },
+    outdent: {
+        icon: 'outdent',
+        label: 'memo.toolOutdent',
+        run: (e) => (e.isActive('listItem') ? e.chain().focus().liftListItem('listItem').run() : e.chain().focus().toggleBlockquote().run()),
+    },
+    hardBreak: { icon: 'arrow-turn-down', label: 'memo.toolLineBreak', run: (e) => e.chain().focus().setHardBreak().run() },
+    paragraph: { icon: 'paragraph', label: 'memo.toolParagraph', run: (e) => e.chain().focus().setParagraph().unsetAllMarks().run() },
+    linkExtract: { icon: 'cloud-arrow-down', label: 'memo.toolLinkExtract', run: null },
+    /* 表格操作（需求：插入后要能加/删行列、合并拆分） */
+    tableAddRow: { icon: 'plus', label: 'memo.tblAddRow', run: (e) => e.chain().focus().addRowAfter().run() },
+    tableAddCol: { icon: 'plus', label: 'memo.tblAddCol', run: (e) => e.chain().focus().addColumnAfter().run() },
+    tableDelRow: { icon: 'minus', label: 'memo.tblDelRow', run: (e) => e.chain().focus().deleteRow().run() },
+    tableDelCol: { icon: 'minus', label: 'memo.tblDelCol', run: (e) => e.chain().focus().deleteColumn().run() },
+    tableMerge: { icon: 'compress', label: 'memo.tblMerge', run: (e) => e.chain().focus().mergeCells().run() },
+    tableSplit: { icon: 'expand', label: 'memo.tblSplit', run: (e) => e.chain().focus().splitCell().run() },
+    tableDelete: { icon: 'trash', label: 'memo.tblDelete', run: (e) => e.chain().focus().deleteTable().run() },
     file: { icon: 'folder-open', label: 'memo.toolFile', run: null },
     /*
      * v1.3.1 新增工具。
@@ -538,6 +766,49 @@ const TOOLS = {
     undo: { icon: 'undo', label: 'memo.toolUndo', run: (e) => e.chain().focus().undo().run() },
     redo: { icon: 'redo', label: 'memo.toolRedo', run: (e) => e.chain().focus().redo().run() },
 };
+
+/**
+ * 工具栏配置行 → { scope, text }
+ *   `pc=h1 h2 | bold`  → { scope: 'pc', text: 'h1 h2 | bold' }
+ *   `[bold italic]`    → { scope: '',   text: '[bold italic]' }
+ */
+function splitScope(line) {
+    const m = /^(pc|m)\s*=\s*([\s\S]*)$/i.exec(String(line || '').trim());
+    if (m) return { scope: m[1].toLowerCase(), text: m[2] };
+    return { scope: '', text: String(line || '').trim() };
+}
+
+/**
+ * 一行工具配置 → token 数组。
+ * `[a b c]` 整体解析成一个数组（工具组），其余按空白切分。
+ * 组内的 `|` 直接丢掉（下拉菜单里再画分隔线意义不大）。
+ */
+function parseToolTokens(text) {
+    const out = [];
+    const src = String(text || '');
+    let i = 0;
+    while (i < src.length) {
+        const ch = src[i];
+        if (ch === '[') {
+            const end = src.indexOf(']', i);
+            if (end < 0) break;
+            const inner = src.slice(i + 1, end).split(/\s+/).filter((x) => x && x !== '|');
+            if (inner.length) out.push(inner);
+            i = end + 1;
+            continue;
+        }
+        if (/\s/.test(ch)) {
+            i += 1;
+            continue;
+        }
+        let j = i;
+        while (j < src.length && !/[\s\[]/.test(src[j])) j += 1;
+        const token = src.slice(i, j);
+        if (token) out.push(token);
+        i = j;
+    }
+    return out;
+}
 
 /** 斜杠菜单命令表 */
 const SLASH_COMMANDS = [
@@ -559,13 +830,19 @@ const SLASH_COMMANDS = [
 
 export default {
     name: 'MemoEditor',
-    components: { EditorContent, FilePickerDialog },
+    components: { EditorContent, FilePickerDialog, UploadTargetDialog },
     props: {
         /** 笔记详情（含 id / content / version）；null = 还没选中 */
         note: { type: Object, default: null },
         instanceId: { type: String, default: '' },
         /** 工具栏行配置（来自编辑器设置） */
         toolbarConfig: { type: Array, default: () => DEFAULT_TOOLBAR_LINES },
+        /**
+         * v1.3.1.1：编辑器设置全集（配色 / 输入工具 / 斜杠菜单 / 历史间隔）。
+         * 单独一个 prop 而不是继续摊平，是因为它整体来自「笔记设置」的同一次请求，
+         * 拆成多个 prop 反而要在页面里维护多份默认值。
+         */
+        editorConfig: { type: Object, default: () => ({}) },
     },
     emits: ['saved', 'dirty', 'request-settings', 'open-note'],
     data() {
@@ -598,16 +875,129 @@ export default {
             backlinksOpen: false,
             /** 图片缩放手柄浮层（v1.4.0） */
             imgBox: { open: false, boxStyle: {}, width: 0, pos: 0, nodeW: 0 },
+            /* ── v1.3.1.1：标题区元信息 + 标签 + 历史记录 ── */
+            /** 上次保存时间（用于「更新时间」展示） */
+            updatedAt: 0,
+            /** 只数中文与英文（不含数字 / 标点 / 符号 / 表情） */
+            wordCount: 0,
+            tags: [],
+            tagInput: '',
+            tagCandidates: [],
+            /** 历史记录弹窗 */
+            historyVisible: false,
+            historyLoading: false,
+            historyItems: [],
+            historyPreview: null,
+            /** 历史快照定时器（间隔来自设置，分钟） */
+            historyTimer: null,
+            /** 上次压历史时的正文，用来判断「真的变了」 */
+            lastHistoryMd: '',
+            /** 工具栏按钮名称浮层（点击后显示 2 秒） */
+            toolTip: { show: false, text: '', left: 0, top: 0 },
+            /** 输入工具条（光标停在空行时浮在光标上方） */
+            inputBar: { open: false, style: {} },
+            /** 上传面板（v1.3.1.1）：选完文件后先问目标渠道 / 实例 / 目录 */
+            uploadTargetVisible: false,
+            uploadBusy: false,
+            pendingUploadFiles: [],
+            /** 'files' = 本地上传 | 'url' = 链接提取（共用同一个目标面板） */
+            uploadMode: 'files',
+            pendingLinkUrl: '',
             /** 8 个把手：四角 + 四边（nw / n / ne / e / se / s / sw / w） */
             imgHandles: ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'],
         };
     },
     computed: {
+        /** 触屏设备（与瞬间发布页同一判据：三项取或） */
+        isTouchDevice() {
+            if (typeof window === 'undefined') return false;
+            const mq = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
+            return (navigator.maxTouchPoints || 0) > 0 || mq('(hover: none)') || mq('(pointer: coarse)');
+        },
+        /** 当前视口是否移动端口径（工具栏 pc= / m= 前缀的判定依据） */
+        isMobileViewport() {
+            if (this.isTouchDevice) return true;
+            return typeof window !== 'undefined' && window.innerWidth <= 900;
+        },
+        /** 生效的配色：light / dark；auto 时跟随 html 上的 dark 类（全站主题） */
+        editorTheme() {
+            const t = String(this.editorConfig?.theme || 'auto');
+            if (t === 'light' || t === 'dark') return t;
+            const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+            return dark ? 'dark' : 'light';
+        },
+        /** 历史预览渲染（走同一套 marked + DOMPurify） */
+        renderHistoryPreview() {
+            return renderMarkdownSafe(String(this.historyPreview?.content || ''));
+        },
+        /** 更新时间文案（没保存过就不显示具体时间） */
+        updatedText() {
+            if (!this.updatedAt) return '—';
+            const d = new Date(Number(this.updatedAt));
+            if (!Number.isFinite(d.getTime())) return '—';
+            const pad = (n) => String(n).padStart(2, '0');
+            const now = new Date();
+            const sameDay = d.toDateString() === now.toDateString();
+            const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+            return sameDay ? hm : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`;
+        },
+        /**
+         * 工具栏行解析（v1.3.1.1）。
+         *
+         * 支持三件事：
+         *   1) 行首 `pc=` / `m=` —— 该行只在桌面端 / 移动端出现（不写 = 两端都出现）；
+         *   2) `[a b c]` 工具组 —— 渲染成一个下拉按钮，点开是组内工具；
+         *   3) `|` 分隔线，行为不变。
+         * 解析结果里 group 是一个数组，模板按 token 是字符串还是数组分别渲染。
+         */
         toolbarLines() {
             const cfg = Array.isArray(this.toolbarConfig) && this.toolbarConfig.length ? this.toolbarConfig : DEFAULT_TOOLBAR_LINES;
-            return cfg
-                .map((line) => String(line || '').split(/\s+/).filter(Boolean))
-                .filter((line) => line.length);
+            const device = this.isMobileViewport ? 'm' : 'pc';
+            const out = [];
+            for (const raw of cfg) {
+                const { scope, text } = splitScope(String(raw || ''));
+                if (scope && scope !== device) continue;
+                const tokens = parseToolTokens(text);
+                if (tokens.length) out.push(tokens);
+            }
+            return out;
+        },
+        /** 输入工具：光标在空行时展示的按钮（同样支持 pc=/m= 与工具组） */
+        inputTools() {
+            const lines = Array.isArray(this.editorConfig?.inputLines) ? this.editorConfig.inputLines : [];
+            if (!lines.length) return [];
+            const device = this.isMobileViewport ? 'm' : 'pc';
+            const out = [];
+            for (const raw of lines) {
+                const { scope, text } = splitScope(String(raw || ''));
+                if (scope && scope !== device) continue;
+                for (const t of parseToolTokens(text)) {
+                    if (typeof t === 'string' && t !== '|' && this.toolsOf(t)) out.push(t);
+                }
+            }
+            return out;
+        },
+        /** `/` 菜单数据源：配置了就用配置（支持 |），没配置用内置表 */
+        slashSource() {
+            const lines = Array.isArray(this.editorConfig?.slashLines) ? this.editorConfig.slashLines : [];
+            if (!lines.length) return SLASH_COMMANDS;
+            const device = this.isMobileViewport ? 'm' : 'pc';
+            const out = [];
+            for (const raw of lines) {
+                const { scope, text } = splitScope(String(raw || ''));
+                if (scope && scope !== device) continue;
+                for (const token of String(text || '').split(/\s+/).filter(Boolean)) {
+                    if (token === '|') {
+                        out.push({ id: '__sep__', separator: true });
+                        continue;
+                    }
+                    if (token.startsWith('[')) continue;
+                    const cmd = SLASH_COMMANDS.find((c) => c.id === token);
+                    if (cmd) out.push(cmd);
+                }
+            }
+            // 一条有效命令都没有（比如全写错了）就回退内置表，别让菜单空着
+            return out.some((c) => !c.separator) ? out : SLASH_COMMANDS;
         },
     },
     watch: {
@@ -616,6 +1006,7 @@ export default {
             handler(note) {
                 this.applyNote(note);
                 this.loadBacklinks();
+                this.loadNoteTags();
             },
         },
         mode(next, prev) {
@@ -642,6 +1033,9 @@ export default {
         window.removeEventListener('resize', this.onViewportChange);
         window.removeEventListener('scroll', this.onViewportChange, true);
         if (this.saveTimer) clearTimeout(this.saveTimer);
+        this.stopHistoryTimer();
+        if (this._tagTimer) clearTimeout(this._tagTimer);
+        if (this._tipTimer) clearTimeout(this._tipTimer);
         if (this.sourceView) {
             this.sourceView.destroy();
             this.sourceView = null;
@@ -686,6 +1080,8 @@ export default {
                     Audio,
                     FileAttachment,
                     Callout,
+                    // v1.3.1.1：段落 / 标题对齐（align 属性版）
+                    BlockAlign,
                     // v1.5.0 引用类行内原子节点
                     NoteRef,
                     NoteEmbed,
@@ -697,6 +1093,7 @@ export default {
                 editorProps: {
                     attributes: { class: 'gh-editor-content' },
                     handleKeyDown: (view, event) => this.onEditorKeyDown(view, event),
+                    handleTextInput: (view, from, to, text) => this.onEditorTextInput(view, from, to, text),
                     handlePaste: (view, event) => this.onEditorPaste(view, event),
                     handleDrop: (view, event) => this.onEditorDrop(view, event),
                 },
@@ -730,6 +1127,11 @@ export default {
             this.version = Number(note.version) || 1;
             const md = String(note.content || '');
             this.charCount = plainTextOf(md).length;
+            this.updatedAt = Number(note.updatedAt) || 0;
+            this.updateWordCount(md);
+            // 换篇时重置历史节流「上次快照」，否则新篇第一分钟不会记历史
+            this.lastHistoryMd = md;
+            this.startHistoryTimer();
             this.dirty = false;
             if (this.editor) this.editor.commands.setContent(this.docOf(md), { emitUpdate: false });
             if (this.sourceView) this.sourceView.dispatch({ changes: { from: 0, to: this.sourceView.state.doc.length, insert: md } });
@@ -816,8 +1218,10 @@ export default {
             const md = this.currentMd();
             this.lastMd = md;
             this.charCount = plainTextOf(md).length;
+            this.updateWordCount(md);
             this.updateSlash();
             this.updateRef();
+            this.updateInputBar();
             /*
              * 编辑即展开全部折叠。
              * 折叠状态存的是文档位置（pos），编辑后位置全变 —— 不清理就会出现
@@ -889,6 +1293,195 @@ export default {
             // 指向自己就不折腾了（切走再切回来会把正在编辑的草稿丢掉）
             if (noteId === this.note?.id) return;
             this.$emit('open-note', noteId);
+        },
+
+        // ---------------- 标签（v1.3.1.1） ----------------
+
+        async loadNoteTags() {
+            const id = this.note?.id;
+            if (!id) {
+                this.tags = [];
+                return;
+            }
+            try {
+                const r = await fetchNoteTags(id);
+                this.tags = Array.isArray(r?.tags) ? r.tags : [];
+            } catch (e) {
+                this.tags = [];
+            }
+        },
+        /** 输入即查候选（与瞬间发布页同一套交互：只管当前输入词，不做全量拉取） */
+        onTagInput() {
+            if (this._tagTimer) clearTimeout(this._tagTimer);
+            this._tagTimer = setTimeout(() => this.loadTagCandidates(), 200);
+        },
+        async loadTagCandidates() {
+            const kw = String(this.tagInput || '').trim();
+            try {
+                const r = await fetchTagCandidates(kw);
+                const list = Array.isArray(r?.tags) ? r.tags : [];
+                // 已选中的不再出现在候选里
+                this.tagCandidates = list.filter((c) => !this.tags.some((t) => t.name === c.name));
+            } catch (e) {
+                this.tagCandidates = [];
+            }
+        },
+        /** 空格 / 回车都算确认；空串忽略；重复忽略 */
+        commitTag() {
+            const name = String(this.tagInput || '').trim().replace(/\s+/g, ' ').slice(0, 20);
+            this.tagInput = '';
+            this.tagCandidates = [];
+            if (!name) return;
+            if (this.tags.some((t) => t.name === name)) return;
+            if (this.tags.length >= 20) return;
+            this.tags = [...this.tags, { id: '', name }];
+            this.saveTags();
+        },
+        pickTag(name) {
+            this.tagInput = name;
+            this.commitTag();
+        },
+        removeTag(index) {
+            this.tags = this.tags.filter((_, i) => i !== index);
+            this.saveTags();
+        },
+        /** 输入框为空时按退格删掉最后一个标签（常见交互，省一次点小叉） */
+        onTagBackspace() {
+            if (String(this.tagInput || '').length) return;
+            if (!this.tags.length) return;
+            this.removeTag(this.tags.length - 1);
+        },
+        async saveTags() {
+            const id = this.note?.id;
+            if (!id) return;
+            try {
+                const r = await saveNoteTags(id, this.tags.map((t) => t.name));
+                this.tags = Array.isArray(r?.tags) ? r.tags : this.tags;
+            } catch (e) {
+                ElMessage.error(this.$t('memo.saveFail'));
+            }
+        },
+
+        // ---------------- 历史记录（v1.3.1.1） ----------------
+
+        formatHistoryTime(ts) {
+            const n = Number(ts) || 0;
+            if (!n) return '—';
+            const d = new Date(n);
+            const pad = (x) => String(x).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        },
+        async openHistory() {
+            this.historyVisible = true;
+            this.historyPreview = null;
+            await this.loadHistory();
+        },
+        async loadHistory() {
+            const id = this.note?.id;
+            if (!id) return;
+            this.historyLoading = true;
+            try {
+                const r = await fetchNoteHistory(id);
+                this.historyItems = Array.isArray(r?.items) ? r.items : [];
+            } catch (e) {
+                this.historyItems = [];
+            } finally {
+                this.historyLoading = false;
+            }
+        },
+        async viewHistory(item) {
+            const id = this.note?.id;
+            if (!id || !item?.id) return;
+            try {
+                this.historyPreview = await fetchNoteHistoryItem(id, item.id);
+            } catch (e) {
+                ElMessage.error(this.$t('memo.historyLoadFail'));
+            }
+        },
+        async restoreHistoryItem(item) {
+            const id = this.note?.id;
+            if (!id || !item?.id) return;
+            try {
+                await ElMessageBox.confirm(
+                    this.$t('memo.historyRestoreConfirm'),
+                    this.$t('memo.historyRestore'),
+                    { type: 'warning', confirmButtonText: this.$t('common.confirm'), cancelButtonText: this.$t('common.cancel') },
+                );
+            } catch (e) {
+                return;
+            }
+            try {
+                const r = await restoreNoteHistory(id, item.id);
+                this.version = Number(r?.version) || this.version + 1;
+                this.updatedAt = Number(r?.updatedAt) || Date.now();
+                this.dirty = false;
+                this.applyContent(String(r?.content || ''));
+                this.historyVisible = false;
+                ElMessage.success(this.$t('memo.historyRestored'));
+                await this.loadBacklinks();
+            } catch (e) {
+                ElMessage.error(this.$t('memo.saveFail'));
+            }
+        },
+        /**
+         * 历史快照定时器。
+         *
+         * 间隔来自「笔记设置 → 历史保存间隔」（分钟）。这里不跟「自动保存正文」共用一个
+         * 节流器：正文保存是秒级、历史是分钟级，混在一起会让历史表几分钟就塞满 100 条。
+         */
+        startHistoryTimer() {
+            this.stopHistoryTimer();
+            const minutes = Math.max(1, Number(this.editorConfig?.historyInterval) || 3);
+            this.historyTimer = setInterval(() => this.maybePushHistory(), minutes * 60 * 1000);
+        },
+        stopHistoryTimer() {
+            if (this.historyTimer) {
+                clearInterval(this.historyTimer);
+                this.historyTimer = null;
+            }
+        },
+        async maybePushHistory() {
+            const id = this.note?.id;
+            if (!id) return;
+            // 没改过就不写：历史是「这次编辑留下的版本」，不是心跳
+            if (!this.dirty) return;
+            const md = this.currentMd();
+            if (!md.trim() || md === this.lastHistoryMd) return;
+            this.lastHistoryMd = md;
+            try {
+                await pushNoteHistory(id, { title: this.title, content: md, version: this.version });
+            } catch (e) {
+                /* 历史写失败不影响正文 */
+            }
+        },
+        /** 字数：只数中文汉字 + 英文字母（需求原文：不含数字、标点、表情、符号） */
+        updateWordCount(md) {
+            const s = String(md || '');
+            const cn = (s.match(/[\u4e00-\u9fa5]/g) || []).length;
+            const en = (s.match(/[a-zA-Z]/g) || []).length;
+            this.wordCount = cn + en;
+        },
+
+        /**
+         * 点击工具栏按钮时在按钮上方显示名称，2 秒后消失（需求）。
+         * 用浮层而不是只靠原生 title：title 要悬停才出、且出现在鼠标旁，
+         * 移动端更是完全不显示。
+         */
+        showToolName(token, evt) {
+            const el = evt?.currentTarget;
+            if (!el) return;
+            const rect = el.getBoundingClientRect();
+            const label = this.toolsOf(token)?.label;
+            this.toolTip = {
+                show: true,
+                text: label ? this.$t(label) : token,
+                left: Math.round(rect.left + rect.width / 2),
+                top: Math.round(rect.top - 8),
+            };
+            if (this._tipTimer) clearTimeout(this._tipTimer);
+            this._tipTimer = setTimeout(() => {
+                this.toolTip = { ...this.toolTip, show: false };
+            }, 2000);
         },
 
         // ---------------- 图片缩放（v1.4.0） ----------------
@@ -978,6 +1571,21 @@ export default {
             window.addEventListener('touchend', onUp);
         },
 
+        /** 把一段 md 灌进当前视图（恢复历史 / 冲突解决共用） */
+        applyContent(md) {
+            const text = String(md || '');
+            this.lastMd = text;
+            this.charCount = plainTextOf(text).length;
+            this.updateWordCount(text);
+            if (this.editor) this.editor.commands.setContent(this.docOf(text), { emitUpdate: false });
+            if (this.sourceView) {
+                this.sourceView.dispatch({
+                    changes: { from: 0, to: this.sourceView.state.doc.length, insert: text },
+                });
+            }
+            this.previewHtml = renderMarkdownSafe(text);
+        },
+
         async saveNow() {
             if (!this.note?.id) return;
             if (this.saving) {
@@ -1052,11 +1660,15 @@ export default {
             return TOOLS[token] || null;
         },
 
-        async runTool(token) {
+        async runTool(token, evt) {
             const tool = TOOLS[token];
             if (!tool) return;
+            // 需求：点击顶部按钮时在按钮上方显示名称，2 秒后消失
+            if (evt) this.showToolName(token, evt);
             if (token === 'link') return this.insertLink();
             if (token === 'image') return this.openImagePicker();
+            if (token === 'upload') return this.openUploadPicker();
+            if (token === 'linkExtract') return this.extractLink();
             if (token === 'file' || token === 'video' || token === 'audio') {
                 // 三个入口共用一个选文件弹窗，落地类型由文件自身的 mime 决定
                 this.pickerVisible = true;
@@ -1119,29 +1731,143 @@ export default {
             }
         },
 
+        /**
+         * 图床选文件回来。
+         *
+         * v1.3.1.1 加固（需求：插入文件仍然显示不出来）：
+         *   · id 逐个兜底（id / fileId / name / path）—— 不同数据源给的字段名不一样，
+         *     原来只认 id，取不到就 `continue`，表现就是「选了文件但什么都没插进去」；
+         *   · 地址优先用条目自带的 url/src，没有才拼 /file/<id>；
+         *   · 块级节点用 insertContentAt 插到「当前块之后」，并在后面补一个空段落 ——
+         *     直接 insertContent 在段尾插入时，块原子节点有时会被并进段落里，
+         *     渲染出来是行内的一个小链接，看着就像「没加载出来」。
+         */
         onPicked(files) {
             if (!this.editor) return;
             const list = Array.isArray(files) ? files : [];
             if (!list.length) return;
             const ed = this.editor;
+            if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
             for (const f of list) {
-                const id = String(f?.id || '');
-                if (!id) continue;
-                const src = `/file/${encodeURIComponent(id)}`;
+                const id = String(f?.id || f?.fileId || f?.name || f?.path || '');
+                const rawUrl = String(f?.url || f?.src || '');
+                const src = rawUrl || (id ? `/file/${encodeURIComponent(id)}` : '');
+                if (!src) continue;
                 const mime = String(f.mime || f.type || '');
-                const name = String(f.originalName || f.name || '');
-                const kind = f.mediaKind || mediaKindOfMime(mime);
-                if (kind === 'image') {
-                    ed.chain().focus().setImage({ src, alt: name }).run();
-                } else if (kind === 'video') {
-                    ed.chain().focus().insertContent({ type: 'video', attrs: { src, poster: '' } }).run();
-                } else if (kind === 'audio') {
-                    ed.chain().focus().insertContent({ type: 'audio', attrs: { src } }).run();
-                } else {
-                    ed.chain().focus().insertContent({ type: 'fileAttachment', attrs: { href: src, name: name || id } }).run();
+                const name = String(f.originalName || f.fileName || f.name || id || '附件');
+                const kind = f.mediaKind === 'other' ? 'file' : f.mediaKind || mediaKindOfMime(mime);
+                try {
+                    if (kind === 'image') {
+                        ed.chain().focus().setImage({ src, alt: name }).run();
+                        continue;
+                    }
+                    const node =
+                        kind === 'video'
+                            ? { type: 'video', attrs: { src, poster: '' } }
+                            : kind === 'audio'
+                              ? { type: 'audio', attrs: { src } }
+                              : { type: 'fileAttachment', attrs: { href: src, name } };
+                    // 插到当前块之后，并补一个空段落收尾，保证块级节点独占一行
+                    const at = ed.state.selection.to;
+                    ed.chain()
+                        .focus()
+                        .insertContentAt(at, [node, { type: 'paragraph' }])
+                        .run();
+                } catch (e) {
+                    console.warn('[memo] 插入文件失败', e);
+                    ElMessage.error(this.$t('memo.insertFileFail'));
                 }
             }
             this.onEditorUpdate();
+        },
+
+        /* ---------------- 上传（v1.3.1.1） ---------------- */
+
+        /** 打开「任意类型」文件选择框（不设 accept，图片/PDF/压缩包都能选） */
+        openUploadPicker() {
+            const el = this.$refs.anyFileInput;
+            if (!el) return;
+            el.value = '';
+            el.click();
+        },
+        onAnyFileChange(event) {
+            const files = Array.from(event?.target?.files || []);
+            if (event?.target) event.target.value = '';
+            if (!files.length) return;
+            this.pendingUploadFiles = files;
+            // 需求：选完文件先调出「上传到图床」面板，确认后才上传
+            this.uploadTargetVisible = true;
+        },
+        /**
+         * 链接提取（需求：与瞬间编辑页的链接提取一致）。
+         * 填直链 → 弹「上传到图床」面板 → 转存 → 把结果插到光标处。
+         */
+        async extractLink() {
+            let url = '';
+            try {
+                const r = await ElMessageBox.prompt(this.$t('memo.linkExtractTip'), this.$t('memo.toolLinkExtract'), {
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                    inputPlaceholder: 'https://…',
+                    inputValidator: (v) => (/^https?:\/\//i.test(String(v || '').trim()) ? true : this.$t('memo.linkInvalid')),
+                });
+                url = String(r?.value || '').trim();
+            } catch (e) {
+                return;
+            }
+            if (!url) return;
+            this.pendingLinkUrl = url;
+            this.pendingUploadFiles = [];
+            this.uploadMode = 'url';
+            this.uploadTargetVisible = true;
+        },
+
+        /** 面板确认：按选定的渠道 / 实例 / 目录逐个上传，再插到光标处 */
+        async confirmUploadTarget(target) {
+            if (this.uploadMode === 'url') {
+                this.uploadBusy = true;
+                try {
+                    const hit = await importUrlToBed(this.pendingLinkUrl, target || {});
+                    const id = String(hit?.id || hit?.name || '');
+                    if (id) {
+                        this.onPicked([{ id, name: hit?.originalName || hit?.name || id, mime: hit?.mime || '' }]);
+                    }
+                    this.uploadTargetVisible = false;
+                    this.pendingLinkUrl = '';
+                    this.uploadMode = 'files';
+                } catch (e) {
+                    ElMessage.error(e?.message || this.$t('memo.uploadFail'));
+                } finally {
+                    this.uploadBusy = false;
+                }
+                return;
+            }
+            const files = this.pendingUploadFiles.slice();
+            if (!files.length) return;
+            this.uploadBusy = true;
+            const inserted = [];
+            try {
+                for (const f of files) {
+                    try {
+                        const hit = await uploadOne(f, target || {});
+                        if (hit?.id) {
+                            inserted.push({
+                                id: String(hit.id),
+                                name: f.name,
+                                mime: f.type,
+                                size: f.size,
+                            });
+                        }
+                    } catch (e) {
+                        ElMessage.error(`${f.name}：${e?.message || this.$t('memo.uploadFail')}`);
+                    }
+                }
+                if (inserted.length) this.onPicked(inserted);
+                this.uploadTargetVisible = false;
+                this.pendingUploadFiles = [];
+            } finally {
+                this.uploadBusy = false;
+            }
         },
 
         /** 工具栏「图片」：打开系统选图框（v1.3.0 缺的就是这一步） */
@@ -1163,20 +1889,50 @@ export default {
         },
 
         /**
-         * 屏蔽浏览器原生右键菜单（v1.3.1 需求）。
+         * 输入时的快捷转换（v1.3.1.1 需求）。
          *
-         * 只挡「编辑区里有文字被选中」的情况：这时候用户想要的是编辑器的操作，
-         * 而弹出来的是「复制/检查/翻译」那一套，既挡视线又容易误点。
-         * 没有选中时保留原生菜单 —— 用户可能真的要用「粘贴」「检查」。
+         * 处理中文输入法下敲出来的记号，StarterKit 自带的 input rule 只认半角 `-` `>`，
+         * 用户打完「【】」或「》」再敲空格是敲不出任务列表 / 引述的。
+         * 这里在「空格」落下的瞬间看光标前两个字符，命中就删掉记号并套上对应结构。
+         */
+        onEditorTextInput(view, from, to, text) {
+            if (text !== ' ' || from !== to) return false;
+            const { state } = view;
+            const $from = state.doc.resolve(from);
+            if (!$from.parent.isTextblock) return false;
+            const before = $from.parent.textBetween(Math.max(0, $from.parentOffset - 2), $from.parentOffset, '\n', '\n');
+            const chain = this.editor?.chain().focus();
+            if (!chain) return false;
+            if (before === '【】') {
+                chain.deleteRange({ from: from - 2, to: from }).toggleTaskList().run();
+                return true;
+            }
+            if (before === '》') {
+                chain.deleteRange({ from: from - 1, to: from }).toggleBlockquote().run();
+                return true;
+            }
+            /*
+             * `··` → 行内代码：把它换成一个反引号，后面的反引号闭合由用户继续输入，
+             * 等于把中文输入法下打不出反引号的场景兜住。
+             */
+            if (before === '··') {
+                chain.insertContentAt({ from: from - 2, to: from }, '`').run();
+                return true;
+            }
+            return false;
+        },
+
+        /**
+         * 屏蔽浏览器原生右键菜单（v1.3.1.1 需求：笔记编辑区里一律屏蔽）。
+         *
+         * 例外只有标题 / 标签这两个 input —— 那里要用系统的「粘贴 / 全选」。
+         * 正文区域里 Shift+F10 与长按也会触发这个事件，一并挡掉。
          */
         onContextMenu(event) {
-            const sel = window.getSelection?.();
-            const hasSel = !!(sel && String(sel.toString() || '').trim());
-            if (hasSel || this.bubble.open) {
-                event.preventDefault();
-                return false;
-            }
-            return true;
+            const tag = String(event?.target?.tagName || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea') return true;
+            event.preventDefault();
+            return false;
         },
 
         // ---------------- v1.3.1 新增块与视图 ----------------
@@ -1395,18 +2151,25 @@ export default {
                 }
             }
             if (this.slash.open) {
-                if (event.key === 'ArrowDown') {
-                    this.slash.index = (this.slash.index + 1) % Math.max(1, this.slash.items.length);
-                    return true;
-                }
-                if (event.key === 'ArrowUp') {
-                    const n = Math.max(1, this.slash.items.length);
-                    this.slash.index = (this.slash.index - 1 + n) % n;
+                /*
+                 * v1.3.1.1：菜单里可能有分隔线，上下键要跳过它们，
+                 * 否则会出现「高亮停在一条线上、回车没反应」。
+                 */
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    const step = event.key === 'ArrowDown' ? 1 : -1;
+                    const n = this.slash.items.length;
+                    if (!n) return true;
+                    let i = this.slash.index;
+                    for (let k = 0; k < n; k += 1) {
+                        i = (i + step + n) % n;
+                        if (!this.slash.items[i]?.separator) break;
+                    }
+                    this.slash.index = i;
                     return true;
                 }
                 if (event.key === 'Enter') {
                     const cmd = this.slash.items[this.slash.index];
-                    if (cmd) {
+                    if (cmd && !cmd.separator) {
                         this.applySlash(cmd);
                         return true;
                     }
@@ -1417,6 +2180,39 @@ export default {
                 }
             }
             return false;
+        },
+
+        /**
+         * 输入工具条定位（v1.3.1.1 需求）。
+         *
+         * 仅在「光标停在空段落」时出现 —— 有内容时不打扰写作。
+         * 浮动而不是吸附在顶部，是因为需求给的参考图就是「贴着光标上方」的样子。
+         */
+        updateInputBar() {
+            const ed = this.editor;
+            if (!ed || this.mode !== 'wysiwyg') {
+                if (this.inputBar.open) this.inputBar = { open: false, style: {} };
+                return;
+            }
+            if (!this.inputTools.length) {
+                if (this.inputBar.open) this.inputBar = { open: false, style: {} };
+                return;
+            }
+            const { state } = ed;
+            const { $from, empty } = state.selection;
+            const isEmptyLine = empty && $from.parent.type.name === 'paragraph' && $from.parent.content.size === 0;
+            if (!isEmptyLine) {
+                if (this.inputBar.open) this.inputBar = { open: false, style: {} };
+                return;
+            }
+            const coords = ed.view.coordsAtPos($from.pos);
+            this.inputBar = {
+                open: true,
+                style: {
+                    left: `${Math.round(coords.left)}px`,
+                    top: `${Math.round(coords.top - 8)}px`,
+                },
+            };
         },
 
         /** 光标处若是「行首一个 / 加查询词」，就展开菜单 */
@@ -1430,8 +2226,25 @@ export default {
             const m = /^\/([^\s/]*)$/.exec(textBefore);
             if (!m) return this.closeSlash();
             const query = m[1].toLowerCase();
-            const items = SLASH_COMMANDS.filter((c) => !query || this.$t(c.label).toLowerCase().includes(query) || c.id.toLowerCase().includes(query));
+            /*
+             * v1.3.1.1：菜单内容来自「/菜单工具配置」（slashSource）。
+             * 分隔线只在没有查询词时保留 —— 搜索状态下夹一条线会让结果看着像断了。
+             */
+            const base = this.slashSource || SLASH_COMMANDS;
+            const items = base.filter((c) => {
+                if (c.separator) return !query;
+                if (!query) return true;
+                return this.$t(c.label).toLowerCase().includes(query) || String(c.id).toLowerCase().includes(query);
+            });
             const coords = ed.view.coordsAtPos($from.pos);
+            /*
+             * v1.3.1.1（需求）：按上下剩余空间决定菜单朝下还是朝上展开。
+             * 估算高度 = 条目数 × 32 + 内边距，取大的那一边；两边都不够时仍然朝下，
+             * 由 CSS 的 max-height + overflow 出滚动条（不会顶出屏幕）。
+             */
+            const estHeight = Math.min(360, Math.max(120, items.length * 34 + 16));
+            const spaceBelow = window.innerHeight - coords.bottom;
+            const openUp = spaceBelow < estHeight && coords.top > spaceBelow;
             this.slash = {
                 open: true,
                 index: Math.min(this.slash.index, Math.max(0, items.length - 1)),
@@ -1439,10 +2252,17 @@ export default {
                 from: $from.pos - (textBefore.length - 1),
                 to: $from.pos,
                 query,
-                style: {
-                    left: `${Math.round(coords.left)}px`,
-                    top: `${Math.round(coords.bottom + 6)}px`,
-                },
+                style: openUp
+                    ? {
+                        left: `${Math.round(coords.left)}px`,
+                        bottom: `${Math.round(window.innerHeight - coords.top + 6)}px`,
+                        maxHeight: `${Math.round(Math.min(estHeight, Math.max(120, coords.top - 12)))}px`,
+                    }
+                    : {
+                        left: `${Math.round(coords.left)}px`,
+                        top: `${Math.round(coords.bottom + 6)}px`,
+                        maxHeight: `${Math.round(Math.min(estHeight, Math.max(120, spaceBelow - 12)))}px`,
+                    },
             };
         },
 
@@ -1471,6 +2291,7 @@ export default {
         onSelectionChange() {
             // 图片被选中时浮出缩放手柄；其它情况一律收起
             this.syncImgBox();
+            this.updateInputBar();
             const ed = this.editor;
             if (!ed || this.mode !== 'wysiwyg') {
                 this.bubble.open = false;
@@ -1509,11 +2330,304 @@ export default {
 }
 
 /* 标题 */
+/*
+ * v1.3.1.1（需求）：标题 / 元信息 / 标签三块都放在滚动容器顶部，**不吸附**。
+ * 标题独占一行（块级），下面两行分别是时间信息与标签。
+ */
 .me-head {
     display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 16px 8px;
+}
+.me-meta {
+    display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
-    padding: 10px 14px 6px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+.me-meta-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+.me-meta-icon {
+    font-size: 11px;
+    opacity: 0.7;
+}
+.me-meta-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--el-text-color-regular);
+    font-family: inherit;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+.me-meta-btn:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+}
+/* 标签行：与瞬间发布页同一套观感（圆角小胶囊 + 内嵌输入） */
+.me-tags {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 26px;
+}
+.me-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 4px 0 8px;
+    border-radius: 999px;
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
+    font-size: 12px;
+    line-height: 1;
+}
+.me-tag-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font-size: 9px;
+    cursor: pointer;
+    opacity: 0.7;
+}
+.me-tag-x:hover {
+    opacity: 1;
+    background: var(--el-color-primary-light-7);
+}
+.me-tag-input {
+    flex: 1 1 120px;
+    min-width: 90px;
+    height: 22px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--el-text-color-primary);
+    font-family: inherit;
+    font-size: 12px;
+}
+.me-tag-input::placeholder {
+    color: var(--el-text-color-placeholder);
+}
+.me-tag-suggest {
+    position: absolute;
+    z-index: 8;
+    top: 28px;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    max-height: 200px;
+    overflow: auto;
+    padding: 4px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-bg-color-overlay);
+    box-shadow: var(--el-box-shadow-light);
+}
+.me-tag-sug-item {
+    padding: 5px 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--el-text-color-regular);
+    font-family: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+}
+.me-tag-sug-item:hover {
+    background: var(--el-fill-color-light);
+    color: var(--el-color-primary);
+}
+
+/* 输入工具条 */
+.me-inputbar {
+    position: fixed;
+    z-index: 2500;
+    transform: translate(0, -100%);
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-bg-color-overlay);
+    box-shadow: var(--el-box-shadow-light);
+}
+/* 工具组下拉按钮 */
+.me-btn-group {
+    width: 26px;
+}
+.me-group-icon {
+    width: 14px;
+    font-size: 12px;
+    opacity: 0.8;
+}
+.me-group-label {
+    margin-left: 6px;
+    font-size: 13px;
+}
+/* 斜杠菜单分隔线 */
+.me-slash-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--el-border-color-lighter);
+}
+
+/*
+ * 编辑器独立配色（v1.3.1.1）
+ * 「跟随全局」时不加这个类，直接用全站主题变量；选白天 / 黑夜才挂上对应类。
+ * 只覆盖编辑器真正用到的几个变量，避免和全站主题互相打架。
+ */
+.me-root.theme-dark {
+    --el-bg-color: #16181d;
+    --el-bg-color-overlay: #1f2228;
+    --el-bg-color-page: #101216;
+    --el-fill-color-blank: #16181d;
+    --el-fill-color-light: #23262d;
+    --el-text-color-primary: #e6e8ec;
+    --el-text-color-regular: #c3c7cf;
+    --el-text-color-secondary: #8f96a3;
+    --el-text-color-placeholder: #6b7280;
+    --el-border-color: #2f333b;
+    --el-border-color-lighter: #262a31;
+    background: var(--el-bg-color);
+    color: var(--el-text-color-primary);
+}
+.me-root.theme-light {
+    --el-bg-color: #ffffff;
+    --el-bg-color-overlay: #ffffff;
+    --el-fill-color-blank: #ffffff;
+    --el-text-color-primary: #1f2329;
+    --el-text-color-regular: #4b5563;
+    --el-text-color-secondary: #6b7280;
+    background: var(--el-bg-color);
+    color: var(--el-text-color-primary);
+}
+
+/* 工具栏按钮名称浮层（点击后 2 秒消失） */
+.me-tooltip {
+    position: fixed;
+    z-index: 3000;
+    transform: translate(-50%, -100%);
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.78);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.2;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+/* 历史记录弹窗 */
+.me-hist-wrap {
+    display: flex;
+    gap: 12px;
+    height: 52vh;
+    min-height: 320px;
+}
+.me-hist-list {
+    flex: 0 0 260px;
+    max-width: 260px;
+    overflow-y: auto;
+    border-right: 1px solid var(--el-border-color-lighter);
+    padding-right: 8px;
+}
+.me-hist-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    text-align: left;
+    font-family: inherit;
+    cursor: pointer;
+}
+.me-hist-item:hover {
+    background: var(--el-fill-color-light);
+}
+.me-hist-item.is-active {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+}
+.me-hist-time {
+    font-size: 12px;
+    color: var(--el-text-color-primary);
+    font-variant-numeric: tabular-nums;
+}
+.me-hist-meta {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+}
+.me-hist-title {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.me-hist-preview {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.me-hist-preview-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 6px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+.me-hist-preview-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    padding: 8px 10px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-blank);
+    font-size: 13px;
+    line-height: 1.7;
+}
+.me-hist-empty {
+    padding: 24px 8px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+.me-hist-tip {
+    margin-right: auto;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
 }
 .me-title {
     flex: 1 1 auto;

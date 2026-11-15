@@ -158,6 +158,12 @@ const ORDERED_RE = /^(\s*)\d+[.)]\s+(.*)$/;
 
 /* ── v1.3.1 新增块 ─────────────────────────────────────────── */
 
+/**
+ * 段级对齐（v1.3.1.1）：`<p align="center">文字</p>`。
+ * markdown 本身没有段落对齐语法，用 HTML 属性表达 —— DOMPurify 白名单放行 align，
+ * 编辑器与预览的观感一致，别的 md 查看器也认得。
+ */
+const P_ALIGN_RE = /^\s*<p\s+align="(left|center|right)"\s*>([\s\S]*)<\/p>\s*$/i;
 /** 表格分隔行：| --- | :---: | ---: | */
 const TABLE_SEP_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 /** 一行表格数据：至少含一个 `|`，首尾的 `|` 可省 */
@@ -479,6 +485,20 @@ export function mdToDoc(md) {
       i += 1;
       continue;
     }
+    // ── v1.3.1.1：段级对齐 `<p align="center">…</p>` ──
+    {
+      const alignMatch = P_ALIGN_RE.exec(line);
+      if (alignMatch) {
+        flushPara();
+        content.push({
+          type: 'paragraph',
+          attrs: { align: alignMatch[1].toLowerCase() },
+          content: normalizeInline(parseInline(alignMatch[2] || '')),
+        });
+        i += 1;
+        continue;
+      }
+    }
     // ── v1.3.1：提示块 `:::callout{type=info}` … `:::` ──
     if (CALLOUT_OPEN_RE.test(line) || (CALLOUT_OPEN_LOOSE_RE.test(line) && !CALLOUT_CLOSE_RE.test(line))) {
       flushPara();
@@ -660,10 +680,20 @@ function listItemToMd(item, kind, depth, index) {
 
 function blockToMd(node, depth = 0) {
   switch (node.type) {
-    case 'paragraph':
-      return inlineToMd(node.content).split('\n').map(escapeLineStart).join('\n');
+    case 'paragraph': {
+      const text = inlineToMd(node.content).split('\n').map(escapeLineStart).join('\n');
+      const align = String(node.attrs?.align || '');
+      // v1.3.1.1：有对齐就落成 `<p align="...">`，否则保持最朴素的段落
+      return align ? `<p align="${align}">${text}</p>` : text;
+    }
     case 'heading': {
       const level = Math.min(6, Math.max(1, Number(node.attrs?.level) || 1));
+      /*
+       * v1.3.1.1：标题**不做对齐**。
+       * md 的标题语法没有对齐位，硬塞 HTML 会让「md 是真源」这条破功
+       * （其它查看器看到一个带属性的 span，本系统再解析回来还得写特例）。
+       * 对齐只给段落 —— 段落在 md 里本来就可以用 `<p align>` 表达。
+       */
       return `${'#'.repeat(level)} ${inlineToMd(node.content)}`;
     }
     case 'bulletList':

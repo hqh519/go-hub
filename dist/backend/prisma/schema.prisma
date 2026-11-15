@@ -698,6 +698,29 @@ model NoteLink {
   @@map("note_links")
 }
 
+// 笔记 / 文章等内容的历史快照（v1.3.1.1）
+//   · 只在编辑器里「内容真的变了」时追加一条，每篇只保留最近 100 条，超出删最旧的；
+//   · 快照是完整正文（不是 diff）—— 100 条 × 几十 KB 对一个笔记库完全可接受，
+//     换来的是「点开任意一条就能看到当时的样子」，不需要回放补丁链；
+//   · 正文只在详情接口返回（列表只给标题/时间/字数），列表页不会被拖慢。
+model NoteHistory {
+  id         String   @id @default(cuid())
+  noteId     String
+  /// 快照时的标题
+  title      String   @default("")
+  /// 快照正文（markdown 全文）
+  content    String   @default("")
+  /// 字数 / 版本号，用于列表展示「这一版有多大」
+  charCount  Int      @default(0)
+  version    Int      @default(0)
+  author     String   @default("")
+  instanceId String   @default("")
+  createdAt  DateTime @default(now())
+
+  @@index([noteId, createdAt])
+  @@map("note_histories")
+}
+
 /// 瞬间专属（1:1）
 model NoteMoment {
   noteId    String @id

@@ -16,7 +16,12 @@
  */
 export const DEFAULT_TOOLBAR_LINES = [
     'h1 h2 h3 | bold italic strike underline code highlight | bulletList orderedList taskList | blockquote codeBlock hr',
-    'table callout | image video audio file link | outline foldAll | clear | undo redo',
+    /*
+     * v1.3.1.1（需求）：一行放不下就横滑。
+     * 新增：对齐三件套、缩进、换行、段落、上传、链接提取、表格操作组。
+     * 表格操作做成工具组 `[...]`，平时只占一个下箭头的位置。
+     */
+    'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
 ];
 
 /** 可在工具栏里使用的工具名（设置页展示用） */
@@ -28,6 +33,10 @@ export const TOOLBAR_TOKENS = [
     'table', 'callout',
     'link', 'image', 'file', 'video', 'audio',
     'outline', 'foldAll',
+    // v1.3.1.1 新增
+    'alignLeft', 'alignCenter', 'alignRight', 'indent', 'outdent',
+    'hardBreak', 'paragraph', 'upload', 'linkExtract',
+    'tableAddRow', 'tableAddCol', 'tableDelRow', 'tableDelCol', 'tableMerge', 'tableSplit', 'tableDelete',
     'clear', 'undo', 'redo',
 ];
 

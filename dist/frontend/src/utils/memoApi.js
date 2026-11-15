@@ -146,3 +146,61 @@ export async function rebuildIndex(id) {
   const res = await axios.post(`/api/memo/${encodeURIComponent(id)}/rebuild-index`, { instanceId: inst() });
   return unwrap(res);
 }
+
+/* ── v1.3.1.1：历史快照 ──────────────────────────────────────── */
+
+/** 追加一条历史快照（服务端会跳过「与上一条相同」和空内容） */
+export async function pushNoteHistory(id, payload = {}) {
+  const res = await axios.post(`/api/memo/${encodeURIComponent(id)}/history`, {
+    instanceId: inst(),
+    ...payload,
+  });
+  return unwrap(res);
+}
+
+/** 历史列表（不含正文） */
+export async function fetchNoteHistory(id) {
+  const res = await axios.get(`/api/memo/${encodeURIComponent(id)}/history`, { params: { instanceId: inst() } });
+  return unwrap(res);
+}
+
+/** 单条历史详情（含正文） */
+export async function fetchNoteHistoryItem(id, hid) {
+  const res = await axios.get(`/api/memo/${encodeURIComponent(id)}/history/${encodeURIComponent(hid)}`, {
+    params: { instanceId: inst() },
+  });
+  return unwrap(res);
+}
+
+/** 恢复到某一版（服务端会先把当前内容存一条历史） */
+export async function restoreNoteHistory(id, hid) {
+  const res = await axios.post(`/api/memo/${encodeURIComponent(id)}/history/${encodeURIComponent(hid)}/restore`, {
+    instanceId: inst(),
+  });
+  return unwrap(res);
+}
+
+/* ── v1.3.1.1：笔记标签 ─────────────────────────────────────── */
+
+/** 本篇标签 */
+export async function fetchNoteTags(id) {
+  const res = await axios.get(`/api/memo/${encodeURIComponent(id)}/tags`, { params: { instanceId: inst() } });
+  return unwrap(res);
+}
+
+/** 覆盖式保存标签（传名字数组） */
+export async function saveNoteTags(id, tagNames) {
+  const res = await axios.put(`/api/memo/${encodeURIComponent(id)}/tags`, {
+    instanceId: inst(),
+    tagNames,
+  });
+  return unwrap(res);
+}
+
+/** 标签候选（输入即查，按用户 + 实例隔离） */
+export async function fetchTagCandidates(keyword = '') {
+  const res = await axios.get('/api/memo/tags/candidates', {
+    params: { keyword, instanceId: inst() },
+  });
+  return unwrap(res);
+}

@@ -111,16 +111,22 @@ export class NotesController {
    */
   @Get('settings')
   async getSettings(@Req() req: Request, @Query('instanceId') instanceId?: string) {
-    this.ctx(req);
-    return { success: true, data: await this.notes.getNoteSettings(instanceId || '') };
+    const { viewer } = this.ctx(req);
+    return { success: true, data: await this.notes.getNoteSettings(instanceId || '', viewer) };
   }
 
-  /** 保存笔记设置（合并式：只传变化的分类即可） */
+  /**
+   * 保存笔记设置（合并式：只传变化的分类即可）。
+   *
+   * v1.3.1.1：`editor` 分类改成**按用户**保存（每个账户有自己的工具条 / 配色 / 输入工具），
+   * 其余分类（moment / general）仍然按实例保存 —— 两者在 service 里分表落库，
+   * 前端调用方式不变。
+   */
   @Put('settings')
   async saveSettings(@Req() req: Request, @Body() body: Record<string, unknown>) {
-    this.ctx(req);
+    const { viewer } = this.ctx(req);
     const { instanceId, ...patch } = body || {};
-    const data = await this.notes.saveNoteSettings(String(instanceId || ''), patch);
+    const data = await this.notes.saveNoteSettings(String(instanceId || ''), patch, viewer);
     return { success: true, data };
   }
 

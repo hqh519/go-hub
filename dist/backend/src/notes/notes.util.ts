@@ -183,15 +183,30 @@ export interface GeneralSettings {
 export const EDITOR_TOOLBAR_MAX_LINES = 4;
 export const EDITOR_TOOLBAR_MAX_LINE_LENGTH = 400;
 
+/** 配色模式：跟随全局 / 白天 / 黑夜（v1.3.1.1） */
+export const EDITOR_THEMES = ['auto', 'light', 'dark'] as const;
+/** 历史记录自动保存间隔（分钟）允许区间 */
+export const HISTORY_INTERVAL_MIN = 1;
+export const HISTORY_INTERVAL_MAX = 120;
+export const DEFAULT_HISTORY_INTERVAL = 3;
+
 export interface EditorSettings {
   toolbarLines: string[];
   blockIds: boolean;
+  /** v1.3.1.1：配色模式 —— auto = 跟随全站，light / dark = 编辑器独立配色 */
+  theme: 'auto' | 'light' | 'dark';
+  /** v1.3.1.1：光标停在空行时展示的「输入工具」配置（一行一条，支持 pc= / m= 前缀） */
+  inputLines: string[];
+  /** v1.3.1.1：「/」菜单工具配置（一行一条，支持 | 分隔线） */
+  slashLines: string[];
+  /** v1.3.1.1：历史记录自动保存间隔（分钟） */
+  historyInterval: number;
 }
 
 /** 出厂默认工具栏（前端 utils/memoEditorConfig.js 同值，改这里要同步改那边） */
 export const DEFAULT_EDITOR_TOOLBAR_LINES = [
-  'h1 h2 h3 | bold italic strike underline code | bulletList orderedList taskList | blockquote codeBlock hr',
-  'image file link | clear | undo redo',
+  'h1 h2 h3 | bold italic strike underline code highlight | bulletList orderedList taskList | blockquote codeBlock hr',
+  'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
 ];
 
 /**
@@ -212,10 +227,37 @@ export function normalizeToolbarLines(raw: unknown): string[] {
 
 export function normalizeEditorSettings(raw: unknown): EditorSettings {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const themeRaw = String(o.theme || 'auto');
+  const interval = Math.round(Number(o.historyInterval));
   return {
     toolbarLines: normalizeToolbarLines(o.toolbarLines),
     blockIds: o.blockIds === true,
+    theme: themeRaw === 'light' || themeRaw === 'dark' ? themeRaw : 'auto',
+    /*
+     * 输入工具 / 斜杠菜单没有「出厂默认」概念（前端各自有内置列表），
+     * 空数组表示「没配置过 → 用内置默认」，所以这里不做非空兜底。
+     */
+    inputLines: normalizeToolLines(o.inputLines, 8),
+    slashLines: normalizeToolLines(o.slashLines, 12),
+    historyInterval: Number.isFinite(interval)
+      ? Math.min(HISTORY_INTERVAL_MAX, Math.max(HISTORY_INTERVAL_MIN, interval))
+      : DEFAULT_HISTORY_INTERVAL,
   };
+}
+
+/**
+ * 工具行归一（输入工具 / 斜杠菜单共用）：
+ * 去空行、压空白、限长、限条数。允许 `pc=` / `m=` 前缀与 `|` 分隔线，
+ * 所以这里**不能**过滤 `|`，只做清洗。
+ */
+export function normalizeToolLines(raw: unknown, maxLines: number): string[] {
+  let lines: unknown[] = [];
+  if (Array.isArray(raw)) lines = raw;
+  else if (typeof raw === 'string') lines = raw.split(/\r?\n/);
+  return lines
+    .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim().slice(0, EDITOR_TOOLBAR_MAX_LINE_LENGTH))
+    .filter(Boolean)
+    .slice(0, maxLines);
 }
 
 export interface NoteSettings {

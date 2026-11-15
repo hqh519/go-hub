@@ -40,6 +40,7 @@ import {
   mediaKindOfMime,
   normalizeTagNames,
   normalizeNoteSettings,
+  normalizeEditorSettings,
   safeParse,
 } from './notes.util';
 
@@ -1403,10 +1404,39 @@ export class NotesService {
   }
 
   /**
-   * 读某个实例的笔记设置。
-   * 没存过 / 存坏了都返回默认值 —— 前端永远拿到一份完整对象，不用自己兜底。
+   * v1.3.1.1：编辑器设置改为**按用户**保存，键名带上用户名。
+   *
+   * 为什么不能继续按实例存：同一个实例可能有多个成员，A 喜欢黑夜模式 + 两行工具条，
+   * B 喜欢白天 + 一行，按实例存必然互相覆盖。其余分类（瞬间附件区、通用背景图）
+   * 仍然按实例存 —— 那是「这个库的观感」，本来就该统一。
    */
-  async getNoteSettings(instanceId: string) {
+  private noteEditorKey(instanceId: string, username: string) {
+    const id = String(instanceId || '').trim();
+    const u = String(username || '').trim();
+    return `note-editor:${id || '~default'}:${u || '~anon'}`;
+  }
+
+  /** 读用户级编辑器设置（没存过返回 null，交给调用方回落到实例级） */
+  private async readUserEditor(instanceId: string, username: string): Promise<Record<string, unknown> | null> {
+    if (!username) return null;
+    try {
+      const key = this.noteEditorKey(instanceId, username);
+      const row = await prisma.setting.findUnique({ where: { key } });
+      if (!row?.value) return null;
+      const parsed = safeParse(row.value, {});
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch (e) {
+      appLog.warn('notes', `读取用户编辑器设置失败：${(e as Error)?.message || e}`);
+      return null;
+    }
+  }
+
+  /**
+   * 读笔记设置。
+   * 没存过 / 存坏了都返回默认值 —— 前端永远拿到一份完整对象，不用自己兜底。
+   * 传了 username 时，editor 分类用「用户级 > 实例级 > 出厂默认」逐项覆盖。
+   */
+  async getNoteSettings(instanceId: string, username = '') {
     const key = this.noteSettingsKey(instanceId);
     let raw = '';
     try {
@@ -1416,14 +1446,28 @@ export class NotesService {
       // 读失败不影响页面：退回默认值，但要留痕（否则用户会觉得「设置没生效」）
       appLog.warn('notes', `读取笔记设置失败（${key}）：${(e as Error)?.message || e}`);
     }
-    return normalizeNoteSettings(safeParse(raw, {}));
+    const base = normalizeNoteSettings(safeParse(raw, {}));
+    const userEditor = await this.readUserEditor(instanceId, username);
+    if (userEditor) {
+      base.editor = normalizeEditorSettings({
+        ...(base.editor as unknown as Record<string, unknown>),
+        ...userEditor,
+      });
+    }
+    return base;
   }
 
   /** 写设置：合并式保存（只覆盖传进来的分类，不会把别的分类清掉） */
-  async saveNoteSettings(instanceId: string, patch: Record<string, unknown>) {
+  async saveNoteSettings(instanceId: string, patch: Record<string, unknown>, username = '') {
     const key = this.noteSettingsKey(instanceId);
-    const current = await this.getNoteSettings(instanceId);
-    const p = patch && typeof patch === 'object' ? patch : {};
+    const current = await this.getNoteSettings(instanceId, username);
+    const p: Record<string, unknown> = { ...(patch && typeof patch === 'object' ? patch : {}) };
+    /*
+     * v1.3.1.1：editor 分类单独落到用户级键里，并从这次的实例级 patch 中摘掉。
+     * 这样「A 改了工具条」永远不会影响 B；而 moment / general 仍然写实例级。
+     */
+    const editorPatch = p.editor;
+    if (username) delete p.editor;
     /*
      * v1.1.2.2：分类对象也要合并，不能整块替换。
      * 前端每次都会提交完整的 moment（所以以前没暴露问题），但只要有人只提交
@@ -1471,6 +1515,23 @@ export class NotesService {
       update: { value },
       create: { key, value },
     });
+    if (editorPatch && typeof editorPatch === 'object' && username) {
+      const prev = (await this.readUserEditor(instanceId, username)) || {};
+      const userNext = normalizeEditorSettings({
+        ...(next.editor as unknown as Record<string, unknown>),
+        ...prev,
+        ...(editorPatch as Record<string, unknown>),
+      });
+      const uKey = this.noteEditorKey(instanceId, username);
+      const uValue = JSON.stringify(userNext);
+      await prisma.setting.upsert({
+        where: { key: uKey },
+        update: { value: uValue },
+        create: { key: uKey, value: uValue },
+      });
+      appLog.info('notes', `编辑器设置已更新（${uKey}）`);
+      next.editor = userNext;
+    }
     appLog.info('notes', `笔记设置已更新（${key}）：${value}`);
     return next;
   }

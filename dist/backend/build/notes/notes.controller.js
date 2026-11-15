@@ -55,13 +55,13 @@ let NotesController = class NotesController {
         return this.notes.tagCandidates(instanceId || '', viewer);
     }
     async getSettings(req, instanceId) {
-        this.ctx(req);
-        return { success: true, data: await this.notes.getNoteSettings(instanceId || '') };
+        const { viewer } = this.ctx(req);
+        return { success: true, data: await this.notes.getNoteSettings(instanceId || '', viewer) };
     }
     async saveSettings(req, body) {
-        this.ctx(req);
+        const { viewer } = this.ctx(req);
         const { instanceId, ...patch } = body || {};
-        const data = await this.notes.saveNoteSettings(String(instanceId || ''), patch);
+        const data = await this.notes.saveNoteSettings(String(instanceId || ''), patch, viewer);
         return { success: true, data };
     }
     async files(req, q) {

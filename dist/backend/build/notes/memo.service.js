@@ -11,9 +11,11 @@ const common_1 = require("@nestjs/common");
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const notes_util_1 = require("./notes.util");
+const tags_1 = require("../common/tags");
 const memo_util_1 = require("./memo.util");
 const memo_block_util_1 = require("./memo-block.util");
 const MAX_TITLE = 200;
+const MAX_HISTORY = 100;
 const MAX_FOLDER_NAME = 60;
 const MAX_FOLDER_DEPTH = 200;
 function asInt(v, fallback = 0) {
@@ -245,11 +247,17 @@ let MemoService = class MemoService {
             updatedAt: timeOf(row.updatedAt),
         };
     }
-    async blockIdsEnabled(instanceId) {
+    async blockIdsEnabled(instanceId, viewer = '') {
         try {
-            const row = await prisma_1.prisma.setting.findUnique({ where: { key: `note-settings:${instanceId || '~default'}` } });
-            const all = (0, notes_util_1.safeParse)(row?.value, {});
-            const editor = (all.editor && typeof all.editor === 'object' ? all.editor : {});
+            const userKey = `note-editor:${instanceId || '~default'}:${viewer || '~anon'}`;
+            const instKey = `note-settings:${instanceId || '~default'}`;
+            const rows = await prisma_1.prisma.setting.findMany({ where: { key: { in: [userKey, instKey] } } });
+            const userAll = (0, notes_util_1.safeParse)(rows.find((r) => r.key === userKey)?.value, {});
+            if (typeof userAll?.blockIds === 'boolean') {
+                return userAll.blockIds === true;
+            }
+            const instAll = (0, notes_util_1.safeParse)(rows.find((r) => r.key === instKey)?.value, {});
+            const editor = (instAll.editor && typeof instAll.editor === 'object' ? instAll.editor : {});
             return editor.blockIds === true;
         }
         catch (e) {
@@ -258,7 +266,7 @@ let MemoService = class MemoService {
     }
     async createNote(viewer, instanceId, input) {
         const md = String(input.content ?? '');
-        const useIds = await this.blockIdsEnabled(instanceId);
+        const useIds = await this.blockIdsEnabled(instanceId, viewer);
         const content = useIds ? (0, memo_util_1.withBlockIds)(md) : md;
         const title = String(input.title ?? '').trim().slice(0, MAX_TITLE) || (0, memo_util_1.titleFromContent)(content, MAX_TITLE);
         const folderId = String(input.folderId ?? '');
@@ -299,7 +307,7 @@ let MemoService = class MemoService {
             return { conflict: true, version: asInt(row.version, 1), message: '这篇笔记已在别处被修改，请刷新后重试' };
         }
         const md = String(input.content ?? row.content ?? '');
-        const useIds = await this.blockIdsEnabled(instanceId);
+        const useIds = await this.blockIdsEnabled(instanceId, viewer);
         const content = useIds ? (0, memo_util_1.withBlockIds)(md) : md;
         const title = input.title !== undefined
             ? String(input.title ?? '').trim().slice(0, MAX_TITLE)
@@ -362,6 +370,7 @@ let MemoService = class MemoService {
         app_log_1.appLog.info('memo', `彻底删除笔记 ${id}`);
         await prisma_1.prisma.noteBlock.deleteMany({ where: { noteId: id } }).catch(() => undefined);
         await prisma_1.prisma.noteLink.deleteMany({ where: { OR: [{ sourceNoteId: id }, { targetNoteId: id }] } }).catch(() => undefined);
+        await prisma_1.prisma.noteHistory.deleteMany({ where: { noteId: id } }).catch(() => undefined);
         return { ok: true };
     }
     async rebuildNoteIndex(noteId, md, viewer, instanceId) {
@@ -516,6 +525,171 @@ let MemoService = class MemoService {
                 linkType: l.linkType,
                 excerpt: l.excerpt,
             })),
+        };
+    }
+    async listNoteTags(viewer, instanceId, noteId) {
+        const note = await prisma_1.prisma.note.findFirst({
+            where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true },
+        });
+        if (!note)
+            return { error: '笔记不存在' };
+        const links = await prisma_1.prisma.noteTag.findMany({
+            where: { noteId },
+            select: { tag: { select: { id: true, name: true } } },
+        });
+        return { tags: links.map((l) => ({ id: l.tag.id, name: l.tag.name })) };
+    }
+    async setNoteTags(viewer, instanceId, noteId, names) {
+        const note = await prisma_1.prisma.note.findFirst({
+            where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true },
+        });
+        if (!note)
+            return { error: '笔记不存在' };
+        const list = (0, notes_util_1.normalizeTagNames)(names);
+        const tagIds = [];
+        for (const name of list) {
+            const t = await (0, tags_1.findOrCreateTag)(name, instanceId, viewer, 'note');
+            if (t?.id)
+                tagIds.push(String(t.id));
+        }
+        await prisma_1.prisma.noteTag.deleteMany({ where: { noteId } });
+        if (tagIds.length) {
+            await prisma_1.prisma.noteTag.createMany({
+                data: tagIds.map((tagId) => ({ noteId, tagId })),
+                skipDuplicates: true,
+            });
+        }
+        return this.listNoteTags(viewer, instanceId, noteId);
+    }
+    async noteTagCandidates(viewer, instanceId, keyword = '') {
+        const kw = String(keyword || '').trim();
+        const rows = await prisma_1.prisma.tag.findMany({
+            where: {
+                instanceId,
+                type: 'note',
+                ...(kw ? { name: { contains: kw, mode: 'insensitive' } } : {}),
+                noteTags: { some: { note: { author: viewer, instanceId } } },
+            },
+            select: { id: true, name: true },
+            orderBy: { name: 'asc' },
+            take: 50,
+        });
+        return { tags: rows };
+    }
+    async pushHistory(viewer, instanceId, noteId, input = {}) {
+        const note = await prisma_1.prisma.note.findFirst({
+            where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, title: true, content: true, version: true },
+        });
+        if (!note)
+            return { error: '笔记不存在' };
+        const content = String(input.content ?? note.content ?? '');
+        if (!content.trim())
+            return { ok: true, skipped: true };
+        const last = await prisma_1.prisma.noteHistory.findFirst({
+            where: { noteId },
+            orderBy: { createdAt: 'desc' },
+            select: { content: true },
+        });
+        if (last && last.content === content)
+            return { ok: true, skipped: true };
+        const row = await prisma_1.prisma.noteHistory.create({
+            data: {
+                noteId,
+                title: String(input.title ?? note.title ?? '').slice(0, MAX_TITLE),
+                content,
+                charCount: (0, memo_util_1.countMemoChars)(content),
+                version: asInt(input.version, asInt(note.version, 1)),
+                author: viewer,
+                instanceId,
+            },
+        });
+        const overflow = await prisma_1.prisma.noteHistory.findMany({
+            where: { noteId },
+            orderBy: { createdAt: 'desc' },
+            skip: MAX_HISTORY,
+            select: { id: true },
+        });
+        if (overflow.length) {
+            await prisma_1.prisma.noteHistory.deleteMany({ where: { id: { in: overflow.map((o) => o.id) } } });
+        }
+        return { id: row.id, createdAt: timeOf(row.createdAt) };
+    }
+    async listHistory(viewer, instanceId, noteId) {
+        const note = await prisma_1.prisma.note.findFirst({
+            where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true },
+        });
+        if (!note)
+            return { error: '笔记不存在' };
+        const rows = await prisma_1.prisma.noteHistory.findMany({
+            where: { noteId },
+            orderBy: { createdAt: 'desc' },
+            take: MAX_HISTORY,
+            select: { id: true, title: true, charCount: true, version: true, createdAt: true },
+        });
+        return {
+            items: rows.map((r) => ({
+                id: r.id,
+                title: r.title,
+                charCount: r.charCount,
+                version: r.version,
+                createdAt: timeOf(r.createdAt),
+            })),
+            max: MAX_HISTORY,
+        };
+    }
+    async getHistory(viewer, instanceId, noteId, hid) {
+        const note = await prisma_1.prisma.note.findFirst({
+            where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true },
+        });
+        if (!note)
+            return { error: '笔记不存在' };
+        const row = await prisma_1.prisma.noteHistory.findFirst({ where: { id: hid, noteId } });
+        if (!row)
+            return { error: '历史记录不存在（可能已被更早的记录挤出保留范围）' };
+        return {
+            id: row.id,
+            title: row.title,
+            content: row.content,
+            charCount: row.charCount,
+            version: row.version,
+            createdAt: timeOf(row.createdAt),
+        };
+    }
+    async restoreHistory(viewer, instanceId, noteId, hid) {
+        const note = await prisma_1.prisma.note.findFirst({
+            where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, title: true, content: true, version: true },
+        });
+        if (!note)
+            return { error: '笔记不存在' };
+        const row = await prisma_1.prisma.noteHistory.findFirst({ where: { id: hid, noteId } });
+        if (!row)
+            return { error: '历史记录不存在' };
+        await this.pushHistory(viewer, instanceId, noteId, { content: note.content, title: note.title });
+        const useIds = await this.blockIdsEnabled(instanceId, viewer);
+        const content = useIds ? (0, memo_util_1.withBlockIds)(row.content) : row.content;
+        const next = await prisma_1.prisma.note.update({
+            where: { id: noteId },
+            data: {
+                content,
+                title: row.title || String(note.title || ''),
+                version: { increment: 1 },
+                metas: JSON.stringify({ excerpt: (0, memo_util_1.excerptOf)(content), charCount: (0, memo_util_1.countMemoChars)(content) }),
+            },
+            select: { version: true, updatedAt: true },
+        });
+        await this.rebuildNoteIndex(noteId, content, viewer, instanceId);
+        app_log_1.appLog.info('memo', `笔记 ${noteId} 恢复到历史 ${hid}`);
+        return {
+            version: asInt(next.version, 1),
+            content,
+            title: row.title || '',
+            updatedAt: timeOf(next.updatedAt),
         };
     }
     async rebuildAllIndex(viewer, instanceId) {

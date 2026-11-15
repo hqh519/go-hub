@@ -471,7 +471,7 @@ import fetchWithAuth from '@/utils/fetchWithAuth'
 import { formatMomentTime } from '@/utils/notes'
 import backgroundManager from '@/mixins/backgroundManager'
 // v1.1.3：实例切换密码守卫（首页 / 图床管理 / 笔记管理共用）
-import { ensureInstanceUnlocked } from '@/utils/instanceSwitch'
+import { ensureInstanceUnlocked, revokeInstanceUnlock } from '@/utils/instanceSwitch'
 import pageActivation from '@/mixins/pageActivation'
 import axios from '@/utils/axios'
 import { ref } from 'vue'
@@ -1239,6 +1239,8 @@ export default {
             // v1.1.3：目标实例启用了切换密码时，先验证再切（与后台两个页面同一份守卫）
             const unlocked = await ensureInstanceUnlocked(val)
             if (!unlocked) return
+            // v1.3.1.1：切走时作废「离开的那个实例」的通行证 —— 切回来要重新验证
+            await revokeInstanceUnlock(this.currentInstanceId)
             try { localStorage.setItem('gohub_instance_id', val) } catch (e) { /* 隐私模式忽略 */ }
             this.currentInstanceId = val
             this.showInstanceDialog = false

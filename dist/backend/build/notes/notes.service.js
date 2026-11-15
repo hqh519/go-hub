@@ -921,7 +921,28 @@ let NotesService = class NotesService {
         const id = String(instanceId || '').trim();
         return `note-settings:${id || '~default'}`;
     }
-    async getNoteSettings(instanceId) {
+    noteEditorKey(instanceId, username) {
+        const id = String(instanceId || '').trim();
+        const u = String(username || '').trim();
+        return `note-editor:${id || '~default'}:${u || '~anon'}`;
+    }
+    async readUserEditor(instanceId, username) {
+        if (!username)
+            return null;
+        try {
+            const key = this.noteEditorKey(instanceId, username);
+            const row = await prisma_1.prisma.setting.findUnique({ where: { key } });
+            if (!row?.value)
+                return null;
+            const parsed = (0, notes_util_1.safeParse)(row.value, {});
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        }
+        catch (e) {
+            app_log_1.appLog.warn('notes', `读取用户编辑器设置失败：${e?.message || e}`);
+            return null;
+        }
+    }
+    async getNoteSettings(instanceId, username = '') {
         const key = this.noteSettingsKey(instanceId);
         let raw = '';
         try {
@@ -931,12 +952,23 @@ let NotesService = class NotesService {
         catch (e) {
             app_log_1.appLog.warn('notes', `读取笔记设置失败（${key}）：${e?.message || e}`);
         }
-        return (0, notes_util_1.normalizeNoteSettings)((0, notes_util_1.safeParse)(raw, {}));
+        const base = (0, notes_util_1.normalizeNoteSettings)((0, notes_util_1.safeParse)(raw, {}));
+        const userEditor = await this.readUserEditor(instanceId, username);
+        if (userEditor) {
+            base.editor = (0, notes_util_1.normalizeEditorSettings)({
+                ...base.editor,
+                ...userEditor,
+            });
+        }
+        return base;
     }
-    async saveNoteSettings(instanceId, patch) {
+    async saveNoteSettings(instanceId, patch, username = '') {
         const key = this.noteSettingsKey(instanceId);
-        const current = await this.getNoteSettings(instanceId);
-        const p = patch && typeof patch === 'object' ? patch : {};
+        const current = await this.getNoteSettings(instanceId, username);
+        const p = { ...(patch && typeof patch === 'object' ? patch : {}) };
+        const editorPatch = p.editor;
+        if (username)
+            delete p.editor;
         const merged = { ...current, ...p };
         if (p.moment && typeof p.moment === 'object') {
             merged.moment = {
@@ -967,6 +999,23 @@ let NotesService = class NotesService {
             update: { value },
             create: { key, value },
         });
+        if (editorPatch && typeof editorPatch === 'object' && username) {
+            const prev = (await this.readUserEditor(instanceId, username)) || {};
+            const userNext = (0, notes_util_1.normalizeEditorSettings)({
+                ...next.editor,
+                ...prev,
+                ...editorPatch,
+            });
+            const uKey = this.noteEditorKey(instanceId, username);
+            const uValue = JSON.stringify(userNext);
+            await prisma_1.prisma.setting.upsert({
+                where: { key: uKey },
+                update: { value: uValue },
+                create: { key: uKey, value: uValue },
+            });
+            app_log_1.appLog.info('notes', `编辑器设置已更新（${uKey}）`);
+            next.editor = userNext;
+        }
         app_log_1.appLog.info('notes', `笔记设置已更新（${key}）：${value}`);
         return next;
     }

@@ -10,6 +10,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.InstancesService = void 0;
 exports.readInstanceMembers = readInstanceMembers;
 exports.readSwitchLock = readSwitchLock;
+exports.readInstanceChannels = readInstanceChannels;
 const common_1 = require("@nestjs/common");
 const crypto_1 = require("crypto");
 const prisma_1 = require("../common/prisma");
@@ -44,6 +45,18 @@ function readSwitchLock(metas) {
     }
     catch {
         return null;
+    }
+}
+function readInstanceChannels(metas) {
+    try {
+        const parsed = JSON.parse(metas || '{}');
+        return {
+            main: String(parsed?.channelMain || '').trim(),
+            backup: String(parsed?.channelBackup || '').trim(),
+        };
+    }
+    catch {
+        return { main: '', backup: '' };
     }
 }
 function makeInviteCode() {
@@ -328,6 +341,15 @@ let InstancesService = class InstancesService {
     clearUnlock(username) {
         InstancesService_1.unlocked.delete(String(username || ''));
     }
+    revokeUnlock(username, instanceId) {
+        const key = String(username || '');
+        const bucket = InstancesService_1.unlocked.get(key);
+        if (!bucket)
+            return { ok: true };
+        bucket.delete(String(instanceId || ''));
+        app_log_1.appLog.info('instance', `${key} 切离实例 ${instanceId || '(默认)'}，已作废该实例通行证`, '', '');
+        return { ok: true };
+    }
     async getAttributes(id, username) {
         const inst = await prisma_1.prisma.instance.findUnique({ where: { id } });
         if (!inst)
@@ -336,11 +358,14 @@ let InstancesService = class InstancesService {
         if (inst.ownerId !== myId)
             return { error: '仅创建者可查看实例属性' };
         const lock = readSwitchLock(inst.metas);
+        const ch = readInstanceChannels(inst.metas);
         return {
             item: {
                 id: inst.id,
                 name: inst.name,
                 note: inst.note,
+                channelMain: ch.main,
+                channelBackup: ch.backup,
                 switchLock: {
                     enabled: !!lock,
                     mode: lock?.mode || 'custom',
@@ -379,6 +404,24 @@ let InstancesService = class InstancesService {
         }
         if (body.note !== undefined)
             data.note = String(body.note || '').slice(0, 200);
+        if (body.channelMain !== undefined || body.channelBackup !== undefined) {
+            const pick = (v) => (v === undefined ? undefined : String(v || '').trim().slice(0, 64));
+            const main = pick(body.channelMain);
+            const backup = pick(body.channelBackup);
+            if (main !== undefined) {
+                if (main)
+                    metas.channelMain = main;
+                else
+                    delete metas.channelMain;
+            }
+            if (backup !== undefined) {
+                if (backup && backup !== 'none')
+                    metas.channelBackup = backup;
+                else
+                    delete metas.channelBackup;
+            }
+            data.metas = JSON.stringify(metas);
+        }
         if (body.switchLock !== undefined) {
             const raw = (body.switchLock || {});
             const enabled = raw.enabled === true;
@@ -430,11 +473,14 @@ let InstancesService = class InstancesService {
         });
         app_log_1.appLog.info('instance', `创建者 ${username} 更新了实例「${updated.name}」的属性`, '', '');
         const lock = readSwitchLock(updated.metas);
+        const ch = readInstanceChannels(updated.metas);
         return {
             item: {
                 id: updated.id,
                 name: updated.name,
                 note: updated.note,
+                channelMain: ch.main,
+                channelBackup: ch.backup,
                 switchLock: { enabled: !!lock, mode: lock?.mode || 'custom', hasCustomPassword: !!lock?.hash },
             },
         };

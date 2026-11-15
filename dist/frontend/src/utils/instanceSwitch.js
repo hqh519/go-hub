@@ -77,4 +77,24 @@ export async function ensureInstanceUnlocked(instanceId) {
     }
 }
 
-export default { ensureInstanceUnlocked };
+/**
+ * v1.3.1.1（需求）：切离某个实例时作废它的通行证。
+ *
+ * 需求：「切换到其他实例后再次切换回来，需要重新输入实例密码」。
+ * 原来是「验证一次 12 小时内免验证」，服务端一直认为已解锁，切回来就不问了。
+ * 现在切换动作里对**离开的实例**调一次这个接口，把它从服务端通行证表摘掉；
+ * 默认实例（空 id）没有实例记录，也就没有通行证，直接跳过。
+ *
+ * 失败不阻断切换 —— 大不了下次多问一次密码，不能因为一个清理请求让用户切不了实例。
+ */
+export async function revokeInstanceUnlock(instanceId) {
+    const id = String(instanceId || '');
+    if (!id) return;
+    try {
+        await fetchWithAuth(`/api/instances/${encodeURIComponent(id)}/revoke-lock`, { method: 'POST' });
+    } catch (e) {
+        /* 忽略：清理失败不影响切换结果 */
+    }
+}
+
+export default { ensureInstanceUnlocked, revokeInstanceUnlock };

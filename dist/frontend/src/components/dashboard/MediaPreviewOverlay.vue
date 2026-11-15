@@ -581,6 +581,29 @@
             </div>
 
             <!--
+                v1.3.1.1（需求）：视频灯箱的「第几个 / 共几个」小圆点。
+                · 位置在左下「目录」与右下「设置」之间（同一条 20vh 高度线上，水平居中）；
+                · 与图片灯箱相反：**控件显示时才显示**，控件隐藏时一起隐藏；
+                · 有「上次播放进度」提示时也要隐藏（那条提示占的就是这个位置）；
+                · 超过 20 个画不下，退化成「当前 / 总数」文本 —— 与图片灯箱同一口径。
+            -->
+            <div
+                v-if="current.kind === 'video' && videoItems.length > 1 && resumeAt <= 0"
+                class="mv-dots mv-video-dots"
+                aria-hidden="true"
+            >
+                <template v-if="videoItems.length <= 20">
+                    <span
+                        v-for="(t, vi) in videoItems"
+                        :key="'vdot-' + t.index"
+                        class="mv-dot"
+                        :class="{ 'is-active': vi === videoDotIndex }"
+                    ></span>
+                </template>
+                <span v-else class="mv-dots-counter">{{ videoDotIndex + 1 }} / {{ videoItems.length }}</span>
+            </div>
+
+            <!--
                 左右切换（图片 / 视频 / 其它；音频用列表点播）
                 v1.0.0：只在「同类型」文件之间循环 —— 图片灯箱只切图片、视频灯箱只切视频，
                 PDF / 文本 / 音频各自独立，不再跨类型乱跳。当前类型只有 1 个时不显示箭头。
@@ -879,6 +902,11 @@ export default {
         /** v1.1.9.3：底部小圆点里「当前这张」的下标（只在图片灯箱用） */
         dotIndex() {
             const pos = this.imageThumbs.findIndex((t) => t.index === this.index)
+            return pos < 0 ? 0 : pos
+        },
+        /** v1.3.1.1：视频灯箱小圆点里「当前这个」的下标（口径同 dotIndex） */
+        videoDotIndex() {
+            const pos = this.videoItems.findIndex((t) => t.index === this.index)
             return pos < 0 ? 0 : pos
         },
         // v3.0.0 播放模式顺序：单次播放 / 单片循环 / 随机播放 / 顺序播放
@@ -3892,6 +3920,19 @@ export default {
 }
 /* v1.1.9.4（需求）：整体再淡一点 —— 从完全不透明收到 0.7，避免在深色图上抢眼 */
 .media-viewer.is-idle .mv-dots {
+    opacity: 0.7;
+}
+/*
+ * v1.3.1.1（需求）：视频灯箱的数量点是「跟随控件」的 ——
+ * 控件显示时出现、控件隐藏时一起消失，与图片灯箱（只在 is-idle 时显示）相反。
+ * 位置压在左下「目录」与右下「设置」之间的那条 20vh 线上。
+ */
+.mv-video-dots {
+    bottom: 20vh;
+    z-index: 4;
+    opacity: 0;
+}
+.media-viewer:not(.is-idle) .mv-video-dots {
     opacity: 0.7;
 }
 .mv-dot {

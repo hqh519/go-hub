@@ -178,7 +178,20 @@ export default createStore({
   actions: {
     async fetchUserConfig({ commit }) {
       try {
-        const response = await axios.get('/api/userConfig');
+        /*
+         * v1.3.1.1：带上当前实例 —— 实例属性里可以单独指定主/备存储渠道，
+         * 后端按「实例 > 账户 > 全局」算出实际生效的渠道再下发。
+         * 不带这个参数，上传设置页显示的就会是账户级渠道，与实际写入的渠道不一致。
+         */
+        let instanceId = '';
+        try {
+          instanceId = localStorage.getItem('gohub_instance_id') || '';
+        } catch (e) {
+          /* 隐私模式下读不到就当默认实例 */
+        }
+        const response = await axios.get('/api/userConfig', {
+          params: instanceId ? { instanceId } : {},
+        });
         commit('setUserConfig', response.data);
       } catch (error) {
         console.log(error);

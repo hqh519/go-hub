@@ -17,7 +17,8 @@
 import { Injectable } from '@nestjs/common';
 import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
-import { safeParse } from './notes.util';
+import { safeParse, normalizeTagNames } from './notes.util';
+import { findOrCreateTag } from '../common/tags';
 import { countMemoChars, excerptOf, titleFromContent, withBlockIds } from './memo.util';
 import { parseBlocks, parseLinks } from './memo-block.util';
 
@@ -48,6 +49,8 @@ export interface MemoFolderView {
 }
 
 const MAX_TITLE = 200;
+/** 每篇内容最多保留多少条历史快照（需求原文：100 条，超出删旧） */
+const MAX_HISTORY = 100;
 const MAX_FOLDER_NAME = 60;
 /**
  * 向上遍历目录链时的圈数上限。
@@ -340,11 +343,22 @@ export class MemoService {
    * 但会出现在「源码模式」的每一行末尾，所以在 v1.5 真正解析引用之前默认关闭，
    * 免得用户以为正文被污染了。开启后保存即生效，不需要迁移。
    */
-  private async blockIdsEnabled(instanceId: string): Promise<boolean> {
+  private async blockIdsEnabled(instanceId: string, viewer = ''): Promise<boolean> {
     try {
-      const row = await prisma.setting.findUnique({ where: { key: `note-settings:${instanceId || '~default'}` } });
-      const all = safeParse(row?.value, {});
-      const editor = (all.editor && typeof all.editor === 'object' ? all.editor : {}) as Record<string, unknown>;
+      /*
+       * v1.3.1.1：编辑器设置改为按用户存 —— 先看用户级（扁平 { blockIds }），
+       * 再回落到实例级（老库结构 { editor: { blockIds } }）。
+       * 用户级没写过 blockIds 字段时也继续回落，避免「用户只改了主题」把块 ID 关掉。
+       */
+      const userKey = `note-editor:${instanceId || '~default'}:${viewer || '~anon'}`;
+      const instKey = `note-settings:${instanceId || '~default'}`;
+      const rows = await prisma.setting.findMany({ where: { key: { in: [userKey, instKey] } } });
+      const userAll = safeParse(rows.find((r) => r.key === userKey)?.value, {});
+      if (typeof (userAll as Record<string, unknown>)?.blockIds === 'boolean') {
+        return (userAll as Record<string, unknown>).blockIds === true;
+      }
+      const instAll = safeParse(rows.find((r) => r.key === instKey)?.value, {});
+      const editor = (instAll.editor && typeof instAll.editor === 'object' ? instAll.editor : {}) as Record<string, unknown>;
       return editor.blockIds === true;
     } catch (e) {
       return false;
@@ -357,7 +371,7 @@ export class MemoService {
     input: { title?: unknown; content?: unknown; folderId?: unknown },
   ) {
     const md = String(input.content ?? '');
-    const useIds = await this.blockIdsEnabled(instanceId);
+    const useIds = await this.blockIdsEnabled(instanceId, viewer);
     const content = useIds ? withBlockIds(md) : md;
     const title =
       String(input.title ?? '').trim().slice(0, MAX_TITLE) || titleFromContent(content, MAX_TITLE);
@@ -413,7 +427,7 @@ export class MemoService {
       return { conflict: true, version: asInt(row.version, 1), message: '这篇笔记已在别处被修改，请刷新后重试' };
     }
     const md = String(input.content ?? row.content ?? '');
-    const useIds = await this.blockIdsEnabled(instanceId);
+    const useIds = await this.blockIdsEnabled(instanceId, viewer);
     const content = useIds ? withBlockIds(md) : md;
     const title =
       input.title !== undefined
@@ -484,6 +498,8 @@ export class MemoService {
     // 派生物一起清掉：块索引、引用关系留着就是脏数据
     await prisma.noteBlock.deleteMany({ where: { noteId: id } }).catch(() => undefined);
     await prisma.noteLink.deleteMany({ where: { OR: [{ sourceNoteId: id }, { targetNoteId: id }] } }).catch(() => undefined);
+    // v1.3.1.1：历史快照也要跟着删，否则彻底删除后还留着一堆孤儿正文
+    await prisma.noteHistory.deleteMany({ where: { noteId: id } }).catch(() => undefined);
     return { ok: true };
   }
 
@@ -669,6 +685,206 @@ export class MemoService {
   }
 
   /** 全量重建（删表重跑 / 迁移后用）：返回处理了多少篇 */
+  // ============================================================
+  //  笔记标签（v1.3.1.1 · 需求：标题下方加一行标签，交互与瞬间一致）
+  // ============================================================
+
+  /*
+   * 存的是 note_tags 关联表（与瞬间共用同一张表、同一套标签池 type='note'）。
+   * 共用而不是另建一套的理由：标签本身就是「跨内容类型的分类词」，
+   * 用户在瞬间里建的 #灵感，在笔记里也应该能直接选到。
+   * 隔离口径仍是 author + instanceId —— 别人的标签不会出现在候选里。
+   */
+
+  async listNoteTags(viewer: string, instanceId: string, noteId: string) {
+    const note = await prisma.note.findFirst({
+      where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true },
+    });
+    if (!note) return { error: '笔记不存在' };
+    const links = await prisma.noteTag.findMany({
+      where: { noteId },
+      select: { tag: { select: { id: true, name: true } } },
+    });
+    return { tags: links.map((l) => ({ id: l.tag.id, name: l.tag.name })) };
+  }
+
+  /** 覆盖式设置本篇标签（前端整行提交，不在后端做增删 diff） */
+  async setNoteTags(viewer: string, instanceId: string, noteId: string, names: unknown) {
+    const note = await prisma.note.findFirst({
+      where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true },
+    });
+    if (!note) return { error: '笔记不存在' };
+    const list = normalizeTagNames(names);
+    const tagIds: string[] = [];
+    for (const name of list) {
+      const t = await findOrCreateTag(name, instanceId, viewer, 'note');
+      if (t?.id) tagIds.push(String(t.id));
+    }
+    await prisma.noteTag.deleteMany({ where: { noteId } });
+    if (tagIds.length) {
+      await prisma.noteTag.createMany({
+        data: tagIds.map((tagId) => ({ noteId, tagId })),
+        skipDuplicates: true,
+      });
+    }
+    return this.listNoteTags(viewer, instanceId, noteId);
+  }
+
+  /** 标签候选（按当前账户 + 实例隔离，只列 type=note 的标签） */
+  async noteTagCandidates(viewer: string, instanceId: string, keyword = '') {
+    const kw = String(keyword || '').trim();
+    const rows = await prisma.tag.findMany({
+      where: {
+        instanceId,
+        type: 'note',
+        ...(kw ? { name: { contains: kw, mode: 'insensitive' as const } } : {}),
+        noteTags: { some: { note: { author: viewer, instanceId } } },
+      },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+      take: 50,
+    });
+    return { tags: rows };
+  }
+
+  // ============================================================
+  //  历史快照（v1.3.1.1 · 需求：每篇内容保存 100 条历史记录）
+  // ============================================================
+
+  /**
+   * 追加一条历史快照。
+   *
+   * 由前端按「笔记设置 → 历史保存间隔」定时调用，服务端只做三件事：
+   *   1) 与最近一条内容相同就跳过（避免定时器空转写一堆重复行）；
+   *   2) 空正文不记（新建笔记还没写东西时不该占历史额度）；
+   *   3) 超过 100 条删最旧的 —— **每篇独立计算**，不是全局池。
+   */
+  async pushHistory(
+    viewer: string,
+    instanceId: string,
+    noteId: string,
+    input: { title?: unknown; content?: unknown; version?: unknown } = {},
+  ) {
+    const note = await prisma.note.findFirst({
+      where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, title: true, content: true, version: true },
+    });
+    if (!note) return { error: '笔记不存在' };
+    const content = String(input.content ?? note.content ?? '');
+    if (!content.trim()) return { ok: true, skipped: true };
+    const last = await prisma.noteHistory.findFirst({
+      where: { noteId },
+      orderBy: { createdAt: 'desc' },
+      select: { content: true },
+    });
+    if (last && last.content === content) return { ok: true, skipped: true };
+    const row = await prisma.noteHistory.create({
+      data: {
+        noteId,
+        title: String(input.title ?? note.title ?? '').slice(0, MAX_TITLE),
+        content,
+        charCount: countMemoChars(content),
+        version: asInt(input.version, asInt(note.version, 1)),
+        author: viewer,
+        instanceId,
+      },
+    });
+    const overflow = await prisma.noteHistory.findMany({
+      where: { noteId },
+      orderBy: { createdAt: 'desc' },
+      skip: MAX_HISTORY,
+      select: { id: true },
+    });
+    if (overflow.length) {
+      await prisma.noteHistory.deleteMany({ where: { id: { in: overflow.map((o) => o.id) } } });
+    }
+    return { id: row.id, createdAt: timeOf(row.createdAt) };
+  }
+
+  /** 历史列表（不含正文，列表页只要时间 / 字数 / 版本） */
+  async listHistory(viewer: string, instanceId: string, noteId: string) {
+    const note = await prisma.note.findFirst({
+      where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true },
+    });
+    if (!note) return { error: '笔记不存在' };
+    const rows = await prisma.noteHistory.findMany({
+      where: { noteId },
+      orderBy: { createdAt: 'desc' },
+      take: MAX_HISTORY,
+      select: { id: true, title: true, charCount: true, version: true, createdAt: true },
+    });
+    return {
+      items: rows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        charCount: r.charCount,
+        version: r.version,
+        createdAt: timeOf(r.createdAt),
+      })),
+      max: MAX_HISTORY,
+    };
+  }
+
+  /** 单条快照详情（含正文，点开某一条时用） */
+  async getHistory(viewer: string, instanceId: string, noteId: string, hid: string) {
+    const note = await prisma.note.findFirst({
+      where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true },
+    });
+    if (!note) return { error: '笔记不存在' };
+    const row = await prisma.noteHistory.findFirst({ where: { id: hid, noteId } });
+    if (!row) return { error: '历史记录不存在（可能已被更早的记录挤出保留范围）' };
+    return {
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      charCount: row.charCount,
+      version: row.version,
+      createdAt: timeOf(row.createdAt),
+    };
+  }
+
+  /**
+   * 用某一版历史覆盖当前内容。
+   *
+   * 「恢复」本身也要能撤回 —— 所以先把**当前**内容压一条历史，再覆盖。
+   * 覆盖后 version+1、块索引重建，前端拿到新 version 继续编辑不会撞乐观锁。
+   */
+  async restoreHistory(viewer: string, instanceId: string, noteId: string, hid: string) {
+    const note = await prisma.note.findFirst({
+      where: { id: noteId, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, title: true, content: true, version: true },
+    });
+    if (!note) return { error: '笔记不存在' };
+    const row = await prisma.noteHistory.findFirst({ where: { id: hid, noteId } });
+    if (!row) return { error: '历史记录不存在' };
+    // 先把当前内容存成一条历史（恢复也可以再恢复回来）
+    await this.pushHistory(viewer, instanceId, noteId, { content: note.content, title: note.title });
+    const useIds = await this.blockIdsEnabled(instanceId, viewer);
+    const content = useIds ? withBlockIds(row.content) : row.content;
+    const next = await prisma.note.update({
+      where: { id: noteId },
+      data: {
+        content,
+        title: row.title || String(note.title || ''),
+        version: { increment: 1 },
+        metas: JSON.stringify({ excerpt: excerptOf(content), charCount: countMemoChars(content) }),
+      },
+      select: { version: true, updatedAt: true },
+    });
+    await this.rebuildNoteIndex(noteId, content, viewer, instanceId);
+    appLog.info('memo', `笔记 ${noteId} 恢复到历史 ${hid}`);
+    return {
+      version: asInt(next.version, 1),
+      content,
+      title: row.title || '',
+      updatedAt: timeOf(next.updatedAt),
+    };
+  }
+
   async rebuildAllIndex(viewer: string, instanceId: string) {
     const notes = await prisma.note.findMany({
       where: { author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },

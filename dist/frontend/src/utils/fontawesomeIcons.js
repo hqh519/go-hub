@@ -19,6 +19,12 @@ import { faVolumeMute } from '@fortawesome/free-solid-svg-icons/faVolumeMute';
 import { faVolumeUp } from '@fortawesome/free-solid-svg-icons/faVolumeUp';
 import { faAngleDoubleRight } from '@fortawesome/free-solid-svg-icons/faAngleDoubleRight';
 import { faArrowDown } from '@fortawesome/free-solid-svg-icons/faArrowDown';
+import { faArrowRight } from '@fortawesome/free-solid-svg-icons/faArrowRight';
+import { faArrowsLeftRight } from '@fortawesome/free-solid-svg-icons/faArrowsLeftRight';
+import { faArrowsUpDown } from '@fortawesome/free-solid-svg-icons/faArrowsUpDown';
+import { faCircle } from '@fortawesome/free-solid-svg-icons/faCircle';
+import { faMarker } from '@fortawesome/free-solid-svg-icons/faMarker';
+import { faRotateLeft } from '@fortawesome/free-solid-svg-icons/faRotateLeft';
 import { faArrowsAlt } from '@fortawesome/free-solid-svg-icons/faArrowsAlt';
 import { faArrowLeft } from '@fortawesome/free-solid-svg-icons/faArrowLeft';
 import { faArrowUp } from '@fortawesome/free-solid-svg-icons/faArrowUp';
@@ -157,6 +163,15 @@ import { faTrashAlt } from '@fortawesome/free-solid-svg-icons/faTrashAlt';
 // v3.0.0（R9）：回收站「恢复」按钮图标（此前 undo 未注册 → 按钮没有图标）
 import { faUndo } from '@fortawesome/free-solid-svg-icons/faUndo';
 import { faUpload } from '@fortawesome/free-solid-svg-icons/faUpload';
+import { faAlignLeft } from '@fortawesome/free-solid-svg-icons/faAlignLeft';
+import { faAlignCenter } from '@fortawesome/free-solid-svg-icons/faAlignCenter';
+import { faAlignRight } from '@fortawesome/free-solid-svg-icons/faAlignRight';
+import { faIndent } from '@fortawesome/free-solid-svg-icons/faIndent';
+import { faOutdent } from '@fortawesome/free-solid-svg-icons/faOutdent';
+import { faArrowTurnDown } from '@fortawesome/free-solid-svg-icons/faArrowTurnDown';
+import { faParagraph } from '@fortawesome/free-solid-svg-icons/faParagraph';
+import { faCloudArrowDown } from '@fortawesome/free-solid-svg-icons/faCloudArrowDown';
+import { faExpand } from '@fortawesome/free-solid-svg-icons/faExpand';
 import { faUser } from '@fortawesome/free-solid-svg-icons/faUser';
 import { faUserCog } from '@fortawesome/free-solid-svg-icons/faUserCog';
 import { faStar } from '@fortawesome/free-solid-svg-icons/faStar';
@@ -180,6 +195,12 @@ export default [
     faAngleDoubleLeft,
     faAngleDoubleRight,
     faArrowDown,
+    faArrowRight,
+    faArrowsLeftRight,
+    faArrowsUpDown,
+    faCircle,
+    faMarker,
+    faRotateLeft,
     faArrowsAlt,
     faArrowLeft,
     faArrowUp,
@@ -301,6 +322,15 @@ export default [
     faTrashAlt,
     faUndo,
     faUpload,
+    faAlignLeft,
+    faAlignCenter,
+    faAlignRight,
+    faIndent,
+    faOutdent,
+    faArrowTurnDown,
+    faParagraph,
+    faCloudArrowDown,
+    faExpand,
     faUser,
     faUserCog,
     faStar,
