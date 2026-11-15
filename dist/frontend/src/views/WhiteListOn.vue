@@ -1,7 +1,7 @@
 <template>
   <div class="whitelist-container">
     <!-- 动态背景图片 -->
-    <div class="background-wrapper" v-html="backgroundImagesTemplate"></div>
+    <div class="background-wrapper" v-safe-html="backgroundImagesTemplate"></div>
     
     <div class="whitelist-content">
       <!-- 返回首页按钮 -->

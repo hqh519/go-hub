@@ -225,13 +225,34 @@ let NotesService = class NotesService {
                 orderBy,
                 skip: (page - 1) * pageSize,
                 take: pageSize,
-                include: {
+                select: {
+                    id: true,
+                    kind: true,
+                    coverFileId: true,
+                    visibility: true,
+                    status: true,
+                    author: true,
+                    instanceId: true,
+                    version: true,
+                    publishedAt: true,
+                    createdAt: true,
+                    updatedAt: true,
                     moment: true,
                     assets: { orderBy: { sort: 'asc' } },
                     tags: { include: { tag: true } },
                 },
             }),
         ]);
+        const needContent = rows.filter((r) => r.kind !== 'memo').map((r) => String(r.id));
+        const contentMap = new Map();
+        if (needContent.length) {
+            const textRows = await prisma_1.prisma.note.findMany({
+                where: { id: { in: needContent } },
+                select: { id: true, content: true },
+            });
+            for (const t of textRows)
+                contentMap.set(String(t.id), String(t.content || ''));
+        }
         const allFileIds = rows.flatMap((r) => (r.assets || []).map((a) => a.fileId));
         const fileMap = await this.resolveFiles(allFileIds);
         const noteIds = rows.map((r) => String(r.id));
@@ -279,7 +300,7 @@ let NotesService = class NotesService {
                     assets.push(hit);
             }
             const all = commentsByNote.get(String(row.id)) || [];
-            return this.shape(row, assets, all.slice(0, exports.LIST_COMMENT_MAX), countByNote.get(String(row.id)) || all.length, input.viewer, profileMap);
+            return this.shape(row, assets, all.slice(0, exports.LIST_COMMENT_MAX), countByNote.get(String(row.id)) || all.length, input.viewer, profileMap, contentMap.get(String(row.id)) || '');
         });
         return { total, page, pageSize, list };
     }
@@ -293,13 +314,13 @@ let NotesService = class NotesService {
             mine: r.author === viewer,
         }));
     }
-    shape(row, assets, comments = [], commentCount = 0, viewer = '', profiles) {
+    shape(row, assets, comments = [], commentCount = 0, viewer = '', profiles, content = '') {
         const prof = profiles ? profiles.get(String(row.author || '')) : undefined;
         return {
             id: row.id,
             kind: row.kind,
             title: String(row.moment?.title || ''),
-            content: row.content || '',
+            content,
             coverFileId: row.coverFileId || '',
             visibility: row.visibility || 'private',
             status: row.status,
@@ -927,6 +948,12 @@ let NotesService = class NotesService {
             merged.general = {
                 ...(current.general || {}),
                 ...p.general,
+            };
+        }
+        if (p.editor && typeof p.editor === 'object') {
+            merged.editor = {
+                ...(current.editor || {}),
+                ...p.editor,
             };
         }
         const next = (0, notes_util_1.normalizeNoteSettings)(merged);

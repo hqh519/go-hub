@@ -445,7 +445,7 @@
         </div>
     </el-dialog>
     <el-dialog :title="$t('upload.announcementTitle')" v-model="showAnnouncementDialog" :width="dialogWidth" :show-close="false" :close-on-click-modal="false" :close-on-press-escape="false" center>
-        <div v-html="announcementContent"></div>
+        <div v-safe-html="announcementContent"></div>
         <template #footer>
             <span class="dialog-footer">
                 <el-button type="primary" @click="acknowledgeAnnouncement">{{ $t('upload.announcementAck') }}</el-button>

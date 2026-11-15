@@ -150,6 +150,8 @@ export default {
                 // v1.1.1：笔记管理（「瞬间」便签式笔记）—— 排在「文件管理」之后
                 // v1.1.9.4（需求）：改名「发布中心」，路由 /notes → /post
                 { name: 'post', icon: 'note-sticky', label: 'dashboardTabs.notesManagement' },
+                // v1.3.0：笔记（memo）工作台 —— 三栏目录 / 列表 / 编辑器，与发布中心是两套东西
+                { name: 'memo', icon: 'file-lines', label: 'dashboardTabs.memoManagement' },
             ];
             // 「本地文件」页：管理员恒显示（页面内会提示「还没有本地文件渠道」）；
             // 普通用户仅在存在被授权的本地文件渠道时显示

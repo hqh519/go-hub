@@ -22,6 +22,8 @@ import { setupEdgeSwipeGuard } from './utils/edgeSwipeGuard'
 import { readThemeCookie } from './utils/themeCookie'
 // v3.0.0：长时间闲置 / 标签页被回收后重新访问时的「自动复活」守护
 import { setupPageRevive } from './utils/page-revive'
+// v1.3.0：HTML 白名单过滤（v-safe-html 指令 + markdown 预览共用一套规则）
+import { sanitizeHtml } from './utils/markdown'
 // v1.1.6：网站标题占位符（{host} / {user} / {pagename}）
 import { resolveSiteTitle } from './utils/siteTitle'
 
@@ -49,6 +51,26 @@ app.component('font-awesome-icon', FontAwesomeIcon);
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
     app.component(key, component)
 }
+
+/**
+ * v1.3.0：`v-safe-html` —— 带白名单过滤的 innerHTML。
+ *
+ * 为什么要有它：项目里 `v-html` 有十来处，之前都是「自家写死的内容」所以安全。
+ * 从 v1.3.0 起 markdown 上线（公告、说明、笔记预览都可能来自可编辑内容），
+ * v-html 就等价于「存储型 XSS 入口」。这里把 DOMPurify 的标签/属性白名单
+ * 收成一个指令，凡是渲染「可能被用户改动」的 HTML 都必须走它，禁止裸 v-html。
+ *
+ * 白名单本身在 utils/markdown.js（与 md 渲染共用一份）—— 两处规则必须一致，
+ * 否则「预览里能点的链接到了公告里点不了」这种诡异差异没人查得动。
+ */
+app.directive('safe-html', {
+    mounted(el, binding) {
+        el.innerHTML = sanitizeHtml(binding.value);
+    },
+    updated(el, binding) {
+        if (binding.value !== binding.oldValue) el.innerHTML = sanitizeHtml(binding.value);
+    },
+});
 
 /**
  * 主题初始化。

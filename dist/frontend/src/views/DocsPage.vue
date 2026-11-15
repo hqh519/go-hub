@@ -1053,6 +1053,37 @@ const ZH = {
         { t: '移动端「我的发布」顶栏按钮靠右', d: '顶栏右侧那一组（发布、搜索、标签管理、刷新、回收站、更多菜单）在手机上原本从头排起，左侧留出一大段空白。现在整组靠右。实现上刻意没用 justify-content: flex-end —— 这个容器是 overflow-x: auto，flex-end 在内容超宽时会把左侧内容顶出可视区且滚不回去，窄屏手机上发布按钮会直接消失。改成给发布按钮加 margin-left: auto：放得下时吃掉左侧空隙（视觉贴右），放不下时 auto 归零、内容从左边起排，照样能左右滑动，一个按钮都不会丢。' },
         { t: '本版没有数据库变更', d: '两项都是前端样式与判断逻辑的调整，直接覆盖升级即可。版本号显示在「系统设置 → 关于」，应为 1.2.3。' }
       ]
+    },
+    {
+      id: 'whatsnew-130',
+      title: '四十九、v1.3.0 更新要点',
+      intro: 'v1.3.0 正式搭起笔记板块：新增「笔记管理」页（页面切换里的第二项），左侧无限层级目录、中间笔记列表、右侧 markdown 编辑器。编辑器有实时 / 源码 / 预览三种模式，支持段落、六级标题、三种列表、引述、代码块、图片、分割线，工具条可按自己的习惯配置，粘贴一张截图会自动进图床并插入正文。',
+      items: [
+        { t: '新页面：笔记管理（/memo）', d: '与「我的发布」并列，从左上角「页面切换」进入。三栏布局：左栏是目录树（可无限嵌套、可拖拽换层级）、中间是当前目录下的笔记列表、右栏是编辑器。窄屏（手机）改成「列表 → 编辑器」两级，目录收进抽屉 —— 手机上硬塞三栏，每栏只剩一百来像素，谁都看不清。' },
+        { t: '编辑器：Markdown 是真源', d: '正文一律以 markdown 保存，富文本只是它的一种视图。三种模式共享同一份文本：实时（所见即所得）、源码（直接改 md）、预览（渲染成只读页面）。切到源码看到的就是干净的 markdown，没有 JSON 残留；在源码里手改一行再切回实时，改动会立刻反映出来。' },
+        { t: '支持的块类型', d: '段落、标题一到六级、无序列表、有序列表、任务列表（可勾选）、引述、代码块、图片、分割线。表格、公式、页签、提示块等留给后续版本 —— 遇到这些语法时不会丢内容，会降级成普通文字显示。' },
+        { t: '工具条可以自己配', d: '右上角齿轮打开「编辑器设置」，里面按行写工具名：一行就是一排，用空格隔开，输入 | 生成一条竖分隔线。改完保存，工具条立刻按新排布渲染。每行末尾固定跟「实时 / 源码 / 预览 / 保存」四个按钮，它们不属于可配置部分。' },
+        { t: '输入 / 唤起命令，选中出浮层', d: '在空行输入斜杠会弹出命令菜单（标题、列表、引述、代码块、分割线、插入图片、从图床插入），可以上下键选、回车执行。选中一段文字时，选区上方会出现一个小浮层：加粗、斜体、删除线、行内代码、链接。' },
+        { t: '与图床联动', d: '在编辑器里粘贴截图或拖入图片，会自动上传到图床（落在 /notes/笔记 目录）并把图片插到光标处；「从图床插入」可以直接挑已有的文件。笔记里存的是相对地址，以后换域名、换存储渠道，历史笔记里的图都不会挂。' },
+        { t: '两个人同时改同一篇不会互相吃掉', d: '保存带版本号校验。如果这篇笔记在另一个标签页已经被改过，后保存的一方会看到「版本冲突」，可以选覆盖或重新加载，不会静默丢弃任何一边的内容。编辑器也会在停止输入约 1.5 秒后自动保存，Ctrl+S 可以立即保存。' },
+        { t: '升级兼容', d: '本版只新增内容，不改动既有数据：数据库新增一个目录表与三列（标题、正文格式、所属目录），已有瞬间、图床文件、标签、留言全部原样保留，旧版本数据可以直接升级。老笔记（瞬间）的正文格式记为空，永远不会被当成 markdown 重新解析。' }
+      ]
+    },
+    {
+      id: 'whatsnew-131',
+      title: '五十、v1.3.1 更新要点',
+      intro: 'v1.3.1 是笔记板块的「补齐版」：把 v1.3.0 遗留的五个毛病（图片传不上、文件插了不显示、正文没左对齐、选中文字弹原生菜单、手机上边缘滑动会退出）逐条修掉，编辑器补上表格 / 提示块 / 视频音频附件 / 大纲 / 折叠 / 图片缩放，并落地了引用体系（块索引、块引用、反向链接）。数据库只新增两张辅助表。',
+      items: [
+        { t: '上传图片 / 插入文件恢复正常', d: '「图片」按钮现在会打开系统选择框（之前是空转，点了没反应）；从图床选中的文件按类型分派 —— 图片进图片、视频进视频、音频进音频、其它一律落成附件卡片，都能正常显示与下载。' },
+        { t: '编辑区排版与左对齐', d: '正文、标题、列表、引述、代码、表格、图片、附件都补了统一样式，默认左对齐，不再依赖浏览器默认字形。' },
+        { t: '手机上不会误退出', d: '在手机编辑页从屏幕边缘滑动，现在是「回到笔记列表」，不再直接把页面退掉 —— 不会再因为一个手势丢掉正在写的内容。选中文字时也不会再弹浏览器右键菜单遮挡操作。' },
+        { t: '目录可以无限嵌套', d: '每个目录上都能继续建子目录（手机上也看得到「更多」按钮了，之前那个按钮只在鼠标悬停时出现）。手机端目录抽屉宽度改为页面宽度的 90%。' },
+        { t: '新增块类型', d: '表格（列可对齐）、提示块（信息 / 提示 / 注意 / 警告）、视频、音频、附件、下划线、文字高亮。表格与提示块在 markdown 里都有对应写法，切到源码能看到、也能手改。' },
+        { t: '大纲与折叠', d: '工具条上的大纲按钮会列出全文标题，点一下跳到对应位置；「全部折叠」可以只看标题速览。折叠只是阅读辅助，不改动正文结构，任何时候开始编辑都会自动展开。' },
+        { t: '图片可拖拽缩放', d: '点中一张图，四周会出现八个手柄，拖动即可改宽度。宽度会写进 markdown（形如 `{width=600}`），高度按原图比例自动跟随。' },
+        { t: '引用与反向链接', d: '输入 `[[` 可以挑一篇笔记引用，输入 `((` 可以挑一个段落块引用；引用在正文里是一个小标签，点一下跳到来源。每篇笔记底部多了「反向链接」，能看到有哪些笔记引用了这一篇。切走内容被删的引用会提示「源块已删除」。' },
+        { t: '升级兼容', d: '只新增两张辅助表（块索引、引用关系），不动任何既有表、不删列。旧笔记、瞬间、文件都不受影响：索引是派生物，第一次保存时自动建立，也可以手动触发一次全量重建。' }
+      ]
     }
   ]
 };
@@ -2044,6 +2075,37 @@ const EN = {
         { t: 'Focus is read from the DOM, not mirrored in a flag', d: 'The dialog focuses the textarea automatically when it opens. Writing a flag on focus and resetting it in onOpen has no guaranteed order; if the reset lands after the focus event the flag is cleared and tablets fall back to the old broken behaviour. The check now asks document.activeElement directly - stateless, no race. Focus and blur still trigger a recalculation; after blur the measurement waits about 180ms because the keyboard animates out and measuring immediately returns a viewport that has not recovered yet.' },
         { t: 'Mobile "My posts" header: buttons right-aligned', d: 'The group on the right (publish, search, tag management, refresh, trash, more) used to start from the left and leave a large gap. It is right-aligned now. Deliberately not with justify-content: flex-end - this container is overflow-x: auto, and flex-end pushes the left side out of reach when the content overflows, so the publish button would simply disappear on narrow phones. Instead the publish button gets margin-left: auto: it eats the free space when everything fits (visually right-aligned) and collapses to zero when it does not, so the row still scrolls and no button is lost.' },
         { t: 'No database changes in this release', d: 'Both items are frontend styling and detection logic. An overwrite upgrade is enough. The version shown under System settings - About should read 1.2.3.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-130',
+      title: '49. What is new in v1.3.0',
+      intro: 'v1.3.0 introduces the notes section: a new "Notes" page (second item in the page switcher) with an unlimited folder tree on the left, the note list in the middle and a markdown editor on the right. The editor offers live / source / preview modes and supports paragraphs, six heading levels, three list types, quotes, code blocks, images and dividers. The toolbar is configurable, and pasting a screenshot uploads it to the library and inserts it into the text.',
+      items: [
+        { t: 'New page: Notes (/memo)', d: 'Sits next to "My posts" in the page switcher. Three columns: folder tree (unlimited nesting, drag to reparent), the note list for the current folder, and the editor. On narrow screens it becomes list → editor with the folders in a drawer - three columns on a phone would leave each one about a hundred pixels wide.' },
+        { t: 'Markdown is the source of truth', d: 'Bodies are always stored as markdown; the rich text view is just one way to look at it. All three modes share the same text: live (WYSIWYG), source (edit the markdown directly) and preview (rendered read-only page). Switching to source shows clean markdown with no JSON leftovers, and editing a line there is reflected in the live view immediately.' },
+        { t: 'Supported block types', d: 'Paragraph, headings 1-6, bullet list, ordered list, task list (checkable), quote, code block, image and divider. Tables, formulas, tabs and callouts come later - those syntaxes are not lost when encountered, they degrade to plain text.' },
+        { t: 'Configurable toolbar', d: 'The gear at the top-right opens editor settings: one line of tool names per toolbar row, separated by spaces, with | producing a divider. Save and the toolbar re-renders immediately. The last row always ends with live / source / preview / save, which are not configurable.' },
+        { t: 'Slash commands and a selection toolbar', d: 'Typing a slash on an empty line opens a command menu (headings, lists, quote, code block, divider, upload image, insert from library) with arrow-key navigation and Enter to run. Selecting text shows a small toolbar above the selection: bold, italic, strikethrough, inline code and link.' },
+        { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
+        { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
+        { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'whatsnew-131',
+      title: '50. What is new in v1.3.1',
+      intro: 'v1.3.1 fills the gaps left by v1.3.0: five editor bugs are fixed (images would not upload, inserted files did not show up, body text was not left-aligned, selecting text popped the browser menu, and an edge swipe on a phone exited the editor), the editor gains tables, callouts, video/audio/attachments, an outline, heading folding and image resizing, and the reference system (block index, block references, backlinks) lands. Only two helper tables are added to the database.',
+      items: [
+        { t: 'Image upload and file insert work again', d: 'The image button now opens the system file picker (before it did nothing at all), and files picked from the library are dispatched by type - images become images, video becomes video, audio becomes audio, anything else becomes an attachment card. All of them display and download correctly.' },
+        { t: 'Body typography and left alignment', d: 'Paragraphs, headings, lists, quotes, code, tables, images and attachments got a consistent style sheet and are left-aligned by default instead of relying on browser defaults.' },
+        { t: 'No more accidental exits on phones', d: 'An edge swipe on the mobile editor now means "back to the note list" instead of leaving the page, so a stray gesture cannot throw away what you are writing. Selecting text no longer pops the native browser context menu.' },
+        { t: 'Unlimited folder nesting', d: 'Every folder can hold subfolders - and the "more" button is now visible on touch screens too (it used to appear on hover only). The mobile folder drawer is 90% of the page width.' },
+        { t: 'New block types', d: 'Tables (with column alignment), callouts (info / tip / warning / danger), video, audio, attachments, underline and highlight. Tables and callouts have real markdown syntax, so you can see and edit them in source mode.' },
+        { t: 'Outline and folding', d: 'The outline button lists every heading and jumps to it; "fold all" gives you a headings-only overview. Folding is a reading aid only - it never changes the document, and editing expands everything automatically.' },
+        { t: 'Drag to resize images', d: 'Select an image and eight handles appear around it; drag to change the width. The width is written into the markdown itself (as `{width=600}`) and the height follows the original ratio.' },
+        { t: 'References and backlinks', d: 'Type `[[` to link another note or `((` to link a specific block. References render as small chips that jump to the source when clicked. Every note now has a backlinks panel at the bottom showing which notes link here, and a reference to a deleted block reports that the source is gone.' },
+        { t: 'Upgrade compatibility', d: 'Only two helper tables are added (block index and link relations); no existing table is altered and no column is dropped. Old notes, moments and files are unaffected - the index is derived data, built on first save and rebuildable in one call.' }
       ]
     }
   ]

@@ -32,6 +32,8 @@ const shares_module_1 = require("./shares/shares.module");
 const localfiles_controller_1 = require("./localfiles/localfiles.controller");
 const notes_controller_1 = require("./notes/notes.controller");
 const notes_service_1 = require("./notes/notes.service");
+const memo_controller_1 = require("./notes/memo.controller");
+const memo_service_1 = require("./notes/memo.service");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -61,6 +63,7 @@ exports.AppModule = AppModule = __decorate([
             mail_controller_1.MailController,
             localfiles_controller_1.LocalFilesController,
             notes_controller_1.NotesController,
+            memo_controller_1.MemoController,
         ],
         providers: [
             settings_service_1.SettingsService,
@@ -72,6 +75,7 @@ exports.AppModule = AppModule = __decorate([
             access_service_1.AccessService,
             mail_service_1.MailService,
             notes_service_1.NotesService,
+            memo_service_1.MemoService,
         ],
     })
 ], AppModule);

@@ -12,9 +12,35 @@
  * 前端对应实现见 `frontend/src/utils/notes.js`，两处逻辑必须逐行等价。
  */
 
-/** 笔记类型（本版只实现 moment，其余为后续版本的预留取值） */
-export const NOTE_KINDS = ['moment', 'article', 'collection', 'nav', 'todo', 'board'] as const;
+/**
+ * 笔记类型（v1.3.0 起 memo 落地，其余仍为预留取值）
+ *
+ * v1.3.0 修正：原来的 `board` 换成 `memo` ——
+ *   前端 `NotesManagePage.vue` 的 `KIND_CYCLE` 一直是 `square / moment / todo / nav /
+ *   article / collection / memo`，`notes.typeMemo` 的文案与图标也早就存在；
+ *   后端白名单里却写着 `board`，两边从来没有对齐过（点「笔记」分类会被后端拒绝）。
+ *   这里统一成 `memo`，`board` 由 `normalizeNoteKind()` 兼容映射，历史数据不会失读。
+ */
+export const NOTE_KINDS = ['moment', 'article', 'collection', 'nav', 'todo', 'memo'] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
+
+/** 已废弃 / 被改名的类型 → 新名（读旧数据时兜底，写库时一律写新名） */
+const NOTE_KIND_ALIASES: Record<string, NoteKind> = {
+  board: 'memo',
+};
+
+/** 把任意输入收敛成合法类型；认不出返回空串（调用方按「没传」处理） */
+export function normalizeNoteKind(raw: unknown): NoteKind | '' {
+  const s = String(raw ?? '').trim();
+  if (!s) return '';
+  if ((NOTE_KINDS as readonly string[]).includes(s)) return s as NoteKind;
+  const alias = NOTE_KIND_ALIASES[s];
+  return alias || '';
+}
+
+/** 内容格式（v1.3.0） */
+export const NOTE_CONTENT_FORMATS = ['', 'markdown'] as const;
+export type NoteContentFormat = (typeof NOTE_CONTENT_FORMATS)[number];
 
 /** 瞬间的媒体类型 */
 export const MOMENT_MEDIA_KINDS = ['text', 'image', 'video', 'audio', 'mixed'] as const;
@@ -146,9 +172,56 @@ export interface GeneralSettings {
   pageBg: string;
 }
 
+/**
+ * 编辑器设置（v1.3.0）
+ *
+ * toolbarLines：一行一个工具栏，行内空格分隔工具名、`|` 生成分隔线。
+ *   存字符串数组而不是结构化对象 —— 需求原文就是「输入名称」，
+ *   用户改的是文本，存文本最直观；解析（split）放在渲染时做。
+ * blockIds：保存时是否给内容块写 `^blk_` 行尾标记（默认关闭，见 memo.util.ts 说明）。
+ */
+export const EDITOR_TOOLBAR_MAX_LINES = 4;
+export const EDITOR_TOOLBAR_MAX_LINE_LENGTH = 400;
+
+export interface EditorSettings {
+  toolbarLines: string[];
+  blockIds: boolean;
+}
+
+/** 出厂默认工具栏（前端 utils/memoEditorConfig.js 同值，改这里要同步改那边） */
+export const DEFAULT_EDITOR_TOOLBAR_LINES = [
+  'h1 h2 h3 | bold italic strike underline code | bulletList orderedList taskList | blockquote codeBlock hr',
+  'image file link | clear | undo redo',
+];
+
+/**
+ * 工具栏行归一：去空行、压空白、限长限量。
+ * 空的 `|` 不清理 —— 用户偶尔会留一个多余分隔线，视觉上只是多一条竖线，
+ * 没必要为它清空用户配置（清空反而让人以为配置没保存）。
+ */
+export function normalizeToolbarLines(raw: unknown): string[] {
+  let lines: unknown[] = [];
+  if (Array.isArray(raw)) lines = raw;
+  else if (typeof raw === 'string') lines = raw.split(/\r?\n/);
+  const out = lines
+    .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim().slice(0, EDITOR_TOOLBAR_MAX_LINE_LENGTH))
+    .filter(Boolean)
+    .slice(0, EDITOR_TOOLBAR_MAX_LINES);
+  return out.length ? out : DEFAULT_EDITOR_TOOLBAR_LINES.slice();
+}
+
+export function normalizeEditorSettings(raw: unknown): EditorSettings {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    toolbarLines: normalizeToolbarLines(o.toolbarLines),
+    blockIds: o.blockIds === true,
+  };
+}
+
 export interface NoteSettings {
   moment: MomentSettings;
   general: GeneralSettings;
+  editor: EditorSettings;
   [key: string]: unknown;
 }
 
@@ -242,6 +315,8 @@ export function normalizeNoteSettings(raw: unknown): NoteSettings {
     ...o,
     general: normalizeGeneralSettings(o.general),
     moment: normalizeMomentSettings(o.moment),
+    // v1.3.0：老库没有这个键 → 落出厂默认（不写库，等用户改设置时才落）
+    editor: normalizeEditorSettings(o.editor),
   } as NoteSettings;
 }
 

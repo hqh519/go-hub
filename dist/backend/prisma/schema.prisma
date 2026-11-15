@@ -564,10 +564,19 @@ model ShareLink {
 /// 笔记主干（所有笔记类型共用）
 model Note {
   id            String    @id @default(cuid())
-  /// moment | article | collection | nav | todo | board（只有 moment 在本版实现，其余为预留）
+  /// moment | article | collection | nav | todo | memo（memo 自 v1.3.0 起实现，其余为预留）
   kind          String
-  /// 正文：瞬间 = 纯文本；文章 / 备注 = markdown
+  /// 正文：瞬间 = 纯文本；笔记（memo）/ 文章 = markdown
   content       String    @default("")
+  /// v1.3.0：正文格式。'' = 老数据（瞬间的纯文本）；'markdown' = 编辑器产出的 md。
+  /// 只在保存时升级、打开时绝不改写 —— 老数据原样可读，不会被误当 md 重新解析。
+  contentFormat String    @default("")
+  /// v1.3.0：所属目录（memo_folders.id；空 = 未归档，落在「全部笔记」下）
+  folderId      String    @default("")
+  /// v1.3.0：标题（memo / 以后的 article 用）。
+  /// 瞬间的标题仍走 `note_moments.title` —— 那边已有独立列与迁移回填逻辑，
+  /// 不动它是为了「瞬间列表按标题排序 / 筛选」这条既有路径零改动。
+  title         String    @default("")
   /// 封面 → files.id（空 = 无封面）
   coverFileId   String    @default("")
   /// private | public | specified（本版只落 private / public，公开页后续版本再做）
@@ -602,7 +611,91 @@ model Note {
   @@index([instanceId, author, status, publishedAt])
   /// 回收站
   @@index([instanceId, status, deletedAt, createdAt])
+  /// v1.3.0：笔记管理页「按目录取列表」——最热的一条路径，单独建索引
+  @@index([instanceId, author, kind, folderId, status])
   @@map("notes")
+}
+
+/// 笔记目录（v1.3.0）
+///
+/// 无限层级靠 parentId 自引用，**不建外键**：目录删除时子目录与笔记都要上浮，
+/// 用外键级联反而不好控制顺序，这里的父子关系由服务层维护（与 NoteAsset 同一思路）。
+/// 排序用整型 sort（同级小的在前），拖拽换位时只重写受影响的那一份顺序。
+model MemoFolder {
+  id         String   @id @default(cuid())
+  /// 目录名
+  name       String   @default("")
+  /// 上级目录 id（空 = 一级目录）
+  parentId   String   @default("")
+  /// 归属人（用户名）—— 目录是私有的，按 author + instanceId 双收窄
+  author     String   @default("")
+  instanceId String   @default("")
+  /// 同级排序（值小的在前；相同则按 createdAt 兜底）
+  sort       Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([instanceId, author, parentId])
+  @@map("memo_folders")
+}
+
+/// v1.3.1（v1.5.0 计划）：笔记块索引。
+///
+/// **这是派生物**：任何时候都可以从 md 全量重建，删表重跑结果一致。
+/// 之所以要建表，是因为「按块 id 找内容 / 找反链」不可能每次全文扫描。
+model NoteBlock {
+  id            String   @id @default(cuid())
+  noteId        String
+  /// `blk_xxxxxxxx`（md 行尾标记）
+  blockId       String
+  /// paragraph / heading / listItem / blockquote / codeBlock / table / image / video / audio / fileAttachment / callout
+  blockType     String   @default("")
+  /// 父块 id（列表子项、callout 内部块）；顶层块为空
+  parentBlockId String   @default("")
+  /// 同级顺序（从 0 开始）
+  blockOrder    Int      @default(0)
+  /// 层级深度（列表嵌套层数、callout 内为 1）
+  depth         Int      @default(0)
+  /// 纯文本（用于搜索与引用预览）
+  plainText     String   @default("")
+  /// 内容哈希（sha1 前 12 位）—— 用来在重建时「认领」旧 ID
+  contentHash   String   @default("")
+  /// 标题级别（heading 才有）
+  headingLevel  Int      @default(0)
+  author        String   @default("")
+  instanceId    String   @default("")
+  updatedAt     DateTime @updatedAt
+
+  @@unique([noteId, blockId])
+  @@index([noteId, blockOrder])
+  @@index([instanceId, author, contentHash])
+  @@map("note_blocks_index")
+}
+
+/// v1.3.1（v1.5.0 计划）：块/文档之间的引用关系。
+/// 同样是派生物，随 md 重建；保留是为了「反链面板」不必扫全库正文。
+model NoteLink {
+  id            String   @id @default(cuid())
+  /// 发起引用的笔记
+  sourceNoteId  String
+  /// 被引用的笔记
+  targetNoteId  String   @default("")
+  /// 发起引用的块（可空字符串）
+  sourceBlockId String   @default("")
+  /// 被引用的块（可空字符串 = 引用整篇）
+  targetBlockId String   @default("")
+  /// block / note / embed
+  linkType      String   @default("block")
+  /// 锚文本或来源片段，供反链列表直接展示，不用再查正文
+  excerpt       String   @default("")
+  author        String   @default("")
+  instanceId    String   @default("")
+  createdAt     DateTime @default(now())
+
+  @@index([targetNoteId, targetBlockId])
+  @@index([sourceNoteId])
+  @@index([instanceId, author])
+  @@map("note_links")
 }
 
 /// 瞬间专属（1:1）

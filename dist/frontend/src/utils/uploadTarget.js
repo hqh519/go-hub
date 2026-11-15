@@ -23,6 +23,8 @@
  */
 const FOLDER_PREFIX = {
     moment: '/notes/瞬间',
+    // v1.3.0：笔记（memo）编辑器里粘贴 / 拖拽的图片落到这里
+    memo: '/notes/笔记',
     article: '/notes/文章',
     todo: '/notes/待办',
     nav: '/notes/导航',

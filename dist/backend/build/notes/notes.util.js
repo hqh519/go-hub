@@ -1,7 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_KINDS = void 0;
+exports.DEFAULT_EDITOR_TOOLBAR_LINES = exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = exports.EDITOR_TOOLBAR_MAX_LINES = exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_CONTENT_FORMATS = exports.NOTE_KINDS = void 0;
+exports.normalizeNoteKind = normalizeNoteKind;
 exports.attachHeightFactorOf = attachHeightFactorOf;
+exports.normalizeToolbarLines = normalizeToolbarLines;
+exports.normalizeEditorSettings = normalizeEditorSettings;
 exports.normalizeNotePageBg = normalizeNotePageBg;
 exports.normalizeGeneralSettings = normalizeGeneralSettings;
 exports.normalizeMomentSettings = normalizeMomentSettings;
@@ -14,7 +17,20 @@ exports.fileUrlOf = fileUrlOf;
 exports.normalizeTagNames = normalizeTagNames;
 exports.safeParse = safeParse;
 exports.brief = brief;
-exports.NOTE_KINDS = ['moment', 'article', 'collection', 'nav', 'todo', 'board'];
+exports.NOTE_KINDS = ['moment', 'article', 'collection', 'nav', 'todo', 'memo'];
+const NOTE_KIND_ALIASES = {
+    board: 'memo',
+};
+function normalizeNoteKind(raw) {
+    const s = String(raw ?? '').trim();
+    if (!s)
+        return '';
+    if (exports.NOTE_KINDS.includes(s))
+        return s;
+    const alias = NOTE_KIND_ALIASES[s];
+    return alias || '';
+}
+exports.NOTE_CONTENT_FORMATS = ['', 'markdown'];
 exports.MOMENT_MEDIA_KINDS = ['text', 'image', 'video', 'audio', 'mixed'];
 exports.DEFAULT_MOMENT_MAX_CHARS = 1000;
 exports.MAX_COMMENT_CHARS = 500;
@@ -49,6 +65,31 @@ exports.NOTE_FONT_SIZE_MIN = 12;
 exports.NOTE_FONT_SIZE_MAX = 22;
 exports.NOTE_PAGE_BG_MAX_ITEMS = 20;
 exports.NOTE_PAGE_BG_MAX_URL_LENGTH = 2000;
+exports.EDITOR_TOOLBAR_MAX_LINES = 4;
+exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = 400;
+exports.DEFAULT_EDITOR_TOOLBAR_LINES = [
+    'h1 h2 h3 | bold italic strike underline code | bulletList orderedList taskList | blockquote codeBlock hr',
+    'image file link | clear | undo redo',
+];
+function normalizeToolbarLines(raw) {
+    let lines = [];
+    if (Array.isArray(raw))
+        lines = raw;
+    else if (typeof raw === 'string')
+        lines = raw.split(/\r?\n/);
+    const out = lines
+        .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim().slice(0, exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH))
+        .filter(Boolean)
+        .slice(0, exports.EDITOR_TOOLBAR_MAX_LINES);
+    return out.length ? out : exports.DEFAULT_EDITOR_TOOLBAR_LINES.slice();
+}
+function normalizeEditorSettings(raw) {
+    const o = (raw && typeof raw === 'object' ? raw : {});
+    return {
+        toolbarLines: normalizeToolbarLines(o.toolbarLines),
+        blockIds: o.blockIds === true,
+    };
+}
 function normalizeNotePageBg(raw) {
     let arr = [];
     if (Array.isArray(raw)) {
@@ -121,6 +162,7 @@ function normalizeNoteSettings(raw) {
         ...o,
         general: normalizeGeneralSettings(o.general),
         moment: normalizeMomentSettings(o.moment),
+        editor: normalizeEditorSettings(o.editor),
     };
 }
 function countTextChars(input) {

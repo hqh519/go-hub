@@ -161,8 +161,7 @@
                         <div class="notice-head">
                             <span class="notice-title">{{ $t('userManage.noticeTitle') }}</span>
                         </div>
-                        <!-- eslint-disable-next-line vue/no-v-html -->
-                        <div v-if="noticeText" class="notice-body" v-html="noticeText"></div>
+                        <div v-if="noticeText" class="notice-body" v-safe-html="noticeText"></div>
                         <div v-else class="notice-empty">{{ $t('userManage.noticeEmpty') }}</div>
                     </template>
                 </div>

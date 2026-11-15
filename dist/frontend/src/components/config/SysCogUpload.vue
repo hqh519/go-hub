@@ -158,7 +158,7 @@
                     </el-radio-group>
                     <el-tooltip placement="top" raw-content>
                         <template #content>
-                            <div style="max-width: min(420px, 78vw); line-height: 1.7;" v-html="$t('sysUpload.dedupScopeTip')"></div>
+                            <div style="max-width: min(420px, 78vw); line-height: 1.7;" v-safe-html="$t('sysUpload.dedupScopeTip')"></div>
                         </template>
                         <font-awesome-icon icon="question-circle" class="help-icon"/>
                     </el-tooltip>

@@ -1,0 +1,248 @@
+/**
+ * 笔记管理控制器（v1.3.0）
+ * ----------------------------------------------------------------------------
+ * 路由前缀：/api/memo
+ *   GET    folders            目录树 + 每个目录的笔记数（含未归档数）
+ *   POST   folders            新建目录 { name, parentId, instanceId }
+ *   PUT    folders/:id        改名 / 移动 / 排序 { name, parentId, sort }
+ *   DELETE folders/:id        删除目录（子目录与笔记上浮，不删内容）
+ *   POST   folders/reorder    同级重排 { parentId, ids: [] }
+ *
+ *   GET    list               列表（**不含正文**）?folderId=&search=&status=&page=&pageSize=
+ *   GET    :id                详情（含正文）
+ *   POST   /                  新建 { title, content, folderId, instanceId }
+ *   PUT    :id                保存 { title, content, folderId, version } —— 版本冲突返回 409
+ *   POST   :id/move           移动到目录
+ *   DELETE :id                进回收站
+ *   POST   :id/restore        从回收站恢复
+ *   DELETE :id/purge          彻底删除
+ *
+ * 路径刻意与 `/api/notes` 分开：瞬间那一套路由已经被前端大量引用，
+ * 笔记自己一套前缀能避免 `:id` 通配把 `folders` 之类的静态段吃掉。
+ */
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpException,
+  HttpStatus,
+  Param,
+  Post,
+  Put,
+  Query,
+  Req,
+} from '@nestjs/common';
+import { Request } from 'express';
+import { currentSession } from '../auth/auth.guard';
+import { MemoService } from './memo.service';
+
+@Controller('api/memo')
+export class MemoController {
+  constructor(private readonly memo: MemoService) {}
+
+  /** 与瞬间同一套权限口径：必须登录，实例隔离，只能碰自己的数据 */
+  private ctx(req: Request): { viewer: string } {
+    const session = currentSession(req);
+    const viewer = String(session?.user || '');
+    if (!viewer) {
+      throw new HttpException({ success: false, message: '请先登录后再使用笔记' }, HttpStatus.UNAUTHORIZED);
+    }
+    return { viewer };
+  }
+
+  private fail(message: string, status = HttpStatus.BAD_REQUEST) {
+    throw new HttpException({ success: false, message }, status);
+  }
+
+  // -------- 目录 --------
+
+  @Get('folders')
+  async folders(@Req() req: Request, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.listFolders(viewer, instanceId || '');
+    return { success: true, data };
+  }
+
+  @Post('folders')
+  async createFolder(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.createFolder(viewer, String(body.instanceId ?? ''), {
+      name: body.name,
+      parentId: body.parentId,
+    });
+    if ('error' in r && r.error) this.fail(r.error);
+    return { success: true, data: (r as { folder: unknown }).folder };
+  }
+
+  @Put('folders/:id')
+  async updateFolder(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.updateFolder(viewer, String(body.instanceId ?? ''), id, {
+      name: body.name,
+      parentId: body.parentId,
+      sort: body.sort,
+    });
+    if ('error' in r && r.error) this.fail(r.error);
+    return { success: true, data: (r as { folder: unknown }).folder };
+  }
+
+  @Delete('folders/:id')
+  async deleteFolder(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.deleteFolder(viewer, instanceId || '', id);
+    if ('error' in r && r.error) this.fail(r.error);
+    return { success: true, data: r };
+  }
+
+  @Post('folders/reorder')
+  async reorderFolders(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.reorderFolders(
+      viewer,
+      String(body.instanceId ?? ''),
+      String(body.parentId ?? ''),
+      body.ids,
+    );
+    return { success: true, data };
+  }
+
+  // -------- 笔记 --------
+
+  @Get('list')
+  async list(@Req() req: Request, @Query() q: Record<string, string>) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.listNotes({
+      viewer,
+      instanceId: q.instanceId || '',
+      folderId: q.folderId,
+      search: q.search,
+      status: q.status,
+      page: Number(q.page) || 1,
+      pageSize: Number(q.pageSize) || 50,
+    });
+    return { success: true, data };
+  }
+
+  /*
+   * ── 块索引与引用（v1.3.1 落地 · v1.5.0 计划） ──
+   * 注意路由顺序：这些静态段必须排在 `@Get(':id')` **之前**，
+   * 否则 `/api/memo/blocks/xxx` 会被当成「id 叫 blocks 的笔记」。
+   */
+  @Get('blocks/resolve')
+  async resolveBlock(@Req() req: Request, @Query() q: Record<string, string>) {
+    const { viewer } = this.ctx(req);
+    const bid = String(q.blockId || '');
+    if (!bid) this.fail('缺少 blockId');
+    const data = await this.memo.resolveBlock(bid, viewer, q.instanceId || '');
+    if ('error' in data && data.error) this.fail(data.error, HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  @Get(':id/blocks')
+  async blocks(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.listBlocks(id, viewer, instanceId || '');
+    if ('error' in data && data.error) this.fail(data.error, HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  @Get(':id/backlinks')
+  async backlinks(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.backlinks(id, viewer, instanceId || '');
+    if ('error' in data && data.error) this.fail(data.error, HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  /** 重新解析本篇的块（索引损坏 / 手工改过 md 之后用） */
+  @Post(':id/rebuild-index')
+  async rebuildIndex(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const instanceId = String(body.instanceId ?? '');
+    const note = await this.memo.getNote(viewer, instanceId, id);
+    if (!note) this.fail('笔记不存在', HttpStatus.NOT_FOUND);
+    const data = await this.memo.rebuildNoteIndex(id, String(note?.content || ''), viewer, instanceId);
+    return { success: true, data };
+  }
+
+  /** 全量重建（运维用；正常保存会自动增量维护） */
+  @Post('rebuild-index')
+  async rebuildAll(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.rebuildAllIndex(viewer, String(body.instanceId ?? ''));
+    return { success: true, data };
+  }
+
+  @Get(':id')
+  async detail(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.getNote(viewer, instanceId || '', id);
+    if (!data) this.fail('笔记不存在或无权查看', HttpStatus.NOT_FOUND);
+    return { success: true, data };
+  }
+
+  @Post()
+  async create(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.createNote(viewer, String(body.instanceId ?? ''), {
+      title: body.title,
+      content: body.content,
+      folderId: body.folderId,
+    });
+    if ('error' in r && r.error) this.fail(r.error);
+    return { success: true, data: r };
+  }
+
+  @Put(':id')
+  async save(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.saveNote(viewer, String(body.instanceId ?? ''), id, {
+      title: body.title,
+      content: body.content,
+      folderId: body.folderId,
+      version: body.version,
+    });
+    if ('error' in r && r.error) this.fail(r.error);
+    // 版本冲突用 409：前端据此弹「已在别处修改」，不能当成普通错误提示
+    if ('conflict' in r && r.conflict) {
+      throw new HttpException(
+        { success: false, conflict: true, message: (r as { message?: string }).message, version: (r as { version?: number }).version },
+        HttpStatus.CONFLICT,
+      );
+    }
+    return { success: true, data: r };
+  }
+
+  @Post(':id/move')
+  async move(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.moveNote(viewer, String(body.instanceId ?? ''), id, body.folderId);
+    if ('error' in r && r.error) this.fail(r.error);
+    return { success: true, data: r };
+  }
+
+  @Delete(':id')
+  async trash(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.trash(viewer, instanceId || '', id);
+    if ('error' in r && r.error) this.fail(r.error);
+    return { success: true };
+  }
+
+  @Post(':id/restore')
+  async restore(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.restore(viewer, String(body.instanceId ?? ''), id);
+    if ('error' in r && r.error) this.fail(r.error);
+    return { success: true };
+  }
+
+  @Delete(':id/purge')
+  async purge(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.purge(viewer, instanceId || '', id);
+    if ('error' in r && r.error) this.fail(r.error);
+    return { success: true };
+  }
+}

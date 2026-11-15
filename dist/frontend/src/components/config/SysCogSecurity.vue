@@ -169,7 +169,7 @@
             <h4 class="second-title">{{ $t('sysOthers.webdav') }}
                 <el-tooltip placement="top" raw-content>
                     <template #content>
-                        <div style="max-width: 340px; line-height: 1.7;" v-html="$t('sysOthers.webdavTooltip')"></div>
+                        <div style="max-width: 340px; line-height: 1.7;" v-safe-html="$t('sysOthers.webdavTooltip')"></div>
                     </template>
                     <font-awesome-icon icon="question-circle" style="margin-left: 5px; cursor: pointer;"/>
                 </el-tooltip>

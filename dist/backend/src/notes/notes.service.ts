@@ -446,13 +446,45 @@ export class NotesService {
         orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
-        include: {
+        /*
+         * v1.3.0：列表**不再 include 整行**，改成显式投影且刻意排除 content。
+         *
+         * 起因：笔记（memo）的正文是几万字的 markdown，列表页一页 50 篇就是几 MB，
+         * 而列表只需要标题 / 摘要 / 时间。下面再单独把「非 memo」的正文补一次 ——
+         * 瞬间正文只有一千字上限，补一次是便宜的；memo 的正文永远不上列表。
+         */
+        select: {
+          id: true,
+          kind: true,
+          coverFileId: true,
+          visibility: true,
+          status: true,
+          author: true,
+          instanceId: true,
+          version: true,
+          publishedAt: true,
+          createdAt: true,
+          updatedAt: true,
           moment: true,
           assets: { orderBy: { sort: 'asc' } },
           tags: { include: { tag: true } },
-        },
+        } as any,
       }),
     ]);
+
+    /*
+     * 非 memo 的正文补取（memo 走摘要列，正文留在详情接口）。
+     * 用一次 in 查询取回本页所有需要正文的行，仍然是两条 SQL，不会变成 N+1。
+     */
+    const needContent = (rows as any[]).filter((r) => r.kind !== 'memo').map((r) => String(r.id));
+    const contentMap = new Map<string, string>();
+    if (needContent.length) {
+      const textRows = await prisma.note.findMany({
+        where: { id: { in: needContent } },
+        select: { id: true, content: true },
+      });
+      for (const t of textRows as any[]) contentMap.set(String(t.id), String(t.content || ''));
+    }
 
     // 分页内所有笔记的附件一次性批量解析（避免每条一次查询的 N+1）
     const allFileIds = rows.flatMap((r: any) => (r.assets || []).map((a: any) => a.fileId));
@@ -518,6 +550,7 @@ export class NotesService {
         countByNote.get(String(row.id)) || all.length,
         input.viewer,
         profileMap,
+        contentMap.get(String(row.id)) || '',
       );
     });
 
@@ -545,6 +578,8 @@ export class NotesService {
     commentCount = 0,
     viewer = '',
     profiles?: Map<string, { nickname: string; avatar: string }>,
+    /** v1.3.0：列表已不再 select content，正文由调用方传入（memo 恒为空串） */
+    content = '',
   ): NoteListItem {
     /*
      * v1.2.0：广场朋友圈式排版需要作者昵称 / 头像。
@@ -558,7 +593,7 @@ export class NotesService {
       // 标题只认独立列（v1.1.3 起）；metas 里不再写 title，也不做兜底 ——
       // 兜底会让「清空标题」失效（列已空、旧 JSON 里还留着上一版的值）
       title: String(row.moment?.title || ''),
-      content: row.content || '',
+      content,
       coverFileId: row.coverFileId || '',
       visibility: row.visibility || 'private',
       status: row.status,
@@ -1407,6 +1442,17 @@ export class NotesService {
       merged.general = {
         ...((current.general as unknown as Record<string, unknown>) || {}),
         ...(p.general as Record<string, unknown>),
+      };
+    }
+    /*
+     * v1.3.0：编辑器设置也按分类浅合并。
+     * 前端目前每次都会提交完整的 editor，但工具栏与块 ID 是两个独立开关，
+     * 只改其中一个时整块替换会把另一个打回默认 —— 与 moment 当年踩的是同一个坑。
+     */
+    if (p.editor && typeof p.editor === 'object') {
+      merged.editor = {
+        ...((current.editor as unknown as Record<string, unknown>) || {}),
+        ...(p.editor as Record<string, unknown>),
       };
     }
     const next = normalizeNoteSettings(merged);

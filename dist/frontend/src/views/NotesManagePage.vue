@@ -1230,6 +1230,15 @@ export default {
         /* ── 列表 ───────────────────────────────────────────────── */
         switchKind(v) {
             if (this.kind === v) return;
+            /*
+             * v1.3.0：笔记（memo）已经拆成独立页面（/memo，三栏目录 + 编辑器）。
+             * 这里保留这个分类入口是为了「点了有个明确去处」，而不是停在空列表上提示
+             * 「该类型尚未上线」—— 那句话现在已经是错的。
+             */
+            if (v === 'memo') {
+                this.$router.push('/memo').catch(() => {});
+                return;
+            }
             this.kind = v;
             this.saveKind();
             if (this.tagMode) return; // 标签管理模式由面板自己按 kind 过滤

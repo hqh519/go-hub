@@ -1,3 +1,15 @@
+import { faTrash } from '@fortawesome/free-solid-svg-icons/faTrash';
+import { faTrashRestore } from '@fortawesome/free-solid-svg-icons/faTrashRestore';
+import { faFileLines } from '@fortawesome/free-solid-svg-icons/faFileLines';
+import { faPenToSquare } from '@fortawesome/free-solid-svg-icons/faPenToSquare';
+import { faHeading } from '@fortawesome/free-solid-svg-icons/faHeading';
+import { faBold } from '@fortawesome/free-solid-svg-icons/faBold';
+import { faItalic } from '@fortawesome/free-solid-svg-icons/faItalic';
+import { faStrikethrough } from '@fortawesome/free-solid-svg-icons/faStrikethrough';
+import { faUnderline } from '@fortawesome/free-solid-svg-icons/faUnderline';
+import { faListOl } from '@fortawesome/free-solid-svg-icons/faListOl';
+import { faTerminal } from '@fortawesome/free-solid-svg-icons/faTerminal';
+import { faEraser } from '@fortawesome/free-solid-svg-icons/faEraser';
 import { faAws } from '@fortawesome/free-brands-svg-icons/faAws';
 import { faCloudflare } from '@fortawesome/free-brands-svg-icons/faCloudflare';
 import { faDiscord } from '@fortawesome/free-brands-svg-icons/faDiscord';
@@ -76,6 +88,11 @@ import { faSlidersH } from '@fortawesome/free-solid-svg-icons/faSlidersH';
 import { faBolt } from '@fortawesome/free-solid-svg-icons/faBolt';
 import { faCompass } from '@fortawesome/free-solid-svg-icons/faCompass';
 import { faLayerGroup } from '@fortawesome/free-solid-svg-icons/faLayerGroup';
+import { faTable } from '@fortawesome/free-solid-svg-icons/faTable';
+import { faCircleInfo } from '@fortawesome/free-solid-svg-icons/faCircleInfo';
+import { faFileVideo } from '@fortawesome/free-solid-svg-icons/faFileVideo';
+import { faFileAudio } from '@fortawesome/free-solid-svg-icons/faFileAudio';
+import { faHighlighter } from '@fortawesome/free-solid-svg-icons/faHighlighter';
 // v3.0.0（R12）：卡片上的评分/级别图标改为「空心」—— 需要 regular 风格的同名图标
 import { faStar as farStar } from '@fortawesome/free-regular-svg-icons/faStar';
 import { faHeart as farHeart } from '@fortawesome/free-regular-svg-icons/faHeart';
@@ -148,6 +165,18 @@ import { faCommentDots } from '@fortawesome/free-solid-svg-icons/faCommentDots';
 import { faUsers } from '@fortawesome/free-solid-svg-icons/faUsers';
 
 export default [
+    faTrash,
+    faTrashRestore,
+    faFileLines,
+    faPenToSquare,
+    faHeading,
+    faBold,
+    faItalic,
+    faStrikethrough,
+    faUnderline,
+    faListOl,
+    faTerminal,
+    faEraser,
     faAngleDoubleLeft,
     faAngleDoubleRight,
     faArrowDown,
@@ -287,5 +316,11 @@ export default [
     faSlidersH,
     faBolt,
     faCompass,
-    faLayerGroup
+    faLayerGroup,
+    // v1.3.1：编辑器新增块
+    faTable,
+    faCircleInfo,
+    faFileVideo,
+    faFileAudio,
+    faHighlighter
 ];
