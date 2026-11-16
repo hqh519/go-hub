@@ -1070,6 +1070,26 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1312',
+      title: '五十二、v1.3.1.2 更新要点',
+      intro: '这一版把编辑器往「顺手」上推：左侧行级栏、右键菜单、选中文本/文件/表格浮层、插入表格数量选择、查找替换、表情符号、网页嵌入、HTML 块与 HTML/MD 互转、日期时间快捷键、引用悬停预览与嵌入块惰性渲染全部补齐；标签按「用户 + 实例 + 内容类型」三层隔离；工具栏/标题栏/辅助栏的滚动吸附可以按终端分别开关；H1-H6 与正文样式可以在设置里直接调。',
+      items: [
+        { t: '左侧行级栏', d: '每个块左边有一枚小按钮，点开可以对整块做复制、剪切、删除、复制此块、下方插入空行、加批注。移动端不显示（屏幕窄，留给出正文）。' },
+        { t: '右键 / 长按菜单', d: '有选中内容时是复制 / 剪切 / 删除 / 批注，段落还会多一个超链接；没有选中时是粘贴 / 粘贴并保留源格式 / 粘贴为纯文本 / 粘贴转义文本 / 全选。浏览器原生右键菜单在编辑区里彻底不出现。' },
+        { t: '选中浮层', d: '选中文字后浮出：标题下拉、对齐下拉、加粗、删除线、斜体、下划线、链接、行代码、字号（小/正常/大）、颜色（7 色）、批注、发布到瞬间。发布到瞬间会带着选中文字打开发布页，发完回到编辑器继续写。' },
+        { t: '表格', d: '插入表格会先弹行列数量选择面板（10×10）；光标落在任意单元格时，表格上方浮出一排表格操作：上下插行、左右插列、删行删列、合并、拆分、删除表格。' },
+        { t: '新工具', d: '选中当前行、全选、五种日期时间格式、表情面板、符号面板、网页嵌入、查找替换、HTML/MD 互转、HTML 块、批注；代码块与撤销/重做换成了新的图标。' },
+        { t: 'HTML 块与嵌入', d: 'HTML 块用 :::html 围栏存进 markdown，渲染时走白名单净化（脚本不会执行）；网页嵌入用 :::iframe 围栏，只接受 http/https。' },
+        { t: '附件不再是裸 HTML', d: '插入的附件改成 ![[file:地址|名称]] 这种 md 写法，预览里是一张可下载的卡片；老笔记里的 <a class="gh-file"> 仍然能读，保存时会自动规范化。' },
+        { t: '滚动吸附', d: '编辑器设置里可以分别设置工具栏、标题栏、辅助栏在 PC / 移动端是否吸附，默认全关。' },
+        { t: '样式设置', d: 'H1-H6 的字号与正文行高可以在设置里直接调，改完立刻生效，而且只影响自己。' },
+        { t: '标签三层隔离', d: '标签按「用户 + 实例 + 内容类型」隔离：瞬间的标签只有瞬间能用，笔记的标签笔记专用；以后的文章、待办、导航同样各归各的。启动时会自动把历史数据拆分干净。' },
+        { t: '引用体验', d: '鼠标停在 [[笔记引用]] / ((块引用)) 上会浮出摘要卡片；![[note#blk]] 嵌入块滚到可见时才去取内容（惰性渲染），一页嵌十几处也不会卡。' },
+        { t: '其它修复', d: '移动端瞬间编辑框的字数统计不再跑到输入框外面；广场与瞬间之间切换不再先闪旧内容；灯箱顶部控件与视频目录/设置按钮统一 90% 透明度，视频数量点跟随控件显隐；图片剪辑页旋转控件移到「取消」左边、撤销/恢复换新图标、重置改成文字；笔记页页面切换下拉不再被裁掉；目录与列表文字统一靠左；滚到底部时顶栏不再抽动；历史记录恢复自动保存，弹窗占满视口 98%。' },
+        { t: '升级兼容', d: '没有新增表、没有改列：标签拆分是启动时的幂等数据迁移，编辑器设置多了 styles / sticky 两个字段（缺省即默认值）。旧版本数据可直接升级。' }
+      ]
+    },
+    {
       id: 'whatsnew-1311',
       title: '五十一、v1.3.1.1 更新要点',
       intro: '这一版把编辑器当成主战场：历史快照、标签、配色、工具配置体系全部补齐，编辑区新增对齐 / 缩进 / 换行 / 段落 / 链接提取与整套表格操作；笔记管理页支持切换实例、顶栏随滚动显隐、目录树关系线；实例可以单独指定存储渠道；图片剪辑页补齐翻转 / 图形 / 马赛克。',
@@ -2109,6 +2129,26 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'whatsnew-1312',
+      title: '52. What is new in v1.3.1.2',
+      intro: 'This release makes the editor feel much more direct: a left block gutter, context menus, selection bubbles for text, files and tables, a table-size picker, find & replace, emoji and symbol panels, web embeds, HTML blocks and an HTML/MD converter, date shortcuts, hover previews and lazy-rendered embeds. Tags are now isolated by user, instance and content type; toolbar / title / auxiliary bars can be pinned independently per platform; heading sizes and line height are configurable.',
+      items: [
+        { t: 'Block gutter', d: 'Every block gets a small handle on the left for copy, cut, delete, duplicate, insert an empty line below or add a comment. Hidden on small screens to keep the text column wide.' },
+        { t: 'Context menu', d: 'With a selection: copy / cut / delete / comment (paragraphs also get a hyperlink entry). Without a selection: paste, paste with formatting, paste as plain text, paste escaped text and select all. The native menu no longer appears inside the editor.' },
+        { t: 'Selection bubble', d: 'Heading picker, alignment, bold, strike, italic, underline, link, inline code, font size, colours, comment and publish-to-moments. Publishing carries the selected text into the composer and returns you to the editor afterwards.' },
+        { t: 'Tables', d: 'Inserting a table opens a 10x10 size picker; when the cursor is inside a table a small toolbar appears above it with add/remove row and column, merge, split and delete.' },
+        { t: 'New tools', d: 'Select line, select all, five date/time formats, emoji, symbols, web embed, find & replace, HTML/MD converter, HTML block and comment - plus new icons for code block and undo/redo.' },
+        { t: 'HTML blocks and embeds', d: 'HTML blocks live in :::html fences and are sanitised on render, so scripts never execute. Embeds use :::iframe fences and only accept http/https.' },
+        { t: 'Attachments are markdown now', d: 'Inserted files serialise as ![[file:url|name]] and render as a download card. Legacy <a class="gh-file"> markup still parses and is normalised on save.' },
+        { t: 'Scroll pinning', d: 'Toolbar, title bar and auxiliary bar can be pinned independently for PC and mobile. Off by default.' },
+        { t: 'Style settings', d: 'Heading sizes and body line height are configurable and apply instantly, per account.' },
+        { t: 'Three-layer tag isolation', d: 'Tags are isolated by user, instance and content type: moment tags only show up in moments, note tags only in notes. A start-up migration splits historical data idempotently.' },
+        { t: 'Reference experience', d: 'Hovering a note or block reference shows a summary card; ![[note#blk]] embeds fetch their content only when scrolled into view.' },
+        { t: 'Other fixes', d: 'Mobile moment counter no longer drifts outside the textarea; switching between square and moments no longer flashes the previous list; lightbox controls and video buttons use 90% opacity and the video counter follows the controls; image editor rotate controls moved next to Cancel, new undo/redo icons, reset is a text button; the notes page switcher is no longer clipped; folder and list text are left aligned; the header no longer flickers at the bottom of the page; history snapshots save again and the dialog fills 98% of the viewport.' },
+        { t: 'Upgrade compatibility', d: 'No new tables or columns: the tag split is a start-up data migration, and editor settings gained styles / sticky (defaults apply when absent). Existing data upgrades in place.' }
       ]
     },
     {

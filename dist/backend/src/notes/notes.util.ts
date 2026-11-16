@@ -201,6 +201,79 @@ export interface EditorSettings {
   slashLines: string[];
   /** v1.3.1.1：历史记录自动保存间隔（分钟） */
   historyInterval: number;
+  /**
+   * v1.3.1.2：滚动吸附（工具栏 / 标题栏 / 辅助栏），PC 与移动端各自独立，默认全关。
+   * 分终端存是因为两端的可视高度差得远 —— 手机上三行都吸住会把正文压得只剩一小块。
+   */
+  sticky: EditorStickySettings;
+  /**
+   * v1.3.1.2：H1-H6 与正文的样式（字号用 em，随正文缩放；行高无单位）。
+   * 之前这些数字写死在 CSS 里（--gh-h1-size 的 fallback），改一个字要改代码；
+   * 现在搬进设置，前端把它们写成同样的 CSS 变量，样式表一行都不用动。
+   */
+  styles: EditorStyleSettings;
+}
+
+export interface EditorStyleSettings {
+  h1: number;
+  h2: number;
+  h3: number;
+  h4: number;
+  h5: number;
+  h6: number;
+  /** 正文行高（1.2 ~ 2.4） */
+  lineHeight: number;
+}
+
+export const DEFAULT_EDITOR_STYLES: EditorStyleSettings = {
+  h1: 1.75,
+  h2: 1.45,
+  h3: 1.24,
+  h4: 1.1,
+  h5: 1,
+  h6: 0.94,
+  lineHeight: 1.75,
+};
+
+/** 样式归一：数值夹在合理区间，防止「字号 0」这种把正文弄没的配置 */
+export function normalizeEditorStyles(raw: unknown): EditorStyleSettings {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const num = (v: unknown, min: number, max: number, dflt: number) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return dflt;
+    return Math.min(max, Math.max(min, Math.round(n * 100) / 100));
+  };
+  return {
+    h1: num(o.h1, 0.9, 3, DEFAULT_EDITOR_STYLES.h1),
+    h2: num(o.h2, 0.9, 2.6, DEFAULT_EDITOR_STYLES.h2),
+    h3: num(o.h3, 0.9, 2.2, DEFAULT_EDITOR_STYLES.h3),
+    h4: num(o.h4, 0.85, 2, DEFAULT_EDITOR_STYLES.h4),
+    h5: num(o.h5, 0.8, 1.8, DEFAULT_EDITOR_STYLES.h5),
+    h6: num(o.h6, 0.75, 1.6, DEFAULT_EDITOR_STYLES.h6),
+    lineHeight: num(o.lineHeight, 1.2, 2.4, DEFAULT_EDITOR_STYLES.lineHeight),
+  };
+}
+
+/** 单个终端的吸附开关 */
+export interface StickyFlags {
+  toolbar: boolean;
+  title: boolean;
+  aux: boolean;
+}
+
+export interface EditorStickySettings {
+  pc: StickyFlags;
+  m: StickyFlags;
+}
+
+/** 吸附配置归一：非对象 / 缺字段一律按 false，不信任前端传值 */
+export function normalizeSticky(raw: unknown): EditorStickySettings {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const one = (v: unknown): StickyFlags => {
+    const x = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
+    return { toolbar: x.toolbar === true, title: x.title === true, aux: x.aux === true };
+  };
+  return { pc: one(o.pc), m: one(o.m) };
 }
 
 /** 出厂默认工具栏（前端 utils/memoEditorConfig.js 同值，改这里要同步改那边） */
@@ -242,6 +315,8 @@ export function normalizeEditorSettings(raw: unknown): EditorSettings {
     historyInterval: Number.isFinite(interval)
       ? Math.min(HISTORY_INTERVAL_MAX, Math.max(HISTORY_INTERVAL_MIN, interval))
       : DEFAULT_HISTORY_INTERVAL,
+    sticky: normalizeSticky(o.sticky),
+    styles: normalizeEditorStyles(o.styles),
   };
 }
 

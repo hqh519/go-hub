@@ -96,10 +96,15 @@ export class NotesController {
 
   /** 标签候选（笔记标签） */
   @Get('tags')
-  async tags(@Req() req: Request, @Query('instanceId') instanceId?: string) {
+  async tags(
+    @Req() req: Request,
+    @Query('instanceId') instanceId?: string,
+    /** v1.3.1.2：内容类型 —— 瞬间与笔记各用各的标签池，默认 moment（该接口当前只服务瞬间） */
+    @Query('kind') kind?: string,
+  ) {
     // v1.1.4：标签候选按用户隔离（笔记私有的直接推论）
     const { viewer } = this.ctx(req);
-    return this.notes.tagCandidates(instanceId || '', viewer);
+    return this.notes.tagCandidates(instanceId || '', viewer, kind || 'moment');
   }
 
   /**

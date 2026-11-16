@@ -374,6 +374,13 @@ export default {
         modelValue: { type: Boolean, default: false },
         /** 编辑时传入原始笔记对象；新建时为 null */
         note: { type: Object, default: null },
+        /**
+         * v1.3.1.2：预填正文。
+         *
+         * 笔记编辑器里「发布到瞬间」要把选中的那段文字带过来 —— 打开弹窗就已经在编辑态，
+         * 用户只需要补图片 / 标签，不用再复制一遍。新建时生效，编辑已有瞬间时忽略。
+         */
+        presetContent: { type: String, default: '' },
         instanceId: { type: String, default: '' }
     },
     emits: ['update:modelValue', 'saved'],
@@ -509,6 +516,10 @@ export default {
     watch: {
         visible(v) {
             if (v) {
+                // v1.3.1.2：带文案进来时先填正文（只在新建时；编辑态以原笔记为准）
+                if (!this.note && this.presetContent && !String(this.form.content || '').trim()) {
+                    this.form.content = this.presetContent;
+                }
                 this.$nextTick(() => this.$refs.textarea && this.$refs.textarea.focus());
             } else {
                 // v1.1.9.1：关窗顺手收掉名称提示，避免浮层留在 body 上
@@ -710,7 +721,16 @@ export default {
             const max = this.editorMaxPx();
             const target = Math.max(base, Math.min(natural, max));
             el.style.height = `${Math.round(target)}px`;
-            // 父容器跟着长，否则附件 / 标签会叠在输入框上
+            /*
+             * v1.3.1.2（需求：移动端/平板聚焦时字数统计跑到输入框外面）：
+             *
+             * 原来 `.mp-editor-wrap` 是 `flex: 1 1 auto` —— 弹窗里还有剩余空间时它会
+             * 一直撑到剩余空间用完，而 textarea 的高度只到 target。右下角的字数统计
+             * 是相对 wrap 绝对定位的，于是被推到 wrap 底部 —— 也就是输入框下沿之外。
+             * 触屏下这里把 wrap 改成按内容收缩（flex: 0 0 auto），wrap 高度 == textarea 高度，
+             * 字数统计就贴在输入框右下角了；桌面端保持原样（固定高度、随弹窗撑满）。
+             */
+            wrap.style.flex = '0 0 auto';
             wrap.style.minHeight = `${Math.round(target)}px`;
             // 撞到上限时内部滚动，用户仍然能看到自己写的最后一行
             el.style.overflowY = natural > max ? 'auto' : 'hidden';
@@ -739,7 +759,11 @@ export default {
                 el.style.overflowY = '';
             }
             const wrap = el && el.parentElement;
-            if (wrap) wrap.style.minHeight = '';
+            if (wrap) {
+                wrap.style.minHeight = '';
+                // v1.3.1.2：清掉触屏模式下的「按内容收缩」，回到弹窗默认的 flex 行为
+                wrap.style.flex = '';
+            }
             this.editorFocused = false;
         },
         onClosed() {

@@ -23,7 +23,7 @@
 import { Injectable } from '@nestjs/common';
 import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
-import { TAG_TYPE_NOTE, findOrCreateTag, tagScope } from '../common/tags';
+import { TAG_TYPE_MOMENT, TAG_TYPE_NOTE, findOrCreateTag, tagScope, tagTypeOfKind } from '../common/tags';
 import { syncFileStats } from '../common/file-share-stats';
 import { fileTypeOf } from '../common/file-view';
 // v1.1.3：「图床文件」模式的筛选与图床管理共用同一份求值实现（见 common/file-filter.ts）
@@ -703,7 +703,7 @@ export class NotesService {
     const tagRows: { id: string }[] = [];
     for (const name of tagNames) {
       // 第四个参数 = 标签类型：笔记标签与文件标签同名也是两条记录，互不污染
-      tagRows.push(await findOrCreateTag(name, instanceId, viewer, 'note'));
+      tagRows.push(await findOrCreateTag(name, instanceId, viewer, TAG_TYPE_MOMENT));
     }
 
     const visibility = NOTE_VISIBILITIES.includes(String(input.visibility || '') as any)
@@ -816,7 +816,7 @@ export class NotesService {
     const tagNames = input.tagNames === undefined ? null : normalizeTagNames(input.tagNames);
     const tagRows: { id: string }[] = [];
     if (tagNames) {
-      for (const name of tagNames) tagRows.push(await findOrCreateTag(name, instanceId, viewer, 'note'));
+      for (const name of tagNames) tagRows.push(await findOrCreateTag(name, instanceId, viewer, TAG_TYPE_MOMENT));
     }
 
     const visibility =
@@ -960,7 +960,7 @@ export class NotesService {
    * 笔记私有之后，标签候选也不能把别人笔记上用过的标签名漏出来 ——
    * 只统计「当前用户自己的笔记」关联到的标签，计数同样只算自己的笔记。
    */
-  async tagCandidates(instanceId: string, viewer: string) {
+  async tagCandidates(instanceId: string, viewer: string, kind = 'moment') {
     /*
      * v1.1.6：按「账户 + 实例」隔离。
      * 笔记标签的 scope 就是用户名（见 common/tags.ts tagScope），
@@ -969,13 +969,16 @@ export class NotesService {
      */
     const rows = await prisma.tag.findMany({
       where: {
-        ...tagScope(instanceId, TAG_TYPE_NOTE, viewer),
-        noteTags: { some: { note: { author: String(viewer || '') } } },
+        ...tagScope(instanceId, tagTypeOfKind(kind), viewer),
+        noteTags: { some: { note: { author: String(viewer || ''), kind: String(kind || 'moment') } } },
       },
       select: {
         id: true,
         name: true,
-        noteTags: { select: { noteId: true }, where: { note: { author: String(viewer || '') } } },
+        noteTags: {
+          select: { noteId: true },
+          where: { note: { author: String(viewer || ''), kind: String(kind || 'moment') } },
+        },
       },
       orderBy: { createdAt: 'desc' },
       take: 200,
@@ -997,7 +1000,7 @@ export class NotesService {
    * ====================================================================== */
   async tagAdmin(instanceId: string, kind: string, viewer: string) {
     // v1.1.6：只取「本账户 + 本实例」的笔记标签（scope = 用户名）
-    const where: Record<string, unknown> = tagScope(instanceId, TAG_TYPE_NOTE, viewer);
+    const where: Record<string, unknown> = tagScope(instanceId, tagTypeOfKind(kind), viewer);
     const tags = await prisma.tag.findMany({ where: where as any, orderBy: { createdAt: 'asc' } });
     if (!tags.length) return [];
     /*

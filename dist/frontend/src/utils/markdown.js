@@ -52,6 +52,16 @@ function parseInline(src, marks = []) {
       i += 2;
       continue;
     }
+    /*
+     * 实体换行（v1.3.1.2）：`<br>` 明确写成 HTML，比「行尾两个空格」可靠得多 ——
+     * 后者会被各种编辑器 / 格式化工具顺手 trim 掉，用户就会觉得「换行丢了」。
+     */
+    if ((m = /^<br\s*\/?>/i.exec(rest))) {
+      flush();
+      out.push({ type: 'hardBreak' });
+      i += m[0].length;
+      continue;
+    }
     if ((m = /^`([^`]+)`/.exec(rest))) {
       flush();
       out.push({ type: 'text', text: m[1], marks: withMark({ type: 'code' }) });
@@ -69,6 +79,12 @@ function parseInline(src, marks = []) {
      * 前面多一个 `!` 就是「嵌入」。
      * 必须先于普通链接 `/^\[([^\]]*)\]/` 匹配 —— 否则 `[[` 会被当成一个空文字的链接吃掉。
      */
+    if ((m = /^!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\]/.exec(rest))) {
+      flush();
+      out.push({ type: 'fileAttachment', attrs: { href: m[1], name: m[2] || '附件' } });
+      i += m[0].length;
+      continue;
+    }
     if ((m = /^(!?)\[\[note:([A-Za-z0-9_-]+)(?:#blk:(blk_[0-9a-f]{8}))?(?:\|([^\]]*))?\]\]/.exec(rest))) {
       flush();
       out.push({
@@ -88,6 +104,39 @@ function parseInline(src, marks = []) {
     if ((m = /^\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/.exec(rest))) {
       flush();
       out.push(...parseInline(m[1], withMark({ type: 'link', attrs: { href: m[2] } })));
+      i += m[0].length;
+      continue;
+    }
+    /*
+     * v1.3.1.2：下划线 / 高亮 / 字号 / 颜色。
+     *
+     * md 语法本身没有这四样，所以统一用最小限度的 HTML：
+     *   <u>…</u>、==…==（GFM 表格里也常见的写法）、
+     *   <span class="gh-fs-l">…</span>、<span class="gh-c-red">…</span>。
+     * 用 class 而不是 style：预览走 DOMPurify 白名单，style 会被剥掉，
+     * 那样「编辑器里是红色、预览变黑」就成了两套观感。
+     */
+    if ((m = /^<u>([\s\S]+?)<\/u>/i.exec(rest))) {
+      flush();
+      out.push(...parseInline(m[1], withMark({ type: 'underline' })));
+      i += m[0].length;
+      continue;
+    }
+    if ((m = /^==([\s\S]+?)==/.exec(rest))) {
+      flush();
+      out.push(...parseInline(m[1], withMark({ type: 'highlight' })));
+      i += m[0].length;
+      continue;
+    }
+    if ((m = /^<span class="gh-fs-(s|m|l)">([\s\S]*?)<\/span>/i.exec(rest))) {
+      flush();
+      out.push(...parseInline(m[2], withMark({ type: 'fontSize', attrs: { size: m[1] } })));
+      i += m[0].length;
+      continue;
+    }
+    if ((m = /^<span class="gh-c-([a-z]+)">([\s\S]*?)<\/span>/i.exec(rest))) {
+      flush();
+      out.push(...parseInline(m[2], withMark({ type: 'textColor', attrs: { color: m[1] } })));
       i += m[0].length;
       continue;
     }
@@ -170,6 +219,16 @@ const TABLE_SEP_RE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 function isTableRow(line) {
     return /\|/.test(line) && !/^\s*```/.test(line);
 }
+/**
+ * v1.3.1.2：HTML 块与网页嵌入。
+ *
+ * 两者都用 `:::` 围栏，而不是直接塞裸 `<div>` / `<iframe>`：
+ *   · 围栏是「整块」语义，跨行内容不用逐行猜边界（行式解析器做不到匹配标签配对）；
+ *   · 收尾一定有一个 `:::`，围栏里写坏的 HTML 也不会把后面半篇文档吞掉；
+ *   · 在别的 md 查看器里只是一段带 ::: 的代码块，不会执行任何东西。
+ */
+const HTML_OPEN_RE = /^\s*:::\s*html\s*$/i;
+const IFRAME_OPEN_RE = /^\s*:::\s*iframe\s*(?:\{([^}]*)\})?\s*$/i;
 /** 提示块围栏：`:::callout{type=info}` … `:::` */
 const CALLOUT_OPEN_RE = /^\s*:::\s*callout\s*(?:\{([^}]*)\})?\s*$/i;
 const CALLOUT_OPEN_LOOSE_RE = /^\s*:::\s*([a-z][\w-]*)\s*(?:\{([^}]*)\})?\s*$/i;
@@ -481,6 +540,9 @@ export function mdToDoc(md) {
       // 尾部 `{width=600}` → 图片节点宽度（v1.3.1 拖拽改尺寸写的就是它）
       const w = /width\s*=\s*(\d+)/.exec(m[3] || '');
       if (w) attrs.width = Number(w[1]);
+      // v1.3.1.2：图片也能左 / 中 / 右 —— 与段落对齐同一套值
+      const al = /align\s*=\s*(left|center|right)/i.exec(m[3] || '');
+      if (al) attrs.align = al[1].toLowerCase();
       content.push({ type: 'image', attrs });
       i += 1;
       continue;
@@ -498,6 +560,30 @@ export function mdToDoc(md) {
         i += 1;
         continue;
       }
+    }
+    // ── v1.3.1.2：HTML 块 `:::html` … `:::`（内容是原样 HTML，渲染时走白名单） ──
+    if (HTML_OPEN_RE.test(line)) {
+      flushPara();
+      const body = [];
+      i += 1;
+      while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      i += 1;
+      content.push({ type: 'htmlBlock', attrs: { html: body.join('\n') } });
+      continue;
+    }
+    // ── v1.3.1.2：网页嵌入 `:::iframe{src="…" height="420"}` … `:::` ──
+    if (IFRAME_OPEN_RE.test(line)) {
+      flushPara();
+      const m = IFRAME_OPEN_RE.exec(line);
+      const src = attrOf(m?.[1] || '', 'src');
+      const height = Number((/height\s*=\s*"?(\d+)/i.exec(m?.[1] || '') || [])[1]) || 420;
+      while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) i += 1;
+      i += 1;
+      if (src) content.push({ type: 'iframe', attrs: { src, height } });
+      continue;
     }
     // ── v1.3.1：提示块 `:::callout{type=info}` … `:::` ──
     if (CALLOUT_OPEN_RE.test(line) || (CALLOUT_OPEN_LOOSE_RE.test(line) && !CALLOUT_CLOSE_RE.test(line))) {
@@ -628,11 +714,22 @@ function inlineToMd(nodes = []) {
   const out = [];
   for (const n of nodes) {
     if (n.type === 'hardBreak') {
-      out.push('  \n');
+      // v1.3.1.2：写成实体 <br>，预览与第三方查看器都稳定识别
+      out.push('<br>');
       continue;
     }
     if (n.type === 'image') {
       out.push(`![${n.attrs?.alt || ''}](${n.attrs?.src || ''})`);
+      continue;
+    }
+    /*
+     * v1.3.1.2：附件在行内被解析出来（`![[file:…]]` 是行内原子），
+     * 但它的序列化分支写在块级 switch 里 —— 少了这一段，行内附件会被整段丢掉。
+     */
+    if (n.type === 'fileAttachment') {
+      const href = String(n.attrs?.href || '');
+      const name = String(n.attrs?.name || '附件').replace(/[|\]]/g, ' ');
+      out.push(`![[file:${href}|${name}]]`);
       continue;
     }
     if (n.type === 'noteRef' || n.type === 'noteEmbed') {
@@ -650,6 +747,17 @@ function inlineToMd(nodes = []) {
     let t = unescapeMd(n.text || '');
     const marks = n.marks || [];
     const has = (x) => marks.some((m) => m.type === x);
+    /*
+     * 顺序：内层语义（字号 / 颜色 / 下划线 / 高亮）先包，再加粗体与斜体。
+     * v1.3.1.2 补上了 underline 与 highlight —— 之前它们在序列化里没有分支，
+     * 保存一次就被悄悄吞掉（编辑器看着有、重开就没了）。
+     */
+    const fs = marks.find((m) => m.type === 'fontSize');
+    if (fs?.attrs?.size) t = `<span class="gh-fs-${fs.attrs.size}">${t}</span>`;
+    const color = marks.find((m) => m.type === 'textColor');
+    if (color?.attrs?.color) t = `<span class="gh-c-${color.attrs.color}">${t}</span>`;
+    if (has('underline')) t = `<u>${t}</u>`;
+    if (has('highlight')) t = `==${t}==`;
     if (has('code')) t = `\`${t}\``;
     if (has('bold')) t = `**${t}**`;
     if (has('italic')) t = `*${t}*`;
@@ -720,9 +828,16 @@ function blockToMd(node, depth = 0) {
     case 'horizontalRule':
       return '---';
     case 'image': {
-      // 宽度写进 md：`{width=600}`。没有宽度时保持最朴素的 `![](src)`
+      /*
+       * 宽度与对齐都写进 md 的尾部属性块：`{width=600 align=center}`。
+       * v1.3.1.2：对齐也要能持久化 —— 用户把图居中，重新打开不能又回到左边。
+       */
       const w = Number(node.attrs?.width) || 0;
-      const tail = w > 0 ? `{width=${Math.round(w)}}` : '';
+      const al = String(node.attrs?.align || '');
+      const parts = [];
+      if (w > 0) parts.push(`width=${Math.round(w)}`);
+      if (al) parts.push(`align=${al}`);
+      const tail = parts.length ? `{${parts.join(' ')}}` : '';
       return `![${node.attrs?.alt || ''}](${node.attrs?.src || ''})${tail}`;
     }
     // ── v1.3.1 新增块 ──
@@ -731,7 +846,23 @@ function blockToMd(node, depth = 0) {
     case 'audio':
       return `<audio src="${node.attrs?.src || ''}" controls></audio>`;
     case 'fileAttachment':
-      return `<a href="${node.attrs?.href || ''}" class="gh-file" download>${String(node.attrs?.name || '附件').replace(/</g, '&lt;')}</a>`;
+      /*
+       * v1.3.1.2（需求：插入的附件不该是一坨 html a 标签）
+       *
+       * 换成 `![[file:地址|显示名]]`：和 `![[note:…]]` 是同一套写法，
+       * 一眼能看出「这是一张卡片式的附件引用」，也方便以后统一做悬浮预览。
+       * 解析侧仍然兼容老的 `<a class="gh-file">` —— 旧笔记不会因为这次改动丢附件。
+       */
+      return `![[file:${node.attrs?.href || ''}|${String(node.attrs?.name || '附件').replace(/[|\]]/g, ' ')}]]`;
+    case 'htmlBlock': {
+      // 空内容也留围栏，避免往返时整块消失
+      return `:::html\n${String(node.attrs?.html || '')}\n:::`;
+    }
+    case 'iframe': {
+      const src = String(node.attrs?.src || '');
+      const h = Math.max(120, Number(node.attrs?.height) || 420);
+      return `:::iframe{src="${src}" height="${h}"}\n:::`;
+    }
     case 'callout': {
       const type = String(node.attrs?.type || 'info');
       const inner = (node.content || []).map((c) => blockToMd(c, depth)).join('\n\n');
@@ -809,6 +940,8 @@ const PURIFY_CONFIG = {
     'input',
     // v1.3.1：视频 / 音频块在预览里要能直接播
     'video', 'audio', 'source',
+    // v1.3.1.2：HTML 块里常用的语义标签 + 网页嵌入
+    'mark', 'sup', 'sub', 'figure', 'figcaption', 'details', 'summary', 'iframe',
   ],
   /*
    * id 必须放行：背景墙纸 mixin 用 `getElementById('bg1'/'bg2')` 取节点，
@@ -821,6 +954,8 @@ const PURIFY_CONFIG = {
     'id', 'type', 'checked', 'disabled',
     // 媒体：controls / poster / download 是播放与下载的必需属性
     'controls', 'poster', 'download', 'preload', 'align',
+    // v1.3.1.2：iframe 的尺寸与惰性加载属性
+    'loading', 'referrerpolicy', 'frameborder', 'allowfullscreen', 'width', 'height',
   ],
   // 只允许 http/https/相对地址，挡掉 javascript: 与 data:text/html
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
@@ -832,10 +967,82 @@ const PURIFY_CONFIG = {
 marked.setOptions({ gfm: true, breaks: false });
 
 /** md → 安全 HTML（预览模式 / 以后的公开页都走这里，禁止绕过） */
+/**
+ * 把 `:::html` / `:::iframe` 围栏抽出来换成占位符，交给 marked 之后的原样注入。
+ *
+ * 为什么不直接让 marked 渲染：marked 只认 CommonMark，不认识 ::: 围栏，
+ * 会把整段当普通段落并用 `:::` 开头（还会把里面的 HTML 当行内 HTML 处理，
+ * 结果是被 <p> 包住、块级 div 嵌套非法）。抽出来自己做，边界最清楚。
+ */
+function extractFences(md) {
+  const blocks = [];
+  const lines = String(md || '').split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (HTML_OPEN_RE.test(line)) {
+      const body = [];
+      i += 1;
+      while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      blocks.push({ type: 'html', html: body.join('\n') });
+      out.push('', `@@GHBLOCK${blocks.length - 1}@@`, '');
+      continue;
+    }
+    if (IFRAME_OPEN_RE.test(line)) {
+      const m = IFRAME_OPEN_RE.exec(line);
+      const src = attrOf(m?.[1] || '', 'src');
+      const height = Number((/height\s*=\s*"?([0-9]+)/i.exec(m?.[1] || '') || [])[1]) || 420;
+      while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) i += 1;
+      blocks.push({ type: 'iframe', src, height });
+      out.push('', `@@GHBLOCK${blocks.length - 1}@@`, '');
+      continue;
+    }
+    out.push(line);
+  }
+  return { text: out.join('\n'), blocks };
+}
+
 export function renderMarkdownSafe(md) {
   // 预览同样要剥块 ID：把 ^blk_x 原样渲染出来对读者毫无意义
-  const raw = marked.parse(stripBlockIds(md), { async: false });
-  return DOMPurify.sanitize(String(raw || ''), PURIFY_CONFIG);
+  const extracted = extractFences(stripBlockIds(md));
+  /*
+   * 附件（v1.3.1.2）：`![[file:地址|名称]]` 在正文里是原子引用，
+   * 预览里要落成「可下载的附件卡片」（<a class="gh-file">）。
+   * 先换占位符，避免 marked 把它当普通文本、也避免文件名里的字符破坏 md 结构。
+   */
+  const files = [];
+  const textWithFiles = extracted.text.replace(/!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\]/g, (_m, href, name) => {
+    files.push({ href: String(href || ''), name: String(name || '附件') });
+    return `@@GHFILE${files.length - 1}@@`;
+  });
+  const blocks = extracted.blocks;
+  let html = String(marked.parse(textWithFiles, { async: false }) || '');
+  /*
+   * 占位符替换：marked 会给独立成段的占位符包一层 <p>，先连 <p> 一起换掉，
+   * 避免出现 `<p><div>…</div></p>` 这种非法嵌套（浏览器会自动闭合，但样式会飘）。
+   */
+  blocks.forEach((b, i) => {
+    const ph = `@@GHBLOCK${i}@@`;
+    const rendered =
+      b.type === 'iframe'
+        ? /^https?:\/\//i.test(b.src)
+          ? `<div class="gh-iframe-wrap"><iframe src="${b.src}" loading="lazy" referrerpolicy="no-referrer" frameborder="0" style="height:${Math.max(120, b.height)}px"></iframe></div>`
+          : ''
+        : b.html;
+    html = html.replace(new RegExp(`<p>\\s*${ph}\\s*</p>`, 'g'), rendered);
+    html = html.replace(new RegExp(ph, 'g'), rendered);
+  });
+  // 附件占位符 → 可点击的下载卡片（名字里的尖括号等要转义，否则会撕坏标签）
+  const esc = (v) => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  files.forEach((f, i) => {
+    const a = `<a class="gh-file" href="${esc(f.href)}" download>${esc(f.name)}</a>`;
+    html = html.replace(new RegExp(`@@GHFILE${i}@@`, 'g'), a);
+  });
+  // 最后整体过一遍白名单：HTML 块里的 <script> / on* 属性在这一步被剥掉
+  return DOMPurify.sanitize(html, PURIFY_CONFIG);
 }
 
 /** 任意 HTML → 安全 HTML（历史内容 / 第三方片段进 innerHTML 前统一过一遍） */
@@ -847,6 +1054,8 @@ export function sanitizeHtml(html) {
 export function plainTextOf(md) {
   return stripBlockIds(md)
     .replace(/```[\s\S]*?```/g, ' ')
+    // v1.3.1.2：HTML 块 / 网页嵌入不是正文，摘要里不出现
+    .replace(/^:::\s*(?:html|iframe)[\s\S]*?^:::\s*$/gm, ' ')
     .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^\s{0,3}#{1,6}\s*/gm, '')

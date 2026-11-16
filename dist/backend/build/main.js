@@ -410,6 +410,16 @@ async function bootstrap() {
     catch (err) {
         console.warn(`[tag] 笔记标签隔离迁移失败：${err.message}`);
     }
+    try {
+        const moved = await (0, tags_1.splitMomentTags)();
+        if (moved) {
+            console.log(`[tag] 瞬间标签独立：处理 ${moved} 条`);
+            app_log_1.appLog.info('file', `瞬间标签隔离迁移：处理 ${moved} 条`, 'type: note → moment');
+        }
+    }
+    catch (err) {
+        console.warn(`[tag] 瞬间标签拆分失败：${err.message}`);
+    }
     const port = Number(process.env.PORT || 3619);
     await app.listen(port, '0.0.0.0');
     const httpServer = app.getHttpServer();

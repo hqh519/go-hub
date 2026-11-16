@@ -1,8 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_EDITOR_TOOLBAR_LINES = exports.DEFAULT_HISTORY_INTERVAL = exports.HISTORY_INTERVAL_MAX = exports.HISTORY_INTERVAL_MIN = exports.EDITOR_THEMES = exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = exports.EDITOR_TOOLBAR_MAX_LINES = exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_CONTENT_FORMATS = exports.NOTE_KINDS = void 0;
+exports.DEFAULT_EDITOR_TOOLBAR_LINES = exports.DEFAULT_EDITOR_STYLES = exports.DEFAULT_HISTORY_INTERVAL = exports.HISTORY_INTERVAL_MAX = exports.HISTORY_INTERVAL_MIN = exports.EDITOR_THEMES = exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = exports.EDITOR_TOOLBAR_MAX_LINES = exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_CONTENT_FORMATS = exports.NOTE_KINDS = void 0;
 exports.normalizeNoteKind = normalizeNoteKind;
 exports.attachHeightFactorOf = attachHeightFactorOf;
+exports.normalizeEditorStyles = normalizeEditorStyles;
+exports.normalizeSticky = normalizeSticky;
 exports.normalizeToolbarLines = normalizeToolbarLines;
 exports.normalizeEditorSettings = normalizeEditorSettings;
 exports.normalizeToolLines = normalizeToolLines;
@@ -72,6 +74,41 @@ exports.EDITOR_THEMES = ['auto', 'light', 'dark'];
 exports.HISTORY_INTERVAL_MIN = 1;
 exports.HISTORY_INTERVAL_MAX = 120;
 exports.DEFAULT_HISTORY_INTERVAL = 3;
+exports.DEFAULT_EDITOR_STYLES = {
+    h1: 1.75,
+    h2: 1.45,
+    h3: 1.24,
+    h4: 1.1,
+    h5: 1,
+    h6: 0.94,
+    lineHeight: 1.75,
+};
+function normalizeEditorStyles(raw) {
+    const o = (raw && typeof raw === 'object' ? raw : {});
+    const num = (v, min, max, dflt) => {
+        const n = Number(v);
+        if (!Number.isFinite(n))
+            return dflt;
+        return Math.min(max, Math.max(min, Math.round(n * 100) / 100));
+    };
+    return {
+        h1: num(o.h1, 0.9, 3, exports.DEFAULT_EDITOR_STYLES.h1),
+        h2: num(o.h2, 0.9, 2.6, exports.DEFAULT_EDITOR_STYLES.h2),
+        h3: num(o.h3, 0.9, 2.2, exports.DEFAULT_EDITOR_STYLES.h3),
+        h4: num(o.h4, 0.85, 2, exports.DEFAULT_EDITOR_STYLES.h4),
+        h5: num(o.h5, 0.8, 1.8, exports.DEFAULT_EDITOR_STYLES.h5),
+        h6: num(o.h6, 0.75, 1.6, exports.DEFAULT_EDITOR_STYLES.h6),
+        lineHeight: num(o.lineHeight, 1.2, 2.4, exports.DEFAULT_EDITOR_STYLES.lineHeight),
+    };
+}
+function normalizeSticky(raw) {
+    const o = (raw && typeof raw === 'object' ? raw : {});
+    const one = (v) => {
+        const x = (v && typeof v === 'object' ? v : {});
+        return { toolbar: x.toolbar === true, title: x.title === true, aux: x.aux === true };
+    };
+    return { pc: one(o.pc), m: one(o.m) };
+}
 exports.DEFAULT_EDITOR_TOOLBAR_LINES = [
     'h1 h2 h3 | bold italic strike underline code highlight | bulletList orderedList taskList | blockquote codeBlock hr',
     'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
@@ -101,6 +138,8 @@ function normalizeEditorSettings(raw) {
         historyInterval: Number.isFinite(interval)
             ? Math.min(exports.HISTORY_INTERVAL_MAX, Math.max(exports.HISTORY_INTERVAL_MIN, interval))
             : exports.DEFAULT_HISTORY_INTERVAL,
+        sticky: normalizeSticky(o.sticky),
+        styles: normalizeEditorStyles(o.styles),
     };
 }
 function normalizeToolLines(raw, maxLines) {

@@ -2766,11 +2766,12 @@ export default {
     background: linear-gradient(to bottom, rgba(0, 0, 0, 0.45), transparent);
     transition: opacity 0.25s ease;
     /*
-     * v1.1.9.4（需求）：顶部区域（标题 / 详情 / 关闭那一行）整体半透明 50%。
+     * v1.1.9.4（需求）：顶部区域（标题 / 详情 / 关闭那一行）整体半透明。
      * 用 opacity 而不是给每个子按钮单独调色 —— 一次覆盖这一行的全部控件，
      * 将来往顶栏加东西也不会漏掉。控件隐藏时被下面的 .is-idle 规则压回 0。
+     * v1.3.1.2（需求）：50% → 90%，标题行不再淡到看不清。
      */
-    opacity: 0.5;
+    opacity: 0.9;
 }
 .media-viewer.is-idle .mv-top {
     opacity: 0;
@@ -3098,6 +3099,8 @@ export default {
 .mv-video-settings {
     position: absolute;
     right: 10px;
+    /* v1.3.1.2（需求）：右下角「设置」按钮透明度 90% */
+    opacity: 0.9;
     /* v3.0.0（R16）：「更多设置」按钮固定在页面高度下方 20vh 处 */
     bottom: 20vh;
     display: flex;
@@ -3213,6 +3216,8 @@ export default {
 .mv-video-toc {
     position: absolute;
     left: 10px;
+    /* v1.3.1.2（需求）：左下角「目录」按钮透明度 90% */
+    opacity: 0.9;
     /* v3.0.0（R16）：「目录」按钮固定在页面高度下方 20vh 处 */
     bottom: 20vh;
     display: flex;
@@ -3547,7 +3552,8 @@ export default {
     background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.25));
 }
 .media-viewer.is-doc.is-idle .mv-top {
-    opacity: 1;
+    /* v1.3.1.2：与其它灯箱统一成 90%（原来是 1，比别的灯箱更实） */
+    opacity: 0.9;
     pointer-events: auto;
 }
 .media-viewer.is-doc .mv-stage {
@@ -3930,10 +3936,22 @@ export default {
 .mv-video-dots {
     bottom: 20vh;
     z-index: 4;
+}
+/*
+ * v1.3.1.2（需求：视频灯箱的数量点一直显示、不跟控件走）
+ *
+ * 真正的原因不是 JS 没切 is-idle，而是**层叠顺序**：
+ *   上面 `body` 级的 `.media-viewer.is-idle .mv-dots { opacity: .7 }` 是 3 个类，
+ *   而这里的 `.mv-video-dots { opacity: 0 }` 只有 1 个类 —— 后者永远被前者压掉。
+ *   结果就是不管控件在不在，点都亮着。
+ * 现在两条规则都写成同样的 3 类选择器，谁生效只取决于 is-idle：
+ *   控件隐藏（is-idle）→ 0；控件显示 → 90%。
+ */
+.media-viewer.is-idle .mv-video-dots {
     opacity: 0;
 }
 .media-viewer:not(.is-idle) .mv-video-dots {
-    opacity: 0.7;
+    opacity: 0.9;
 }
 .mv-dot {
     /*

@@ -33,13 +33,32 @@ export function memoError(e) {
   return e instanceof Error ? e : new Error(String(e || '请求失败'));
 }
 
-/** 实例参数：与项目其它模块同一口径，空 = 默认实例 */
-let currentInstanceId = '';
+/**
+ * 实例参数：与项目其它模块同一口径，空 = 默认实例。
+ *
+ * v1.3.1.2（需求：笔记管理页数据必须严格按实例隔离）
+ *
+ * 原来这里只有一个由页面 mounted 写入的模块变量。问题是 Vue 的挂载顺序是
+ * **先子后父** —— MemoTree / MemoList 的 mounted 早于 MemoPage 的 mounted，
+ * 所以页面上来第一把请求拿到的是空实例（默认实例）的目录与列表，
+ * 表现就是「在 A 实例下看到了默认实例的目录 / 笔记」。
+ *
+ * 现在改成：没有显式设置过就读 localStorage（切换实例时前端就写在那个键里），
+ * 页面后续调用 setMemoInstance 只是把同一个值缓存下来。两条路径取值一致，
+ * 不依赖组件挂载顺序。
+ */
+let currentInstanceId = null;
 export function setMemoInstance(id) {
-  currentInstanceId = String(id || '');
+  currentInstanceId = String(id ?? '');
 }
 function inst() {
-  return currentInstanceId;
+  if (currentInstanceId !== null) return currentInstanceId;
+  try {
+    return localStorage.getItem('gohub_instance_id') || '';
+  } catch (e) {
+    /* 隐私模式下读不到，按默认实例处理 */
+    return '';
+  }
 }
 
 // -------- 目录 --------

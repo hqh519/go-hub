@@ -18,8 +18,36 @@ import { prisma } from './prisma';
  *   应用层仍保留「先查后建」的写法：并发插入撞唯一键时回查一次，不把错误抛给调用方。
  */
 export const TAG_TYPE_FILE = 'file';
-/** v1.1.6：笔记标签 —— 与文件标签同名也是两条记录，且按账户隔离 */
+/** v1.1.6：笔记（memo）标签 —— 与文件标签同名也是两条记录，且按账户隔离 */
 export const TAG_TYPE_NOTE = 'note';
+/**
+ * v1.3.1.2（需求：标签要按「用户 + 实例 + 内容类型」三层隔离）
+ *
+ * 原来瞬间和笔记共用 type='note'，于是「瞬间里建的 #灵感」会出现在笔记的候选里。
+ * 内容类型本身就是标签的天然分区，加一个独立 type 即可，不需要新表：
+ *   file / note(memo) / moment / article / todo / nav …
+ * 三者叠加后才是完整身份：type（内容类型）+ instanceId（实例）+ scope（账户）。
+ */
+export const TAG_TYPE_MOMENT = 'moment';
+
+/** 内容种类 → 标签类型（以后加文章 / 待办 / 导航，只改这张映射表） */
+export function tagTypeOfKind(kind: string): string {
+  switch (String(kind || '')) {
+    case 'moment':
+      return TAG_TYPE_MOMENT;
+    case 'article':
+      return 'article';
+    case 'todo':
+      return 'todo';
+    case 'nav':
+      return 'nav';
+    case 'note':
+    case 'memo':
+      return TAG_TYPE_NOTE;
+    default:
+      return TAG_TYPE_NOTE;
+  }
+}
 
 export type TagScope = { instanceId: string; type: string; scope: string };
 
@@ -35,7 +63,12 @@ export function tagScope(instanceId: string, type: string = TAG_TYPE_FILE, owner
   return {
     instanceId: String(instanceId || ''),
     type: t,
-    scope: t === TAG_TYPE_NOTE ? String(owner || '') : '',
+    /*
+     * v1.3.1.2：作用域从「只有笔记按账户」扩成「除文件之外的都按账户」。
+     * 瞬间、文章、待办同样是私有内容，标签不能跨账户共用；
+     * 文件标签保持实例内共用的团队语义（scope 恒空）。
+     */
+    scope: t === TAG_TYPE_FILE ? '' : String(owner || ''),
   };
 }
 
@@ -164,6 +197,69 @@ export async function mergeDuplicateTags(): Promise<number> {
  *
  * @returns 新建 / 修正的标签行数
  */
+/**
+ * v1.3.1.2：把历史上「瞬间与笔记共用 type='note'」的标签拆开。
+ *
+ * 规则（幂等）：
+ *   · 一条 note 标签只被 moment 用过 → 整条改成 type='moment'（连带 scope 已经有了，不动）；
+ *   · 同时被 moment 与 memo 用过 → 保留 note 那条给 memo，另建一条 moment 给瞬间，
+ *     把瞬间的关联挪过去；
+ *   · 只被 memo 用过 / 没有关联 → 保持 note 不动。
+ *
+ * 为什么不在查询处「兼容旧数据」：那会让候选列表同时出现两份同名标签，
+ * 用户改了一个另一个不变，长期更难收拾 —— 一次性搬干净，之后只有一套口径。
+ */
+export async function splitMomentTags(): Promise<number> {
+  let fixed = 0;
+  try {
+    const tags = await prisma.tag.findMany({ where: { type: TAG_TYPE_NOTE } });
+    for (const tag of tags) {
+      const links = await prisma.noteTag.findMany({
+        where: { tagId: tag.id },
+        select: { noteId: true, note: { select: { kind: true, author: true } } },
+      });
+      if (!links.length) continue;
+      const momentLinks = links.filter((l) => String(l.note?.kind || '') === 'moment');
+      const memoLinks = links.filter((l) => String(l.note?.kind || '') !== 'moment');
+      if (!momentLinks.length) continue;
+      if (!memoLinks.length) {
+        // 纯瞬间标签：整条换成 moment
+        await prisma.tag.update({ where: { id: tag.id }, data: { type: TAG_TYPE_MOMENT } }).catch(() => undefined);
+        fixed += 1;
+        continue;
+      }
+      /*
+       * 混合标签：按作者拆。moment 侧的作者可能不止一个，逐个建 moment 标签再挪关联；
+       * 原 note 标签留给 memo 侧，scope 不变（原本就是 memo 作者的隔离域）。
+       */
+      const authors = Array.from(new Set(momentLinks.map((l) => String(l.note?.author || '')).filter(Boolean)));
+      for (const author of authors) {
+        const row = await findOrCreateTag(tag.name, String(tag.instanceId || ''), author, TAG_TYPE_MOMENT);
+        const mine = momentLinks.filter((l) => String(l.note?.author || '') === author);
+        for (const link of mine) {
+          const exists = await prisma.noteTag.findUnique({
+            where: { noteId_tagId: { noteId: link.noteId, tagId: row.id } },
+            select: { noteId: true },
+          });
+          if (exists) {
+            await prisma.noteTag
+              .delete({ where: { noteId_tagId: { noteId: link.noteId, tagId: tag.id } } })
+              .catch(() => undefined);
+          } else {
+            await prisma.noteTag
+              .update({ where: { noteId_tagId: { noteId: link.noteId, tagId: tag.id } }, data: { tagId: row.id } })
+              .catch(() => undefined);
+          }
+        }
+      }
+      fixed += 1;
+    }
+  } catch (e) {
+    console.warn(`[tag] 瞬间标签拆分失败：${(e as Error)?.message || e}`);
+  }
+  return fixed;
+}
+
 export async function splitSharedNoteTags(): Promise<number> {
   let fixed = 0;
   try {

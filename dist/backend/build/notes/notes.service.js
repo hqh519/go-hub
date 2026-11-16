@@ -410,7 +410,7 @@ let NotesService = class NotesService {
         const tagNames = (0, notes_util_1.normalizeTagNames)(input.tagNames);
         const tagRows = [];
         for (const name of tagNames) {
-            tagRows.push(await (0, tags_1.findOrCreateTag)(name, instanceId, viewer, 'note'));
+            tagRows.push(await (0, tags_1.findOrCreateTag)(name, instanceId, viewer, tags_1.TAG_TYPE_MOMENT));
         }
         const visibility = notes_util_1.NOTE_VISIBILITIES.includes(String(input.visibility || ''))
             ? String(input.visibility)
@@ -504,7 +504,7 @@ let NotesService = class NotesService {
         const tagRows = [];
         if (tagNames) {
             for (const name of tagNames)
-                tagRows.push(await (0, tags_1.findOrCreateTag)(name, instanceId, viewer, 'note'));
+                tagRows.push(await (0, tags_1.findOrCreateTag)(name, instanceId, viewer, tags_1.TAG_TYPE_MOMENT));
         }
         const visibility = input.visibility !== undefined && notes_util_1.NOTE_VISIBILITIES.includes(String(input.visibility))
             ? String(input.visibility)
@@ -621,16 +621,19 @@ let NotesService = class NotesService {
         app_log_1.appLog.info('note', `彻底删除瞬间：${hit.row.id}`, `作者=${hit.row.author}`, ip);
         return { ok: true };
     }
-    async tagCandidates(instanceId, viewer) {
+    async tagCandidates(instanceId, viewer, kind = 'moment') {
         const rows = await prisma_1.prisma.tag.findMany({
             where: {
-                ...(0, tags_1.tagScope)(instanceId, tags_1.TAG_TYPE_NOTE, viewer),
-                noteTags: { some: { note: { author: String(viewer || '') } } },
+                ...(0, tags_1.tagScope)(instanceId, (0, tags_1.tagTypeOfKind)(kind), viewer),
+                noteTags: { some: { note: { author: String(viewer || ''), kind: String(kind || 'moment') } } },
             },
             select: {
                 id: true,
                 name: true,
-                noteTags: { select: { noteId: true }, where: { note: { author: String(viewer || '') } } },
+                noteTags: {
+                    select: { noteId: true },
+                    where: { note: { author: String(viewer || ''), kind: String(kind || 'moment') } },
+                },
             },
             orderBy: { createdAt: 'desc' },
             take: 200,
@@ -641,7 +644,7 @@ let NotesService = class NotesService {
             .sort((a, b) => b.count - a.count);
     }
     async tagAdmin(instanceId, kind, viewer) {
-        const where = (0, tags_1.tagScope)(instanceId, tags_1.TAG_TYPE_NOTE, viewer);
+        const where = (0, tags_1.tagScope)(instanceId, (0, tags_1.tagTypeOfKind)(kind), viewer);
         const tags = await prisma_1.prisma.tag.findMany({ where: where, orderBy: { createdAt: 'asc' } });
         if (!tags.length)
             return [];

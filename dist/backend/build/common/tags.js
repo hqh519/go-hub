@@ -1,19 +1,39 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TAG_TYPE_NOTE = exports.TAG_TYPE_FILE = void 0;
+exports.TAG_TYPE_MOMENT = exports.TAG_TYPE_NOTE = exports.TAG_TYPE_FILE = void 0;
+exports.tagTypeOfKind = tagTypeOfKind;
 exports.tagScope = tagScope;
 exports.findOrCreateTag = findOrCreateTag;
 exports.mergeDuplicateTags = mergeDuplicateTags;
+exports.splitMomentTags = splitMomentTags;
 exports.splitSharedNoteTags = splitSharedNoteTags;
 const prisma_1 = require("./prisma");
 exports.TAG_TYPE_FILE = 'file';
 exports.TAG_TYPE_NOTE = 'note';
+exports.TAG_TYPE_MOMENT = 'moment';
+function tagTypeOfKind(kind) {
+    switch (String(kind || '')) {
+        case 'moment':
+            return exports.TAG_TYPE_MOMENT;
+        case 'article':
+            return 'article';
+        case 'todo':
+            return 'todo';
+        case 'nav':
+            return 'nav';
+        case 'note':
+        case 'memo':
+            return exports.TAG_TYPE_NOTE;
+        default:
+            return exports.TAG_TYPE_NOTE;
+    }
+}
 function tagScope(instanceId, type = exports.TAG_TYPE_FILE, owner = '') {
     const t = String(type || exports.TAG_TYPE_FILE);
     return {
         instanceId: String(instanceId || ''),
         type: t,
-        scope: t === exports.TAG_TYPE_NOTE ? String(owner || '') : '',
+        scope: t === exports.TAG_TYPE_FILE ? '' : String(owner || ''),
     };
 }
 async function findOrCreateTag(name, instanceId, operator = '', type = exports.TAG_TYPE_FILE) {
@@ -101,6 +121,55 @@ async function mergeDuplicateTags() {
     catch {
     }
     return merged;
+}
+async function splitMomentTags() {
+    let fixed = 0;
+    try {
+        const tags = await prisma_1.prisma.tag.findMany({ where: { type: exports.TAG_TYPE_NOTE } });
+        for (const tag of tags) {
+            const links = await prisma_1.prisma.noteTag.findMany({
+                where: { tagId: tag.id },
+                select: { noteId: true, note: { select: { kind: true, author: true } } },
+            });
+            if (!links.length)
+                continue;
+            const momentLinks = links.filter((l) => String(l.note?.kind || '') === 'moment');
+            const memoLinks = links.filter((l) => String(l.note?.kind || '') !== 'moment');
+            if (!momentLinks.length)
+                continue;
+            if (!memoLinks.length) {
+                await prisma_1.prisma.tag.update({ where: { id: tag.id }, data: { type: exports.TAG_TYPE_MOMENT } }).catch(() => undefined);
+                fixed += 1;
+                continue;
+            }
+            const authors = Array.from(new Set(momentLinks.map((l) => String(l.note?.author || '')).filter(Boolean)));
+            for (const author of authors) {
+                const row = await findOrCreateTag(tag.name, String(tag.instanceId || ''), author, exports.TAG_TYPE_MOMENT);
+                const mine = momentLinks.filter((l) => String(l.note?.author || '') === author);
+                for (const link of mine) {
+                    const exists = await prisma_1.prisma.noteTag.findUnique({
+                        where: { noteId_tagId: { noteId: link.noteId, tagId: row.id } },
+                        select: { noteId: true },
+                    });
+                    if (exists) {
+                        await prisma_1.prisma.noteTag
+                            .delete({ where: { noteId_tagId: { noteId: link.noteId, tagId: tag.id } } })
+                            .catch(() => undefined);
+                    }
+                    else {
+                        await prisma_1.prisma.noteTag
+                            .update({ where: { noteId_tagId: { noteId: link.noteId, tagId: tag.id } }, data: { tagId: row.id } })
+                            .catch(() => undefined);
+                    }
+                }
+            }
+            fixed += 1;
+        }
+    }
+    catch (e) {
+        console.warn(`[tag] 瞬间标签拆分失败：${e?.message || e}`);
+    }
+    return fixed;
 }
 async function splitSharedNoteTags() {
     let fixed = 0;

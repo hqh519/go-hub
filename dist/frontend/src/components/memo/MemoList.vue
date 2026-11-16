@@ -349,6 +349,8 @@ export default {
     min-height: 0;
     overflow: auto;
     padding: 4px 6px 20px;
+    /* v1.3.1.2（需求）：列表名称 / 摘要一律靠左 */
+    text-align: left;
 }
 .ml-item {
     display: flex;
@@ -380,6 +382,8 @@ export default {
 .ml-item-main {
     flex: 1 1 auto;
     min-width: 0;
+    /* v1.3.1.2（需求）：标题 / 摘要 / 时间行统一靠左，不随条目内的其它元素漂移 */
+    text-align: left;
 }
 .ml-item-title {
     font-size: 13.5px;

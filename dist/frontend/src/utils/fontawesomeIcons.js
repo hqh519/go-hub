@@ -25,6 +25,18 @@ import { faArrowsUpDown } from '@fortawesome/free-solid-svg-icons/faArrowsUpDown
 import { faCircle } from '@fortawesome/free-solid-svg-icons/faCircle';
 import { faMarker } from '@fortawesome/free-solid-svg-icons/faMarker';
 import { faRotateLeft } from '@fortawesome/free-solid-svg-icons/faRotateLeft';
+import { faObjectGroup } from '@fortawesome/free-solid-svg-icons/faObjectGroup';
+import { faCalendarDay } from '@fortawesome/free-solid-svg-icons/faCalendarDay';
+import { faFaceSmile } from '@fortawesome/free-solid-svg-icons/faFaceSmile';
+import { faShapes } from '@fortawesome/free-solid-svg-icons/faShapes';
+import { faScissors } from '@fortawesome/free-solid-svg-icons/faScissors';
+import { faClone } from '@fortawesome/free-solid-svg-icons/faClone';
+import { faClipboard } from '@fortawesome/free-solid-svg-icons/faClipboard';
+import { faColumns } from '@fortawesome/free-solid-svg-icons/faColumns';
+import { faWindowMaximize } from '@fortawesome/free-solid-svg-icons/faWindowMaximize';
+import { faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons/faMagnifyingGlass';
+import { faFileCode } from '@fortawesome/free-solid-svg-icons/faFileCode';
+import { faCaretDown } from '@fortawesome/free-solid-svg-icons/faCaretDown';
 import { faArrowsAlt } from '@fortawesome/free-solid-svg-icons/faArrowsAlt';
 import { faArrowLeft } from '@fortawesome/free-solid-svg-icons/faArrowLeft';
 import { faArrowUp } from '@fortawesome/free-solid-svg-icons/faArrowUp';
@@ -352,5 +364,18 @@ export default [
     faCircleInfo,
     faFileVideo,
     faFileAudio,
-    faHighlighter
+    faHighlighter,
+    // v1.3.1.2：编辑器工具新增
+    faObjectGroup,
+    faCalendarDay,
+    faFaceSmile,
+    faShapes,
+    faWindowMaximize,
+    faMagnifyingGlass,
+    faFileCode,
+    faCaretDown,
+    faScissors,
+    faClipboard,
+    faClone,
+    faColumns,
 ];

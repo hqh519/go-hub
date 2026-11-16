@@ -16,7 +16,7 @@ import { prisma } from './common/prisma';
 import { SESSION_COOKIE, parseSession } from './auth/auth.guard';
 import { rateLimiter } from './common/rate-limit';
 import { appLog } from './common/app-log';
-import { mergeDuplicateTags, splitSharedNoteTags } from './common/tags';
+import { mergeDuplicateTags, splitSharedNoteTags, splitMomentTags } from './common/tags';
 import { CryptoService } from './common/crypto.service';
 import { backendSub, frontendAppDir } from './common/project-paths';
 
@@ -585,6 +585,20 @@ async function bootstrap() {
     }
   } catch (err) {
     console.warn(`[tag] 笔记标签隔离迁移失败：${(err as Error).message}`);
+  }
+
+  /*
+   * v1.3.1.2：瞬间与笔记的标签池拆开 —— 历史上两者共用 type='note'，
+   * 这里把「只被瞬间用过」的迁到 type='moment'，混合的按作者拆成两条。幂等。
+   */
+  try {
+    const moved = await splitMomentTags();
+    if (moved) {
+      console.log(`[tag] 瞬间标签独立：处理 ${moved} 条`);
+      appLog.info('file', `瞬间标签隔离迁移：处理 ${moved} 条`, 'type: note → moment');
+    }
+  } catch (err) {
+    console.warn(`[tag] 瞬间标签拆分失败：${(err as Error).message}`);
   }
 
   const port = Number(process.env.PORT || 3619);

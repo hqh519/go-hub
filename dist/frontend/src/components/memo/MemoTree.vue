@@ -295,6 +295,16 @@ export default {
     min-height: 0;
     overflow: auto;
     padding: 0 6px 12px;
+    /* v1.3.1.2（需求）：目录名称一律靠左 —— 显式声明，避免被上层 text-align 带偏 */
+    text-align: left;
+}
+.mt-tree :deep(.el-tree-node__content) {
+    text-align: left;
+    justify-content: flex-start;
+}
+.mt-tree :deep(.el-tree-node__label) {
+    text-align: left;
+    width: 100%;
 }
 /*
  * ── v1.3.1.1（需求）：目录缩进减半 + 关系线 ─────────────────────────
@@ -337,10 +347,12 @@ export default {
 .mt-node {
     display: flex;
     align-items: center;
+    justify-content: flex-start;
     gap: 6px;
     width: 100%;
     padding-right: 4px;
     font-size: 13px;
+    text-align: left;
 }
 .mt-node-icon {
     flex: 0 0 auto;

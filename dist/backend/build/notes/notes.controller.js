@@ -50,9 +50,9 @@ let NotesController = class NotesController {
             isAdmin,
         });
     }
-    async tags(req, instanceId) {
+    async tags(req, instanceId, kind) {
         const { viewer } = this.ctx(req);
-        return this.notes.tagCandidates(instanceId || '', viewer);
+        return this.notes.tagCandidates(instanceId || '', viewer, kind || 'moment');
     }
     async getSettings(req, instanceId) {
         const { viewer } = this.ctx(req);
@@ -218,8 +218,9 @@ __decorate([
     (0, common_1.Get)('tags'),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Query)('instanceId')),
+    __param(2, (0, common_1.Query)('kind')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [Object, String, String]),
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "tags", null);
 __decorate([

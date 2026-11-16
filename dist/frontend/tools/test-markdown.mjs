@@ -61,7 +61,13 @@ console.log('\n=== 3. v1.3.1 新块 ===');
 roundtrip('图片带宽度', '![图](/file/abc){width=600}');
 roundtrip('视频', '<video src="/file/v1" controls></video>');
 roundtrip('音频', '<audio src="/file/a1" controls></audio>');
-roundtrip('附件', '<a href="/file/f1" class="gh-file" download>说明书.pdf</a>');
+// v1.3.1.2：附件改成 md 原生写法；老的 html 锚点仍能读，只是会被规范化成新语法
+roundtrip('附件', '![[file:/file/f1|说明书.pdf]]');
+eq(
+  '旧附件写法可读并规范化',
+  docToMd(mdToDoc('<a href="/file/f1" class="gh-file" download>说明书.pdf</a>')).trim(),
+  '![[file:/file/f1|说明书.pdf]]',
+);
 roundtrip('提示块', ':::callout{type=info}\n提示内容\n:::');
 roundtrip('提示块-警告', ':::callout{type=warning}\n小心\n:::');
 roundtrip('表格', '| A | B |\n| --- | --- |\n| 1 | 2 |');

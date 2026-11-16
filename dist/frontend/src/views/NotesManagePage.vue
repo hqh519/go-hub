@@ -1244,6 +1244,29 @@ export default {
             this.kind = v;
             this.saveKind();
             if (this.tagMode) return; // 标签管理模式由面板自己按 kind 过滤
+            /*
+             * v1.3.1.2（需求）：切换分类时列表会先显示上一个分类的内容、
+             * 等接口回来再整体换掉，中间还会跳一下。
+             *
+             * 原因是 reload() 只清分页、不清数据 —— 旧数组一直挂着，新数据到达才替换。
+             * 这里在发起请求前就把列表与总数清空，并把 loading 立刻置起来，
+             * 模板里的 `loading && !list.length` 骨架屏会接管这一帧：
+             * 用户看到的是「正在加载」，而不是「原来是广场的内容、突然变成瞬间」。
+             */
+            this.list = [];
+            this.total = 0;
+            this.page = 1;
+            this.loading = true;
+            // 切分类回到顶部（列表要么跟 window 滚动，要么在内部容器里滚，两种都兜住）
+            try {
+                window.scrollTo({ top: 0, behavior: 'auto' });
+            } catch (e) {
+                window.scrollTo(0, 0);
+            }
+            this.$nextTick(() => {
+                const scroller = this.$refs.mainBody;
+                if (scroller && scroller.scrollTop) scroller.scrollTop = 0;
+            });
             this.reload();
         },
         /** 移动端左右滑动循环切换类型 */

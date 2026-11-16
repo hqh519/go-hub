@@ -9,7 +9,10 @@
     <div
         ref="pageEl"
         class="memo-page"
-        :class="{ 'is-mobile': isMobile, 'is-topbar-hidden': topbarHidden }"
+        :class="[
+            { 'is-mobile': isMobile, 'is-topbar-hidden': topbarHidden },
+            pageThemeClass,
+        ]"
     >
         <div class="memo-topbar">
             <DashboardTabs active-tab="memo">
@@ -87,6 +90,7 @@
                     :toolbar-config="editorSettings.toolbarLines"
                     :editor-config="editorSettings"
                     @saved="onSaved"
+                    @publish-moment="onPublishMoment"
                     @reload="reloadNote"
                     @open-note="openNote"
                 />
@@ -104,6 +108,17 @@
         <el-drawer v-if="isMobile" v-model="treeDrawer" direction="ltr" size="90%" :with-header="false">
             <MemoTree v-model:active="activeFolderDrawer" :instance-id="instanceId" @loaded="onTreeLoaded" />
         </el-drawer>
+
+        <!--
+            v1.3.1.2（需求：选中文字「发布到瞬间」）——
+            复用发布中心的同一个弹窗，发布完关掉就回到编辑器，不发生页面跳转。
+        -->
+        <MomentPublishDialog
+            v-model="momentDlgVisible"
+            :instance-id="instanceId"
+            :preset-content="momentDraft"
+            @saved="onMomentSaved"
+        />
 
         <!-- v1.3.1.1：切换实例弹窗（与「我的发布」/「瞬间管理」同一个组件） -->
         <InstanceSwitchDialog
@@ -124,6 +139,12 @@
                     {{ $t('memo.toolbarAvail') }}：<code>{{ availableTokens }}</code>
                 </p>
             </div>
+            <!--
+                v1.3.1.2（需求）：「输入工具配置」改名「光标工具栏配置」，
+                「/菜单工具配置」改名「/命令菜单配置」。
+                改名不是整齐癖 —— 前者现在真的是跟着光标走的一条工具栏，
+                后者弹出的就是一个命令清单（含分隔线），名字跟实物对上才好互相指代。
+            -->
             <div class="ms-field">
                 <label class="ms-label">{{ $t('memo.inputToolsConfig') }}</label>
                 <p class="ms-tip">{{ $t('memo.inputToolsTip') }}</p>
@@ -133,6 +154,55 @@
                 <label class="ms-label">{{ $t('memo.slashToolsConfig') }}</label>
                 <p class="ms-tip">{{ $t('memo.slashToolsTip') }}</p>
                 <textarea v-model="settingsDraft.slashTools" class="ms-textarea" rows="4" spellcheck="false"></textarea>
+            </div>
+            <!-- v1.3.1.2：H1-H6 与正文样式（写进 CSS 变量，样式表不用改） -->
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.styleTitle') }}</label>
+                <p class="ms-tip">{{ $t('memo.styleTip') }}</p>
+                <div class="ms-style-grid">
+                    <label v-for="lv in 6" :key="`hs-${lv}`" class="ms-style-item">
+                        <span>H{{ lv }}</span>
+                        <el-input-number
+                            v-model="settingsDraft.styles[`h${lv}`]"
+                            :min="0.75"
+                            :max="3"
+                            :step="0.05"
+                            :precision="2"
+                            size="small"
+                            controls-position="right"
+                        />
+                    </label>
+                    <label class="ms-style-item">
+                        <span>{{ $t('memo.styleLineHeight') }}</span>
+                        <el-input-number
+                            v-model="settingsDraft.styles.lineHeight"
+                            :min="1.2"
+                            :max="2.4"
+                            :step="0.05"
+                            :precision="2"
+                            size="small"
+                            controls-position="right"
+                        />
+                    </label>
+                </div>
+            </div>
+
+            <!-- v1.3.1.2：滚动吸附（PC / 移动端各自独立） -->
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.stickyTitle') }}</label>
+                <p class="ms-tip">{{ $t('memo.stickyTip') }}</p>
+                <div class="ms-sticky-table">
+                    <div class="ms-sticky-head">
+                        <span></span>
+                        <span>{{ $t('memo.stickyPc') }}</span>
+                        <span>{{ $t('memo.stickyMobile') }}</span>
+                    </div>
+                    <div v-for="row in stickyRows" :key="`st-${row.key}`" class="ms-sticky-row">
+                        <span class="ms-sticky-name">{{ $t(row.label) }}</span>
+                        <el-switch v-model="settingsDraft.sticky.pc[row.key]" size="small" />
+                        <el-switch v-model="settingsDraft.sticky.m[row.key]" size="small" />
+                    </div>
+                </div>
             </div>
             <div class="ms-field ms-row">
                 <div>
@@ -173,6 +243,7 @@ import { ElMessage } from 'element-plus';
 import axios from '@/utils/axios';
 import DashboardTabs from '@/components/DashboardTabs.vue';
 import InstanceSwitchDialog from '@/components/InstanceSwitchDialog.vue';
+import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue';
 import MemoTree from '@/components/memo/MemoTree.vue';
 import MemoList from '@/components/memo/MemoList.vue';
 import MemoEditor from '@/components/memo/MemoEditor.vue';
@@ -184,7 +255,7 @@ import { setEmptyStackBackHandler } from '@/utils/layerStack';
 
 export default {
     name: 'MemoPage',
-    components: { DashboardTabs, MemoTree, MemoList, MemoEditor, InstanceSwitchDialog },
+    components: { DashboardTabs, MemoTree, MemoList, MemoEditor, InstanceSwitchDialog, MomentPublishDialog },
     data() {
         return {
             isMobile: false,
@@ -206,6 +277,12 @@ export default {
                 inputLines: [],
                 slashLines: [],
                 historyInterval: 3,
+                // v1.3.1.2：样式与吸附默认值
+                styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75 },
+                sticky: {
+                    pc: { toolbar: false, title: false, aux: false },
+                    m: { toolbar: false, title: false, aux: false },
+                },
             },
             settingsDraft: {
                 toolbar: '',
@@ -214,7 +291,23 @@ export default {
                 inputTools: '',
                 slashTools: '',
                 historyInterval: 3,
+                /* v1.3.1.2：标题与正文样式 */
+                styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75 },
+                /* v1.3.1.2：PC / 移动端各自的吸附开关，默认全关 */
+                sticky: {
+                    pc: { toolbar: false, title: false, aux: false },
+                    m: { toolbar: false, title: false, aux: false },
+                },
             },
+            /** 吸附表格的行定义（三行 × 两列终端） */
+            stickyRows: [
+                { key: 'toolbar', label: 'memo.stickyToolbar' },
+                { key: 'title', label: 'memo.stickyTitleBar' },
+                { key: 'aux', label: 'memo.stickyAux' },
+            ],
+            /* v1.3.1.2：从编辑器「发布到瞬间」带过去的正文 */
+            momentDlgVisible: false,
+            momentDraft: '',
             /* ── v1.3.1.1：切换实例 + 顶栏随滚动显隐 ── */
             showInstanceDialog: false,
             instances: [],
@@ -247,6 +340,18 @@ export default {
         },
         editingId() {
             return this.currentNote?.id || '';
+        },
+        /**
+         * v1.3.1.2（需求）：配色模式选白天 / 黑夜时，笔记管理页的目录栏、列表栏、顶部栏
+         * 也要一起跟着变 —— 只改编辑器会出现「正文是黑的、两边是白的」的割裂感。
+         *
+         * 「跟随全局」返回空串，页面继续用全站主题变量（不干预）。
+         */
+        pageThemeClass() {
+            const t = this.editorSettings?.theme;
+            if (t === 'light') return 'page-theme-light';
+            if (t === 'dark') return 'page-theme-dark';
+            return '';
         },
         /** 当前实例在「创建时间升序」里的序号（1-based；默认实例为 0，不显示角标） */
         instanceSeq() {
@@ -418,17 +523,55 @@ export default {
         onPageScroll(e) {
             const el = e.target;
             if (!el || typeof el.scrollTop !== 'number') return;
-            const top = el.scrollTop;
-            const last = el.__memoLastTop ?? 0;
-            if (Math.abs(top - last) < 8) return;
-            el.__memoLastTop = top;
-            // 顶部 40px 内一律展开，避免刚滚一点就抖
-            if (top <= 40) {
-                this.topbarHidden = false;
+            /*
+             * v1.3.1.2（需求：滚到底部时顶部工具栏一直闪烁跳动）
+             *
+             * 原因是「收/展顶栏」本身会改变内容高度：顶栏收起 → 视口里的内容整体上移
+             * → 浏览器把 scrollTop 夹回去 → 又触发一次 scroll 事件、方向与刚才相反
+             * → 顶栏展开 → 高度再变……滚到最底部（或内容刚好够高）时这个循环会一直转，
+             * 表现就是顶栏反复抽动。
+             *
+             * 三条刹车：
+             *   1) 到底了就不再隐/显（底部本来就没有更多内容，收起毫无意义）；
+             *   2) 每次切换后 400ms 内忽略事件，掐断震荡回路；
+             *   3) 容器不可滚（内容比视口短）时直接不参与。
+             */
+            if (el.scrollHeight - el.clientHeight < 80) {
+                if (this.topbarHidden) this.topbarHidden = false;
                 return;
             }
-            this.topbarHidden = top > last;
+            const top = el.scrollTop;
+            const atBottom = el.scrollHeight - el.clientHeight - top <= 48;
+            const last = el.__memoLastTop ?? 0;
+            el.__memoLastTop = top;
+            if (atBottom) {
+                // 到底：一律展开，并记住当前方向，避免下一帧再判一次
+                if (this.topbarHidden) this.topbarHidden = false;
+                return;
+            }
+            if (Date.now() - (this._topbarLock || 0) < 400) return;
+            if (Math.abs(top - last) < 8) return;
+            if (top <= 40) {
+                if (this.topbarHidden) this.topbarHidden = false;
+                return;
+            }
+            const next = top > last;
+            if (next !== this.topbarHidden) {
+                this.topbarHidden = next;
+                this._topbarLock = Date.now();
+            }
         },
+        /* ── v1.3.1.2：编辑器「发布到瞬间」 ─────────────────────── */
+        onPublishMoment(text) {
+            this.momentDraft = String(text || '');
+            this.momentDlgVisible = true;
+        },
+        onMomentSaved() {
+            this.momentDlgVisible = false;
+            this.momentDraft = '';
+            ElMessage.success(this.$t('memo.publishToMomentDone'));
+        },
+
         async createNote() {
             try {
                 const folderId = this.activeFolder && !this.activeFolder.startsWith('__') ? this.activeFolder : '';
@@ -482,6 +625,29 @@ export default {
                     inputLines: Array.isArray(editor.inputLines) ? editor.inputLines.map((x) => String(x || '')) : [],
                     slashLines: Array.isArray(editor.slashLines) ? editor.slashLines.map((x) => String(x || '')) : [],
                     historyInterval: Number(editor.historyInterval) > 0 ? Number(editor.historyInterval) : 3,
+                    // v1.3.1.2：样式（后端已归一）
+                    styles: {
+                        h1: Number(editor?.styles?.h1) || 1.75,
+                        h2: Number(editor?.styles?.h2) || 1.45,
+                        h3: Number(editor?.styles?.h3) || 1.24,
+                        h4: Number(editor?.styles?.h4) || 1.1,
+                        h5: Number(editor?.styles?.h5) || 1,
+                        h6: Number(editor?.styles?.h6) || 0.94,
+                        lineHeight: Number(editor?.styles?.lineHeight) || 1.75,
+                    },
+                    // v1.3.1.2：吸附配置（后端已归一并保证结构完整，这里再兜一层）
+                    sticky: {
+                        pc: {
+                            toolbar: !!editor?.sticky?.pc?.toolbar,
+                            title: !!editor?.sticky?.pc?.title,
+                            aux: !!editor?.sticky?.pc?.aux,
+                        },
+                        m: {
+                            toolbar: !!editor?.sticky?.m?.toolbar,
+                            title: !!editor?.sticky?.m?.title,
+                            aux: !!editor?.sticky?.m?.aux,
+                        },
+                    },
                 };
             } catch (e) {
                 // 读不到就用默认值，不打扰用户
@@ -492,6 +658,11 @@ export default {
                     inputLines: [],
                     slashLines: [],
                     historyInterval: 3,
+                    styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75 },
+                    sticky: {
+                        pc: { toolbar: false, title: false, aux: false },
+                        m: { toolbar: false, title: false, aux: false },
+                    },
                 };
             }
         },
@@ -503,6 +674,14 @@ export default {
                 inputTools: (this.editorSettings.inputLines || []).join('\n'),
                 slashTools: (this.editorSettings.slashLines || []).join('\n'),
                 historyInterval: this.editorSettings.historyInterval || 3,
+                styles: JSON.parse(JSON.stringify(this.editorSettings.styles || {
+                    h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75,
+                })),
+                // 深拷贝：弹窗里改开关不能立刻影响编辑器，点「确定」才生效
+                sticky: JSON.parse(JSON.stringify(this.editorSettings.sticky || {
+                    pc: { toolbar: false, title: false, aux: false },
+                    m: { toolbar: false, title: false, aux: false },
+                })),
             };
             this.settingsVisible = true;
         },
@@ -521,6 +700,13 @@ export default {
                 inputLines: splitLines(this.settingsDraft.inputTools).slice(0, 8),
                 slashLines: splitLines(this.settingsDraft.slashTools).slice(0, 12),
                 historyInterval: Math.min(120, Math.max(1, Number(this.settingsDraft.historyInterval) || 3)),
+                styles: JSON.parse(JSON.stringify(this.settingsDraft.styles || {
+                    h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75,
+                })),
+                sticky: JSON.parse(JSON.stringify(this.settingsDraft.sticky || {
+                    pc: { toolbar: false, title: false, aux: false },
+                    m: { toolbar: false, title: false, aux: false },
+                })),
             };
             try {
                 await axios.put('/api/notes/settings', {
@@ -558,23 +744,63 @@ export default {
     background: var(--el-bg-color);
     border-bottom: 1px solid var(--el-border-color-lighter);
 }
+/* ── v1.3.1.2：配色模式联动整页（仅笔记管理页） ───────────────────
+   只在编辑器设置选了白天 / 黑夜时挂类；「跟随全局」不加类，走全站变量。
+   覆盖的是页面骨架用到的那几个变量 —— 目录栏、列表栏、顶栏、分隔线、hover 底色，
+   这样三栏与编辑器不会一半黑一半白。 */
+.memo-page.page-theme-dark {
+    --el-bg-color: #16181d;
+    --el-bg-color-page: #101216;
+    --el-bg-color-overlay: #1f2228;
+    --el-fill-color-blank: #16181d;
+    --el-fill-color-light: #23262d;
+    --el-fill-color-lighter: #1b1e24;
+    --el-text-color-primary: #e6e8ec;
+    --el-text-color-regular: #c3c7cf;
+    --el-text-color-secondary: #8f96a3;
+    --el-text-color-placeholder: #6b7280;
+    --el-border-color: #2f333b;
+    --el-border-color-light: #2a2e36;
+    --el-border-color-lighter: #262a31;
+    background: var(--el-bg-color-page);
+}
+.memo-page.page-theme-light {
+    --el-bg-color: #ffffff;
+    --el-bg-color-page: #f6f7f9;
+    --el-bg-color-overlay: #ffffff;
+    --el-fill-color-blank: #ffffff;
+    --el-fill-color-light: #f2f3f5;
+    --el-fill-color-lighter: #f7f8fa;
+    --el-text-color-primary: #1f2329;
+    --el-text-color-regular: #4b5563;
+    --el-text-color-secondary: #6b7280;
+    --el-border-color: #dcdfe6;
+    --el-border-color-lighter: #e8eaee;
+    background: var(--el-bg-color-page);
+}
+
 /* ── v1.3.1.1：顶栏随滚动显隐（下滑收起，上滑展开） ───────────── */
 .memo-topbar {
     /*
-     * 用 max-height 收起来而不是 transform：transform 只是视觉上移走，
-     * 列表区上方仍留着一条与页面底色不同的空带，看着像「页面坏了」。
-     * 收起时 padding / 边框一起归零，三栏就能顶到窗口最上面。
+     * v1.3.1.2（需求：左上角页面切换按钮层级不够、被遮挡）
+     *
+     * 上一版用 `overflow: hidden` + `max-height` 收起顶栏，副作用是把页面切换的
+     * 下拉面板一起裁掉了 —— 面板是绝对定位、要溢出顶栏往下展开，于是被裁成一条缝，
+     * 看起来就是「层级不够、被下面的列表盖住」。
+     *
+     * 现在改成用**负 margin 上移**收起：不需要裁剪，面板可以正常溢出；
+     * 顶栏本身加 position/z-index，保证面板压在目录栏与列表栏之上。
      */
-    overflow: hidden;
-    max-height: 64px;
-    transition: max-height 0.22s ease, padding 0.22s ease, opacity 0.18s ease;
+    position: relative;
+    z-index: 60;
+    overflow: visible;
+    transition: margin-top 0.22s ease, opacity 0.18s ease;
 }
 .memo-page.is-topbar-hidden .memo-topbar {
-    max-height: 0;
-    padding-top: 0;
-    padding-bottom: 0;
+    /* 收起：整行上移自身高度（含 padding 与边框约 55px），下面的三栏随之上提 */
+    margin-top: -55px;
     opacity: 0;
-    border-bottom-color: transparent;
+    pointer-events: none;
 }
 
 /* ── 页面切换下拉里的「切换实例」条目（与瞬间管理页 / 图床管理页同款） ── */
@@ -754,6 +980,95 @@ export default {
     line-height: 1.6;
     color: var(--el-text-color-secondary);
 }
+/* v1.3.1.2：标题 / 正文样式网格 */
+.ms-style-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+.ms-style-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    color: var(--el-text-color-regular);
+}
+.ms-style-item > span {
+    flex: 0 0 34px;
+}
+.ms-style-item :deep(.el-input-number) {
+    flex: 1 1 auto;
+    width: 100%;
+}
+
+/* v1.3.1.2：吸附开关表格（3 行 × PC / 移动端 两列） */
+.ms-sticky-table {
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.ms-sticky-head,
+.ms-sticky-row {
+    display: grid;
+    grid-template-columns: 1fr 72px 72px;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+}
+.ms-sticky-head {
+    background: var(--el-fill-color-light);
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    text-align: center;
+}
+.ms-sticky-head > span:first-child {
+    text-align: left;
+}
+.ms-sticky-row + .ms-sticky-row {
+    border-top: 1px solid var(--el-border-color-lighter);
+}
+.ms-sticky-name {
+    color: var(--el-text-color-regular);
+}
+.ms-sticky-row :deep(.el-switch) {
+    justify-self: center;
+}
+
+/* v1.3.1.2：吸附开关表格（3 行 × PC / 移动端 两列） */
+.ms-sticky-table {
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.ms-sticky-head,
+.ms-sticky-row {
+    display: grid;
+    grid-template-columns: 1fr 72px 72px;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 12.5px;
+}
+.ms-sticky-head {
+    background: var(--el-fill-color-light);
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    text-align: center;
+}
+.ms-sticky-head > span:first-child {
+    text-align: left;
+}
+.ms-sticky-row + .ms-sticky-row {
+    border-top: 1px solid var(--el-border-color-lighter);
+}
+.ms-sticky-name {
+    color: var(--el-text-color-regular);
+}
+.ms-sticky-row :deep(.el-switch) {
+    justify-self: center;
+}
+
 .ms-textarea {
     width: 100%;
     box-sizing: border-box;

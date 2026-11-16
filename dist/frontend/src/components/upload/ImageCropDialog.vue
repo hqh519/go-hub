@@ -17,6 +17,12 @@
             <div class="crop-head">
                 <span class="crop-head-title">{{ $t(titleKey) }}</span>
                 <div class="crop-head-actions">
+                    <!--
+                        v1.3.1.2（需求）：撤销 / 恢复换成「↶ / ↷」这套细线箭头图标。
+                        这两个图标 FontAwesome 里没有同款（fa-undo 是实心钩形），
+                        所以直接内联 SVG（形状取自 Lucide 的 undo-2 / redo-2，ISC 许可），
+                        用 currentColor 描边，跟其它按钮的禁用态颜色一致。
+                    -->
                     <button
                         type="button"
                         class="crop-icon-btn"
@@ -25,7 +31,10 @@
                         :aria-label="$t('uploadCrop.undo')"
                         @click="undoAnnotation"
                     >
-                        <font-awesome-icon icon="undo" />
+                        <svg class="crop-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M9 14 4 9l5-5" />
+                            <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+                        </svg>
                     </button>
                     <button
                         type="button"
@@ -35,18 +44,19 @@
                         :aria-label="$t('uploadCrop.redo')"
                         @click="redoAnnotation"
                     >
-                        <font-awesome-icon icon="redo" />
+                        <svg class="crop-svg-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="m15 14 5-5-5-5" />
+                            <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+                        </svg>
                     </button>
+                    <!-- v1.3.1.2（需求）：重置不再用图标，直接显示文字 -->
                     <button
                         type="button"
-                        class="crop-icon-btn"
+                        class="crop-icon-btn is-text"
                         :disabled="!canReset"
                         :title="$t('uploadCrop.resetAll')"
-                        :aria-label="$t('uploadCrop.resetAll')"
                         @click="resetAll"
-                    >
-                        <font-awesome-icon icon="rotate-left" />
-                    </button>
+                    >{{ $t('uploadCrop.resetAll') }}</button>
                 </div>
             </div>
         </template>
@@ -189,9 +199,13 @@
             · 左转 / 右转 / 度数挪到底部「取消」按钮左侧；
             · 「复位」按钮取消（重置统一走右上角的「重置」）。
         -->
-        <p class="crop-hint">
-            <span v-if="outputSize" class="crop-size">{{ $t('uploadCrop.outputSize', { w: outputSize.w, h: outputSize.h }) }}</span>
-            <span class="crop-hint-text">{{ hintText }}</span>
+        <!--
+            v1.3.1.2（需求）：这一行只保留「输出尺寸：xxx × xxx px」。
+            原来跟在后面的操作提示（怎么画笔、怎么遮挡…）全部去掉 ——
+            工具本身已经足够直观，多余的文字只占高度。
+        -->
+        <p v-if="outputSize" class="crop-hint">
+            <span class="crop-size">{{ $t('uploadCrop.outputSize', { w: outputSize.w, h: outputSize.h }) }}</span>
         </p>
 
         <template #footer>
@@ -202,23 +216,24 @@
                 撤销、恢复、重置已经挪到右上角，底部不再重复。
             -->
             <div class="crop-footer">
-                <div class="crop-footer-left">
-                    <button type="button" class="crop-rot-btn" :disabled="rotating" :title="$t('uploadCrop.rotateLeft')" @click="rotate(-1)">
-                        <font-awesome-icon icon="undo" />
-                        <span>{{ $t('uploadCrop.rotateLeft') }}</span>
-                    </button>
-                    <button type="button" class="crop-rot-btn" :disabled="rotating" :title="$t('uploadCrop.rotateRight')" @click="rotate(1)">
-                        <font-awesome-icon icon="redo" />
-                        <span>{{ $t('uploadCrop.rotateRight') }}</span>
-                    </button>
-                    <span class="crop-angle">{{ rotation }}°</span>
-                </div>
-                <div class="crop-footer-right">
-                    <el-button @click="$emit('update:modelValue', false)">{{ $t('common.cancel') }}</el-button>
-                    <el-button type="primary" :loading="exporting" :disabled="!canCrop" @click="confirm">
-                        {{ $t(confirmKey) }}
-                    </el-button>
-                </div>
+                <!--
+                    v1.3.1.2（需求）：左转 / 右转 / 度数直接排在「取消」左边，整行靠左对齐。
+                    原来它们在最左侧、取消/保存在最右侧，宽屏下两者相隔一整个屏幕，
+                    点完旋转还要横跨回去点保存。
+                -->
+                <button type="button" class="crop-rot-btn" :disabled="rotating" :title="$t('uploadCrop.rotateLeft')" @click="rotate(-1)">
+                    <font-awesome-icon icon="undo" />
+                    <span>{{ $t('uploadCrop.rotateLeft') }}</span>
+                </button>
+                <button type="button" class="crop-rot-btn" :disabled="rotating" :title="$t('uploadCrop.rotateRight')" @click="rotate(1)">
+                    <font-awesome-icon icon="redo" />
+                    <span>{{ $t('uploadCrop.rotateRight') }}</span>
+                </button>
+                <span class="crop-angle">{{ rotation }}°</span>
+                <el-button class="crop-footer-cancel" @click="$emit('update:modelValue', false)">{{ $t('common.cancel') }}</el-button>
+                <el-button type="primary" :loading="exporting" :disabled="!canCrop" @click="confirm">
+                    {{ $t(confirmKey) }}
+                </el-button>
             </div>
         </template>
     </el-dialog>
@@ -1587,6 +1602,18 @@ export default {
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
 }
+/* v1.3.1.2：右上角「重置」是文字按钮，宽度按内容走 */
+.crop-icon-btn.is-text {
+    width: auto;
+    padding: 0 8px;
+    font-size: 12px;
+}
+.crop-svg-icon {
+    width: 15px;
+    height: 15px;
+    display: block;
+}
+
 .crop-icon-btn:hover:not(:disabled) {
     background: var(--el-fill-color-light, #f5f7fa);
     color: var(--el-color-primary, #409eff);
@@ -1699,23 +1726,25 @@ export default {
  * v1.1.9.3：「重置选区 / 撤销 / 清空」搬到「取消」左侧后，底部行改成左右两组：
  * 左侧操作组贴左，取消 / 保存贴右（原来是整行居右，左侧这几个按钮就没地方站）。
  */
+/*
+ * v1.3.1.2（需求）：底部是一整行、靠左对齐 ——
+ * 左转 / 右转 / 度数 紧挨着「取消」「保存」，不再左右分组。
+ * 移动端宽度不够时换行（flex-wrap），保证「保存」永远点得到。
+ */
 .crop-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
+    flex-wrap: wrap;
     gap: 8px;
 }
-.crop-footer-left {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    min-height: 24px;
+.crop-footer .crop-rot-btn,
+.crop-footer .crop-angle {
+    flex: 0 0 auto;
 }
-.crop-footer-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: auto;
+.crop-footer-cancel {
+    /* 旋转控件与「取消」之间留一点视觉分隔（两者性质不同：一个是操作、一个是退出） */
+    margin-left: 6px;
 }
 
 @media (max-width: 768px) {
