@@ -468,16 +468,24 @@ export default {
             /** 本次打开是否恢复过草稿 */
             draftRestored: false,
             /**
-             * v1.3.1.1：正文是否处于聚焦态。
-             * 触屏自适应高度用它决定上限 —— 聚焦时被软键盘占掉半屏，只能给到视口 40%；
-             * 失焦时页面空间是完整的，可以放到 80%。
+             * v1.3.1.1：正文是否处于聚焦态。桌面端用它决定要不要同步父容器高度。
              */
             editorFocused: false,
+            /**
+             * v1.3.3.3（需求：移动端失焦后正文框仍然不自适应大小）：
+             * **软键盘是否弹起**，独立于 focus / blur。
+             *
+             * 为什么不再用 editorFocused 当判据：
+             *   手机上 focus / blur 与键盘的实际弹出/收起并不同步 ——
+             *   键盘收起时 blur 可能早触发 300ms（此时视口还是矮的），
+             *   也可能因为焦点留在输入法合成的节点上而**根本不触发**。
+             *   只要有一次判错，输入框就永久停在压缩态，看起来就是「没自适应」。
+             * 现在只认可见视口的高度变化（与笔记页「反向链接栏随键盘收起」同一套口径）。
+             */
+            keyboardOpen: false,
             /*
-             * v1.3.2（需求：失焦后输入框没有恢复「刚打开时」的高度）：
-             * 记下「打开弹窗那一刻」的视口高度。聚焦时用当前可见视口（要跟着软键盘缩），
-             * 失焦后回到这个稳定值 —— 否则键盘还在收起的动画里，visualViewport 仍是矮的，
-             * 算出来的下限/上限都偏小，输入框就停在压缩状态了。
+             * v1.3.2：记下「键盘收起时」的稳定视口高度（历史最大值）。
+             * 键盘弹起时视口变小不能覆盖它，否则收起来以后回不到原来的口径。
              */
             openedViewportPx: 0
         };
@@ -629,6 +637,10 @@ export default {
         }
         // v1.2.1：弹窗高度的观察者要跟着销毁，避免弹窗关掉后还在算
         this.teardownEditorObserver();
+        if (this._kbTimers) {
+            this._kbTimers.forEach((t) => window.clearTimeout(t));
+            this._kbTimers = null;
+        }
         if (this._floatDown) document.removeEventListener('pointerdown', this._floatDown, true);
         if (this._floatEsc) document.removeEventListener('keydown', this._floatEsc, true);
         if (this._layerUnbind) {
@@ -709,7 +721,14 @@ export default {
                 : null;
             this.assetFloat = {
                 key: a.fileId || a.url,
-                src: a.mediaKind === 'image' ? (a.thumbUrl || a.url) : a.url,
+                /*
+                 * v1.3.3.3（需求：小眼睛预览框还是太小）：
+                 * 原来图片传的是 thumbUrl —— 缩略图本身只有一两百像素宽，
+                 * 浮层虽然给了 300px 的框，图片按自身尺寸渲染出来仍然很小。
+                 * 这里改用原图地址（同一台机器、刚上传完，基本都在缓存里），
+                 * 配合浮层里 object-fit: contain 的铺满规则，才是「看得清」的预览。
+                 */
+                src: a.url || a.thumbUrl || '',
                 kind: a.mediaKind || 'file',
                 name: a.originalName || a.name || '',
                 anchor: rect
@@ -721,56 +740,26 @@ export default {
             if (this.assetFloat) this.assetFloat = null;
         },
         /**
-         * v1.2.4（需求）：移动端（手机 + 平板）**一律按可见视口的 40% 作为最小高度**，
-         * 不再判断「键盘弹起没弹起」，也不再监听聚焦 / 失焦。
+         * 正文框的最小高度。
          *
-         * 为什么把前几版的整套判定拆掉：
-         *   · v1.2.2.1 用「可见高度掉到基准 85% 以下」判收缩 —— 手机成立；
-         *   · v1.2.3 补了「正文聚焦」这条信号 —— 平板仍有收不到的情况
-         *     （外接键盘不弹软键盘、部分浏览器 focus 被输入法吃掉、桌面版 UA 下
-         *     键盘是浮层且 visualViewport 不变）；
-         *   · 一旦判不出收缩，输入框就停在 45%，平板上那截正好被浮层键盘盖住，
-         *     表现出来就是「平板上没生效」。
+         * v1.3.3.3（需求：移动端失焦后正文框不自适应）—— 判据换成「键盘是否弹起」：
+         *   · 键盘弹起 → 用**当前**可见视口算（那才是用户真正看得见的那块）；
+         *   · 键盘收起 → 用**静止基准**（键盘收起后的完整视口）算。
+         * 这样不管 focus / blur 有没有按预期触发，只要键盘真的收起，框就会回到页面口径。
          *
-         * 现在只有一条口径，不需要任何状态机：
-         *   · 触屏设备（手机 / 平板）→ **30%**，恒定（v1.3.1 由 40% 下调）；
-         *   · 桌面（maxTouchPoints = 0 且 hover: hover）→ 45%，与老版本观感一致。
-         *
-         * 为什么恒定 30% 就够：
-         *   基准取 visualViewport.height（用户真正看得见的那块）。手机弹键盘后这个值
-         *   会变小，30% 自然跟着变小；平板键盘是浮层、这个值不变，那就保持 30% ——
-         *   输入框本身不会被压到看不见，多出来的部分本来就能滚动。
-         *   也就是需求里那句「最小值锁死，最大值随页面自适应」：
-         *   min-height 只兜底，内容多时由 flex 继续撑高，超出弹窗再出滚动条。
+         * 触屏（手机 / 平板）与桌面用两套比例：触屏要留出键盘的位置，桌面没有键盘。
          */
         editorMinPx() {
             if (typeof window === 'undefined') return 0;
-            /*
-             * v1.3.2：聚焦时跟着可见视口（软键盘弹出会变小），
-             * 失焦后回到「打开弹窗时」的视口高度 —— 见 openedViewportPx 的注释。
-             */
-            const raw = this.currentViewportPx();
-            const cur = !this.editorFocused && this.openedViewportPx ? this.openedViewportPx : raw;
+            const cur = this.keyboardOpen ? this.currentViewportPx() : this.restingViewportPx();
             if (!cur) return 0;
-            /*
-             * 「是不是触屏」不再要求媒体查询同时成立。
-             *
-             * v1.2.3 用的是「(hover:none) || (pointer:coarse)」并且再 && maxTouchPoints>0，
-             * 平板开「请求桌面网站」时会报 hover:hover + pointer:fine，第一层就为假 ——
-             * 这正是「平板端一直没生效」的原因。
-             * 现在统一走 isTouchDevice()：只要有触摸点、或粗指针、或无悬停，就按移动端口径算。
-             */
-            const touch = isTouchDevice();
-            // v1.3.1（需求）：移动端一律最小 30%，不再区分聚焦/失焦与档位
-            return Math.round(cur * (touch ? 0.3 : 0.45));
+            return Math.round(cur * (isTouchDevice() ? (this.keyboardOpen ? 0.24 : 0.32) : 0.45));
         },
         /**
-         * v1.3.3：**静止基准** —— 打开弹窗那一刻的可见视口高度。
+         * 静止基准 —— 键盘收起时的可见视口高度。
          *
-         * 上一版把 `--mp-editor-min` 按「当前视口」写变量，聚焦弹键盘时变量被改小，
-         * 失焦后没有任何地方把它改回来：CSS 的 min-height 一直停在键盘态的小值，
-         * 于是输入框回不到打开时的高度。现在变量只认静止基准，键盘态的高度
-         * 只由 JS 写行内 height（见 syncEditorHeight），失焦自然恢复。
+         * 不直接用 currentViewportPx()：键盘收起有 200~300ms 动画，
+         * 这期间读到的还是矮值；而 openedViewportPx 记的是历史最大值，永远是「纯页面」的高度。
          */
         restingViewportPx() {
             return this.openedViewportPx || this.currentViewportPx();
@@ -778,24 +767,33 @@ export default {
         restingMinPx() {
             const h = this.restingViewportPx();
             if (!h) return 0;
-            return Math.round(h * (isTouchDevice() ? 0.3 : 0.45));
+            return Math.round(h * (isTouchDevice() ? 0.32 : 0.45));
+        },
+        /**
+         * 判定软键盘是否弹起（与笔记页「反向链接栏随键盘收起」同一套口径）。
+         *
+         * 只看可见视口相对**历史最大高度**的跌幅：
+         *   · 软键盘一般吃掉 35%~50% 的高度，阈值取 0.82 足够稳；
+         *   · 地址栏收起/展开、旋屏只有 5%~10% 的变化，不会误判；
+         *   · 再加一条绝对值门槛（≥110px），避免小屏上的抖动被当成键盘。
+         * 判完顺手把基准抬到新的最大值，用户换方向或换浏览器都不会算偏。
+         */
+        detectKeyboard() {
+            if (typeof window === 'undefined') return;
+            const vh = this.currentViewportPx();
+            if (!vh) return;
+            if (!this._maxVh || vh > this._maxVh) this._maxVh = vh;
+            if (!this.openedViewportPx || vh > this.openedViewportPx) this.openedViewportPx = vh;
+            const drop = this._maxVh - vh;
+            const next = drop >= 110 && vh < this._maxVh * 0.82;
+            if (this.keyboardOpen !== next) this.keyboardOpen = next;
         },
         /** 把算出来的下限写进 CSS 变量（.mp-editor-wrap / .mp-textarea 都读它） */
         updateEditorMin() {
             const body = this.$refs.bodyEl;
             if (!body) return;
-            /*
-             * v1.3.2：失焦状态下视口变大（软键盘收起 / 旋屏），说明「正常视口」变了，
-             * 把它记成新的基准；视口变小则多半是键盘又弹起来了，不能覆盖基准值。
-             */
-            if (!this.editorFocused) {
-                const cur = this.currentViewportPx();
-                if (cur && (!this.openedViewportPx || cur > this.openedViewportPx * 0.95)) {
-                    this.openedViewportPx = cur;
-                }
-            }
-            // v1.3.3：变量恒用静止基准，不再随软键盘缩小（否则失焦后回不去）
-            const px = this.restingMinPx();
+            this.detectKeyboard();
+            const px = this.editorMinPx();
             if (!px) return;
             body.style.setProperty('--mp-editor-min', `${px}px`);
             // 视口变了（键盘弹起 / 旋屏 / 地址栏收起）以后，上限也跟着变，重算一次内容高度
@@ -834,18 +832,14 @@ export default {
             }
         },
         /**
-         * v1.1.7：正文输入框允许用户从右下角自由拉伸。
-         * 原生 resize 只改 textarea 自己的行内高度，父容器不会跟着变高 ——
-         * 后面的附件 / 标签就会压到输入框上。这里在松手（或打字）后把父容器的
-         * min-height 同步成实际高度；低于默认下限时清空，交还给我们算出来的下限。
-         * v1.2.2.1：下限口径与 editorMinPx 同源（v1.2.4：触屏 30% / 桌面 45%），不再各算一套。
+         * 正文输入框的高度。
          *
-         * v1.3.1.1（需求）：**触屏设备改成随内容自动增高**。
-         *   · 内容没超过当前高度 → 保持 editorMinPx() 算出的下限（30%）；
-         *   · 内容超过 → 跟着内容长高，直到撞上「上限」；
-         *   · 上限：聚焦时是可见视口的 40%（再高会被软键盘顶出屏幕），
-         *          失焦时由页面决定（这里取可见视口的 80%，剩下的交给弹窗滚动）。
-         * 桌面端保持原样（固定高度 + 手动拖拽），需求只点名了移动端。
+         * 触屏设备（需求原文：最小值锁死、最大值随页面自适应）：
+         *   · 量出内容真正需要的高度 natural；
+         *   · 高度 = clamp(natural, 下限, 上限) —— 内容少时撑到下限，内容多时按内容长高；
+         *   · 上限：键盘弹起时是可见视口的 42%（再高会被键盘顶出屏幕），
+         *          键盘收起时是静止视口的 80%（剩下的交给弹窗滚动）。
+         * 桌面端保持原样（固定高度 + 手动拖拽）。
          */
         syncEditorHeight() {
             const el = this.$refs.textarea;
@@ -854,10 +848,6 @@ export default {
             const base = this.editorMinPx() || 180;
             if (!isTouchDevice()) {
                 if (!this.editorFocused) {
-                    /*
-                     * v1.3.3：失焦时把聚焦期间可能写入的临时高度全部清掉，
-                     * 交回 CSS（min-height 变量刚在 onEditorBlur 里恢复成静止口径）。
-                     */
                     el.style.height = '';
                     el.style.overflowY = '';
                     wrap.style.minHeight = '';
@@ -892,33 +882,34 @@ export default {
             // 撞到上限时内部滚动，用户仍然能看到自己写的最后一行
             el.style.overflowY = natural > max ? 'auto' : 'hidden';
         },
-        /** 触屏正文框的高度上限：聚焦 40%，失焦按页面给（留出标题/工具栏/底栏） */
+        /** 正文框的高度上限：键盘弹起时按当前视口，收起时按静止视口 */
         editorMaxPx() {
             if (typeof window === 'undefined') return 400;
-            const raw = this.currentViewportPx();
-            const cur = !this.editorFocused && this.openedViewportPx ? this.openedViewportPx : raw;
+            const cur = this.keyboardOpen ? this.currentViewportPx() : this.restingViewportPx();
             if (!cur) return 400;
-            return Math.round(cur * (this.editorFocused ? 0.4 : 0.8));
+            return Math.round(cur * (this.keyboardOpen ? 0.42 : 0.8));
         },
+        /**
+         * 聚焦 / 失焦只用来「催一次重算」，不再作为判断键盘的依据。
+         * 键盘动画期间视口是连续变化的，所以连补几个时间点，保证动画结束后一定重算到。
+         */
         onEditorFocus() {
             this.editorFocused = true;
             this.syncEditorHeight();
+            this.scheduleHeightSync();
         },
         onEditorBlur() {
             this.editorFocused = false;
-            // v1.3.3：先把 CSS 变量恢复成静止基准，再重算高度 —— 顺序反了会读到键盘态的小值
-            this.updateEditorMin();
             this.syncEditorHeight();
-            /*
-             * v1.3.2：软键盘收起有 200~300ms 动画，部分浏览器在这期间不派发
-             * visualViewport.resize。补一次延时重算，保证失焦后回到「刚打开」的高度。
-             */
-            if (this._blurTimer) window.clearTimeout(this._blurTimer);
-            this._blurTimer = window.setTimeout(() => {
-                this._blurTimer = null;
+            this.scheduleHeightSync();
+        },
+        /** 键盘弹出/收起是 200~300ms 的动画，分几个时间点各量一次（幂等，多量几次无副作用） */
+        scheduleHeightSync() {
+            if (this._kbTimers) this._kbTimers.forEach((t) => window.clearTimeout(t));
+            this._kbTimers = [80, 220, 380, 620].map((d) => window.setTimeout(() => {
+                this.detectKeyboard();
                 this.updateEditorMin();
-                this.syncEditorHeight();
-            }, 320);
+            }, d));
         },
         /** 重新打开弹窗时把上一次拉伸留下的行内高度清掉，回到默认下限起点 */
         resetEditorHeight() {
@@ -934,11 +925,14 @@ export default {
                 wrap.style.flex = '';
             }
             this.editorFocused = false;
+            // v1.3.3.3：键盘态与基准一起重置，否则下次打开会沿用上一轮的矮视口
+            this.keyboardOpen = false;
+            this._maxVh = 0;
         },
         onClosed() {
-            if (this._blurTimer) {
-                window.clearTimeout(this._blurTimer);
-                this._blurTimer = null;
+            if (this._kbTimers) {
+                this._kbTimers.forEach((t) => window.clearTimeout(t));
+                this._kbTimers = null;
             }
             // 关闭（含 Esc / 点遮罩 / 点取消）都留草稿；只有「发布成功」才跳过
             if (!this.skipDraftSave) this.saveDraft();

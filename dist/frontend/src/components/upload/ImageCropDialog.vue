@@ -174,6 +174,29 @@
                     <font-awesome-icon icon="arrows-up-down" class="crop-mode-icon" />{{ $t('uploadCrop.flipV') }}
                 </button>
             </div>
+        </div>
+
+        <!--
+            v1.3.1.1（需求）：原来这一整行「输出尺寸 + 左转 / 右转 / 度数 / 复位」被拆掉 ——
+            · 输出尺寸并进下面那行提示文字（信息还在，只是不单独占一行）；
+            · 左转 / 右转 / 度数挪到底部「取消」按钮左侧；
+            · 「复位」按钮取消（重置统一走右上角的「重置」）。
+        -->
+        <!--
+            v1.3.1.2（需求）：这一行只保留「输出尺寸：xxx × xxx px」。
+            原来跟在后面的操作提示（怎么画笔、怎么遮挡…）全部去掉 ——
+            工具本身已经足够直观，多余的文字只占高度。
+        -->
+        <!--
+            v1.3.3.3（需求：选中画笔 / 文字 / 箭头 / 椭圆 / 矩形 / 马赛克后出现的附属选项，
+            要放在「输出尺寸：… px」提示行的后面）
+            原来这一组（颜色 / 粗细 / 字号）单独占一行，与输出尺寸一行上下分家，
+            高度多一行、视线还要来回跳。现在并到同一行，跟在尺寸文字后面。
+        -->
+        <div v-if="outputSize" class="crop-hint">
+            <span class="crop-size">{{ $t('uploadCrop.outputSize', { w: outputSize.w, h: outputSize.h }) }}</span>
+            <!-- v1.3.3（需求）：只有转过角度才显示，未旋转不占位 -->
+            <span v-if="rotation" class="crop-angle-inline">{{ rotation }}°</span>
             <div class="crop-paint" v-if="tool !== 'crop' || annotations.length">
                 <span class="crop-swatches">
                     <button
@@ -214,23 +237,6 @@
                 -->
             </div>
         </div>
-
-        <!--
-            v1.3.1.1（需求）：原来这一整行「输出尺寸 + 左转 / 右转 / 度数 / 复位」被拆掉 ——
-            · 输出尺寸并进下面那行提示文字（信息还在，只是不单独占一行）；
-            · 左转 / 右转 / 度数挪到底部「取消」按钮左侧；
-            · 「复位」按钮取消（重置统一走右上角的「重置」）。
-        -->
-        <!--
-            v1.3.1.2（需求）：这一行只保留「输出尺寸：xxx × xxx px」。
-            原来跟在后面的操作提示（怎么画笔、怎么遮挡…）全部去掉 ——
-            工具本身已经足够直观，多余的文字只占高度。
-        -->
-        <p v-if="outputSize" class="crop-hint">
-            <span class="crop-size">{{ $t('uploadCrop.outputSize', { w: outputSize.w, h: outputSize.h }) }}</span>
-            <!-- v1.3.3（需求）：只有转过角度才显示，未旋转不占位 -->
-            <span v-if="rotation" class="crop-angle-inline">{{ rotation }}°</span>
-        </p>
 
         <template #footer>
             <!--
@@ -1575,10 +1581,17 @@ export default {
     display: flex;
     align-items: center;
     gap: 8px;
+    /* v1.3.3.3：附属选项并进来以后，窄屏允许折行，不会把尺寸文字挤没 */
+    flex-wrap: wrap;
     margin: 6px 0 0;
     font-size: 12px;
     line-height: 1.5;
     color: var(--el-text-color-secondary);
+}
+.crop-hint .crop-paint {
+    /* 与「输出尺寸」文字之间留一点呼吸，不贴在一起 */
+    margin-left: 6px;
+    gap: 8px;
 }
 .crop-hint-text {
     min-width: 0;

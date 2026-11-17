@@ -51,9 +51,6 @@
                 <button v-if="isMobile" type="button" class="memo-icon-btn" :title="$t('memo.folders')" @click="treeDrawer = true">
                     <font-awesome-icon icon="folder-tree" />
                 </button>
-                <button type="button" class="memo-icon-btn" :title="$t('memo.newNote')" @click="createNote">
-                    <font-awesome-icon icon="plus" />
-                </button>
                 <button type="button" class="memo-icon-btn" :title="$t('memo.editorSettings')" @click="openSettings">
                     <!-- v1.3.3.2（需求）：两个齿轮（cogs）太容易和「系统设置」混，换成滑杆 -->
                     <font-awesome-icon icon="sliders-h" />
@@ -67,6 +64,7 @@
                 v-if="!isMobile"
                 class="memo-col memo-col-tree"
                 :style="{ flexBasis: `${treeWidth}px`, maxWidth: `${treeWidth}px` }"
+                @contextmenu.prevent
             >
                 <MemoTree v-model:active="activeFolder" :instance-id="instanceId" @loaded="onTreeLoaded" />
                 <!--
@@ -85,6 +83,7 @@
                 v-show="!isMobile || !editingId"
                 class="memo-col memo-col-list"
                 :style="isMobile ? null : { flexBasis: `${listWidth}px`, maxWidth: `${listWidth}px` }"
+                @contextmenu.prevent
             >
                 <MemoList
                     ref="list"
@@ -134,7 +133,10 @@
 
         <!-- 移动端目录抽屉（v1.3.1：78% → 90%，目录名长了也能看全） -->
         <el-drawer v-if="isMobile" v-model="treeDrawer" direction="ltr" size="90%" :with-header="false">
-            <MemoTree v-model:active="activeFolderDrawer" :instance-id="instanceId" @loaded="onTreeLoaded" />
+            <!-- v1.3.3.3（需求）：移动端抽屉里的目录栏同样屏蔽原生右键（长按）菜单 -->
+            <div class="memo-tree-drawer-body" @contextmenu.prevent>
+                <MemoTree v-model:active="activeFolderDrawer" :instance-id="instanceId" @loaded="onTreeLoaded" />
+            </div>
         </el-drawer>
 
         <!--
@@ -168,14 +170,24 @@
                     并在最下方显示刚复制的是哪一个（方便直接粘进上面的配置框）。
                 -->
                 <p class="ms-tip ms-avail">{{ $t('memo.toolbarAvail') }}：</p>
+                <!--
+                    v1.3.3.3（需求）：悬停 / 点击工具名都要能看见它的中文名称。
+                    工具名本身是配置里要填的英文标识，光看 `pasteEscaped` 猜不出是「转义粘贴」。
+                -->
                 <div class="ms-token-list">
-                    <button
+                    <el-tooltip
                         v-for="tk in availableToolList"
                         :key="'tk-' + tk"
-                        type="button"
-                        class="ms-token"
-                        @click="copyToken(tk)"
-                    >{{ tk }}</button>
+                        :content="tokenLabel(tk)"
+                        placement="top"
+                        :show-after="120"
+                    >
+                        <button
+                            type="button"
+                            class="ms-token"
+                            @click="copyToken(tk)"
+                        >{{ tk }}</button>
+                    </el-tooltip>
                 </div>
                 <p class="ms-copied">{{ copiedTool ? $t('memo.tokenCopied', { name: copiedTool }) : $t('memo.tokenCopyTip') }}</p>
             </div>
@@ -478,12 +490,19 @@ export default {
         });
         this.fetchInstances();
         await this.loadSettings();
+        // v1.3.3.3：量一次顶栏真实高度（收起时按它精确上移，不留间隔行）
+        this.$nextTick(() => this.setupTopbarMetrics());
         // 深链：/memo?id=xxx 直接打开某篇（分享链接、刷新后恢复）
         const id = String(this.$route?.query?.id || '');
         if (id) await this.openNote(id);
     },
     beforeUnmount() {
         window.removeEventListener('resize', this.syncViewport);
+        if (this._tbRO) {
+            this._tbRO.disconnect();
+            this._tbRO = null;
+        }
+        this.restorePageTheme();
         const el = this.$refs.pageEl;
         if (el) el.removeEventListener('scroll', this.onPageScroll, true);
         // 兜底是全局单例，离开页面必须摘掉 —— 否则别的页面按 Esc 会莫名其妙没反应
@@ -492,6 +511,52 @@ export default {
     methods: {
         syncViewport() {
             this.isMobile = window.innerWidth <= 900;
+        },
+        /** v1.3.3.3：把顶栏真实高度写进 --memo-tb-h（顶栏收起时按它精确上移） */
+        setupTopbarMetrics() {
+            const el = this.$refs.pageEl;
+            const bar = el && el.querySelector('.memo-topbar');
+            if (!bar) return;
+            const apply = () => {
+                const h = Math.round(bar.getBoundingClientRect().height);
+                if (h > 0) el.style.setProperty('--memo-tb-h', `${h}px`);
+            };
+            apply();
+            if (this._tbRO) this._tbRO.disconnect();
+            if (typeof ResizeObserver !== 'undefined') {
+                this._tbRO = new ResizeObserver(apply);
+                this._tbRO.observe(bar);
+            }
+        },
+        /**
+         * v1.3.3.3（需求：配色模式要和「跟随全局」时完全一致，且只影响 /memo）
+         *
+         * 做法不是「再抄一份深色变量」—— 抄出来的色值永远会和全局主题慢慢跑偏
+         * （上一版就是这样：页面用了 #16181d，全局是 #2B2B2B，观感对不上）。
+         * 这里直接把全局主题用的那个 `html.dark` 类按设置加上 / 去掉：
+         *   · 设置=黑夜 → 加 dark（与全局深色完全同一套变量）
+         *   · 设置=白天 → 去 dark（与全局浅色完全同一套变量）
+         *   · 跟随全局 → 还原成进来之前的状态
+         * 因为只在本页停留期间生效，离开时 beforeUnmount 会还原，不会污染其它页面。
+         */
+        applyPageTheme() {
+            if (typeof document === 'undefined') return;
+            const html = document.documentElement;
+            const t = this.editorSettings?.theme;
+            const wasDark = this._themeWasDark === undefined
+                ? html.classList.contains('dark')
+                : this._themeWasDark;
+            if (this._themeWasDark === undefined) this._themeWasDark = wasDark;
+            if (t === 'dark') html.classList.add('dark');
+            else if (t === 'light') html.classList.remove('dark');
+            else if (wasDark) html.classList.add('dark');
+            else html.classList.remove('dark');
+        },
+        restorePageTheme() {
+            if (typeof document === 'undefined') return;
+            if (this._themeWasDark === undefined) return;
+            document.documentElement.classList.toggle('dark', this._themeWasDark);
+            this._themeWasDark = undefined;
         },
         onTreeLoaded(payload) {
             this.folders = payload?.folders || [];
@@ -615,8 +680,8 @@ export default {
             const last = el.__memoLastTop ?? 0;
             el.__memoLastTop = top;
             const down = top > last;
-            // 距顶部 200px 以内：顶栏始终显示（刚进页面、刚回到开头都该看到导航）
-            if (top < 200) {
+            // v1.3.3.3（需求）：距顶部 100px 以内才显示顶栏，其它位置的向上滚动保持隐藏
+            if (top < 100) {
                 if (this.topbarHidden) this.topbarHidden = false;
                 return;
             }
@@ -633,7 +698,7 @@ export default {
             if (Math.abs(top - last) < 8) return;
             /*
              * 只处理「正滚」：向下滚就收起。
-             * 回滚不做任何展开动作 —— 需求写得很清楚：只有滚到距顶部 200px 以内才显示，
+             * 回滚不做任何展开动作 —— 需求写得很清楚：只有滚到距顶部 100px 以内才显示，
              * 其它位置的向上滚动保持隐藏。这样也不会出现「展开→高度变化→再触发滚动」
              * 的振荡回路（顶栏收起/展开会改变滚动容器高度，这是上一版闪烁的根源）。
              */
@@ -762,6 +827,8 @@ export default {
                     },
                 };
             }
+            // v1.3.3.3：设置到位后立刻应用配色模式（黑夜/白天 = 全局那一套配色）
+            this.applyPageTheme();
         },
         /** v1.3.3：拖动目录栏右边框改宽度 */
         startTreeResize(e) {
@@ -848,6 +915,32 @@ export default {
             this.settingsVisible = true;
         },
         /** v1.3.2：点工具名 → 复制，并在列表下方回显 */
+        /**
+         * v1.3.3.3（需求）：工具名 → 中文名称。
+         * 大多数工具名就是 `memo.tool` + 首字母大写（toolBold / toolPasteEscaped…），
+         * 少数历史命名不一致的单独列出来，避免为了显示一个名字去改一整套 i18n 键。
+         */
+        tokenLabel(tk) {
+            const key = `memo.tool${tk.charAt(0).toUpperCase()}${tk.slice(1)}`;
+            if (this.$te(key)) return this.$t(key);
+            const alias = {
+                bulletList: 'memo.toolBullet',
+                orderedList: 'memo.toolOrdered',
+                taskList: 'memo.toolTask',
+                blockquote: 'memo.toolQuote',
+                hardBreak: 'memo.toolLineBreak',
+                tableAddRow: 'memo.tblAddRow',
+                tableAddCol: 'memo.tblAddCol',
+                tableDelRow: 'memo.tblDelRow',
+                tableDelCol: 'memo.tblDelCol',
+                tableMerge: 'memo.tblMerge',
+                tableSplit: 'memo.tblSplit',
+                tableDelete: 'memo.tblDelete',
+                tableAddRowBefore: 'memo.tblAddRowBefore',
+                tableAddColBefore: 'memo.tblAddColBefore',
+            };
+            return alias[tk] && this.$te(alias[tk]) ? this.$t(alias[tk]) : tk;
+        },
         async copyToken(name) {
             const text = String(name || '');
             if (!text) return;
@@ -864,9 +957,12 @@ export default {
                     document.execCommand('copy');
                     document.body.removeChild(ta);
                 }
-                this.copiedTool = text;
+                // v1.3.3.3（需求）：点击也要能看见功能名 —— 回显带上中文名称
+                const label = this.tokenLabel(text);
+                this.copiedTool = label && label !== text ? `${text}（${label}）` : text;
             } catch (e) {
-                this.copiedTool = text;
+                const label = this.tokenLabel(text);
+                this.copiedTool = label && label !== text ? `${text}（${label}）` : text;
             }
         },
         async saveSettings() {
@@ -909,6 +1005,8 @@ export default {
                 });
                 this.editorSettings = { ...editor };
                 this.settingsVisible = false;
+                // v1.3.3.3：保存后立刻生效（不必刷新页面）
+                this.applyPageTheme();
                 ElMessage.success(this.$t('memo.settingsSaved'));
             } catch (e) {
                 ElMessage.error(e?.response?.data?.message || this.$t('memo.saveFail'));
@@ -921,6 +1019,13 @@ export default {
 </script>
 
 <style scoped>
+/* v1.3.3.3：移动端目录抽屉的内层容器要撑满，否则目录树滚不到底 */
+.memo-tree-drawer-body {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
 .memo-page {
     display: flex;
     flex-direction: column;
@@ -928,6 +1033,8 @@ export default {
     height: 100dvh;
     background: var(--el-bg-color-page);
     overflow: hidden;
+    /* v1.3.3.3（需求）：整页同样不参与滚动链，避免把底层背景拖出来 */
+    overscroll-behavior: none;
 }
 .memo-topbar {
     flex: 0 0 auto;
@@ -938,40 +1045,12 @@ export default {
     background: var(--el-bg-color);
     border-bottom: 1px solid var(--el-border-color-lighter);
 }
-/* ── v1.3.1.2：配色模式联动整页（仅笔记管理页） ───────────────────
-   只在编辑器设置选了白天 / 黑夜时挂类；「跟随全局」不加类，走全站变量。
-   覆盖的是页面骨架用到的那几个变量 —— 目录栏、列表栏、顶栏、分隔线、hover 底色，
-   这样三栏与编辑器不会一半黑一半白。 */
-.memo-page.page-theme-dark {
-    --el-bg-color: #16181d;
-    --el-bg-color-page: #101216;
-    --el-bg-color-overlay: #1f2228;
-    --el-fill-color-blank: #16181d;
-    --el-fill-color-light: #23262d;
-    --el-fill-color-lighter: #1b1e24;
-    --el-text-color-primary: #e6e8ec;
-    --el-text-color-regular: #c3c7cf;
-    --el-text-color-secondary: #8f96a3;
-    --el-text-color-placeholder: #6b7280;
-    --el-border-color: #2f333b;
-    --el-border-color-light: #2a2e36;
-    --el-border-color-lighter: #262a31;
-    background: var(--el-bg-color-page);
-}
-.memo-page.page-theme-light {
-    --el-bg-color: #ffffff;
-    --el-bg-color-page: #f6f7f9;
-    --el-bg-color-overlay: #ffffff;
-    --el-fill-color-blank: #ffffff;
-    --el-fill-color-light: #f2f3f5;
-    --el-fill-color-lighter: #f7f8fa;
-    --el-text-color-primary: #1f2329;
-    --el-text-color-regular: #4b5563;
-    --el-text-color-secondary: #6b7280;
-    --el-border-color: #dcdfe6;
-    --el-border-color-lighter: #e8eaee;
-    background: var(--el-bg-color-page);
-}
+/* ── 配色模式（v1.3.3.3 重做） ─────────────────────────────────────
+   上一版在这里抄了一份「深色变量」，色值和全局深色（html.dark）对不上，
+   于是切到黑夜模式时整页偏蓝黑、反差色难看。
+   现在改成 applyPageTheme() 直接切换 html.dark —— 与「跟随全局」时的深色
+   完全同一套变量，只在本页停留期间生效，离开即还原。
+   这里只保留类名（供需要时定位），不再覆盖任何变量。 */
 
 /* ── v1.3.1.1：顶栏随滚动显隐（下滑收起，上滑展开） ───────────── */
 .memo-topbar {
@@ -991,8 +1070,14 @@ export default {
     transition: margin-top 0.22s ease, opacity 0.18s ease;
 }
 .memo-page.is-topbar-hidden .memo-topbar {
-    /* 收起：整行上移自身高度（含 padding 与边框约 55px），下面的三栏随之上提 */
-    margin-top: -55px;
+    /*
+     * v1.3.3.3（需求：顶栏收起后顶部残留一条间隔行）
+     *
+     * 原来写死 -55px。顶栏真实高度随「页面切换下拉」的字体、内边距、边框变化，
+     * 一旦实测不是 55（比如 56），往上推 55 就正好留下 1px 的顶栏底色/边框 ——
+     * 肉眼就是顶上一道细线。现在高度由 JS 量出来写进 --memo-tb-h，推的距离永远精确。
+     */
+    margin-top: calc(-1 * var(--memo-tb-h, 55px) - 1px);
     opacity: 0;
     pointer-events: none;
 }

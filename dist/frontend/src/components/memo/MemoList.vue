@@ -41,7 +41,12 @@
                         <div v-if="n.excerpt" class="ml-item-excerpt">{{ n.excerpt }}</div>
                         <div class="ml-item-meta">
                             <span>{{ formatTime(n.updatedAt) }}</span>
-                            <span v-if="n.charCount">· {{ $t('memo.charUnit', { n: n.charCount }) }}</span>
+                            <!--
+                                v1.3.3.3（需求：字数只显示一个「字」）
+                                memo.charUnit 的值就是「字」，里面没有 {n} 占位符，
+                                所以传 n 进去也不会有数字。这里换成带占位符的 listChars。
+                            -->
+                            <span v-if="n.charCount" class="ml-item-chars">{{ $t('memo.listChars', { n: n.charCount }) }}</span>
                         </div>
                     </div>
                     <el-dropdown trigger="click" class="ml-item-more" @command="(cmd) => onCommand(cmd, n)" @click.stop>
@@ -348,6 +353,8 @@ export default {
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
+    /* v1.3.3.3（需求）：列表滚到底不外溢到页面 */
+    overscroll-behavior-y: contain;
     padding: 4px 6px 20px;
     /* v1.3.1.2（需求）：列表名称 / 摘要一律靠左 */
     text-align: left;
@@ -408,7 +415,10 @@ export default {
     font-size: 11px;
     color: var(--el-text-color-placeholder);
     display: flex;
+    /* v1.3.3.3（需求）：时间与字数同一基线、不换行 */
+    align-items: baseline;
     gap: 6px;
+    white-space: nowrap;
 }
 .ml-item-more {
     flex: 0 0 auto;

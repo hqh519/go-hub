@@ -1070,6 +1070,23 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1333',
+      title: '五十七、v1.3.3.3 更新要点',
+      intro: '这一版把笔记编辑器往「顺手」方向推了一大步：行号栏常显、列表与标题末尾各自有专属操作条、代码块带操作栏、输入几个符号就能出块；同时修掉了笔记管理页配色不跟随全局主题、顶栏收起后残留一条细线、回滚时吸附行狂闪这类观感问题。',
+      items: [
+        { t: '配色模式与全局一致', d: '编辑器设置里选「黑夜 / 白天」时，笔记管理页现在直接复用全局主题的那一套配色（同一个 html.dark 开关），不再是另抄一份色值，因此深色下不会再出现偏蓝黑的反差色。设置只在本页停留期间生效，离开自动还原，不影响其它页面。' },
+        { t: '顶栏收起不再留缝', d: '顶栏上移的距离改为按实测高度计算（此前写死 55px，与实际高度差一两像素就会在顶部留一条细线）。回滚时也只在距顶部 100px 以内才重新显示顶栏。' },
+        { t: '吸附不再闪烁', d: '回滚时工具栏 / 标题栏「吸住」的方向判定加了滞回：位移累计到 14px 才切换，1~2px 的抖动翻不动它。三种开关组合下的反复闪烁都随之消失。' },
+        { t: '标题行更紧凑 + 返回顶部', d: '标题行高度减了约 10px，文字上下等距居中；最右侧固定一个「返回顶部」按钮，一点就平滑滚回开头。' },
+        { t: '行号栏常显 + 列表可折叠', d: '行号一直显示（不再随鼠标显隐）、水平居中，悬停时底色加深。折叠箭头除标题外也支持任务 / 有序 / 无序列表：折叠后只收起下级列表。块操作菜单固定为「复制块ID / 复制此块 / 剪切此块 / 删除此块 / 下方插入空行」。' },
+        { t: '列表与标题的行末操作条', d: '光标停在列表项或标题文字末尾时，上方浮出一行专属操作：列表是增加/减少缩进、增加一行、删除本行、复制内容块、清除格式；标题是折叠展开、H2~H6、段落。' },
+        { t: '代码块带操作栏', d: '代码块左上角是折叠/展开箭头与语言名，右上角是语言下拉、自动换行、复制。语言写进 markdown 的 ```lang，往返不变。' },
+        { t: '符号即块', d: '输入 `:::`（全角`：：：`）加空格出提示块；`<>` 或`《》`加空格出行内代码；`{}` 加空格出代码块；输入 `【【` 直接打开引用搜索。列表里按 Tab / Shift+Tab 缩进与回退，任务列表的勾选框会跟着一起动。' },
+        { t: '媒体与文件', d: '视频去掉圆角；点击图片 / 视频 / 音频 / 文件后按左右方向键，光标落在文件右侧；四种媒体都能左中右对齐；移动端可以点选视频；灯箱右上角新增「详情」，手机上向下滑动也能进详情；详情页里复制链接的提示不会再被弹层盖住。' },
+        { t: '其它', d: '右侧右键菜单在桌面端改回竖排、字号与选中菜单一致；目录栏与列表栏屏蔽浏览器右键菜单；列表统计字数恢复显示；工具名的中文名称在设置页悬停与点击时都会提示；创建子文档：弹窗里新建一篇同目录笔记，确认后自动在光标处插入引用。' }
+      ]
+    },
+    {
       id: 'whatsnew-1332',
       title: '五十六、v1.3.3.2 更新要点',
       intro: '这一版把笔记编辑器里「位置」这一类问题一次收干净：行号栏改成按块矩形定位（图片 / 视频再也不会跑到行号上方）、三种浮层跟着页面滚动、选中菜单只认文本；同时修掉了 Docker 升级时把自家表误判成「外来表」而拒绝启动的问题。',
@@ -2197,6 +2214,23 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1333',
+      title: '57. What is new in v1.3.3.3',
+      intro: 'This release pushes the note editor further towards "just works": the gutter is always visible, lists and headings get their own end-of-line action bar, code blocks come with a toolbar, and a few typed symbols produce blocks. It also fixes visual issues such as the memo page not following the global theme, a thin line left behind when the top bar hides, and sticky rows flickering while scrolling back.',
+      items: [
+        { t: 'Colour mode matches the global theme', d: 'Choosing Dark or Light in the editor settings now reuses the exact global palette (the same html.dark switch) instead of a second set of hard-coded values, so dark mode no longer shows off-tone contrast colours. It only applies while you are on this page and is restored when you leave.' },
+        { t: 'No gap under the hidden top bar', d: 'The top bar now slides up by its measured height (it used to be a hard-coded 55px, which left a one-pixel line at the top). Scrolling back also reveals it only within 100px of the top.' },
+        { t: 'Sticky rows no longer flicker', d: 'The scroll direction that pins the toolbar and title row now has hysteresis: it flips only after 14px of accumulated movement, so 1-2px jitter cannot toggle it. The flicker is gone for all three switch combinations.' },
+        { t: 'Tighter title row and a back-to-top button', d: 'The title row is about 10px shorter and the text is vertically centred; a back-to-top button is pinned to its far right.' },
+        { t: 'Gutter always visible, lists foldable', d: 'Line numbers stay visible, are horizontally centred and darken on hover. The fold arrow now also works for task/ordered/bullet lists (collapsing nested lists). The block menu is fixed to Copy block ID / Copy / Cut / Delete / Insert line below.' },
+        { t: 'End-of-line action bars', d: 'When the caret sits at the end of a list item or a heading, a dedicated bar appears above it: indent, outdent, add row, delete row, copy block, clear formatting for lists; fold/unfold, H2-H6 and paragraph for headings.' },
+        { t: 'Code blocks with a toolbar', d: 'Collapse/expand and the language name on the left; language picker, soft wrap and copy on the right. The language is written into markdown as ```lang and survives round trips.' },
+        { t: 'Symbols become blocks', d: 'Type ::: plus space for a callout, <> or 《》 plus space for inline code, {} plus space for a code block, and 【【 opens the reference search. Tab / Shift+Tab indent and outdent inside lists, moving the checkbox along with the text.' },
+        { t: 'Media and files', d: 'Videos are no longer rounded; after clicking an image, video, audio or file the arrow keys park the caret to its right; all four media types support left/centre/right alignment; videos can be selected on mobile; the lightbox gained a Details button that also opens on swipe-down; copy confirmations inside the file details are no longer hidden behind layers.' },
+        { t: 'Other', d: 'The desktop context menu is a vertical list again with the same font size as the selection menu; the folder tree and note list suppress the browser context menu; the character count in the list is restored; tool names show their readable title on hover and on click; and Create sub-document creates a note in the same folder and inserts a reference at the cursor.' }
       ]
     },
     {

@@ -35,8 +35,8 @@
 </template>
 
 <script>
-/** 浮层最长边（与 FilePickerDialog 同一口径） */
-const PREVIEW_MAX = 300;
+/** 浮层最长边（v1.3.3.3 由 300 上调到 360；手机上还会按视口 84% 收） */
+const PREVIEW_MAX = 360;
 const PREVIEW_MIN = 120;
 const PREVIEW_MARGIN = 8;
 const PREVIEW_GAP = 8;
@@ -133,22 +133,29 @@ export default {
 
             const vw = window.innerWidth;
             const vh = window.innerHeight;
-            let w = PREVIEW_MAX;
-            let h = PREVIEW_MAX;
+            /*
+             * v1.3.3.3（需求：预览框还是太小）：
+             * 小屏（手机）上 300px 的最长边只占 390 视口的 3/4，看着仍然很小。
+             * 现在最长边取「min(360, 视口的 84%)」—— 手机上直接铺到接近满宽，
+             * 桌面上仍是 360 的克制尺寸，不会盖住半个屏幕。
+             */
+            const maxSide = Math.round(Math.min(PREVIEW_MAX, Math.max(200, Math.min(vw, vh) * 0.84)));
+            let w = maxSide;
+            let h = maxSide;
             if (ratio && Number.isFinite(ratio) && ratio > 0) {
                 if (ratio >= 1) {
-                    w = PREVIEW_MAX;
-                    h = Math.max(PREVIEW_MIN, Math.round(PREVIEW_MAX / ratio));
+                    w = maxSide;
+                    h = Math.max(PREVIEW_MIN, Math.round(maxSide / ratio));
                 } else {
-                    h = PREVIEW_MAX;
-                    w = Math.max(PREVIEW_MIN, Math.round(PREVIEW_MAX * ratio));
+                    h = maxSide;
+                    w = Math.max(PREVIEW_MIN, Math.round(maxSide * ratio));
                 }
             } else if (this.type === 'audio') {
                 w = 260;
                 h = 96;
             } else if (this.type === 'file') {
-                w = 240;
-                h = 120;
+                w = Math.min(280, maxSide);
+                h = Math.max(140, Math.round(w * 0.5));
             }
             w = Math.min(w, vw - PREVIEW_MARGIN * 2);
             h = Math.min(h, vh - PREVIEW_MARGIN * 2);
@@ -261,9 +268,10 @@ export default {
     background: #0b0b0b;
 }
 
+/* 铺满整个预览舞台（等比不变形）—— 缩略图尺寸偏小时也能看清 */
 .np-preview-media {
-    max-width: 100%;
-    max-height: 100%;
+    width: 100%;
+    height: 100%;
     object-fit: contain;
     border-radius: 6px;
     display: block;

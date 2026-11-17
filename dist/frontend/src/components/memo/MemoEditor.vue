@@ -74,14 +74,20 @@
                                 'is-active': toolsOf(token).active ? toolsOf(token).active(editor) : false,
                                 'is-tb-hidden': isTbHidden(li, ti),
                             }"
-                            :title="$t(toolsOf(token).label)"
+                            :title="token === 'foldAll' && foldAllActive ? $t('memo.toolUnfoldAll') : $t(toolsOf(token).label)"
                             @mousedown.prevent
                             @click="runTool(token, $event)"
                         >
                             <span v-if="token.startsWith('h') && /^h[1-6]$/.test(token)" class="me-hlabel">{{ token.toUpperCase() }}</span>
                             <span v-else-if="token === 'undo'" class="me-svg-icon" v-html="svgUndo"></span>
                             <span v-else-if="token === 'redo'" class="me-svg-icon" v-html="svgRedo"></span>
-                            <span v-else-if="token === 'codeBlock'" class="me-svg-icon" v-html="svgCode"></span>
+                            <span v-else-if="toolsOf(token).svgKey" class="me-svg-icon" v-html="svgOf(token)"></span>
+                            <span v-else-if="toolsOf(token).glyph" class="me-glyph-tool">{{ toolsOf(token).glyph }}</span>
+                            <!-- v1.3.3.3（需求）：折叠全部后按钮变成「展开全部」（向下箭头） -->
+                            <font-awesome-icon
+                                v-else-if="token === 'foldAll'"
+                                :icon="foldAllActive ? 'angles-down' : 'angles-up'"
+                            />
                             <font-awesome-icon v-else-if="toolsOf(token).icon" :icon="toolsOf(token).icon" />
                         </button>
                     </template>
@@ -91,7 +97,9 @@
                     -->
                     <el-dropdown
                         v-if="toolbarOverflowTools[li] && toolbarOverflowTools[li].length"
-                        trigger="click"
+                        :trigger="isTouchUi ? 'click' : 'hover'"
+                        :show-timeout="60"
+                        :hide-timeout="120"
                         placement="bottom-end"
                         class="me-toolbar-more"
                         @command="(cmd) => runTool(cmd)"
@@ -113,7 +121,14 @@
                     <span class="me-grow"></span>
                     <template v-if="li === toolbarLines.length - 1">
                         <!-- v1.3.2（需求）：三个模式按钮合并成一个文字下拉框 -->
-                        <el-dropdown trigger="click" placement="bottom-end" @command="setMode">
+                        <!-- v1.3.3.3（需求）：鼠标移到按钮上就展开下拉 -->
+                        <el-dropdown
+                            :trigger="isTouchUi ? 'click' : 'hover'"
+                            :show-timeout="60"
+                            :hide-timeout="120"
+                            placement="bottom-end"
+                            @command="setMode"
+                        >
                             <button type="button" class="me-btn me-mode-btn" :title="$t('memo.modeLabel')" @mousedown.prevent>
                                 <span class="me-mode-text">{{ modeLabel }}</span>
                                 <font-awesome-icon icon="caret-down" class="me-mode-caret" />
@@ -147,6 +162,20 @@
                         maxlength="200"
                         @input="onTitleInput"
                     />
+                    <!--
+                        v1.3.3.3（需求）：标题行最右侧固定一个「返回顶部」按钮。
+                        用固定定位外的 flex 末位 + margin-left:auto 实现「固定在最靠右」，
+                        不随工具栏折行或标题长短漂移。
+                    -->
+                    <button
+                        type="button"
+                        class="me-title-top"
+                        :title="$t('memo.backTop')"
+                        @mousedown.prevent
+                        @click="scrollBodyToTop"
+                    >
+                        <font-awesome-icon icon="arrow-up" />
+                    </button>
                 </div>
                 <!-- v1.3.3.2：辅助栏不再参与吸附（需求已移除该开关），保持普通跟随滚动 -->
                 <div class="me-meta">
@@ -218,7 +247,7 @@
                     :style="{ top: `${row.top}px` }"
                 >
                     <button
-                        v-if="row.level > 0"
+                        v-if="row.foldable"
                         type="button"
                         class="me-gutter-fold"
                         :class="{ 'is-folded': row.folded }"
@@ -342,7 +371,9 @@
                         @mouseenter="slash.index = i; slash.sub = null"
                         @click="applySlash(cmd)"
                     >
-                    <font-awesome-icon :icon="cmd.icon" class="me-slash-icon" />
+                    <span v-if="cmd.svgKey" class="me-svg-icon me-slash-icon" v-html="svgOf(cmd.id)"></span>
+                    <span v-else-if="cmd.glyph" class="me-glyph-tool me-slash-icon">{{ cmd.glyph }}</span>
+                    <font-awesome-icon v-else :icon="cmd.icon" class="me-slash-icon" />
                     <span class="me-slash-label">{{ $t(cmd.label) }}</span>
                         <span class="me-slash-hint">{{ cmd.hint }}</span>
                     </div>
@@ -365,7 +396,9 @@
                     class="me-slash-item"
                     @click.stop="applySlash(c)"
                 >
-                    <font-awesome-icon v-if="c.icon" :icon="c.icon" class="me-slash-icon" />
+                    <span v-if="c.svgKey" class="me-svg-icon me-slash-icon" v-html="svgOf(c.id)"></span>
+                    <span v-else-if="c.glyph" class="me-glyph-tool me-slash-icon">{{ c.glyph }}</span>
+                    <font-awesome-icon v-else-if="c.icon" :icon="c.icon" class="me-slash-icon" />
                     <span class="me-slash-label">{{ $t(c.label) }}</span>
                     <span class="me-slash-hint">{{ c.hint }}</span>
                 </div>
@@ -405,7 +438,7 @@
             <div v-if="bubble.open" ref="bubbleEl" class="me-bubble" :style="bubble.style" @mousedown.prevent>
                 <template v-for="(it, i) in selItems" :key="`sel-${i}`">
                     <span v-if="it.sep" class="me-bub-sep"></span>
-                    <el-dropdown v-else-if="it.id === 'heading'" trigger="click" placement="top-start" @command="(c) => runTool(c)">
+                    <el-dropdown v-else-if="it.id === 'heading'" :trigger="isTouchUi ? 'click' : 'hover'" :show-timeout="60" :hide-timeout="140" placement="top-start" @command="(c) => runTool(c)">
                         <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubHeading')">
                             <span class="me-bub-head">H</span>
                             <font-awesome-icon icon="caret-down" class="me-bub-caret" />
@@ -422,7 +455,7 @@
                             </el-dropdown-menu>
                         </template>
                     </el-dropdown>
-                    <el-dropdown v-else-if="it.id === 'align'" trigger="click" placement="top-start" @command="(c) => runTool(c)">
+                    <el-dropdown v-else-if="it.id === 'align'" :trigger="isTouchUi ? 'click' : 'hover'" :show-timeout="60" :hide-timeout="140" placement="top-start" @command="(c) => runTool(c)">
                         <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubAlign')">
                             <font-awesome-icon icon="align-left" />
                             <font-awesome-icon icon="caret-down" class="me-bub-caret" />
@@ -435,7 +468,7 @@
                             </el-dropdown-menu>
                         </template>
                     </el-dropdown>
-                    <el-dropdown v-else-if="it.id === 'fontSize'" trigger="click" placement="top-start" @command="setFontSize">
+                    <el-dropdown v-else-if="it.id === 'fontSize'" :trigger="isTouchUi ? 'click' : 'hover'" :show-timeout="60" :hide-timeout="140" placement="top-start" @command="setFontSize">
                         <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubFontSize')">
                             <span class="me-bub-font">A</span>
                             <font-awesome-icon icon="caret-down" class="me-bub-caret" />
@@ -449,8 +482,10 @@
                             </el-dropdown-menu>
                         </template>
                     </el-dropdown>
-                    <el-dropdown v-else-if="it.id === 'textColor'" trigger="click" placement="top-start" @command="setTextColor">
+                    <el-dropdown v-else-if="it.id === 'textColor'" :trigger="isTouchUi ? 'click' : 'hover'" :show-timeout="60" :hide-timeout="140" placement="top-start" @command="setTextColor">
                         <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubColor')">
+                            <!-- v1.3.3.3（需求：颜色按钮没有图标）—— 一个带色条的 A，一眼看出是文字颜色 -->
+                            <span class="me-bub-color-a">A</span>
                             <span class="me-bub-color-preview"></span>
                             <font-awesome-icon icon="caret-down" class="me-bub-caret" />
                         </button>
@@ -481,6 +516,8 @@
                         @click="runTool(it.id)"
                     >
                         <span v-if="bubLetter(it.id)" class="me-bub-letter">{{ bubLetter(it.id) }}</span>
+                        <span v-else-if="it.svgKey" class="me-svg-icon" v-html="svgOf(it.id)"></span>
+                        <span v-else-if="it.glyph" class="me-glyph-tool">{{ it.glyph }}</span>
                         <font-awesome-icon v-else-if="it.icon" :icon="it.icon" />
                         <span v-else>{{ it.id }}</span>
                     </button>
@@ -558,13 +595,16 @@
                 </template>
             </div>
 
-            <!-- 左侧行级栏的块操作菜单（v1.3.1.2） -->
+            <!-- 左侧行级栏的块操作菜单（v1.3.3.3：按需求固定为这五项） -->
             <div
                 v-if="gutterMenu.open"
                 class="me-ctx me-gutter-menu"
                 :style="{ left: `${gutterMenu.x}px`, top: `${gutterMenu.y}px` }"
                 @mousedown.stop
             >
+                <button type="button" class="me-ctx-item" @click="gutterAction('copyId')">
+                    <font-awesome-icon icon="hashtag" class="me-ctx-icon" /><span>{{ $t('memo.gutterCopyId') }}</span>
+                </button>
                 <button type="button" class="me-ctx-item" @click="gutterAction('copy')">
                     <font-awesome-icon icon="copy" class="me-ctx-icon" /><span>{{ $t('memo.ctxCopy') }}</span>
                 </button>
@@ -574,15 +614,9 @@
                 <button type="button" class="me-ctx-item" @click="gutterAction('delete')">
                     <font-awesome-icon icon="trash" class="me-ctx-icon" /><span>{{ $t('memo.ctxDelete') }}</span>
                 </button>
-                <button type="button" class="me-ctx-item" @click="gutterAction('duplicate')">
-                    <font-awesome-icon icon="clone" class="me-ctx-icon" /><span>{{ $t('memo.gutterDuplicate') }}</span>
-                </button>
+                <div class="me-ctx-sep"></div>
                 <button type="button" class="me-ctx-item" @click="gutterAction('insertAfter')">
                     <font-awesome-icon icon="plus" class="me-ctx-icon" /><span>{{ $t('memo.gutterInsertAfter') }}</span>
-                </button>
-                <div class="me-ctx-sep"></div>
-                <button type="button" class="me-ctx-item" @click="gutterAction('annotate')">
-                    <font-awesome-icon icon="comment-dots" class="me-ctx-icon" /><span>{{ $t('memo.ctxAnnotate') }}</span>
                 </button>
             </div>
 
@@ -635,6 +669,68 @@
         </Teleport>
 
         <!--
+            v1.3.3.3（需求）：列表 / 标题末尾的行级操作条。
+            ------------------------------------------------------------------
+            光标停在列表项或标题的**文字末尾**时，在光标上方浮出一行操作：
+              · 列表：增加缩进 / 减少缩进 / 增加一行 / 删除本行 / 复制内容块 / 清除格式；
+              · 标题：折叠展开 / h2~h6 / 段落。
+            这类操作都是「对当前这一整行」，放工具栏里反而要先回顶部找按钮。
+        -->
+        <Teleport to="body">
+            <div
+                v-if="lineBar.open"
+                class="me-linebar"
+                :class="{ 'is-list': lineBar.kind === 'list' }"
+                :style="lineBar.style"
+                @mousedown.prevent
+            >
+                <div class="me-linebar-scroll">
+                    <template v-if="lineBar.kind === 'list'">
+                        <button type="button" class="me-btn" :title="$t('memo.listAddIndent')" @click="lineAction('indent')">
+                            <font-awesome-icon icon="indent" />
+                        </button>
+                        <button type="button" class="me-btn" :title="$t('memo.listDelIndent')" @click="lineAction('outdent')">
+                            <font-awesome-icon icon="outdent" />
+                        </button>
+                        <span class="me-sep"></span>
+                        <button type="button" class="me-btn" :title="$t('memo.listAddRow')" @click="lineAction('addRow')">
+                            <font-awesome-icon icon="plus" />
+                        </button>
+                        <button type="button" class="me-btn" :title="$t('memo.listDelRow')" @click="lineAction('delRow')">
+                            <font-awesome-icon icon="minus" />
+                        </button>
+                        <span class="me-sep"></span>
+                        <button type="button" class="me-btn" :title="$t('memo.listCopyBlock')" @click="lineAction('copyBlock')">
+                            <font-awesome-icon icon="copy" />
+                        </button>
+                        <button type="button" class="me-btn" :title="$t('memo.listClearFormat')" @click="lineAction('clearFormat')">
+                            <font-awesome-icon icon="eraser" />
+                        </button>
+                    </template>
+                    <template v-else>
+                        <button
+                            type="button"
+                            class="me-btn"
+                            :title="lineBar.folded ? $t('memo.headUnfold') : $t('memo.headFold')"
+                            @click="lineAction('fold')"
+                        >
+                            <font-awesome-icon :icon="lineBar.folded ? 'angles-down' : 'angles-up'" />
+                        </button>
+                        <span class="me-sep"></span>
+                        <button v-for="lv in 5" :key="`lb-h${lv + 1}`" type="button" class="me-btn me-hbtn" @click="lineAction('h' + (lv + 1))">
+                            <span class="me-hlabel">H{{ lv + 1 }}</span>
+                        </button>
+                        <span class="me-sep"></span>
+                        <button type="button" class="me-btn" :title="$t('memo.bubParagraph')" @click="lineAction('paragraph')">
+                            <font-awesome-icon icon="paragraph" />
+                        </button>
+                    </template>
+                </div>
+                <span class="me-linebar-arrow" aria-hidden="true"></span>
+            </div>
+        </Teleport>
+
+        <!--
             光标工具栏（v1.3.1.2）
             · 与光标同一行，左侧一个指向光标的小三角 —— 一眼看出「这条是对当前这一行的」；
             · 移动端可左右滑动（工具再多也不会换行把正文顶下去）；
@@ -653,7 +749,9 @@
                     <template v-for="(t, ti) in inputTools" :key="`ib-${ti}`">
                         <el-dropdown
                             v-if="isGroupToken(t)"
-                            trigger="click"
+                            :trigger="isTouchUi ? 'click' : 'hover'"
+                            :show-timeout="60"
+                            :hide-timeout="120"
                             placement="bottom-start"
                             @command="(cmd) => runTool(cmd)"
                         >
@@ -680,7 +778,8 @@
                             <span v-if="/^h[1-6]$/.test(t)" class="me-hlabel">{{ t.toUpperCase() }}</span>
                             <span v-else-if="t === 'undo'" class="me-svg-icon" v-html="svgUndo"></span>
                             <span v-else-if="t === 'redo'" class="me-svg-icon" v-html="svgRedo"></span>
-                            <span v-else-if="t === 'codeBlock'" class="me-svg-icon" v-html="svgCode"></span>
+                            <span v-else-if="toolsOf(t).svgKey" class="me-svg-icon" v-html="svgOf(t)"></span>
+                            <span v-else-if="toolsOf(t).glyph" class="me-glyph-tool">{{ toolsOf(t).glyph }}</span>
                             <font-awesome-icon v-else-if="toolsOf(t).icon" :icon="toolsOf(t).icon" />
                         </button>
                     </template>
@@ -736,7 +835,21 @@
         </el-dialog>
 
         <!-- 查找替换（v1.3.1.2） -->
-        <el-dialog v-model="findDlg.visible" :title="$t('memo.toolFindReplace')" width="480px" append-to-body>
+        <!--
+            v1.3.3.3（需求：增加「查找」按钮与查找定位）
+            改成非模态 + 可拖动：定位到某一处时要能同时看见正文，
+            模态遮罩会把编辑区整块盖住，等于「定位了但看不见」。
+        -->
+        <el-dialog
+            v-model="findDlg.visible"
+            :title="$t('memo.toolFindReplace')"
+            width="480px"
+            append-to-body
+            :modal="false"
+            :close-on-click-modal="false"
+            draggable
+            class="me-find-dialog"
+        >
             <div class="me-find">
                 <el-input v-model="findDlg.find" :placeholder="$t('memo.findWhat')" clearable @input="countMatches" />
                 <el-input v-model="findDlg.replace" :placeholder="$t('memo.replaceWith')" clearable />
@@ -746,6 +859,7 @@
                 </p>
             </div>
             <template #footer>
+                <el-button size="small" type="primary" plain @click="findNext">{{ $t('memo.findNext') }}</el-button>
                 <el-button size="small" @click="countMatches">{{ $t('memo.findCountBtn') }}</el-button>
                 <el-button size="small" @click="replaceOne">{{ $t('memo.replaceOne') }}</el-button>
                 <el-button size="small" type="primary" @click="replaceAll">{{ $t('memo.replaceAll') }}</el-button>
@@ -770,6 +884,34 @@
                 <el-button size="small" @click="mdToHtmlNow">{{ $t('memo.mdToHtml') }}</el-button>
                 <el-button size="small" type="primary" plain @click="applyHtmlMdToEditor">{{ $t('memo.applyToEditor') }}</el-button>
                 <el-button size="small" @click="htmlDlg.visible = false">{{ $t('common.close') }}</el-button>
+            </template>
+        </el-dialog>
+
+        <!--
+            v1.3.3.3（需求）：创建子文档并引用。
+            弹出一个小笔记页（标题 + 正文），确认后：
+              1) 在当前笔记的**同一目录**下创建这篇笔记；
+              2) 把它的引用插到刚才的光标位置。
+            光标位置先存下来 —— 弹窗期间焦点离开编辑器，选区会变。
+        -->
+        <el-dialog
+            v-model="subDoc.visible"
+            :title="$t('memo.subDoc')"
+            width="620px"
+            append-to-body
+            class="me-subdoc-dialog"
+        >
+            <p class="me-subdoc-hint">{{ $t('memo.subDocHint') }}</p>
+            <el-input v-model="subDoc.title" :placeholder="$t('memo.subDocTitle')" maxlength="200" />
+            <textarea
+                v-model="subDoc.content"
+                class="me-subdoc-text"
+                spellcheck="false"
+                :placeholder="$t('notes.contentPlaceholder')"
+            ></textarea>
+            <template #footer>
+                <el-button @click="subDoc.visible = false">{{ $t('common.cancel') }}</el-button>
+                <el-button type="primary" :loading="subDoc.busy" @click="createSubDoc">{{ $t('memo.subDocCreate') }}</el-button>
             </template>
         </el-dialog>
 
@@ -867,10 +1009,18 @@
             预览走全站媒体灯箱（图片 / 视频 / 音频 / 其它各有一套形态），
             详情走全站统一详情弹窗（FileDetailUnified）。
         -->
+        <!--
+            v1.3.3.3（需求：灯箱右上角要显示「详情」，下滑也要能进详情）
+            show-detail 打开顶栏入口；items 里带上 recordId 后，
+            移动端下拉手势会优先走「已落库文件详情」（见 MediaPreviewOverlay 的手势分支）。
+        -->
         <MediaPreviewOverlay
             v-model="lightbox.open"
             :items="lightbox.items"
             :start-index="lightbox.index"
+            :show-detail="true"
+            @detail="onLightboxDetail"
+            @record-detail="onLightboxDetail"
         />
         <FileDetailUnified v-model="fileDlg.open" :file="fileDlg.file" />
     </div>
@@ -893,6 +1043,7 @@ import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
+import CodeBlock from '@tiptap/extension-code-block';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import FilePickerDialog from '@/components/notes/FilePickerDialog.vue';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
@@ -907,6 +1058,7 @@ import { loadFileDetail } from '@/utils/fileDetailLoader';
 import { docToMd, mdToDoc, renderMarkdownSafe, plainTextOf } from '@/utils/markdown';
 import {
     saveNote,
+    createNote as apiCreateNote,
     memoError,
     fetchNotes,
     fetchNote,
@@ -1113,6 +1265,9 @@ const mediaWidthAttr = {
  */
 const MEDIA_NODE_NAMES = ['image', 'video', 'audio', 'fileAttachment'];
 
+/** v1.3.3.3：可折叠的列表类型（折叠时只收下级列表） */
+const LIST_NODE_NAMES = ['bulletList', 'orderedList', 'taskList'];
+
 /**
  * 选中「点中的那个媒体节点」，返回它的文档位置；没点中返回 -1。
  *
@@ -1197,13 +1352,24 @@ const Video = Node.create({
                 else video.removeAttribute('align');
             };
             apply(node);
-            // 点视频本体（不是控件条）→ 选中该节点
-            video.addEventListener('click', (ev) => {
+            /*
+             * 点视频本体（不是控件条）→ 选中该节点。
+             * v1.3.3.3（需求：移动端选不中视频）
+             * 手机上点 <video> 常常不派发 click —— 原生控件接管了这次点击，
+             * 或者浏览器把「点一下」当成「唤出控件」。这里补 touchend：
+             * 只认画面区（底部 35% 是进度条/播放键），抬手即选中。
+             */
+            const pickOnVideo = (ev) => {
                 const r = video.getBoundingClientRect();
                 const barZone = Math.min(56, r.height * 0.35);
                 if (ev.clientY > r.bottom - barZone) return; // 点在原生控件上，别抢
                 mediaSelectOnClick(view, video, ev);
-            });
+            };
+            video.addEventListener('click', pickOnVideo);
+            video.addEventListener('touchend', (ev) => {
+                const t = (ev.changedTouches && ev.changedTouches[0]) || ev;
+                pickOnVideo({ clientX: t.clientX, clientY: t.clientY, target: video });
+            }, { passive: true });
             return { dom: video, update: (n) => (n.type.name === 'video' ? (apply(n), true) : false) };
         };
     },
@@ -1242,11 +1408,16 @@ const Audio = Node.create({
                 else audio.removeAttribute('align');
             };
             apply(node);
-            audio.addEventListener('click', (ev) => {
+            const pickOnAudio = (ev) => {
                 const r = audio.getBoundingClientRect();
                 if (ev.clientY > r.bottom - Math.min(40, r.height * 0.5)) return;
                 mediaSelectOnClick(view, audio, ev);
-            });
+            };
+            audio.addEventListener('click', pickOnAudio);
+            audio.addEventListener('touchend', (ev) => {
+                const t = (ev.changedTouches && ev.changedTouches[0]) || ev;
+                pickOnAudio({ clientX: t.clientX, clientY: t.clientY, target: audio });
+            }, { passive: true });
             return { dom: audio, update: (n) => (n.type.name === 'audio' ? (apply(n), true) : false) };
         };
     },
@@ -1733,18 +1904,178 @@ function mediaSelectionName(editor) {
  * 媒体节点与段落共用的对齐实现。
  * 选中媒体时改节点自身的 align（落成尾部属性 / HTML 属性），否则改段落。
  */
+/**
+ * v1.3.3.3（需求：四种媒体都要能左中右对齐）
+ *
+ * 图片 / 视频 / 音频是块级原子：给节点写 align，CSS 用 auto 外边距定位。
+ * 附件（fileAttachment）是**行内**原子，位置由所在段落决定 ——
+ * 只给节点写 align 在视觉上没有效果，所以额外把父段落一起对齐。
+ */
 function applyBlockAlign(editor, align) {
     const name = mediaSelectionName(editor);
-    if (name) return editor.chain().focus().updateAttributes(name, { align }).run();
-    return editor.chain().focus().updateAttributes('paragraph', { align }).run();
+    if (!name) return editor.chain().focus().updateAttributes('paragraph', { align }).run();
+    const chain = editor.chain().focus().updateAttributes(name, { align });
+    if (name === 'fileAttachment') chain.updateAttributes('paragraph', { align });
+    return chain.run();
 }
+
+/**
+ * v1.3.3.3（需求：代码块要有「收起展开 / 代码类型 / 自动换行 / 复制」）
+ *
+ * 为什么用 NodeView 而不是在工具栏里堆按钮：
+ *   这些操作都是**针对某一个代码块**的，按钮离得越近越好；堆到顶部工具栏里
+ *   就得先记住「现在改的是哪一块」。NodeView 只在渲染层包一层壳，
+ *   文档结构仍然是标准的 codeBlock —— md 往返（```lang）完全不受影响。
+ *
+ * 三个注意点：
+ *   · contentDOM 必须交给 <code>（PM 只在这个节点里改文本，壳里的按钮不被碰）；
+ *   · 按钮栏设 contenteditable=false 并吞掉 mousedown，否则点一下就把光标塞进代码里；
+ *   · ignoreMutation 要放过壳上的变化，否则点一下按钮 PM 就认为「文档脏了」。
+ */
+const CODE_LANGS = ['text', 'js', 'ts', 'json', 'html', 'css', 'bash', 'sql', 'python', 'java', 'go', 'rust', 'yaml', 'markdown'];
+
+const CodeBlockView = CodeBlock.extend({
+    addNodeView() {
+        return ({ node, editor, getPos }) => {
+            const wrap = document.createElement('div');
+            wrap.className = 'gh-codeblock';
+            const bar = document.createElement('div');
+            bar.className = 'gh-cb-bar';
+            bar.contentEditable = 'false';
+
+            const fold = document.createElement('button');
+            fold.type = 'button';
+            fold.className = 'gh-cb-btn gh-cb-fold';
+            fold.title = '折叠 / 展开';
+            fold.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+
+            const lang = document.createElement('span');
+            lang.className = 'gh-cb-lang';
+
+            const grow = document.createElement('span');
+            grow.className = 'gh-cb-grow';
+
+            const sel = document.createElement('select');
+            sel.className = 'gh-cb-select';
+            sel.title = '代码类型';
+            CODE_LANGS.forEach((v) => {
+                const o = document.createElement('option');
+                o.value = v;
+                o.textContent = v;
+                sel.appendChild(o);
+            });
+
+            const wrapBtn = document.createElement('button');
+            wrapBtn.type = 'button';
+            wrapBtn.className = 'gh-cb-btn gh-cb-wrapbtn';
+            wrapBtn.title = '自动换行';
+            wrapBtn.textContent = '↩';
+
+            const copy = document.createElement('button');
+            copy.type = 'button';
+            copy.className = 'gh-cb-btn gh-cb-copy';
+            copy.title = '复制代码';
+            copy.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
+
+            bar.appendChild(fold);
+            bar.appendChild(lang);
+            bar.appendChild(grow);
+            bar.appendChild(sel);
+            bar.appendChild(wrapBtn);
+            bar.appendChild(copy);
+
+            const pre = document.createElement('pre');
+            // 同时带上 gh-code-block：原有样式里有针对它的高特异性规则，带上才能被下面的规则接管
+            pre.className = 'gh-cb-pre gh-code-block';
+            const code = document.createElement('code');
+            pre.appendChild(code);
+            wrap.appendChild(bar);
+            wrap.appendChild(pre);
+
+            let cur = node;
+            const sync = () => {
+                const l = String(cur.attrs?.language || 'text') || 'text';
+                lang.textContent = l;
+                sel.value = CODE_LANGS.includes(l) ? l : 'text';
+            };
+            sync();
+
+            const stop = (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+            };
+            fold.addEventListener('mousedown', stop);
+            wrapBtn.addEventListener('mousedown', stop);
+            copy.addEventListener('mousedown', stop);
+            sel.addEventListener('mousedown', (ev) => ev.stopPropagation());
+            sel.addEventListener('change', () => {
+                const v = sel.value;
+                const pos = typeof getPos === 'function' ? getPos() : null;
+                if (typeof pos !== 'number') return;
+                editor.chain().focus().command(({ tr }) => {
+                    tr.setNodeMarkup(pos, undefined, { ...cur.attrs, language: v === 'text' ? null : v });
+                    return true;
+                }).run();
+                sync();
+            });
+            fold.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                wrap.classList.toggle('is-collapsed');
+            });
+            wrapBtn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                wrap.classList.toggle('is-wrap');
+            });
+            copy.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                const text = pre.textContent || '';
+                const done = () => {
+                    copy.classList.add('is-ok');
+                    window.setTimeout(() => copy.classList.remove('is-ok'), 1200);
+                };
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).then(done).catch(done);
+                } else {
+                    try {
+                        const ta = document.createElement('textarea');
+                        ta.value = text;
+                        ta.style.cssText = 'position:fixed;left:-9999px';
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                    } catch (e) {
+                        /* 忽略 */
+                    }
+                    done();
+                }
+            });
+
+            return {
+                dom: wrap,
+                contentDOM: code,
+                update(next) {
+                    if (next.type !== cur.type) return false;
+                    cur = next;
+                    sync();
+                    return true;
+                },
+                ignoreMutation(m) {
+                    // 壳内部（按钮栏 / 折叠状态）的变化不归 PM 管
+                    return m.type === 'attributes' || m.target === wrap || m.target === bar;
+                },
+            };
+        };
+    },
+});
 
 const TOOLS = {
     bold: { icon: 'bold', label: 'memo.toolBold', run: (e) => e.chain().focus().toggleBold().run(), active: (e) => e && e.isActive('bold') },
     italic: { icon: 'italic', label: 'memo.toolItalic', run: (e) => e.chain().focus().toggleItalic().run(), active: (e) => e && e.isActive('italic') },
     strike: { icon: 'strikethrough', label: 'memo.toolStrike', run: (e) => e.chain().focus().toggleStrike().run(), active: (e) => e && e.isActive('strike') },
     underline: { icon: 'underline', label: 'memo.toolUnderline', run: (e) => e.chain().focus().toggleUnderline().run(), active: (e) => e && e.isActive('underline') },
-    code: { icon: 'code', label: 'memo.toolCode', run: (e) => e.chain().focus().toggleCode().run(), active: (e) => e && e.isActive('code') },
+    /* v1.3.3.3（需求）：行内代码图标改成 `< >` */
+    code: { svgKey: 'svgAngle', label: 'memo.toolCode', run: (e) => e.chain().focus().toggleCode().run(), active: (e) => e && e.isActive('code') },
     h1: { label: 'memo.toolH1', run: (e) => e.chain().focus().toggleHeading({ level: 1 }).run(), active: (e) => e && e.isActive('heading', { level: 1 }) },
     h2: { label: 'memo.toolH2', run: (e) => e.chain().focus().toggleHeading({ level: 2 }).run(), active: (e) => e && e.isActive('heading', { level: 2 }) },
     h3: { label: 'memo.toolH3', run: (e) => e.chain().focus().toggleHeading({ level: 3 }).run(), active: (e) => e && e.isActive('heading', { level: 3 }) },
@@ -1755,7 +2086,8 @@ const TOOLS = {
     orderedList: { icon: 'list-ol', label: 'memo.toolOrdered', run: (e) => e.chain().focus().toggleOrderedList().run(), active: (e) => e && e.isActive('orderedList') },
     taskList: { icon: 'check-square', label: 'memo.toolTask', run: (e) => e.chain().focus().toggleTaskList().run(), active: (e) => e && e.isActive('taskList') },
     blockquote: { icon: 'quote-right', label: 'memo.toolQuote', run: (e) => e.chain().focus().toggleBlockquote().run(), active: (e) => e && e.isActive('blockquote') },
-    codeBlock: { icon: '', label: 'memo.toolCodeBlock', run: (e) => e.chain().focus().toggleCodeBlock().run(), active: (e) => e && e.isActive('codeBlock') },
+    /* v1.3.3.3（需求）：代码块图标改成 `{}` */
+    codeBlock: { svgKey: 'svgBraces', label: 'memo.toolCodeBlock', run: (e) => e.chain().focus().toggleCodeBlock().run(), active: (e) => e && e.isActive('codeBlock') },
     hr: { icon: 'minus', label: 'memo.toolHr', run: (e) => e.chain().focus().setHorizontalRule().run() },
     link: { icon: 'link', label: 'memo.toolLink', run: null, active: (e) => e && e.isActive('link') },
     image: { icon: 'image', label: 'memo.toolImage', run: null },
@@ -1808,6 +2140,13 @@ const TOOLS = {
          * 往返稳定，而且中文排版本来就用它做首行缩进。
          */
         run: (e) => {
+            /*
+             * v1.3.3.3（需求：缩进时列表图标要跟着变成子列表）
+             * 任务列表的节点名是 taskItem，不是 listItem —— 只判 listItem 时，
+             * 任务列表里按缩进会走「插两个全角空格」那条分支，结果是
+             * 文字缩进了、前面的勾选框还在原地。这里两个都认。
+             */
+            if (e.isActive('taskItem')) return e.chain().focus().sinkListItem('taskItem').run();
             if (e.isActive('listItem')) return e.chain().focus().sinkListItem('listItem').run();
             const { $from } = e.state.selection;
             return e.chain().focus().insertContentAt($from.start(), '\u3000\u3000').run();
@@ -1817,6 +2156,7 @@ const TOOLS = {
         icon: 'outdent',
         label: 'memo.toolOutdent',
         run: (e) => {
+            if (e.isActive('taskItem')) return e.chain().focus().liftListItem('taskItem').run();
             if (e.isActive('listItem')) return e.chain().focus().liftListItem('listItem').run();
             const { $from } = e.state.selection;
             const start = $from.start();
@@ -1846,7 +2186,8 @@ const TOOLS = {
     paste: { icon: 'paste', label: 'memo.toolPaste', run: (e) => pasteFromClipboard(e, 'rich') },
     pasteKeep: { icon: 'clipboard', label: 'memo.toolPasteKeep', run: (e) => pasteFromClipboard(e, 'keep') },
     pastePlain: { icon: 'paste', label: 'memo.toolPastePlain', run: (e) => pasteFromClipboard(e, 'plain') },
-    pasteEscaped: { icon: 'code', label: 'memo.toolPasteEscaped', run: (e) => pasteFromClipboard(e, 'escaped') },
+    /* v1.3.3.3（需求）：转义粘贴换成「页面 + <>」的图标，与行内代码区分开 */
+    pasteEscaped: { icon: 'file-code', label: 'memo.toolPasteEscaped', run: (e) => pasteFromClipboard(e, 'escaped') },
     paragraph: { icon: 'paragraph', label: 'memo.toolParagraph', run: (e) => e.chain().focus().setParagraph().unsetAllMarks().run() },
     linkExtract: { icon: 'cloud-arrow-down', label: 'memo.toolLinkExtract', run: null },
     /* 表格操作（需求：插入后要能加/删行列、合并拆分） */
@@ -1891,7 +2232,8 @@ const TOOLS = {
         },
     },
     /** 全选 */
-    selectAll: { icon: 'object-group', label: 'memo.toolSelectAll', run: (e) => e.chain().focus().selectAll().run() },
+    /* v1.3.3.3（需求）：全选换成「虚线选择框 + 方块」 */
+    selectAll: { svgKey: 'svgSelectAll', label: 'memo.toolSelectAll', run: (e) => e.chain().focus().selectAll().run() },
     /* 日期 / 时间：各格式一个独立工具，点击即插入到光标处 */
     dateYmd: { icon: 'calendar-day', label: 'memo.toolDateYmd', run: null },
     dateSlash: { icon: 'calendar-day', label: 'memo.toolDateSlash', run: null },
@@ -1900,16 +2242,20 @@ const TOOLS = {
     timeHms: { icon: 'clock', label: 'memo.toolTimeHms', run: null },
     /* 表情 / 符号面板 */
     emoji: { icon: 'face-smile', label: 'memo.toolEmoji', run: null },
-    symbol: { icon: 'font', label: 'memo.toolSymbol', run: null },
+    /* v1.3.3.3（需求）：符号工具图标直接用 Ω */
+    symbol: { glyph: '\u03a9', label: 'memo.toolSymbol', run: null },
     /* 网页嵌入 */
     iframe: { icon: 'window-maximize', label: 'memo.toolIframe', run: null },
     /* 查找替换 */
     findReplace: { icon: 'magnifying-glass', label: 'memo.toolFindReplace', run: null },
     /* HTML ↔ MD 互转 / HTML 块 */
     htmlMd: { icon: 'right-left', label: 'memo.toolHtmlMd', run: null },
-    htmlBlock: { icon: 'file-code', label: 'memo.toolHtmlBlock', run: null },
+    /* v1.3.3.3（需求）：HTML 块换成「页面 + </>」 */
+    htmlBlock: { svgKey: 'svgHtml', label: 'memo.toolHtmlBlock', run: null },
     /* 批注（选中文本后添加） */
     annotate: { icon: 'comment-dots', label: 'memo.toolAnnotate', run: null },
+    /* v1.3.3.3（需求）：新建子文档并把引用插到当前光标处 */
+    subDoc: { icon: 'file-circle-plus', label: 'memo.subDoc', run: null },
     /* v1.3.3（需求）：媒体选中条用的两个通用动作 */
     imgSizeCycle: {
         icon: 'up-right-and-down-left-from-center',
@@ -2019,6 +2365,21 @@ const SVG_UNDO =
 /* 代码块图标（v1.3.1.2 需求参考图：圆角方框里一个 >_ ）—— FontAwesome 没有同款，内联一个 */
 const SVG_CODE =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7.5 10 2.2 2.2-2.2 2.2"/><path d="M12.5 14.5h4"/></svg>';
+/*
+ * v1.3.3.3：这批图标 FontAwesome 没有同款，统一内联（尺寸/线宽与既有 SVG 一致）。
+ *   · SVG_BRACES     代码块   `{}`
+ *   · SVG_ANGLE      行内代码 `< >`
+ *   · SVG_HTML       HTML块   页面轮廓 + `</>`
+ *   · SVG_SELECT_ALL 全选     虚线选择框 + 实心方块
+ */
+const SVG_BRACES =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5c-1.7 0-2.6.9-2.6 2.6v2.3c0 1.3-.6 2-1.9 2.1v.9c1.3.1 1.9.8 1.9 2.1v2.4c0 1.7.9 2.6 2.6 2.6"/><path d="M15 4.5c1.7 0 2.6.9 2.6 2.6v2.3c0 1.3.6 2 1.9 2.1v.9c-1.3.1-1.9.8-1.9 2.1v2.4c0 1.7-.9 2.6-2.6 2.6"/></svg>';
+const SVG_ANGLE =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 7-5 5 5 5"/><path d="m15 7 5 5-5 5"/></svg>';
+const SVG_HTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m10.5 12-1.6 2 1.6 2"/><path d="m14 12 1.6 2-1.6 2"/></svg>';
+const SVG_SELECT_ALL =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5.6A1.6 1.6 0 0 1 5.6 4H7"/><path d="M10 4h1.6"/><path d="M14.4 4H16"/><path d="M19 7V5.6A1.6 1.6 0 0 0 17.4 4H17"/><path d="M20 10v1.4"/><path d="M20 14.6V16"/><path d="M17 20h1.4A1.6 1.6 0 0 0 20 18.4V18"/><path d="M13.6 20H12"/><path d="M9 20H7.6A1.6 1.6 0 0 1 6 18.4V18"/><path d="M4 15v-1.4"/><path d="M4 10.6V10"/><rect x="9" y="9" width="6.5" height="6.5" rx="1"/></svg>';
 const SVG_REDO =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>';
 
@@ -2026,6 +2387,9 @@ const SVG_REDO =
 const SLASH_COMMANDS = Object.keys(TOOLS).map((id) => ({
     id,
     icon: TOOLS[id].icon || '',
+    /* v1.3.3.3：内联图标 / 字形图标的工具，斜杠菜单也要跟着显示，不能空着 */
+    svgKey: TOOLS[id].svgKey || '',
+    glyph: TOOLS[id].glyph || '',
     label: TOOLS[id].label,
     hint: TOOL_HINTS[id] || '',
     separator: false,
@@ -2172,10 +2536,16 @@ export default {
             svgUndo: SVG_UNDO,
             svgRedo: SVG_REDO,
             svgCode: SVG_CODE,
+            svgBraces: SVG_BRACES,
+            svgAngle: SVG_ANGLE,
+            svgHtml: SVG_HTML,
+            svgSelectAll: SVG_SELECT_ALL,
             /* v1.3.1.2：左侧行级栏菜单 */
             gutterMenu: { open: false, x: 0, y: 0, pos: 0, type: '' },
             /** v1.3.3.2：左侧行号栏的每一行（按块矩形算出的绝对位置） */
             gutterRows: [],
+            /** v1.3.3.3：折叠状态的版本号（_folds 是非响应式 Set，靠它触发 computed 重算） */
+            foldsRev: 0,
             /* v1.3.1.2：引用悬停预览 */
             hoverCard: { open: false, x: 0, y: 0, title: '', text: '', loading: false },
             /* v1.3.1.2：浮层 / 右键菜单 / 表格 */
@@ -2197,13 +2567,17 @@ export default {
             emojiGroups: EMOJI_GROUPS,
             symbolGroups: SYMBOL_GROUPS,
             /* ── 查找替换 ── */
-            findDlg: { visible: false, find: '', replace: '', count: 0, tip: '' },
+            findDlg: { visible: false, find: '', replace: '', count: 0, tip: '', index: 0 },
+            /** v1.3.3.3：创建子文档（pos 是发起时的光标位置） */
+            subDoc: { visible: false, title: '', content: '', busy: false, pos: 0 },
             /* ── HTML ↔ MD 互转 ── */
             htmlDlg: { visible: false, html: '', md: '' },
             /* ── HTML 块 ── */
             htmlBlockDlg: { visible: false, html: '' },
             /** 输入工具条（光标停在空行时浮在光标上方） */
             inputBar: { open: false, style: {} },
+            /** v1.3.3.3（需求）：列表 / 标题末尾的行级操作条 */
+            lineBar: { open: false, kind: '', style: {}, folded: false },
             /** 上传面板（v1.3.1.1）：选完文件后先问目标渠道 / 实例 / 目录 */
             uploadTargetVisible: false,
             /** v1.3.2：上传目标弹窗的默认值（目录固定 /notes/memo/年/月） */
@@ -2267,7 +2641,7 @@ export default {
                 }
                 const tool = TOOLS[id];
                 if (tool) {
-                    out.push({ id, icon: tool.icon, label: tool.label, tool: true });
+                    out.push({ id, icon: tool.icon, svgKey: tool.svgKey || '', glyph: tool.glyph || '', label: tool.label, tool: true });
                     lastSep = false;
                 }
             });
@@ -2351,6 +2725,30 @@ export default {
          * v1.3.3.2（需求）：移除「辅助栏」吸附 —— 版本/时间/字数那一行不再参与吸附，
          * 只剩工具栏与标题栏两个开关。
          */
+        /**
+         * v1.3.3.3（需求）：是否已经「全部折叠」。
+         * 判据不是「有任意折叠」—— 手动折了一节也算有；必须是所有标题都在折叠集合里，
+         * 这时工具栏按钮才应该变成「展开全部」（向下箭头）。
+         */
+        foldAllActive() {
+            /*
+             * _folds 是个 Set（非响应式），改它不会让 computed 重算 ——
+             * 先读一下 foldsRev 这个计数器，把依赖挂上去。
+             */
+            void this.foldsRev;
+            const set = this._folds;
+            if (!set || !set.size) return false;
+            const ed = this.editor;
+            if (!ed) return false;
+            let total = 0;
+            let folded = 0;
+            ed.state.doc.forEach((node, offset) => {
+                if (node.type.name !== 'heading') return;
+                total += 1;
+                if (set.has(offset)) folded += 1;
+            });
+            return total > 0 && folded === total;
+        },
         stickyCfg() {
             const all = this.editorConfig?.sticky;
             const key = this.isMobileViewport ? 'm' : 'pc';
@@ -2540,6 +2938,7 @@ export default {
                 this.bubble.open = false;
                 this.tableBar.open = false;
                 this.gutterMenu = { open: false };
+                this.lineBar = { open: false, kind: '', style: {}, folded: false };
                 return;
             }
             if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') {
@@ -2638,12 +3037,13 @@ export default {
             }
             // v1.3.2：窗口宽度变了要重新算工具栏溢出（滚动事件不重算，太频繁）
             if (e && e.type === 'resize') {
+                /*
+                 * v1.3.3.3（实测修复）：上一版这里混进了「断开工具栏观察器」的一段代码 ——
+                 * 每次窗口 resize 都会把 ResizeObserver 断掉且不再重建，
+                 * 于是改一次窗口大小以后工具栏就再也不折叠了。
+                 * 这里只保留「防抖重量一次」，观察器本身在 setupToolbarObserver 里维护。
+                 */
                 clearTimeout(this._tbMeasureTimer);
-        if (this._tbRaf) cancelAnimationFrame(this._tbRaf);
-        if (this._tbRO) {
-            this._tbRO.disconnect();
-            this._tbRO = null;
-        }
                 this._tbMeasureTimer = setTimeout(() => this.measureToolbar(), 200);
             }
         };
@@ -2755,8 +3155,10 @@ export default {
                             autolink: true,
                             HTMLAttributes: { rel: 'noopener noreferrer nofollow', target: '_blank' },
                         },
-                        codeBlock: { HTMLAttributes: { class: 'gh-code-block' } },
+                        // v1.3.3.3：代码块改用自定义 NodeView（见 CodeBlockView）
+                        codeBlock: false,
                     }),
+                    CodeBlockView.configure({ HTMLAttributes: { class: 'gh-code-block' } }),
                     ImageWithWidth.configure({ inline: false, allowBase64: false }),
                     TaskList,
                     TaskItem.configure({ nested: true }),
@@ -2861,6 +3263,7 @@ export default {
         },
 
         setMode(next) {
+            this.lineBar = { open: false, kind: '', style: {}, folded: false };
             if (next === this.mode) return;
             this.mode = next;
             // v1.3.3.2：行号栏只在实时模式存在；切换后要重算（切回来时 DOM 刚重建）
@@ -3297,6 +3700,25 @@ export default {
          * 往上滚（scrollTop 变大）时不吸，往下回滚（scrollTop 变小）时临时吸住，
          * 回到它自己的原始位置后由 sticky 自动脱离。CSS 只负责"吸"，方向由这个类控制。
          */
+        /**
+         * 取某个工具的内联 SVG（toolsOf 里用 svgKey 指到 data 上的那份字符串）。
+         * 不直接用 v-html="svgBraces" 之类：模板里要按 token 动态取，写死一处就要改四处。
+         */
+        svgOf(token) {
+            const t = this.toolsOf(token);
+            const key = t && t.svgKey;
+            return key ? (this[key] || '') : '';
+        },
+        /** v1.3.3.3（需求）：标题行右侧「返回顶部」——平滑滚回编辑区顶部 */
+        scrollBodyToTop() {
+            const el = this.$refs.bodyEl;
+            if (!el) return;
+            try {
+                el.scrollTo({ top: 0, behavior: 'smooth' });
+            } catch (e) {
+                el.scrollTop = 0;
+            }
+        },
         onBodyScroll(e) {
             const el = e && e.target;
             if (!el) return;
@@ -3310,10 +3732,42 @@ export default {
             this.scheduleGutter();
             // v1.3.3（需求）：光标工具栏跟随页面滚动，始终贴在光标那一行
             if (this.inputBar.open) this.updateInputBar();
+            // v1.3.3.3：行末操作条同样要跟着滚
+            if (this.lineBar.open) this.syncLineMenu();
+            /*
+             * v1.3.3.3（需求：回滚时工具栏 / 标题栏一直闪烁）
+             *
+             * 原因不是「吸附算错了」，而是**方向判据太灵敏**：
+             * 上一版用 `top < last - 1` 判回滚，滚动时相邻两次事件的位移常常只有 1~2px，
+             * 甚至因为布局微调出现「+1 / -1 / +1」的抖动 —— 于是 reverseSticky
+             * 在每帧里反复翻转，所有开启吸附的行跟着反复吸住/松开，看起来就是狂闪。
+             *
+             * 现在改成带**滞回**的方向判定：
+             *   · 同向位移累加；
+             *   · 反向位移先清掉累计（视为掉头），再从 0 开始计；
+             *   · 累计到 14px 才真正切换状态，切换后清零。
+             * 1~2px 的抖动永远翻不动它，而用户真的换方向时 14px 立刻就切。
+             */
             const top = el.scrollTop || 0;
-            const back = top < (this._lastScrollTop || 0) - 1;
+            const prev = this._lastScrollTop || 0;
+            const delta = top - prev;
             this._lastScrollTop = top;
-            if (this.reverseSticky !== back) this.reverseSticky = back;
+            if (top <= 4) {
+                // 已经在顶部：不存在「回滚吸附」的意义，直接复位
+                this._stkAcc = 0;
+                if (this.reverseSticky) this.reverseSticky = false;
+                return;
+            }
+            const acc = this._stkAcc || 0;
+            this._stkAcc = (acc > 0 && delta < 0) || (acc < 0 && delta > 0) ? delta : acc + delta;
+            const TH = 14;
+            if (this._stkAcc <= -TH) {
+                this._stkAcc = 0;
+                if (!this.reverseSticky) this.reverseSticky = true;
+            } else if (this._stkAcc >= TH) {
+                this._stkAcc = 0;
+                if (this.reverseSticky) this.reverseSticky = false;
+            }
         },
         /** v1.3.2：该工具是否被折叠进行末下拉 */
         isTbHidden(li, ti) {
@@ -3633,6 +4087,7 @@ export default {
             if (token === 'htmlMd') return this.openHtmlMd();
             if (token === 'htmlBlock') return this.openHtmlBlock();
             if (token === 'annotate') return this.annotateSelection();
+            if (token === 'subDoc') return this.openSubDoc();
             if (token === 'mediaPreview') return this.openMediaPreview();
             if (token === 'mediaDetail') return this.openMediaDetail();
             if (token === 'outline') return this.openOutline();
@@ -3694,13 +4149,22 @@ export default {
             let skipLevel = 0;
             let childIdx = 0;
             const hiddenIdx = [];
+            const foldedListIdx = [];
             ed.state.doc.forEach((node, offset) => {
                 childIdx += 1; // 与 .gh-editor-content 的子元素一一对应
                 const level = node.type.name === 'heading' ? Number(node.attrs.level) || 1 : 0;
+                const isList = LIST_NODE_NAMES.includes(node.type.name);
                 if (skipLevel && level > 0 && level <= skipLevel) skipLevel = 0;
                 const shouldHide = skipLevel > 0;
                 if (!shouldHide && level > 0 && folds.has(offset)) skipLevel = level;
                 if (shouldHide) hiddenIdx.push(childIdx);
+                /*
+                 * v1.3.3.3（需求）：列表也能折叠 —— 折的是「列表内部的下级列表」，
+                 * 不是整块。隐藏规则交给 applyFoldCss 生成，
+                 * 这里只记下「第几个块是折叠状态的列表」。
+                 */
+                const listFolded = !shouldHide && isList && folds.has(offset);
+                if (listFolded) foldedListIdx.push(childIdx);
                 let el = null;
                 try {
                     el = ed.view.nodeDOM(offset);
@@ -3724,12 +4188,14 @@ export default {
                     no: rows.length + 1,
                     type: node.type.name,
                     level,
-                    folded: level > 0 && folds.has(offset),
+                    /* 只有标题 / 列表才有折叠箭头 */
+                    foldable: level > 0 || isList,
+                    folded: (level > 0 || isList) && folds.has(offset),
                     top: Math.round(y),
                 });
             });
             this.gutterRows = rows;
-            this.applyFoldCss(hiddenIdx);
+            this.applyFoldCss(hiddenIdx, foldedListIdx);
         },
 
         /**
@@ -3741,15 +4207,26 @@ export default {
          * 样式表是文档级的东西，PM 完全不碰，而且 nth-child 的下标正好等于块的序号，
          * 与 syncGutter 同一次遍历算出来的区间天然一致。
          */
-        applyFoldCss(indexes) {
+        applyFoldCss(indexes, listIndexes) {
             if (!this._foldStyleEl) {
                 const el = document.createElement('style');
                 el.id = 'gohub-memo-fold-css';
                 document.head.appendChild(el);
                 this._foldStyleEl = el;
             }
+            const parts = [];
             const sel = (indexes || []).map((n) => `.gh-editor-content > *:nth-child(${n})`).join(',');
-            this._foldStyleEl.textContent = sel ? `${sel}{display:none !important}` : '';
+            if (sel) parts.push(`${sel}{display:none !important}`);
+            /*
+             * 列表折叠：只收掉「二级及以下」的列表，一级项照常显示。
+             * 同时把上级 li 的 marker 缩进一起算进去 —— 只隐藏子列表会留下一段空白，
+             * 看起来像「折了一半」。
+             */
+            (listIndexes || []).forEach((n) => {
+                const root = `.gh-editor-content > *:nth-child(${n})`;
+                parts.push(`${root} ul ul,${root} ul ol,${root} ol ul,${root} ol ol{display:none !important}`);
+            });
+            this._foldStyleEl.textContent = parts.join('\n');
         },
         /** rAF 合并：滚动与输入都会频繁触发，没必要每次同步重排 */
         scheduleGutter() {
@@ -3825,6 +4302,11 @@ export default {
             if (!ed) return;
             const node = ed.state.doc.nodeAt(pos);
             if (!node) return;
+            // v1.3.3.3（需求）：复制块 ID 不需要选中块，先处理掉
+            if (action === 'copyId') {
+                this.copyBlockId(pos, node);
+                return;
+            }
             this.selectBlockAt(pos);
             if (action === 'copy') {
                 try {
@@ -3853,6 +4335,70 @@ export default {
                 return;
             }
             this.onEditorUpdate();
+        },
+
+        /**
+         * v1.3.3.3（需求）：复制当前块的 ID。
+         *
+         * 块 ID 由后端在建索引时算出来（`blk_` + 内容哈希前 8 位），前端不重算哈希 ——
+         * 重算一份等于把同一套规则维护两次，改一处就错位。这里直接问后端的块索引：
+         * 「这篇笔记里 plainText 等于当前块文本的块」，同名多份时按出现顺序取第 k 个。
+         * 索引还没生成（刚写的新笔记、还没保存）时明确提示，不复制一个假 ID 出去。
+         */
+        async copyBlockId(pos, node) {
+            const noteId = this.note && (this.note.id || this.note.noteId);
+            if (!noteId) {
+                ElMessage.warning(this.$t('memo.gutterCopyIdNoNote'));
+                return;
+            }
+            const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+            const copied = async (val) => {
+                try {
+                    await navigator.clipboard.writeText(val);
+                } catch (e) {
+                    try {
+                        const ta = document.createElement('textarea');
+                        ta.value = val;
+                        ta.style.cssText = 'position:fixed;left:-9999px';
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(ta);
+                    } catch (err) {
+                        ElMessage.error(this.$t('memo.gutterCopyFailed'));
+                        return;
+                    }
+                }
+                ElMessage.success(this.$t('memo.gutterCopyIdDone', { id: val }));
+            };
+            let blocks = [];
+            try {
+                const r = await fetchNoteBlocks(noteId);
+                blocks = Array.isArray(r?.blocks) ? r.blocks : [];
+            } catch (e) {
+                blocks = [];
+            }
+            if (!blocks.length) {
+                ElMessage.warning(this.$t('memo.gutterCopyIdNoIndex'));
+                return;
+            }
+            /* 当前块之前、同样文本的块有几个 —— 用来在同名块里定位自己 */
+            const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim();
+            let nth = 0;
+            const editor = this.editor;
+            if (editor) {
+                editor.state.doc.forEach((n, offset) => {
+                    if (offset >= pos) return;
+                    if (norm(n.textContent) === text) nth += 1;
+                });
+            }
+            const same = blocks.filter((b) => norm(b.plainText) === text);
+            const hit = same[nth] || same[0];
+            if (!hit || !hit.blockId) {
+                ElMessage.warning(this.$t('memo.gutterCopyIdNotFound'));
+                return;
+            }
+            await copied(`((${hit.blockId}))`);
         },
 
         /** v1.3.3：改嵌入块的地址与高度（两步输入，避免做一个只为两行的表单弹窗） */
@@ -4008,7 +4554,13 @@ export default {
             if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
             ed.chain().focus().insertContent(String(ch || '')).run();
             this.onEditorUpdate();
-            // 面板不关：连续插几个表情是常态
+            /*
+             * v1.3.3.3（需求：插入后要关掉面板）
+             * 上一版是「连续插几个表情是常态」所以故意不关 —— 但面板是居中大弹窗，
+             * 插完不关就得手动关一次才能看见插入结果，反而更绕。
+             * 表情本身还能用输入法直接打，面板按需再开。
+             */
+            this.insertPanelVisible = false;
         },
 
         // ---------------- v1.3.1.2：网页嵌入 / HTML 块 ----------------
@@ -4059,7 +4611,7 @@ export default {
         // ---------------- v1.3.1.2：查找替换 ----------------
 
         openFindReplace() {
-            this.findDlg = { visible: true, find: '', replace: '', count: 0, tip: '' };
+            this.findDlg = { visible: true, find: '', replace: '', count: 0, tip: '', index: 0 };
         },
         /** 收集所有匹配（文本节点内逐个扫，跨节点的不算 —— 那种情况极少且会切坏标记） */
         findMatches() {
@@ -4082,6 +4634,33 @@ export default {
             this.findDlg.count = n;
             this.findDlg.tip = n ? '' : this.$t('memo.findNone');
             return n;
+        },
+        /**
+         * v1.3.3.3（需求）：查找定位 —— 从当前光标往后找下一个匹配，选中并滚到可见处。
+         * 找完一圈就从头再来；同时把「第 i / n 项」显示在提示行里。
+         */
+        findNext() {
+            const ed = this.editor;
+            if (!ed) return;
+            const list = this.findMatches();
+            this.findDlg.count = list.length;
+            if (!list.length) {
+                this.findDlg.tip = this.$t('memo.findNoResult');
+                return;
+            }
+            const cur = ed.state.selection.to;
+            let idx = list.findIndex((m) => m.from >= cur);
+            if (idx < 0) idx = 0;
+            const hit = list[idx];
+            ed.chain().focus().setTextSelection({ from: hit.from, to: hit.to }).scrollIntoView().run();
+            this.findDlg.index = idx + 1;
+            this.findDlg.tip = this.$t('memo.findCount', { i: idx + 1, n: list.length });
+            /*
+             * 重新聚焦到弹窗里的输入框：定位只是「把光标放过去」，
+             * 用户可以接着按查找看下一处，不必再点回输入框。
+             */
+            const input = document.querySelector('.me-find-dialog input');
+            if (input) input.focus({ preventScroll: true });
         },
         replaceOne() {
             const list = this.findMatches();
@@ -4108,6 +4687,43 @@ export default {
             this.onEditorUpdate();
             this.findDlg.count = 0;
             ElMessage.success(this.$t('memo.replaceDone', { n: list.length }));
+        },
+
+        /** v1.3.3.3（需求）：打开「新建子文档」弹窗，并记住当前光标 */
+        openSubDoc() {
+            const ed = this.editor;
+            if (!ed) return;
+            const { from } = ed.state.selection;
+            this.subDoc = { visible: true, title: '', content: '', busy: false, pos: from };
+        },
+        /** 创建子文档 → 在当前笔记同目录下建一篇 → 把引用插到刚才的光标处 */
+        async createSubDoc() {
+            if (this.subDoc.busy) return;
+            const title = String(this.subDoc.title || '').trim();
+            if (!title) {
+                ElMessage.warning(this.$t('memo.subDocTitle'));
+                return;
+            }
+            this.subDoc.busy = true;
+            try {
+                const folderId = String(this.note?.folderId || '');
+                const r = await apiCreateNote({ title, content: String(this.subDoc.content || ''), folderId });
+                if (!r?.id) throw new Error('create failed');
+                const ed = this.editor;
+                const pos = Math.min(Math.max(1, Number(this.subDoc.pos) || 1), ed.state.doc.content.size);
+                ed.chain()
+                    .focus()
+                    .insertContentAt(pos, { type: 'noteRef', attrs: { noteId: r.id, blockId: null, label: title } })
+                    .run();
+                this.onEditorUpdate();
+                this.subDoc = { visible: false, title: '', content: '', busy: false, pos: 0 };
+                ElMessage.success(this.$t('memo.subDocDone'));
+                // 让父页面刷新目录/列表（新笔记要出现在列表里）
+                this.$emit('reload', this.note?.id || '');
+            } catch (e) {
+                this.subDoc.busy = false;
+                ElMessage.error(memoError(e).message || this.$t('memo.saveFail'));
+            }
         },
 
         // ---------------- v1.3.1.2：HTML ↔ MD ----------------
@@ -4418,9 +5034,38 @@ export default {
                 chain.deleteRange({ from: from - 2, to: from }).toggleTaskList().run();
                 return true;
             }
+            /*
+             * v1.3.3.3（需求）：`《》` + 空格 → 行内代码。
+             * 必须排在 `》` 前面：中文输入法里打「书名号」是一对，
+             * 若先命中 `》` 的单字符规则，就变成引述块了。
+             */
+            if (before === '《》' || before === '<>') {
+                chain.deleteRange({ from: from - 2, to: from }).toggleCode().run();
+                return true;
+            }
             if (before === '》') {
                 chain.deleteRange({ from: from - 1, to: from }).toggleBlockquote().run();
                 return true;
+            }
+            /*
+             * v1.3.3.3（需求）：`{}` + 空格 → 块代码。
+             * 同理，中文输入法下花括号是｛｝，两种都收。
+             */
+            if (before === '{}' || before === '｛｝') {
+                chain.deleteRange({ from: from - 2, to: from }).toggleCodeBlock().run();
+                return true;
+            }
+            /*
+             * v1.3.3.3（需求）：`:::`（或全角`：：：`）+ 空格 → 提示块。
+             * 三个字符要用 textBetween 单独取，不能和上面的两字符判断共用 before。
+             */
+            {
+                const three = $from.parent.textBetween(Math.max(0, $from.parentOffset - 3), $from.parentOffset, '\n', '\n');
+                if (three === ':::' || three === '：：：') {
+                    chain.deleteRange({ from: from - 3, to: from }).run();
+                    this.insertCallout();
+                    return true;
+                }
             }
             /*
              * `··` → 行内代码：把它换成一个反引号，后面的反引号闭合由用户继续输入，
@@ -4676,6 +5321,26 @@ export default {
                 ElMessage.warning(this.$t('memo.publishNeedSelection'));
                 return;
             }
+            /*
+             * v1.3.3.3（需求）：点「发布到瞬间」时同时把选中内容复制到剪贴板。
+             * 发布弹窗里的正文是另一套输入框（富文本 md → 纯文本会丢格式），
+             * 用户常常还想把原文粘到别处；顺手复制一份最省事。
+             */
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(text).catch(() => {});
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.cssText = 'position:fixed;left:-9999px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                }
+            } catch (e) {
+                /* 复制失败不影响发布 */
+            }
             this.$emit('publish-moment', text);
         },
 
@@ -4762,6 +5427,7 @@ export default {
              * v1.3.3.2：折叠状态不在文档里，不需要发事务 —— 直接重排行号栏，
              * 隐藏类由 syncGutter 一并挂到块 DOM 上（见该函数）。
              */
+            this.foldsRev += 1;
             this.syncGutter();
         },
 
@@ -4772,6 +5438,7 @@ export default {
             const set = this._folds || (this._folds = new Set());
             if (set.has(pos)) set.delete(pos);
             else set.add(pos);
+            this.foldsRev += 1;
             this.syncGutter();
         },
 
@@ -4793,7 +5460,12 @@ export default {
             const { $from, empty } = ed.state.selection;
             if (!empty) return this.closeRef();
             const before = $from.parent.textBetween(0, $from.parentOffset, '\n', '\n');
-            const mNote = /\[\[([^\]\n]*)$/.exec(before);
+            /*
+             * v1.3.3.3（需求：输入`【【`也要调出查找引用）
+             * 中文输入法下打两个半角方括号很别扭，全角【【才是自然输入；
+             * 两种都认，插入的仍然是标准的 [[note:…]]。
+             */
+            const mNote = /\[\[([^\]\n]*)$/.exec(before) || /【【([^】\n]*)$/.exec(before);
             const mBlock = /\(\(([^)\n]*)$/.exec(before);
             const mode = mNote ? 'note' : mBlock ? 'block' : '';
             if (!mode) return this.closeRef();
@@ -4921,6 +5593,60 @@ export default {
                     return true;
                 }
             }
+            /*
+             * v1.3.3.3（需求：列表里按 Tab 不会缩进）
+             *
+             * 实时模式里 Tab 默认被浏览器拿去做焦点切换，ProseMirror 不会自己缩进；
+             * 这里显式接管：
+             *   · 列表项 → 变成子列表（sinkListItem），Shift+Tab 回上一级；
+             *   · 代码块 → 插入两个空格（代码里 Tab 就该是缩进）；
+             *   · 表格 → 跳到下一个单元格（与 Excel 一致）；
+             *   · 其它位置 → 吃掉 Tab，避免焦点跳到页面其它按钮上。
+             */
+            /*
+             * v1.3.3.3（需求：点中图片/视频等文件后，光标要落在文件的右侧）
+             * 块级原子节点被选中时没有「文本光标」，按左右键默认会把光标丢到下一行开头。
+             * 这里显式接管：右键 → 落在节点之后，左键 → 落在节点之前，
+             * 连续按右键还能顺着往后移动。
+             */
+            if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && this.mode === 'wysiwyg') {
+                const ed = this.editor;
+                const sel = ed && ed.state.selection;
+                if (sel instanceof NodeSelection && MEDIA_NODE_NAMES.includes(sel.node.type.name)) {
+                    const to = event.key === 'ArrowRight' ? sel.to : sel.from;
+                    const target = Math.min(Math.max(1, to), ed.state.doc.content.size);
+                    ed.chain().focus().setTextSelection(target).run();
+                    return true;
+                }
+            }
+            if (event.key === 'Tab' && this.mode === 'wysiwyg') {
+                const ed = this.editor;
+                if (!ed) return false;
+                const inTable = ed.isActive('table');
+                if (inTable) {
+                    ed.chain().focus()[event.shiftKey ? 'goToPreviousCell' : 'goToNextCell']().run();
+                    return true;
+                }
+                if (ed.isActive('codeBlock')) {
+                    ed.chain().focus().insertContent('  ').run();
+                    return true;
+                }
+                if (ed.isActive('taskItem')) {
+                    ed.chain().focus()[event.shiftKey ? 'liftListItem' : 'sinkListItem']('taskItem').run();
+                    this.onEditorUpdate();
+                    return true;
+                }
+                if (ed.isActive('listItem')) {
+                    ed.chain().focus()[event.shiftKey ? 'liftListItem' : 'sinkListItem']('listItem').run();
+                    this.onEditorUpdate();
+                    return true;
+                }
+                /*
+                 * 其它位置不抢 Tab：内容区里 Tab 本来就该把焦点交给下一个控件，
+                 * 吃掉它会让键盘用户困在编辑器里出不来。
+                 */
+                return false;
+            }
             if (this.slash.open) {
                 /*
                  * v1.3.1.1：菜单里可能有分隔线，上下键要跳过它们，
@@ -4959,6 +5685,122 @@ export default {
          * 仅在「光标停在空段落」时出现 —— 有内容时不打扰写作。
          * 浮动而不是吸附在顶部，是因为需求给的参考图就是「贴着光标上方」的样子。
          */
+        /**
+         * v1.3.3.3：列表 / 标题「行末」操作条的显隐与定位。
+         *
+         * 判据三条（缺一不可，否则会到处乱浮）：
+         *   1) 必须是折叠光标（有选区就让选中浮层去做事）；
+         *   2) 光标必须在该文本块的**最末尾**（$from.pos >= $from.end()）；
+         *   3) 所在块是标题，或所在行属于列表项（listItem / taskItem）。
+         * 位置取光标坐标往上抬 —— 需求要求「显示在光标上方」，
+         * 具体高度交给 CSS 的 translateY(-100%)，不用先渲染再测。
+         */
+        syncLineMenu() {
+            const close = () => {
+                if (this.lineBar.open) this.lineBar = { open: false, kind: '', style: {}, folded: false };
+            };
+            const ed = this.editor;
+            if (!ed || this.mode !== 'wysiwyg') return close();
+            if (this.gutterMenu.open) return close();
+            const { state } = ed;
+            const { $from, empty } = state.selection;
+            if (!empty) return close();
+            if ($from.pos < $from.end()) return close();
+            const isHeading = $from.parent.type.name === 'heading';
+            const inList = ed.isActive('listItem') || ed.isActive('taskItem');
+            if (!isHeading && !inList) return close();
+            const coords = ed.view.coordsAtPos($from.pos);
+            const bodyW = (this.$refs.bodyEl && this.$refs.bodyEl.clientWidth) || window.innerWidth;
+            const barW = isHeading ? 268 : 240;
+            const left = Math.max(8, Math.min(coords.left, window.innerWidth - barW - 8));
+            let folded = false;
+            if (isHeading) {
+                const pos = this.headingPosOf($from);
+                folded = pos >= 0 && !!this._folds && this._folds.has(pos);
+            }
+            this.lineBar = {
+                open: true,
+                kind: isHeading ? 'heading' : 'list',
+                folded,
+                style: {
+                    left: `${Math.round(left)}px`,
+                    top: `${Math.round(Math.max(8, coords.top - 6))}px`,
+                    maxWidth: `${Math.round(Math.max(180, bodyW * 0.7))}px`,
+                },
+            };
+        },
+        /** 光标所在标题块在文档里的位置（找不到返回 -1） */
+        headingPosOf($from) {
+            for (let d = $from.depth; d > 0; d -= 1) {
+                if ($from.node(d).type.name === 'heading') return $from.before(d);
+            }
+            return -1;
+        },
+        /** 光标所在列表项的位置与节点（找不到返回 null） */
+        currentListItem() {
+            const ed = this.editor;
+            if (!ed) return null;
+            const { $from } = ed.state.selection;
+            for (let d = $from.depth; d > 0; d -= 1) {
+                const node = $from.node(d);
+                if (node.type.name === 'listItem' || node.type.name === 'taskItem') {
+                    return { pos: $from.before(d), node, depth: d };
+                }
+            }
+            return null;
+        },
+        /** 行末操作条的动作分发 */
+        lineAction(action) {
+            const ed = this.editor;
+            if (!ed) return;
+            if (this.lineBar.kind === 'heading') {
+                if (action === 'fold') {
+                    const { $from } = ed.state.selection;
+                    const pos = this.headingPosOf($from);
+                    if (pos >= 0) this.toggleFoldAt(pos);
+                    return;
+                }
+                const level = /^h([2-6])$/.exec(action);
+                if (level) {
+                    ed.chain().focus().setHeading({ level: Number(level[1]) }).run();
+                } else if (action === 'paragraph') {
+                    ed.chain().focus().setParagraph().unsetAllMarks().run();
+                }
+                this.onEditorUpdate();
+                return;
+            }
+            if (action === 'indent') return this.runTool('indent');
+            if (action === 'outdent') return this.runTool('outdent');
+            if (action === 'clearFormat') return this.runTool('clear');
+            const item = this.currentListItem();
+            if (!item) return;
+            if (action === 'addRow') {
+                /*
+                 * 增加一行：在当前项末尾 splitListItem —— 这是 ProseMirror 给列表的
+                 * 原生语义，任务列表（taskItem）同样支持，缩进层级也会自动继承。
+                 */
+                const name = item.node.type.name;
+                ed.chain().focus().splitListItem(name).run();
+                this.onEditorUpdate();
+                return;
+            }
+            if (action === 'delRow') {
+                ed.chain().focus().deleteRange({ from: item.pos, to: item.pos + item.node.nodeSize }).run();
+                this.onEditorUpdate();
+                return;
+            }
+            if (action === 'copyBlock') {
+                this.selectBlockAt(item.pos);
+                try {
+                    document.execCommand('copy');
+                } catch (e) {
+                    /* 忽略 */
+                }
+                ElMessage.success(this.$t('memo.listCopyDone'));
+                return;
+            }
+        },
+
         updateInputBar() {
             const ed = this.editor;
             if (!ed || this.mode !== 'wysiwyg') {
@@ -5279,8 +6121,14 @@ export default {
             else if (AUDIO.includes(ext)) kind = 'audio';
             else if (TEXT.includes(ext)) kind = 'text';
             const fileName = m.label || decodeURIComponent(String(m.src).split('/').pop() || '') || '文件';
-            const item = { key: m.src, name: fileName, url: m.src, kind, ext };
+            const recordId = this.fileIdOfSrc(m.src);
+            const item = { key: m.src, name: fileName, url: m.src, kind, ext, recordId };
             this.lightbox = { open: true, items: [item], index: 0 };
+        },
+
+        /** v1.3.3.3：灯箱顶栏「详情」/ 移动端下滑 → 打开同一个文件详情页 */
+        onLightboxDetail() {
+            this.openMediaDetail();
         },
 
         /**
@@ -5420,6 +6268,8 @@ export default {
             this.syncMediaBar();
             this.updateInputBar();
             this.syncTableBar();
+            // v1.3.3.3：列表 / 标题末尾的行级操作条
+            this.syncLineMenu();
             const ed = this.editor;
             if (!ed || this.mode !== 'wysiwyg') {
                 this.bubble.open = false;
@@ -5448,6 +6298,15 @@ export default {
             }
             const picked = state.doc.textBetween(from, to, '\n', '\n');
             if (!picked || !picked.trim()) {
+                this.bubble.open = false;
+                return;
+            }
+            /*
+             * v1.3.3.3（需求：内容块是 h 标题时选中文本不显示工具栏）
+             * 标题的字号/颜色由「样式设置」统一决定，单段标题不需要逐个调格式；
+             * 更重要的是浮层会挡住标题本身，选个标题名想复制都看不见。
+             */
+            if (ed.isActive('heading')) {
                 this.bubble.open = false;
                 return;
             }
@@ -5670,6 +6529,14 @@ export default {
     flex: 0 0 auto;
 }
 /* 工具组下拉按钮：v1.3.1.2 起显示组名 + 倒三角（不再是 …） */
+.me-glyph-tool {
+    display: inline-block;
+    min-width: 14px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    text-align: center;
+}
 .me-svg-icon {
     display: inline-flex;
     align-items: center;
@@ -5929,6 +6796,9 @@ export default {
     display: flex;
     gap: 10px;
     width: 100%;
+    /* v1.3.3.3：撑满弹窗剩余高度，输入框才能「按页面自适应」 */
+    flex: 1 1 auto;
+    height: 100%;
     min-height: 0;
 }
 .me-htmlmd-col {
@@ -5944,7 +6814,8 @@ export default {
 }
 .me-htmlmd-text {
     flex: 1 1 auto;
-    min-height: 200px;
+    /* v1.3.3.3：桌面端不再写死 200px 下限，交给容器高度 */
+    min-height: 0;
     width: 100%;
     box-sizing: border-box;
     padding: 8px 10px;
@@ -6128,7 +6999,10 @@ export default {
     font-size: 19px;
     font-weight: 600;
     color: var(--el-text-color-primary);
-    line-height: 1.4;
+    /* v1.3.3.3：行高锁 26px，与 .me-title-row 的 30px 高配合做到垂直居中 */
+    line-height: 26px;
+    height: 26px;
+    padding: 0;
 }
 .me-title::placeholder {
     color: var(--el-text-color-placeholder);
@@ -6188,13 +7062,42 @@ export default {
 .me-title-row {
     display: flex;
     align-items: center;
-    /* v1.3.2：原 .me-head 的内边距下放（display: contents 后它不再产生盒子） */
-    padding: 12px 16px 0;
+    /*
+     * v1.3.3.3（需求：标题行高度调小 10px、文字垂直居中）：
+     * 原来 padding 是 12px 上 / 0 下，行高 26.6 + 12 ≈ 38.6 —— 上方比下方多出 12px，
+     * 看起来标题「贴下沿」。现在改成上下等距的 2px，并把行高锁到 26px：
+     * 总高 30px，比原来少 8.6px（约等于需求里的 10px），文字正好在行内垂直居中。
+     */
+    height: 30px;
+    padding: 0 16px;
 }
 .me-title-row.is-sticky {
     /* 标题吸住时补一条极淡的分隔，否则正文会「贴着」标题滑过去 */
     box-shadow: inset 0 -1px 0 var(--el-border-color-lighter);
-    min-height: 40px;
+    height: 30px;
+    min-height: 30px;
+}
+/* 返回顶部按钮：钉在标题行最右侧 */
+.me-title-top {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin-left: 8px;
+    padding: 0;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.me-title-top:hover {
+    background: var(--el-fill-color-light);
+    color: var(--el-color-primary);
 }
 .me-meta.is-sticky,
 .me-meta.is-sticky {
@@ -6283,6 +7186,12 @@ export default {
     min-height: 0;
     overflow: auto;
     position: relative;
+    /*
+     * v1.3.3.3（需求：滚到底部不要继续拉动页面、露出底部背景层）
+     * overscroll-behavior 关掉「滚动链」：滚到编辑区底部就停住，
+     * 不再把外面的页面一起拖动（移动端那层橡皮筋会把背景拉出来）。
+     */
+    overscroll-behavior-y: contain;
 }
 .me-wysiwyg {
     height: 100%;
@@ -6290,6 +7199,7 @@ export default {
 .me-source {
     height: 100%;
     overflow: auto;
+    overscroll-behavior-y: contain;
     /* v1.3.1.2（需求）：源码模式内容左对齐（CM6 默认会用 text-align: inherit） */
     text-align: left;
 }
@@ -6358,6 +7268,7 @@ export default {
     z-index: 3000;
     display: flex;
     align-items: center;
+    flex-wrap: nowrap;
     gap: 2px;
     padding: 3px;
     border-radius: 7px;
@@ -6392,9 +7303,26 @@ export default {
     background: var(--el-border-color-lighter);
 }
 .me-bub-dd {
+    /*
+     * v1.3.3.3（需求：下拉三角被挤到下一行）
+     * 原来按钮宽度固定、内边距只有 4px，内容一多（图标 + 三角）就换行。
+     * 现在宽度随内容自适应，且行内不换行。
+     */
     width: auto;
-    padding: 0 4px;
-    gap: 2px;
+    min-width: 0;
+    padding: 0 5px;
+    gap: 3px;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+}
+/* 文字颜色按钮里的「A」 */
+.me-bub-color-a {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
 }
 .me-bub-caret {
     font-size: 8px;
@@ -6520,6 +7448,56 @@ export default {
 }
 
 /* 左侧行号栏（v1.3.3.2）：绝对定位覆盖层，按块矩形逐行摆放 */
+/* v1.3.3.3：列表 / 标题末尾的行级操作条（浮在光标上方） */
+.me-linebar {
+    position: fixed;
+    z-index: 3100;
+    display: flex;
+    align-items: center;
+    padding: 3px;
+    border: 1px solid var(--el-border-color-light);
+    border-radius: 8px;
+    background: var(--el-bg-color-overlay);
+    box-shadow: var(--el-box-shadow-light);
+    /* 贴光标上方：用自身高度整体上移，省掉一次「先渲染再测量」 */
+    transform: translateY(-100%);
+}
+.me-linebar-scroll {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.me-linebar-scroll::-webkit-scrollbar {
+    display: none;
+}
+.me-linebar .me-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+}
+.me-linebar .me-hbtn {
+    width: 26px;
+}
+/* 指向光标的小三角 */
+.me-linebar-arrow {
+    position: absolute;
+    left: 14px;
+    bottom: -5px;
+    width: 8px;
+    height: 8px;
+    background: var(--el-bg-color-overlay);
+    border-right: 1px solid var(--el-border-color-light);
+    border-bottom: 1px solid var(--el-border-color-light);
+    transform: rotate(45deg);
+}
+@media (max-width: 900px) {
+    .me-linebar {
+        max-width: 92vw;
+    }
+}
+
 .me-gutter-layer {
     position: absolute;
     left: 0;
@@ -6553,8 +7531,12 @@ export default {
     line-height: 1;
     cursor: pointer;
     pointer-events: auto;
-    opacity: 0;
-    transition: opacity 0.12s ease, background 0.12s ease;
+    /*
+     * v1.3.3.3（需求）：行号常显以后，折叠箭头也跟着常显（低透明度），
+     * 否则「有列表能折」这件事没人知道。悬停整行时提亮。
+     */
+    opacity: 0.5;
+    transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
 }
 .me-gutter-fold.is-folded {
     opacity: 1;
@@ -6572,14 +7554,15 @@ export default {
     font-size: 10px;
     line-height: 20px;
     font-variant-numeric: tabular-nums;
-    text-align: right;
+    /* v1.3.3.3（需求）：行号水平居中，不再靠右 */
+    text-align: center;
     cursor: pointer;
     pointer-events: auto;
-    opacity: 0;
+    /* v1.3.3.3（需求）：行号常显，不再随鼠标进出显隐 */
+    opacity: 0.75;
     transition: opacity 0.12s ease, background 0.12s ease;
 }
-/* 悬停正文 / 行号本身时行号才显形，不打扰阅读 */
-.me-body:hover .me-gutter-layer .me-gutter-no,
+/* 悬停时略微提亮（常显状态下的可交互提示） */
 .me-gutter-row:hover .me-gutter-no {
     opacity: 1;
 }
@@ -6587,25 +7570,28 @@ export default {
     opacity: 1;
 }
 .me-gutter-no:hover {
-    background: var(--el-fill-color);
+    /* v1.3.3.3（需求）：鼠标移到行号上时块操作按钮的底色更深一点 */
+    background: var(--el-fill-color-dark);
     color: var(--el-color-primary);
+    opacity: 1;
 }
 .me-gutter-fold:hover {
-    background: var(--el-fill-color);
+    background: var(--el-fill-color-dark);
     color: var(--el-color-primary);
+    opacity: 1;
 }
-/* v1.3.3.2：移动端行号常显（触屏没有 hover），列宽收窄 */
+/* v1.3.3.2：移动端列宽收窄（行号已常显，与桌面同一套规则） */
 @media (max-width: 900px) {
     .me-gutter-layer,
     .me-gutter-row {
         width: 40px;
     }
     .me-gutter-no {
-        opacity: 0.65;
+        opacity: 0.7;
     }
 }
 .me-gutter-menu {
-    min-width: 150px;
+    min-width: 140px;
 }
 
 /* 右键 / 长按菜单 */
@@ -6617,7 +7603,7 @@ export default {
     align-items: center;
     gap: 2px;
     min-width: 0;
-    /* v1.3.2（需求）：右键菜单改成一行；移动端最宽 70%，超出横滑 */
+    /* 移动端：右键（长按）菜单保持一行，最宽 70%，超出横滑 */
     max-width: min(70vw, 620px);
     overflow-x: auto;
     padding: 5px;
@@ -6630,6 +7616,35 @@ export default {
 .me-ctx::-webkit-scrollbar {
     display: none;
 }
+/*
+ * v1.3.3.3（需求）：桌面端右键菜单改回竖版列表。
+ * 上一版为了移动端窄屏把菜单压成一条横带，桌面上「一长条」既不好扫读、
+ * 也与选中文字浮层的观感割裂。桌面回到竖排（图标 + 文字 + 右侧快捷键），
+ * 移动端仍是横带（竖排会顶到屏幕外）。
+ */
+@media (min-width: 901px) and (hover: hover) {
+    .me-ctx {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1px;
+        min-width: 168px;
+        max-width: min(320px, 40vw);
+        overflow-x: visible;
+        overflow-y: auto;
+        max-height: 70vh;
+        padding: 4px;
+    }
+    /* 竖排时竖向分隔线 */
+    .me-ctx > .me-ctx-sep {
+        width: auto;
+        height: 1px;
+        margin: 3px 6px;
+    }
+    .me-ctx-item {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}
 .me-ctx-item {
     display: flex;
     align-items: center;
@@ -6637,13 +7652,15 @@ export default {
     width: auto;
     flex: 0 0 auto;
     white-space: nowrap;
-    padding: 6px 8px;
+    /* v1.3.3.3（需求）：字号改小，与选中文字浮层一致（13 → 12px） */
+    padding: 5px 8px;
     border: none;
     border-radius: 6px;
     background: transparent;
     color: var(--el-text-color-primary);
     font-family: inherit;
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 18px;
     text-align: left;
     cursor: pointer;
 }
@@ -6724,6 +7741,10 @@ export default {
 .me-bub-btn {
     width: 28px;
     height: 26px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: none;
     background: transparent;
     border-radius: 4px;
@@ -6834,6 +7855,42 @@ export default {
     padding-left: 1.55em;
     margin: 0.5em 0;
 }
+/*
+ * v1.3.3.3（需求：任务 / 有序 / 无序列表的下级列表要有一条上下级关系线）
+ * ---------------------------------------------------------------------------
+ * 竖线画在下级列表本身（border-left），横枝用 li::before 指向每一行的符号，
+ * 与目录树的关系线是同一套观感。竖线只加在「二级及以下」，
+ * 一级列表保持干净，不会整页都是线。
+ */
+.me-wysiwyg :deep(.gh-editor-content ul ul),
+.me-wysiwyg :deep(.gh-editor-content ul ol),
+.me-wysiwyg :deep(.gh-editor-content ol ul),
+.me-wysiwyg :deep(.gh-editor-content ol ol) {
+    position: relative;
+    margin-left: 0.2em;
+    padding-left: 1.1em;
+    border-left: 1px solid var(--el-border-color);
+}
+.me-wysiwyg :deep(.gh-editor-content ul ul > li),
+.me-wysiwyg :deep(.gh-editor-content ul ol > li),
+.me-wysiwyg :deep(.gh-editor-content ol ul > li),
+.me-wysiwyg :deep(.gh-editor-content ol ol > li) {
+    position: relative;
+}
+/* 横枝：从竖线指到这一行的符号（绝对定位，不影响 flex 任务行的排版） */
+.me-wysiwyg :deep(.gh-editor-content ul ul > li::before),
+.me-wysiwyg :deep(.gh-editor-content ul ol > li::before),
+.me-wysiwyg :deep(.gh-editor-content ol ul > li::before),
+.me-wysiwyg :deep(.gh-editor-content ol ol > li::before) {
+    content: '';
+    position: absolute;
+    left: -1.1em;
+    top: 0.82em;
+    width: 0.78em;
+    height: 1px;
+    background: var(--el-border-color);
+    pointer-events: none;
+}
 .me-wysiwyg :deep(.gh-editor-content li),
 .me-preview :deep(li) {
     margin: 0.18em 0;
@@ -6884,6 +7941,128 @@ export default {
 }
 .me-preview :deep(ul:has(input[type='checkbox']) li > input[type='checkbox']) {
     margin: 0 0.4em 0 0;
+}
+
+/* v1.3.3.3：创建子文档弹窗 */
+.me-subdoc-hint {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+.me-subdoc-text {
+    width: 100%;
+    box-sizing: border-box;
+    height: 180px;
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+    color: var(--el-text-color-primary);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.7;
+    resize: vertical;
+    outline: none;
+}
+
+/* ── v1.3.3.3：代码块（带操作栏） ─────────────────────────────── */
+.me-wysiwyg :deep(.gh-codeblock) {
+    position: relative;
+    margin: 0.7em 0;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+    overflow: hidden;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-cb-bar) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 28px;
+    padding: 0 6px;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    background: var(--el-fill-color-light);
+    /* 亮色/深色都保持低对比，别抢代码的注意力 */
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+    user-select: none;
+}
+.me-wysiwyg :deep(.gh-cb-lang) {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    text-transform: lowercase;
+    opacity: 0.85;
+}
+.me-wysiwyg :deep(.gh-cb-grow) {
+    flex: 1 1 auto;
+}
+.me-wysiwyg :deep(.gh-cb-btn) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+}
+.me-wysiwyg :deep(.gh-cb-btn:hover) {
+    background: var(--el-fill-color-dark);
+    color: var(--el-color-primary);
+}
+.me-wysiwyg :deep(.gh-cb-btn.is-ok) {
+    color: var(--el-color-success);
+}
+.me-wysiwyg :deep(.gh-cb-select) {
+    height: 20px;
+    padding: 0 2px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-size: 11px;
+    cursor: pointer;
+}
+.me-wysiwyg :deep(.gh-cb-select:hover) {
+    border-color: var(--el-border-color-light);
+    background: var(--el-bg-color);
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-cb-pre) {
+    margin: 0;
+    padding: 10px 12px;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    /* 去掉原来 codeBlock 的灰底，外壳已经给了 */
+    background: transparent;
+    white-space: pre;
+    tab-size: 4;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-codeblock.is-wrap .gh-cb-pre) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+/* 收起：只留操作栏 */
+.me-wysiwyg :deep(.gh-editor-content .gh-codeblock.is-collapsed .gh-cb-pre) {
+    display: none;
+}
+.me-wysiwyg :deep(.gh-codeblock.is-collapsed .gh-cb-fold svg) {
+    transform: rotate(-90deg);
+}
+.me-wysiwyg :deep(.gh-cb-fold svg) {
+    transition: transform 0.15s ease;
+}
+/* 原有 codeBlock 的样式还留在 .gh-code-block 上，这里把内边距让给新外壳 */
+.me-wysiwyg :deep(.gh-editor-content pre.gh-code-block) {
+    margin: 0;
+    padding: 0;
+    background: transparent;
 }
 
 /* 引述 */
@@ -7021,9 +8200,26 @@ export default {
 .me-preview :deep(.gh-video) {
     display: block;
     max-width: 100%;
-    border-radius: 8px;
+    /* v1.3.3.3（需求）：视频不要圆角 —— 这条规则特异性比 `video` 高，之前一直压着它 */
+    border-radius: 0;
     margin: 0.7em 0;
     background: #000;
+}
+/* v1.3.3.3（需求）：视频 / 音频 / 附件也要能左中右对齐 */
+.me-wysiwyg :deep(.gh-editor-content .gh-video[align='center']),
+.me-wysiwyg :deep(.gh-editor-content .gh-audio[align='center']) {
+    margin-left: auto;
+    margin-right: auto;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-video[align='right']),
+.me-wysiwyg :deep(.gh-editor-content .gh-audio[align='right']) {
+    margin-left: auto;
+    margin-right: 0;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-video[align='left']),
+.me-wysiwyg :deep(.gh-editor-content .gh-audio[align='left']) {
+    margin-left: 0;
+    margin-right: auto;
 }
 .me-wysiwyg :deep(.gh-editor-content .gh-audio),
 .me-preview :deep(.gh-audio) {
@@ -7033,6 +8229,11 @@ export default {
 }
 .me-wysiwyg :deep(.gh-editor-content .gh-file),
 .me-preview :deep(.gh-file) {
+    /*
+     * v1.3.3.3：附件是**行内**原子（md 里就是句子中的一个 token），
+     * 必须保持 inline-flex —— 改成 block/flex 会让它在句子里强制换行。
+     * 它的左中右对齐靠「父段落一起对齐」实现（见 TOOLS.align* 注释）。
+     */
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -7419,7 +8620,14 @@ export default {
     flex: 0 0 auto;
 }
 
+/*
+ * v1.3.3.3（需求：互转页移动端宽度不对、桌面端输入框要按页面自适应）
+ *   · 宽高统一按**视口 98%** 算，并且显式给 el-dialog 的 --el-dialog-width，
+ *     否则 Element Plus 内部还按组件上传的 50% 算一次，移动端就会横向溢出；
+ *   · body 撑满剩余高度，里面的两栏再各自 flex 撑满 —— 输入框自然跟着页面变高。
+ */
 .me-htmlmd-dialog {
+    --el-dialog-width: 98vw;
     width: 98vw !important;
     max-width: 98vw;
     height: 98vh;
@@ -7427,6 +8635,7 @@ export default {
     margin: 1vh auto !important;
     display: flex;
     flex-direction: column;
+    box-sizing: border-box;
 }
 .me-htmlmd-dialog .el-dialog__body {
     flex: 1 1 auto;
@@ -7434,5 +8643,29 @@ export default {
     display: flex;
     padding: 8px 10px;
     box-sizing: border-box;
+    overflow: hidden;
+}
+.me-htmlmd-dialog .el-dialog__footer {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+}
+@media (max-width: 900px) {
+    .me-htmlmd-dialog {
+        --el-dialog-width: 98vw;
+        width: 98vw !important;
+        max-width: 98vw;
+        height: 98vh !important;
+        max-height: 98vh !important;
+        margin: 1vh auto !important;
+    }
+    .me-htmlmd-dialog .el-dialog__body {
+        padding: 6px;
+    }
+    .me-htmlmd-dialog .el-dialog__header {
+        padding: 10px 12px;
+    }
 }
 </style>

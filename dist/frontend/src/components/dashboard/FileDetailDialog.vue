@@ -2600,17 +2600,28 @@ export default {
             if (!url) return;
             const ok = await copyText(url);
             if (ok) {
-                ElMessage.success(this.$t('fileDetail.sourceUrlCopied'));
+                ElMessage.success({ message: this.$t('fileDetail.sourceUrlCopied'), zIndex: 100000 });
                 this.showSourceDialog = false;
             } else {
-                ElMessage.warning(this.$t('fileDetail.copyFailed'));
+                ElMessage.warning({ message: this.$t('fileDetail.copyFailed'), zIndex: 100000 });
             }
         },
         async handleUrlClick(e) {
             const input = e.target;
             input.select();
             const ok = await copyText(input.value);
-            ElMessage[ok ? 'success' : 'warning'](this.$t(ok ? 'fileDetail.linkCopied' : 'dashboard.copyFailed'));
+            /*
+             * v1.3.3.3（需求：详情页里点 URL 复制的「复制成功」提示看不到）
+             *
+             * Element Plus 的 message 用的是自己的 z-index 计数器，而详情弹窗本身
+             * 也参与同一套计数；弹窗层级被 layerStack 抬高后，提示就落到它下面去了。
+             * 这里给提示一个明确的、远高于任何弹层的 z-index，保证永远可见。
+             */
+            ElMessage({
+                type: ok ? 'success' : 'warning',
+                message: this.$t(ok ? 'fileDetail.linkCopied' : 'dashboard.copyFailed'),
+                zIndex: 100000,
+            });
         },
         /**
          * 复制某个渠道下该文件的真实直链。
@@ -2625,9 +2636,10 @@ export default {
                     message: this.$t('fileDetail.sourceLinkWarning'),
                     duration: 6000,
                     showClose: true,
+                    zIndex: 100000,
                 });
             } else {
-                ElMessage.warning(this.$t('dashboard.copyFailed'));
+                ElMessage.warning({ message: this.$t('dashboard.copyFailed'), zIndex: 100000 });
             }
         },
         openImageLink() {

@@ -326,35 +326,24 @@ export default {
 .mt-tree :deep(.el-tree-node__children) {
     position: relative;
     /*
-     * v1.3.2（需求：关系线要落在倒三角正下方）
+     * v1.3.3.3（需求：上下级缩进减少一半，关系线落在三角按钮正下方）
      *
-     * 缩进从 8px 加到 20px：三角形在 el-tree 的 content 里占 24px（12px 图标 + 左右各 6px
-     * padding），中心在 12px 处。缩进必须大于 12px，子项内容才不会跑到三角形中心左边；
-     * 竖线固定在 left: 12px，每一层都正好穿过父级三角形的中心。
+     * 实测：el-tree 的三角是 24px 宽（12px 图标 + 左右各 6px padding），
+     * 相对行首中心在 12px 处。上一版缩进 20px，子项离父项太远、层级一多就吃不消。
+     * 现在缩进收到 10px（正好一半），竖线也放到 10px ——
+     * 与三角中心只差 2px，视觉上就是「从三角正下方垂下来」，
+     * 并且与子项内容左缘对齐，不再需要一段横向小枝。
      */
-    padding-left: 20px;
+    padding-left: 10px;
 }
 .mt-tree :deep(.el-tree-node__children)::before {
     content: '';
     position: absolute;
-    left: 12px;
+    left: 10px;
     top: 0;
     /* 最后一项的下半行不需要竖线，留出行高的一半 */
     bottom: 13px;
     width: 1px;
-    background: var(--el-border-color-lighter, #e4e7ed);
-}
-.mt-tree :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content) {
-    position: relative;
-}
-.mt-tree :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content)::before {
-    content: '';
-    position: absolute;
-    /* 从竖线（12px）连到子项内容左缘（20px） */
-    left: -8px;
-    top: 50%;
-    width: 8px;
-    height: 1px;
     background: var(--el-border-color-lighter, #e4e7ed);
 }
 
