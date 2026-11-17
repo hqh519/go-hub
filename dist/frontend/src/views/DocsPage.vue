@@ -1070,6 +1070,28 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1332',
+      title: '五十六、v1.3.3.2 更新要点',
+      intro: '这一版把笔记编辑器里「位置」这一类问题一次收干净：行号栏改成按块矩形定位（图片 / 视频再也不会跑到行号上方）、三种浮层跟着页面滚动、选中菜单只认文本；同时修掉了 Docker 升级时把自家表误判成「外来表」而拒绝启动的问题。',
+      items: [
+        { t: '行号栏重做', d: '不再往文档里插零宽占位节点（那个做法在块级原子节点上会让行号落到块的上方）。现在遍历每个顶层块、取它自己的矩形来定位：段落对准首行中心，图片 / 视频 / 音频 / 附件 / 表格贴块顶，折叠或高度为零的块不占号，行号因此永远连续、永远正对内容。左侧留出固定的行号列宽，正文从列右侧起排，行号不会再被容器裁掉。' },
+        { t: '图片 / 视频 / 文件都能选中并缩放', d: '视频、音频、附件补了点击选中（此前点原生播放器只会播放，选不中），选中后与图片共用同一套八向手柄。宽度会写进 markdown：视频 / 音频是标签上的 width 属性，附件是行尾的 {width=N}，重新打开、切到预览都保持原样。' },
+        { t: '选中菜单只认文本', d: '选中图片 / 视频 / 文件时不再同时冒出「文本格式菜单」—— 只有真正的文字选区才会出浮层，并且左侧不会越过编辑区左缘。' },
+        { t: '浮层跟随滚动', d: '选中文本菜单、选中文件菜单、`/` 命令菜单、`[[` 搜索面板都按文档位置实时重算坐标；右键菜单与行号菜单按滚动量等距平移，滚多远都贴着原处。' },
+        { t: '`/` 菜单二级菜单', d: '工具组展开的子菜单改为独立浮层：此前它绝对定位在滚动容器里，超出部分被整块裁掉，看起来就是「移上去没反应」。现在贴组名右侧展开，靠右放不下自动翻到左侧。' },
+        { t: '移动端字号 / 颜色下拉', d: '点开下拉时编辑器会失焦、键盘收起，旧逻辑在失焦时立刻收起整个浮层，于是第二层菜单一起消失。现在浮层只由「选区变化」和「点到浮层之外」关闭，键盘收起不再误伤。' },
+        { t: '行号里的折叠按钮', d: '标题行号左侧新增折叠 / 展开按钮，与源码模式的折叠同一套语义：折叠该标题直到下一个同级或更高级标题。折叠只影响显示，不改文档、不动 markdown。' },
+        { t: '块操作与光标工具栏不打架', d: '点行号弹出块操作菜单时，光标工具栏自动收起；行号菜单本身也随页面滚动。' },
+        { t: '工具栏组名不再被挤压', d: '工具组按钮的宽度改为按组名长度自适应（此前被通用按钮的固定 30px 覆盖，「表格工具」被压成一条）。' },
+        { t: '排版间距', d: '标题的上方间距与下方间距取同值（原来上重下轻）；标签行的上下间距也改成一样。' },
+        { t: '顶部导航栏', d: '向下滚动收起；回滚时只有滚到距顶部 200px 以内才显示；滚到底部保持收起，不再反复抽动。' },
+        { t: '滚动吸附', d: '移除「辅助栏」吸附开关与对应逻辑，只剩工具栏 / 标题栏两行。正滚按开关，回滚时两行都吸住、标题栏贴工具栏最后一行下方 —— 与需求给的 6 行矩阵逐条对齐。' },
+        { t: '笔记管理页', d: '目录栏的「更多」按钮与计数一起靠右对齐；桌面端中间列表栏也能拖右边框改宽度（宽度会记住）；右上角的编辑设置图标从「两个齿轮」换成滑杆，避免和系统设置混淆。' },
+        { t: 'Docker 升级被拒之门外', d: '启动前的「防误删守卫」此前用一份手写的自有表清单，漏了新加的 4 张笔记表，导致从旧版升级后**第一次重启就拒绝启动**，还会把它们说成「别的系统的表」。现在自有表清单一律从 prisma/schema.prisma 的 @@map 运行时解析，以后加表不用再改脚本；报错文案也不再出现任何预设库名，只报你 DATABASE_URL 实际指向的库，并明确「程序不会替你选库、也不会改你的连接串」。' },
+        { t: '升级兼容', d: '没有新增表、没有改列，编辑器设置里的「辅助栏吸附」字段读入时被忽略（不会报错）。旧的笔记、附件、图片宽度都能原样打开。' }
+      ]
+    },
+    {
       id: 'whatsnew-1331',
       title: '五十五、v1.3.3.1 修复',
       intro: '补丁版，只修「看起来修好、实际用不了」的问题，不加新功能。',
@@ -2175,6 +2197,28 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'whatsnew-1332',
+      title: '56. What is new in v1.3.3.2',
+      intro: 'This release clears out the "positioning" class of problems in the note editor: the line-number gutter is now placed from each block\'s own rectangle (images and videos no longer drift above their number), the three floating menus follow page scrolling, and the selection menu only appears for real text. It also fixes Docker refusing to start after an upgrade because it mistook its own tables for foreign ones.',
+      items: [
+        { t: 'Gutter rebuilt', d: 'The gutter no longer inserts zero-width placeholder nodes into the document - that approach made numbers land above block-level atoms. Each top-level block is now measured and positioned by its own rectangle: text blocks align to the centre of their first line, atoms (image / video / audio / attachment / table) stick to the block top, folded or zero-height blocks are skipped, so numbers stay continuous and always sit next to their block.' },
+        { t: 'Images, videos and files can be selected and resized', d: 'Video, audio and attachments now become selected on click (previously a click on the native player only played it), and they share the same eight resize handles as images. Width is persisted in markdown: a width attribute on video/audio tags, and a trailing {width=N} on attachments - reopening or switching to preview keeps the size.' },
+        { t: 'Selection menu only for text', d: 'Selecting an image, video or file no longer brings up the text formatting bar at the same time; only a real text selection shows it, and it never overflows the left edge of the editor.' },
+        { t: 'Floating menus follow scrolling', d: 'The text selection bar, media bar, slash menu and reference search panel recompute their position from document coordinates; the context menu and gutter menu shift with the scroll delta, so they stay attached while you scroll.' },
+        { t: 'Slash menu submenu', d: 'Submenus for tool groups are now their own floating layer. Previously they were absolutely positioned inside a scrolling container and got clipped, which looked like "hovering does nothing". They open to the right of the group and flip to the left when there is no room.' },
+        { t: 'Font size / colour on mobile', d: 'Opening a dropdown blurs the editor and closes the keyboard; the old logic closed the whole floating bar on blur, so the second-level menu vanished with it. The bar now closes only when the selection changes or you tap outside it.' },
+        { t: 'Fold button in the gutter', d: 'Heading rows get a collapse / expand button, with the same semantics as source-mode folding: collapse down to the next heading of the same or higher level. Folding only affects display - the document and markdown are untouched.' },
+        { t: 'Block menu and caret toolbar', d: 'Opening the block menu from a line number hides the caret toolbar, and the block menu itself now follows page scrolling.' },
+        { t: 'Toolbar group width', d: 'Group buttons size themselves to the group name; previously the shared 30px button width won the cascade and squeezed labels such as "table tools" into a sliver.' },
+        { t: 'Spacing', d: 'Headings now use the same gap above and below (they were top-heavy), and the tag row is evenly spaced as well.' },
+        { t: 'Top navigation bar', d: 'It hides while scrolling down, reappears only when you scroll back to within 200px of the top, and stays hidden at the bottom instead of flickering.' },
+        { t: 'Scroll pinning', d: 'The "auxiliary bar" toggle and its logic are gone; only the toolbar and title bar remain. Scrolling down follows your toggles, scrolling up pins both with the title bar sitting below the toolbar\'s last row - matching the six-row matrix exactly.' },
+        { t: 'Notes page', d: 'The folder row "more" button now aligns to the right together with the count; the middle list column can be resized by dragging its right edge (and remembers it); the editor-settings icon changed from two gears to sliders so it is not confused with system settings.' },
+        { t: 'Docker upgrade rejected', d: 'The pre-start safety guard used a hand-written list of GoHub\'s own tables and missed four newer note tables, so the first restart after an upgrade refused to start and even called them "another system\'s tables". The list is now parsed from the @@map entries in prisma/schema.prisma at runtime, so new tables need no script change. The message no longer contains any preset database name - it reports the database your DATABASE_URL actually points at and states that the program never picks a database or rewrites your connection string.' },
+        { t: 'Upgrade compatibility', d: 'No new tables and no column changes; the leftover "auxiliary bar" flag in saved editor settings is ignored on read. Existing notes, attachments and image widths open unchanged.' }
       ]
     },
     {

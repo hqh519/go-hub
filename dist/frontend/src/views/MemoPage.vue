@@ -55,7 +55,8 @@
                     <font-awesome-icon icon="plus" />
                 </button>
                 <button type="button" class="memo-icon-btn" :title="$t('memo.editorSettings')" @click="openSettings">
-                    <font-awesome-icon icon="cogs" />
+                    <!-- v1.3.3.2（需求）：两个齿轮（cogs）太容易和「系统设置」混，换成滑杆 -->
+                    <font-awesome-icon icon="sliders-h" />
                 </button>
             </div>
         </div>
@@ -80,7 +81,11 @@
             </aside>
 
             <!-- 中：列表 -->
-            <section v-show="!isMobile || !editingId" class="memo-col memo-col-list">
+            <section
+                v-show="!isMobile || !editingId"
+                class="memo-col memo-col-list"
+                :style="isMobile ? null : { flexBasis: `${listWidth}px`, maxWidth: `${listWidth}px` }"
+            >
                 <MemoList
                     ref="list"
                     :folder-id="activeFolder"
@@ -90,6 +95,16 @@
                     @create="createNote"
                     @changed="onListChanged"
                 />
+                <!--
+                    v1.3.3.2（需求）：桌面端列表栏也能拖边框改宽度。
+                    与目录栏同一套实现：宽度存 localStorage，下次进来还是上次的宽度。
+                -->
+                <span
+                    v-if="!isMobile"
+                    class="memo-list-resizer"
+                    :title="$t('memo.listResize')"
+                    @pointerdown.prevent="startListResize"
+                ></span>
             </section>
 
             <!-- 右：编辑器 -->
@@ -317,9 +332,10 @@ export default {
                 historyInterval: 3,
                 // v1.3.1.2：样式与吸附默认值
                 styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75 },
+                // v1.3.3.2：辅助栏吸附已移除，只剩工具栏 / 标题栏
                 sticky: {
-                    pc: { toolbar: false, title: false, aux: false },
-                    m: { toolbar: false, title: false, aux: false },
+                    pc: { toolbar: false, title: false },
+                    m: { toolbar: false, title: false },
                 },
             },
             settingsDraft: {
@@ -340,16 +356,16 @@ export default {
                 /* v1.3.2：自定义 CSS（草稿层单独放一份，确认后才写回 styles.customCss） */
                 customCss: '',
                 /* v1.3.1.2：PC / 移动端各自的吸附开关，默认全关 */
+                // v1.3.3.2：辅助栏吸附已移除，只剩工具栏 / 标题栏
                 sticky: {
-                    pc: { toolbar: false, title: false, aux: false },
-                    m: { toolbar: false, title: false, aux: false },
+                    pc: { toolbar: false, title: false },
+                    m: { toolbar: false, title: false },
                 },
             },
-            /** 吸附表格的行定义（三行 × 两列终端） */
+            /** 吸附表格的行定义（两行 × 两列终端；v1.3.3.2 移除「辅助栏」） */
             stickyRows: [
                 { key: 'toolbar', label: 'memo.stickyToolbar' },
                 { key: 'title', label: 'memo.stickyTitleBar' },
-                { key: 'aux', label: 'memo.stickyAux' },
             ],
             /* v1.3.1.2：从编辑器「发布到瞬间」带过去的正文 */
             momentDlgVisible: false,
@@ -361,6 +377,8 @@ export default {
             lastScrollTop: 0,
             /** v1.3.3：左侧目录栏宽度（桌面端可拖拽） */
             treeWidth: 210,
+            /** v1.3.3.2：中间列表栏宽度（桌面端可拖拽） */
+            listWidth: 280,
         };
     },
     computed: {
@@ -427,6 +445,7 @@ export default {
     },
     async mounted() {
         this.restoreTreeWidth();
+        this.restoreListWidth();
         this.syncViewport();
         window.addEventListener('resize', this.syncViewport);
         /*
@@ -573,7 +592,13 @@ export default {
             }
         },
         /**
-         * 顶栏随滚动显隐：下滑超过阈值收起，上滑立即展开。
+         * 顶栏随滚动显隐。
+         *
+         * v1.3.3.2（需求）：
+         *   · 滚到底部时**不要**把顶栏显示出来（原来到底会强制展开，是为了压住振荡；
+         *     现在改成「到底保持收起」，不存在展开→高度变化→再触发滚动这条回路）；
+         *   · 回滚时只有滚到「距顶部 < 200px」才显示顶栏，其它位置一律保持隐藏 ——
+         *     上滑一点点就弹出来会挡住正文。
          *
          * 滚动事件来自子容器（列表 / 编辑器正文），用捕获阶段统一收口；
          * `scroll` 不冒泡，但捕获阶段可以看到 —— 这是不往每个子组件塞回调的最小代价。
@@ -581,43 +606,38 @@ export default {
         onPageScroll(e) {
             const el = e.target;
             if (!el || typeof el.scrollTop !== 'number') return;
-            /*
-             * v1.3.1.2（需求：滚到底部时顶部工具栏一直闪烁跳动）
-             *
-             * 原因是「收/展顶栏」本身会改变内容高度：顶栏收起 → 视口里的内容整体上移
-             * → 浏览器把 scrollTop 夹回去 → 又触发一次 scroll 事件、方向与刚才相反
-             * → 顶栏展开 → 高度再变……滚到最底部（或内容刚好够高）时这个循环会一直转，
-             * 表现就是顶栏反复抽动。
-             *
-             * 三条刹车：
-             *   1) 到底了就不再隐/显（底部本来就没有更多内容，收起毫无意义）；
-             *   2) 每次切换后 400ms 内忽略事件，掐断震荡回路；
-             *   3) 容器不可滚（内容比视口短）时直接不参与。
-             */
+            // 容器不可滚（内容比视口短）时直接不参与，顶栏常显
             if (el.scrollHeight - el.clientHeight < 80) {
                 if (this.topbarHidden) this.topbarHidden = false;
                 return;
             }
             const top = el.scrollTop;
-            const atBottom = el.scrollHeight - el.clientHeight - top <= 48;
             const last = el.__memoLastTop ?? 0;
             el.__memoLastTop = top;
+            const down = top > last;
+            // 距顶部 200px 以内：顶栏始终显示（刚进页面、刚回到开头都该看到导航）
+            if (top < 200) {
+                if (this.topbarHidden) this.topbarHidden = false;
+                return;
+            }
+            /*
+             * 到底了：一律保持收起状态。
+             * 底部没有更多内容，此时把顶栏弹出来除了遮挡别无用处；
+             * 由于这里不再「展开」，也就不会因为展开改变高度而反复触发滚动。
+             */
+            const atBottom = el.scrollHeight - el.clientHeight - top <= 48;
             if (atBottom) {
-                // 到底：一律展开，并记住当前方向，避免下一帧再判一次
-                if (this.topbarHidden) this.topbarHidden = false;
+                if (!this.topbarHidden) this.topbarHidden = true;
                 return;
             }
-            if (Date.now() - (this._topbarLock || 0) < 400) return;
             if (Math.abs(top - last) < 8) return;
-            if (top <= 40) {
-                if (this.topbarHidden) this.topbarHidden = false;
-                return;
-            }
-            const next = top > last;
-            if (next !== this.topbarHidden) {
-                this.topbarHidden = next;
-                this._topbarLock = Date.now();
-            }
+            /*
+             * 只处理「正滚」：向下滚就收起。
+             * 回滚不做任何展开动作 —— 需求写得很清楚：只有滚到距顶部 200px 以内才显示，
+             * 其它位置的向上滚动保持隐藏。这样也不会出现「展开→高度变化→再触发滚动」
+             * 的振荡回路（顶栏收起/展开会改变滚动容器高度，这是上一版闪烁的根源）。
+             */
+            if (down && !this.topbarHidden) this.topbarHidden = true;
         },
         /* ── v1.3.1.2：编辑器「发布到瞬间」 ─────────────────────── */
         onPublishMoment(text) {
@@ -713,12 +733,10 @@ export default {
                         pc: {
                             toolbar: !!editor?.sticky?.pc?.toolbar,
                             title: !!editor?.sticky?.pc?.title,
-                            aux: !!editor?.sticky?.pc?.aux,
                         },
                         m: {
                             toolbar: !!editor?.sticky?.m?.toolbar,
                             title: !!editor?.sticky?.m?.title,
-                            aux: !!editor?.sticky?.m?.aux,
                         },
                     },
                 };
@@ -739,8 +757,8 @@ export default {
                     historyInterval: 3,
                     styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '' },
                     sticky: {
-                        pc: { toolbar: false, title: false, aux: false },
-                        m: { toolbar: false, title: false, aux: false },
+                        pc: { toolbar: false, title: false },
+                        m: { toolbar: false, title: false },
                     },
                 };
             }
@@ -759,6 +777,42 @@ export default {
                 document.body.classList.remove('is-col-resizing');
                 try {
                     localStorage.setItem('gohub_memo_tree_width', String(this.treeWidth));
+                } catch (err) {
+                    /* 隐私模式忽略 */
+                }
+            };
+            document.body.classList.add('is-col-resizing');
+            document.addEventListener('pointermove', move, true);
+            document.addEventListener('pointerup', up, true);
+        },
+        /**
+         * v1.3.3.2（需求）：列表栏也可以拖边框改宽度。
+         *
+         * 与目录栏用同一套 pointer 捕获实现：拖动期间给 body 挂 is-col-resizing
+         * （统一 col-resize 光标 + 禁选），松手写 localStorage。
+         * 范围 220~520：窄到 220 以下标题会整行截断，宽到 520 以上编辑区就没了。
+         */
+        restoreListWidth() {
+            try {
+                const raw = Number(localStorage.getItem('gohub_memo_list_width'));
+                if (raw && raw >= 220 && raw <= 520) this.listWidth = Math.round(raw);
+            } catch (e) {
+                /* 忽略 */
+            }
+        },
+        startListResize(e) {
+            const startX = e.clientX || 0;
+            const startW = this.listWidth;
+            const move = (ev) => {
+                const dx = (ev.clientX || 0) - startX;
+                this.listWidth = Math.round(Math.min(520, Math.max(220, startW + dx)));
+            };
+            const up = () => {
+                document.removeEventListener('pointermove', move, true);
+                document.removeEventListener('pointerup', up, true);
+                document.body.classList.remove('is-col-resizing');
+                try {
+                    localStorage.setItem('gohub_memo_list_width', String(this.listWidth));
                 } catch (err) {
                     /* 隐私模式忽略 */
                 }
@@ -787,8 +841,8 @@ export default {
                 })),
                 // 深拷贝：弹窗里改开关不能立刻影响编辑器，点「确定」才生效
                 sticky: JSON.parse(JSON.stringify(this.editorSettings.sticky || {
-                    pc: { toolbar: false, title: false, aux: false },
-                    m: { toolbar: false, title: false, aux: false },
+                    pc: { toolbar: false, title: false },
+                    m: { toolbar: false, title: false },
                 })),
             };
             this.settingsVisible = true;
@@ -844,8 +898,8 @@ export default {
                     customCss: String(this.settingsDraft.customCss || '').slice(0, 4000),
                 },
                 sticky: JSON.parse(JSON.stringify(this.settingsDraft.sticky || {
-                    pc: { toolbar: false, title: false, aux: false },
-                    m: { toolbar: false, title: false, aux: false },
+                    pc: { toolbar: false, title: false },
+                    m: { toolbar: false, title: false },
                 })),
             };
             try {
@@ -1036,7 +1090,9 @@ export default {
 .memo-tree-resizer {
     position: absolute;
     top: 0;
-    right: -3px;
+    /* v1.3.3.2：整条热区放在列内（原来 right:-3px 有一半被 .memo-col 的 overflow 裁掉，
+       只剩 3px 能抓，拖起来很难命中） */
+    right: 0;
     width: 6px;
     height: 100%;
     z-index: 5;
@@ -1051,9 +1107,24 @@ export default {
     user-select: none;
 }
 .memo-col-list {
+    position: relative;
     flex: 0 0 280px;
     max-width: 280px;
     border-left: 1px solid var(--el-border-color-lighter);
+}
+/* v1.3.3.2：列表栏右边框可拖（与目录栏同一套观感） */
+.memo-list-resizer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    z-index: 5;
+    cursor: col-resize;
+    background: transparent;
+}
+.memo-list-resizer:hover {
+    background: var(--el-color-primary-light-7);
 }
 .memo-col-editor {
     flex: 1 1 auto;

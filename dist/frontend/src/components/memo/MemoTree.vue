@@ -290,6 +290,8 @@ export default {
 }
 .mt-count {
     flex: 0 0 auto;
+    /* v1.3.3.2：计数与「更多」一起靠右成一列，目录名再长也不会把按钮挤到中间 */
+    margin-left: auto;
     font-size: 11px;
     font-variant-numeric: tabular-nums;
     opacity: 0.6;
@@ -388,6 +390,7 @@ export default {
     width: 12px;
     opacity: 0.7;
 }
+/* v1.3.3.2（需求）：更多按钮排在目录名右侧、整体靠右对齐 */
 .mt-node-more {
     flex: 0 0 auto;
     opacity: 0;

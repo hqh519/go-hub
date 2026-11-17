@@ -3057,12 +3057,11 @@
         "toolLinkExtract": "链接提取",
         "toolGroup": "工具组",
         "stickyTitle": "滚动吸附",
-        "stickyTip": "开启后对应的行会固定在编辑区顶部，不随正文滚走。PC 与移动端分开设置；移动端屏幕小，建议只开一项。默认为关闭。",
+        "stickyTip": "开启后对应的行会固定在编辑区顶部，不随正文滚走。PC 与移动端分开设置；未开启的行在「向上回滚」时会临时吸住，滚回原位自动脱离。默认为关闭。",
         "stickyPc": "PC",
         "stickyMobile": "移动端",
         "stickyToolbar": "工具栏",
         "stickyTitleBar": "标题栏",
-        "stickyAux": "辅助栏",
         "tblAddRow": "下方插入行",
         "tblAddCol": "右侧插入列",
         "tblDelRow": "删除行",
@@ -3192,10 +3191,16 @@
         "historyRestored": "已恢复到该版本",
         "historyLoadFail": "历史内容加载失败",
         "treeResize": "拖动调整目录栏宽度",
-        "toolImgSize": "图片尺寸",
+        "toolImgSize": "尺寸",
         "iframeSettings": "嵌入设置",
         "iframeUrlPrompt": "网页地址（只支持 http/https）",
         "iframeHeightPrompt": "嵌入框高度（px，120~2000）",
-        "iframeHeightInvalid": "请输入 120~2000 之间的数字"
+        "iframeHeightInvalid": "请输入 120~2000 之间的数字",
+        "listResize": "拖动调整列表栏宽度",
+        "gutterMenu": "块操作",
+        "foldTitle": "折叠这一节",
+        "unfoldTitle": "展开这一节",
+        "toolMediaPreview": "预览",
+        "toolFileDetail": "文件详情"
     }
 }

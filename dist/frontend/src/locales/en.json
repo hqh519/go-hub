@@ -3062,12 +3062,11 @@
         "toolLinkExtract": "Extract from link",
         "toolGroup": "Tool group",
         "stickyTitle": "Scroll pinning",
-        "stickyTip": "Pinned rows stay at the top of the editor instead of scrolling away. PC and mobile are configured separately; on a small screen one row is usually enough. Off by default.",
+        "stickyTip": "Pinned rows stay at the top of the editor instead of scrolling away. PC and mobile are configured separately; rows that are off still stick temporarily while scrolling back up and release when they return to their original position. Off by default.",
         "stickyPc": "PC",
         "stickyMobile": "Mobile",
         "stickyToolbar": "Toolbar",
         "stickyTitleBar": "Title bar",
-        "stickyAux": "Auxiliary bar",
         "tblAddRow": "Insert row below",
         "tblAddCol": "Insert column right",
         "tblDelRow": "Delete row",
@@ -3197,10 +3196,16 @@
         "historyRestored": "Restored to that version",
         "historyLoadFail": "Failed to load the snapshot",
         "treeResize": "Drag to resize the folder pane",
-        "toolImgSize": "Image size",
+        "toolImgSize": "Size",
         "iframeSettings": "Embed settings",
         "iframeUrlPrompt": "Page URL (http/https only)",
         "iframeHeightPrompt": "Embed height (px, 120-2000)",
-        "iframeHeightInvalid": "Enter a number between 120 and 2000"
+        "iframeHeightInvalid": "Enter a number between 120 and 2000",
+        "listResize": "Drag to resize the list pane",
+        "gutterMenu": "Block actions",
+        "foldTitle": "Collapse this section",
+        "unfoldTitle": "Expand this section",
+        "toolMediaPreview": "Preview",
+        "toolFileDetail": "File details"
     }
 }

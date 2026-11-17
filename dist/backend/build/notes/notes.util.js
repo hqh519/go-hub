@@ -107,7 +107,7 @@ function normalizeSticky(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
     const one = (v) => {
         const x = (v && typeof v === 'object' ? v : {});
-        return { toolbar: x.toolbar === true, title: x.title === true, aux: x.aux === true };
+        return { toolbar: x.toolbar === true, title: x.title === true };
     };
     return { pc: one(o.pc), m: one(o.m) };
 }

@@ -269,11 +269,16 @@ export function normalizeEditorStyles(raw: unknown): EditorStyleSettings {
   };
 }
 
-/** 单个终端的吸附开关 */
+/**
+ * 单个终端的吸附开关。
+ *
+ * v1.3.3.2：移除 aux（辅助栏）—— 需求里「不再对辅助栏设置吸附功能」。
+ * 旧数据里残留的 aux 字段在读入时被忽略（normalizeSticky 只取 toolbar / title），
+ * 不会因为少一个键就报错，也不需要写迁移脚本。
+ */
 export interface StickyFlags {
   toolbar: boolean;
   title: boolean;
-  aux: boolean;
 }
 
 export interface EditorStickySettings {
@@ -286,7 +291,7 @@ export function normalizeSticky(raw: unknown): EditorStickySettings {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const one = (v: unknown): StickyFlags => {
     const x = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
-    return { toolbar: x.toolbar === true, title: x.title === true, aux: x.aux === true };
+    return { toolbar: x.toolbar === true, title: x.title === true };
   };
   return { pc: one(o.pc), m: one(o.m) };
 }

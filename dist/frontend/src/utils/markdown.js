@@ -79,9 +79,12 @@ function parseInline(src, marks = []) {
      * 前面多一个 `!` 就是「嵌入」。
      * 必须先于普通链接 `/^\[([^\]]*)\]/` 匹配 —— 否则 `[[` 会被当成一个空文字的链接吃掉。
      */
-    if ((m = /^!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\]/.exec(rest))) {
+    if ((m = /^!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\](\{width=\d+\})?/.exec(rest))) {
       flush();
-      out.push({ type: 'fileAttachment', attrs: { href: m[1], name: m[2] || '附件' } });
+      const attrs = { href: m[1], name: m[2] || '附件' };
+      const w = /width\s*=\s*(\d+)/.exec(m[3] || '');
+      if (w) attrs.width = Number(w[1]);
+      out.push({ type: 'fileAttachment', attrs });
       i += m[0].length;
       continue;
     }
@@ -612,10 +615,16 @@ export function mdToDoc(md) {
       const kind = m[1].toLowerCase();
       const src = attrOf(m[2], 'src');
       if (src) {
-        content.push({
-          type: kind,
-          attrs: { src, poster: attrOf(m[2], 'poster') || '' },
-        });
+        /*
+         * v1.3.3.2：宽度 / 对齐跟着标签属性一起读回来。
+         * 老笔记没有这两个属性 → 保持自动宽度（null），不改变原样。
+         */
+        const w = Number(attrOf(m[2], 'width')) || 0;
+        const al = /align\s*=\s*"?(left|center|right)"?/i.exec(m[2] || '');
+        const attrs = { src, poster: attrOf(m[2], 'poster') || '' };
+        if (w > 0) attrs.width = w;
+        if (al) attrs.align = al[1].toLowerCase();
+        content.push({ type: kind, attrs });
       } else {
         // 没有 src 就当成普通文本，绝不悄悄丢掉一行
         content.push({ type: 'paragraph', content: [{ type: 'text', text: line.trim() }] });
@@ -636,6 +645,25 @@ export function mdToDoc(md) {
       });
       i += 1;
       continue;
+    }
+    /*
+     * v1.3.3.2：独占一行的 `![[file:…]]`（含可选宽度）显式收成一个「只含附件」的段落。
+     *
+     * 附件节点是**行内**原子（解析侧本来就把 token 放在段落里），所以这里不能
+     * 直接 push 一个块节点 —— 那会让 schema 对不上。包成段落既保持了「独占一行」
+     * 的块级观感（前后有空行），序列化回来也还是同一行。
+     */
+    {
+      const fm = /^\s*!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\]\s*(?:\{([^}]*)\})?\s*$/.exec(line);
+      if (fm) {
+        flushPara();
+        const attrs = { href: fm[1], name: String(fm[2] || '附件').trim() || '附件' };
+        const w = /width\s*=\s*(\d+)/.exec(fm[3] || '');
+        if (w) attrs.width = Number(w[1]);
+        content.push({ type: 'paragraph', content: [{ type: 'fileAttachment', attrs }] });
+        i += 1;
+        continue;
+      }
     }
     // ── v1.3.1：GFM 表格（表头 + 分隔行 + 若干数据行） ──
     if (isTableRow(line) && i + 1 < lines.length && TABLE_SEP_RE.test(lines[i + 1])) {
@@ -729,7 +757,8 @@ function inlineToMd(nodes = []) {
     if (n.type === 'fileAttachment') {
       const href = String(n.attrs?.href || '');
       const name = String(n.attrs?.name || '附件').replace(/[|\]]/g, ' ');
-      out.push(`![[file:${href}|${name}]]`);
+      const w = Number(n.attrs?.width) || 0;
+      out.push(`![[file:${href}|${name}]]${w > 0 ? `{width=${Math.round(w)}}` : ''}`);
       continue;
     }
     if (n.type === 'noteRef' || n.type === 'noteEmbed') {
@@ -841,11 +870,19 @@ function blockToMd(node, depth = 0) {
       return `![${node.attrs?.alt || ''}](${node.attrs?.src || ''})${tail}`;
     }
     // ── v1.3.1 新增块 ──
+    /*
+     * v1.3.3.2：视频 / 音频 / 附件也能拖框改大小，宽度同样要能落进 md。
+     *   视频 / 音频 → HTML 属性 width / align（DOMPurify 白名单放行，预览一致）
+     *   附件       → 尾部属性块 `{width=320}`，与图片 `{width=600}` 同一套写法
+     */
     case 'video':
-      return `<video src="${node.attrs?.src || ''}" controls></video>`;
-    case 'audio':
-      return `<audio src="${node.attrs?.src || ''}" controls></audio>`;
-    case 'fileAttachment':
+    case 'audio': {
+      const w = Number(node.attrs?.width) || 0;
+      const al = String(node.attrs?.align || '');
+      const extra = `${w > 0 ? ` width="${Math.round(w)}"` : ''}${al ? ` align="${al}"` : ''}`;
+      return `<${node.type} src="${node.attrs?.src || ''}"${extra} controls></${node.type}>`;
+    }
+    case 'fileAttachment': {
       /*
        * v1.3.1.2（需求：插入的附件不该是一坨 html a 标签）
        *
@@ -853,7 +890,11 @@ function blockToMd(node, depth = 0) {
        * 一眼能看出「这是一张卡片式的附件引用」，也方便以后统一做悬浮预览。
        * 解析侧仍然兼容老的 `<a class="gh-file">` —— 旧笔记不会因为这次改动丢附件。
        */
-      return `![[file:${node.attrs?.href || ''}|${String(node.attrs?.name || '附件').replace(/[|\]]/g, ' ')}]]`;
+      const name = String(node.attrs?.name || '附件').replace(/[|\]]/g, ' ');
+      const w = Number(node.attrs?.width) || 0;
+      const tail = w > 0 ? `{width=${Math.round(w)}}` : '';
+      return `![[file:${node.attrs?.href || ''}|${name}]]${tail}`;
+    }
     case 'htmlBlock': {
       // 空内容也留围栏，避免往返时整块消失
       return `:::html\n${String(node.attrs?.html || '')}\n:::`;
@@ -961,8 +1002,29 @@ const PURIFY_CONFIG = {
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
   ADD_ATTR: ['target'],
   // 外链一律新窗口 + noopener，避免 window.opener 被反向控制
-  FORBID_ATTR: ['style', 'onerror', 'onload', 'onclick'],
+  FORBID_ATTR: ['onerror', 'onload', 'onclick'],
 };
+
+/*
+ * style 的「唯一放行口径」（v1.3.3.2）。
+ *
+ * 附件卡片可以被拖框改宽度，而这个宽度在预览 / 只读渲染里没有别的表达方式
+ * （a 元素不吃 width 属性）。与其为了一个宽度整体放开 style（那等于把
+ * `style="background:url(javascript:…)"` 这类口子也打开），不如只认白名单形状：
+ * 仅 .gh-file 上的 `width:Npx` / `max-width:Npx`，其余 style 一律丢弃。
+ */
+if (typeof DOMPurify.addHook === 'function') {
+  DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+    if (data.attrName !== 'style') return;
+    const ok =
+      node && node.classList && node.classList.contains('gh-file') &&
+      /^(max-)?width:\s*\d{1,4}px$/i.test(String(data.attrValue || '').trim());
+    if (!ok) {
+      data.keepAttr = false;
+      data.attrValue = '';
+    }
+  });
+}
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -1014,8 +1076,10 @@ export function renderMarkdownSafe(md) {
    * 先换占位符，避免 marked 把它当普通文本、也避免文件名里的字符破坏 md 结构。
    */
   const files = [];
-  const textWithFiles = extracted.text.replace(/!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\]/g, (_m, href, name) => {
-    files.push({ href: String(href || ''), name: String(name || '附件') });
+  // v1.3.3.2：尾部 `{width=N}` 要一起吃掉，否则预览里会多出一段 `{width=320}` 文字
+  const textWithFiles = extracted.text.replace(/!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\](\{width=\d+\})?/g, (_m, href, name, wtail) => {
+    const w = /width\s*=\s*(\d+)/.exec(wtail || '');
+    files.push({ href: String(href || ''), name: String(name || '附件'), width: w ? Number(w[1]) : 0 });
     return `@@GHFILE${files.length - 1}@@`;
   });
   const blocks = extracted.blocks;
@@ -1038,7 +1102,9 @@ export function renderMarkdownSafe(md) {
   // 附件占位符 → 可点击的下载卡片（名字里的尖括号等要转义，否则会撕坏标签）
   const esc = (v) => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   files.forEach((f, i) => {
-    const a = `<a class="gh-file" href="${esc(f.href)}" download>${esc(f.name)}</a>`;
+    // v1.3.3.2：有宽度就写成行内 style —— 预览是静态 HTML，没有手柄可用
+    const style = f.width > 0 ? ` style="width:${Math.round(f.width)}px"` : '';
+    const a = `<a class="gh-file" href="${esc(f.href)}"${style} download>${esc(f.name)}</a>`;
     html = html.replace(new RegExp(`@@GHFILE${i}@@`, 'g'), a);
   });
   // 最后整体过一遍白名单：HTML 块里的 <script> / on* 属性在这一步被剥掉

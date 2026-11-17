@@ -148,11 +148,8 @@
                         @input="onTitleInput"
                     />
                 </div>
-                <div
-                    class="me-meta"
-                    :class="{ 'is-sticky': isStickyNow('aux') }"
-                    :style="{ top: stickyTop('aux') }"
-                >
+                <!-- v1.3.3.2：辅助栏不再参与吸附（需求已移除该开关），保持普通跟随滚动 -->
+                <div class="me-meta">
                     <button type="button" class="me-meta-btn" :title="$t('memo.historyOpen')" @click="openHistory">
                         <font-awesome-icon icon="history" class="me-meta-icon" />
                         {{ $t('memo.versionNo', { n: version || 1 }) }}
@@ -197,6 +194,47 @@
                             @mousedown.prevent="pickTag(c.name)"
                         >{{ c.name }}</button>
                     </div>
+                </div>
+            </div>
+
+            <!--
+                v1.3.3.2（需求）：左侧行号栏改成「按块矩形算坐标」的覆盖层。
+                ------------------------------------------------------------------
+                原来每个块前面插一个零宽 widget（Decoration.widget），由 ProseMirror
+                跟着文档走。它对段落很好用，但遇到块级原子节点（图片 / 视频 / 文件 /
+                分割线 / 表格）就会「站到块的上一行」—— widget 落在了节点边界上，
+                渲染位置在块之前，视觉上就是「图片其实是第 3 行，行号 3 却浮在它上方」。
+                现在统一改成：遍历顶层块 → 取每块自己 DOM 的矩形 → 用 top 绝对定位。
+                段落按首行居中，原子块贴块顶，**永远正对**，也不再有 widget 的边界问题。
+            -->
+            <div v-if="gutterRows.length" class="me-gutter-layer" aria-hidden="true">
+                <div
+                    v-for="row in gutterRows"
+                    :key="`gut-${row.pos}`"
+                    class="me-gutter-row"
+                    :class="{ 'is-heading': row.level > 0 }"
+                    :data-pos="row.pos"
+                    :data-no="row.no"
+                    :style="{ top: `${row.top}px` }"
+                >
+                    <button
+                        v-if="row.level > 0"
+                        type="button"
+                        class="me-gutter-fold"
+                        :class="{ 'is-folded': row.folded }"
+                        :title="row.folded ? $t('memo.unfoldTitle') : $t('memo.foldTitle')"
+                        @mousedown.prevent
+                        @click.stop="toggleFoldAt(row.pos)"
+                    >
+                        <font-awesome-icon :icon="row.folded ? 'caret-right' : 'caret-down'" />
+                    </button>
+                    <button
+                        type="button"
+                        class="me-gutter-no"
+                        :title="$t('memo.gutterMenu')"
+                        @mousedown.prevent
+                        @click.stop="openGutter(row.pos, row.type, $event.currentTarget)"
+                    >{{ row.no }}</button>
                 </div>
             </div>
 
@@ -273,35 +311,29 @@
 
         <!-- 斜杠菜单 -->
         <Teleport to="body">
-            <div v-if="slash.open" class="me-slash" :style="slash.style" @mousedown.prevent>
+            <div v-if="slash.open" ref="slashEl" class="me-slash" :style="slash.style" @mousedown.prevent>
                 <template v-for="(cmd, i) in slash.items" :key="cmd.id">
                     <div v-if="cmd.separator" class="me-slash-sep"></div>
                     <!--
                         v1.3.2（需求）：`/` 菜单支持 [组名 a b] 工具组 ——
                         鼠标移上去在右侧展开二级菜单，点组名本身不执行任何命令。
+                        v1.3.3.2（实测修复：二级菜单怎么都打不开）
+                        它原来绝对定位在 .me-slash-item 里，而 .me-slash 有
+                        overflow: auto —— 超出父级的二级菜单被整块裁掉，
+                        看起来就是「移上去 / 点一下都没反应」。
+                        现在二级菜单 Teleport 到 body、position: fixed，
+                        位置按组名那一行的矩形实时算，右侧放不下就翻到左侧。
                     -->
                     <div
                         v-else-if="cmd.group"
                         class="me-slash-item me-slash-group"
                         :class="{ 'is-active': i === slash.index }"
-                        @mouseenter="slash.index = i; openSlashGroup(cmd)"
-                        @click="openSlashGroup(cmd)"
+                        @mouseenter="onSlashGroupHover(i, cmd, $event)"
+                        @click="onSlashGroupHover(i, cmd, $event)"
                     >
                         <font-awesome-icon icon="folder" class="me-slash-icon" />
                         <span class="me-slash-label">{{ cmd.label }}</span>
                         <font-awesome-icon icon="caret-right" class="me-slash-caret" />
-                        <div v-if="slash.sub && slash.sub.id === cmd.id" class="me-slash-sub" @click.stop>
-                            <div
-                                v-for="c in slash.sub.items"
-                                :key="'sub-' + c.id"
-                                class="me-slash-item"
-                                @click.stop="applySlash(c)"
-                            >
-                                <font-awesome-icon v-if="c.icon" :icon="c.icon" class="me-slash-icon" />
-                                <span class="me-slash-label">{{ $t(c.label) }}</span>
-                                <span class="me-slash-hint">{{ c.hint }}</span>
-                            </div>
-                        </div>
                     </div>
                     <div
                         v-else
@@ -316,6 +348,27 @@
                     </div>
                 </template>
                 <div v-if="!slash.items.length" class="me-slash-empty">{{ $t('memo.slashEmpty') }}</div>
+            </div>
+        </Teleport>
+
+        <!-- `/` 菜单的工具组二级菜单（v1.3.3.2：独立浮层，不受父级 overflow 裁切） -->
+        <Teleport to="body">
+            <div
+                v-if="slash.open && slash.sub && slash.sub.items.length"
+                class="me-slash-sub"
+                :style="slash.subStyle"
+                @mousedown.prevent
+            >
+                <div
+                    v-for="c in slash.sub.items"
+                    :key="'sub-' + c.id"
+                    class="me-slash-item"
+                    @click.stop="applySlash(c)"
+                >
+                    <font-awesome-icon v-if="c.icon" :icon="c.icon" class="me-slash-icon" />
+                    <span class="me-slash-label">{{ $t(c.label) }}</span>
+                    <span class="me-slash-hint">{{ c.hint }}</span>
+                </div>
             </div>
         </Teleport>
 
@@ -349,7 +402,7 @@
                 「设置 → 选中文本工具配置」里填什么就渲染什么，没填用内置默认。
                 标题 / 对齐 / 字号 / 颜色是复合控件，用保留名 heading / align / fontSize / textColor 表示。
             -->
-            <div v-if="bubble.open" class="me-bubble" :style="bubble.style" @mousedown.prevent>
+            <div v-if="bubble.open" ref="bubbleEl" class="me-bubble" :style="bubble.style" @mousedown.prevent>
                 <template v-for="(it, i) in selItems" :key="`sel-${i}`">
                     <span v-if="it.sep" class="me-bub-sep"></span>
                     <el-dropdown v-else-if="it.id === 'heading'" trigger="click" placement="top-start" @command="(c) => runTool(c)">
@@ -808,6 +861,18 @@
             :instance-id="instanceId"
             @confirm="onPicked"
         />
+
+        <!--
+            v1.3.3.2（需求）：选中文件 → 菜单里的「预览 / 文件详情」
+            预览走全站媒体灯箱（图片 / 视频 / 音频 / 其它各有一套形态），
+            详情走全站统一详情弹窗（FileDetailUnified）。
+        -->
+        <MediaPreviewOverlay
+            v-model="lightbox.open"
+            :items="lightbox.items"
+            :start-index="lightbox.index"
+        />
+        <FileDetailUnified v-model="fileDlg.open" :file="fileDlg.file" />
     </div>
 </template>
 
@@ -815,8 +880,7 @@
 import { markRaw } from 'vue';
 import { Editor, EditorContent } from '@tiptap/vue-3';
 import { Node, Mark, Extension, mergeAttributes } from '@tiptap/core';
-import { Plugin, PluginKey, NodeSelection } from '@tiptap/pm/state';
-import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import TaskList from '@tiptap/extension-task-list';
@@ -828,9 +892,18 @@ import Highlight from '@tiptap/extension-highlight';
 import { Table } from '@tiptap/extension-table';
 import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
-import TableHeader from '@tiptap/extension-table-header';import { ElMessage, ElMessageBox } from 'element-plus';
+import TableHeader from '@tiptap/extension-table-header';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import FilePickerDialog from '@/components/notes/FilePickerDialog.vue';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
+/*
+ * v1.3.3.2（需求：选中文件 → 预览 / 文件详情）
+ * 复用全站同一套灯箱与详情页，不另做一套「笔记专用预览」——
+ * 两套并存的话，用户在笔记里看到的操作与文件管理里不一致，还会各修一遍。
+ */
+import MediaPreviewOverlay from '@/components/dashboard/MediaPreviewOverlay.vue';
+import FileDetailUnified from '@/components/dashboard/FileDetailUnified.vue';
+import { loadFileDetail } from '@/utils/fileDetailLoader';
 import { docToMd, mdToDoc, renderMarkdownSafe, plainTextOf } from '@/utils/markdown';
 import {
     saveNote,
@@ -879,60 +952,15 @@ function guessMimeByName(name) {
     return map[ext] || '';
 }
 
-/**
- * 左侧行级栏（gutter，v1.3.1.2）。
+/*
+ * v1.3.3.2：左侧行号栏不再用 Decoration.widget。
  *
- * 每个顶层块的开头放一个零宽的 widget，里面是一枚「⠿」小按钮 ——
- * 它不占布局（width: 0），绝对定位挂在正文左侧，所以不会把文字挤歪。
- * 点它选中该块并弹出块操作菜单（复制 / 剪切 / 删除 / 上下插入空行 / 加批注）。
- *
- * 为什么用 widget 而不是鼠标位置算：
- *   算坐标要在每次滚动、每次输入、每次折叠时重算，稍微漏一次就会「指示器错行」；
- *   widget 由 ProseMirror 自己跟着文档走，永远贴着自己那个块。
+ * 老做法是「每个块前插一个零宽 widget，由 ProseMirror 跟着文档走」。它对段落没问题，
+ * 但块级原子节点（图片 / 视频 / 文件 / 分割线 / 表格）的边界上插 widget，渲染位置会
+ * 落到块的**上一行** —— 用户看到的就是「图片其实是第 3 行，行号 3 却浮在它上方」。
+ * 现在改成 syncGutter()：遍历顶层块 → 取块自己的 DOM 矩形 → 绝对定位覆盖层，
+ * 段落按首行居中、原子块贴块顶，位置永远与块正对。
  */
-const BlockGutter = Extension.create({
-    name: 'blockGutter',
-    addOptions() {
-        return { onOpen: null };
-    },
-    addProseMirrorPlugins() {
-        const opts = this.options;
-        return [
-            new Plugin({
-                key: new PluginKey('blockGutter'),
-                props: {
-                    decorations(state) {
-                        const decos = [];
-                        /* v1.3.2（需求）：用行号代替 ⠿ 图标，点击行为不变 */
-                        let lineNo = 0;
-                        state.doc.forEach((node, offset) => {
-                            lineNo += 1;
-                            const wrap = document.createElement('span');
-                            wrap.className = 'gh-gutter';
-                            wrap.contentEditable = 'false';
-                            const btn = document.createElement('button');
-                            btn.type = 'button';
-                            btn.className = 'gh-gutter-btn';
-                            btn.title = '块操作';
-                            btn.textContent = String(lineNo);
-                            btn.addEventListener('mousedown', (e) => e.preventDefault());
-                            btn.addEventListener('click', (e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                if (typeof opts.onOpen === 'function') {
-                                    opts.onOpen(offset, node.type.name, btn);
-                                }
-                            });
-                            wrap.appendChild(btn);
-                            decos.push(Decoration.widget(offset + 1, wrap, { side: -1 }));
-                        });
-                        return DecorationSet.create(state.doc, decos);
-                    },
-                },
-            }),
-        ];
-    },
-});
 
 /**
  * 字号 / 文字颜色（v1.3.1.2）。
@@ -1048,23 +1076,136 @@ const ImageWithWidth = Image.extend({
  *
  * 为什么自己写而不是装扩展：
  *   · 官方没有 video / audio 节点；
- *   · 附件要能落成 md 里的 `<a class="gh-file">`，属性名与序列化规则必须和
+ *   · 附件要能落成 md 里的 `![[file:…]]`，属性名与序列化规则必须和
  *     utils/markdown.js 完全对齐，第三方扩展的 HTML 规则不受我们控制。
  * 三个都是 atom（不可编辑内部），md 里各占一行，往返稳定。
+ *
+ * v1.3.3.2（需求：视频/音频/文件也要能选中、能被拖动框缩放）
+ *   ① 三者的 `width` 属性都写进 md：
+ *        视频 / 音频 → `<video src="…" width="480" controls>`（HTML 属性，白名单放行）
+ *        附件       → `![[file:地址|名称]]{width=320}`（尾部属性块，与图片同一套写法）
+ *   ② 三者都加 NodeView：点一下就是 NodeSelection（否则 <video controls> 的
+ *      原生控件会把点击吃掉，永远选不中），选中后由 .me-imgbox 那套手柄统一缩放；
+ *   ③ 附件从 block 改成 **inline** 原子 —— 解析侧本来就把它放在段落里，
+ *      声明成 block 会让 `![[file:…]]` 这一行在装载时对不上 schema。
  */
+/** 媒体节点的宽度属性（三者共用同一套 parse/render，避免三份实现漂移） */
+const mediaWidthAttr = {
+    width: {
+        default: null,
+        parseHTML: (el) => Number(el.getAttribute('width')) || null,
+        renderHTML: (attrs) => (attrs.width ? { width: Math.round(Number(attrs.width)) } : {}),
+    },
+    /** 与图片同一套对齐值（left / center / right），落成 HTML 的 align 属性 */
+    align: {
+        default: null,
+        parseHTML: (el) => el.getAttribute('align') || null,
+        renderHTML: (attrs) => (attrs.align ? { align: attrs.align } : {}),
+    },
+};
+
+/**
+ * 点击即选中节点（NodeSelection）。
+ *
+ * `stopEvent` 返回 false 表示「这个事件交给我处理」，PM 不会吞掉它；
+ * 但 <video> 的原生控件（播放 / 进度条）必须继续可用，所以只有点击
+ * 控件以外的地方才切成节点选区。
+ */
+const MEDIA_NODE_NAMES = ['image', 'video', 'audio', 'fileAttachment'];
+
+/**
+ * 选中「点中的那个媒体节点」，返回它的文档位置；没点中返回 -1。
+ *
+ * 两条路都试，谁先成功用谁：
+ *   1) 用被点元素的 DOM 反查位置（posAtDOM）—— 对行内原子（附件卡片）最准；
+ *   2) 用鼠标坐标反查（posAtCoords）—— 图片这种块级叶子节点用它稳。
+ * 只靠坐标会在「行内原子」上算到段落边界，结果是点附件变成落光标；
+ * 只靠 posAtDOM 又会在部分块级节点上拿到 +1 的偏移，所以两条一起。
+ */
+function selectMediaNode(view, el, event) {
+    const isMedia = (pos) => {
+        if (typeof pos !== 'number' || pos < 0) return null;
+        const n = view.state.doc.nodeAt(pos);
+        return n && MEDIA_NODE_NAMES.includes(n.type.name) ? n : null;
+    };
+    const commit = (pos) => {
+        try {
+            view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
+            return pos;
+        } catch (e) {
+            return -1;
+        }
+    };
+    if (el) {
+        try {
+            const p0 = view.posAtDOM(el, 0);
+            if (isMedia(p0)) return commit(p0);
+            if (isMedia(p0 + 1)) return commit(p0 + 1);
+        } catch (e) {
+        }
+    }
+    if (event && typeof event.clientX === 'number') {
+        const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+        if (at) {
+            if (isMedia(at.pos)) return commit(at.pos);
+            if (isMedia(at.pos - 1)) return commit(at.pos - 1);
+        }
+    }
+    return -1;
+}
+
+function mediaSelectOnClick(view, el, event) {
+    const pos = selectMediaNode(view, el, event);
+    if (pos < 0) return;
+    /*
+     * v1.3.3.2：程序内 dispatch 设的选区，Tiptap 不一定派发 selectionUpdate
+     * （实测首次点击媒体节点时完全不发），所以额外抛一个 DOM 事件让组件自己去同步浮层。
+     */
+    try {
+        (el || view.dom).dispatchEvent(new CustomEvent('gohub:media-select', { bubbles: true }));
+    } catch (e) {
+        /* 忽略 */
+    }
+}
+
 const Video = Node.create({
     name: 'video',
     group: 'block',
     atom: true,
     draggable: true,
     addAttributes() {
-        return { src: { default: '' }, poster: { default: '' } };
+        return { src: { default: '' }, poster: { default: '' }, ...mediaWidthAttr };
     },
     parseHTML() {
         return [{ tag: 'video[src]' }];
     },
     renderHTML({ HTMLAttributes }) {
         return ['video', mergeAttributes(HTMLAttributes, { controls: 'true', class: 'gh-video' })];
+    },
+    addNodeView() {
+        return ({ node, getPos, view }) => {
+            const video = document.createElement('video');
+            video.controls = true;
+            video.className = 'gh-video';
+            video.src = String(node.attrs.src || '');
+            if (node.attrs.poster) video.poster = String(node.attrs.poster);
+            const apply = (n) => {
+                video.src = String(n.attrs.src || '');
+                if (n.attrs.width) video.setAttribute('width', String(Math.round(Number(n.attrs.width))));
+                else video.removeAttribute('width');
+                if (n.attrs.align) video.setAttribute('align', String(n.attrs.align));
+                else video.removeAttribute('align');
+            };
+            apply(node);
+            // 点视频本体（不是控件条）→ 选中该节点
+            video.addEventListener('click', (ev) => {
+                const r = video.getBoundingClientRect();
+                const barZone = Math.min(56, r.height * 0.35);
+                if (ev.clientY > r.bottom - barZone) return; // 点在原生控件上，别抢
+                mediaSelectOnClick(view, video, ev);
+            });
+            return { dom: video, update: (n) => (n.type.name === 'video' ? (apply(n), true) : false) };
+        };
     },
 });
 
@@ -1074,13 +1215,40 @@ const Audio = Node.create({
     atom: true,
     draggable: true,
     addAttributes() {
-        return { src: { default: '' } };
+        return { src: { default: '' }, ...mediaWidthAttr };
     },
     parseHTML() {
         return [{ tag: 'audio[src]' }];
     },
     renderHTML({ HTMLAttributes }) {
         return ['audio', mergeAttributes(HTMLAttributes, { controls: 'true', class: 'gh-audio' })];
+    },
+    addNodeView() {
+        return ({ node, getPos, view }) => {
+            const audio = document.createElement('audio');
+            audio.controls = true;
+            audio.className = 'gh-audio';
+            audio.src = String(node.attrs.src || '');
+            const apply = (n) => {
+                audio.src = String(n.attrs.src || '');
+                if (n.attrs.width) {
+                    // 音频条的宽度只能走行内 style（它没有 width 属性），
+                    // 但编辑器里的 style 不参与 md 序列化，落库仍然是 width=N
+                    audio.style.width = `${Math.round(Number(n.attrs.width))}px`;
+                } else {
+                    audio.style.width = '';
+                }
+                if (n.attrs.align) audio.setAttribute('align', String(n.attrs.align));
+                else audio.removeAttribute('align');
+            };
+            apply(node);
+            audio.addEventListener('click', (ev) => {
+                const r = audio.getBoundingClientRect();
+                if (ev.clientY > r.bottom - Math.min(40, r.height * 0.5)) return;
+                mediaSelectOnClick(view, audio, ev);
+            });
+            return { dom: audio, update: (n) => (n.type.name === 'audio' ? (apply(n), true) : false) };
+        };
     },
 });
 
@@ -1186,27 +1354,82 @@ const IframeBlock = Node.create({
 
 const FileAttachment = Node.create({
     name: 'fileAttachment',
-    group: 'block',
+    /*
+     * v1.3.3.2：从 block 改成 inline 原子。
+     *
+     * md 里它本来就是「一句话里的一个 token」（`![[file:地址|名称]]`），
+     * utils/markdown.js 的解析侧也把它放进段落里；声明成 block 会让这类笔记
+     * 在装载时对不上 schema（段落里不允许放块节点），只能被降级成纯文本。
+     * 同时它现在也要能被选中 + 缩放，与 video / audio 用同一套手柄。
+     */
+    group: 'inline',
+    inline: true,
     atom: true,
     draggable: true,
     addAttributes() {
-        return { href: { default: '' }, name: { default: '' } };
+        return { href: { default: '' }, name: { default: '' }, ...mediaWidthAttr };
     },
     parseHTML() {
         return [{ tag: 'a.gh-file' }];
     },
-    renderHTML({ node }) {
+    renderHTML({ node, HTMLAttributes }) {
         return [
             'a',
-            {
+            mergeAttributes(HTMLAttributes, {
                 class: 'gh-file',
                 href: node.attrs.href || '',
                 download: '',
                 target: '_blank',
                 rel: 'noopener noreferrer',
-            },
+            }),
             `📎 ${node.attrs.name || '附件'}`,
         ];
+    },
+    addNodeView() {
+        return ({ node, getPos, view }) => {
+            const a = document.createElement('a');
+            a.className = 'gh-file';
+            a.setAttribute('download', '');
+            a.setAttribute('rel', 'noopener noreferrer');
+            const apply = (n) => {
+                a.href = String(n.attrs.href || '');
+                a.textContent = `📎 ${n.attrs.name || '附件'}`;
+                a.title = String(n.attrs.name || '附件');
+                if (n.attrs.width) {
+                    a.style.width = `${Math.round(Number(n.attrs.width))}px`;
+                    a.classList.add('is-sized');
+                } else {
+                    a.style.width = '';
+                    a.classList.remove('is-sized');
+                }
+            };
+            apply(node);
+            /*
+             * 编辑器里点附件：不跳转，改成「选中这个节点」——
+             * 否则一点就离开当前笔记，正在写的草稿还没保存。
+             * Ctrl / Cmd + 点击才真的打开。
+             */
+            /*
+             * v1.3.3.2：附件卡片用 mousedown 选中，而不是 click。
+             *
+             * 它是 atom 节点，ProseMirror 会给 DOM 挂 draggable="true"；
+             * 在可拖拽元素上按下鼠标会进入拖拽手势，浏览器随后**不再派发 click**，
+             * 于是「点附件」永远选不中（只落一个光标）。
+             * mousedown 一定会到，preventDefault 又顺手掐掉原生拖拽与跳转。
+             */
+            a.addEventListener('mousedown', (ev) => {
+                if (ev.ctrlKey || ev.metaKey) return; // 交给浏览器在新标签打开
+                ev.preventDefault();
+                ev.stopPropagation();
+                mediaSelectOnClick(view, a, ev);
+            });
+            a.addEventListener('click', (ev) => {
+                // 兜底：拦掉默认的「下载 / 打开」，选中已在 mousedown 完成
+                if (ev.ctrlKey || ev.metaKey) return;
+                ev.preventDefault();
+            });
+            return { dom: a, update: (n) => (n.type.name === 'fileAttachment' ? (apply(n), true) : false) };
+        };
     },
 });
 
@@ -1400,44 +1623,16 @@ const HeaderWithAlign = TableHeader.extend({
     },
 });
 
-/**
- * 标题折叠插件（v1.3.1）。
+/*
+ * 标题折叠（v1.3.3.2 改为 DOM 类实现）。
  *
- * 折叠区间 = 从该标题的下一个块开始，到「下一个同级或更高级标题」之前。
- * 隐藏方式用 node decoration 加 class（display:none），**不改文档结构** ——
- * 一旦真把内容从文档里摘出去，用户在这段隐藏区里打字就会串到别处，
- * 而且保存时的 md 会缺内容，属于「看着折叠了、其实内容没了」的灾难。
- *
- * 折叠状态不跟随文档位置映射：任何一次编辑都清空折叠（见 onEditorUpdate）。
- * 折叠只是阅读辅助，编辑时自动展开最不容易出错。
+ * 原来用 ProseMirror 的 node decoration 加 class（display:none）。问题在于：
+ * 「折叠状态」不在文档里，只存在组件的一个 Set 里，切换后要发一个**空事务**
+ * 让装饰重算 —— 实测这一步在很多情况下不会真的触发重算（PM 对无变化的
+ * 事务会走快速路径），表现就是「点了折叠按钮，按钮变了，内容没折」。
+ * 现在改成在 syncGutter() 里直接给块 DOM 挂 .gh-fold-hidden（见该函数），
+ * 折叠区间与行号栏用同一份遍历逻辑，两者永远一致。
  */
-const foldKey = new PluginKey('memoFold');
-function createFoldPlugin(getFolds) {
-    return new Plugin({
-        key: foldKey,
-        props: {
-            decorations(state) {
-                const folds = getFolds();
-                if (!folds || !folds.size) return null;
-                const decos = [];
-                let skipLevel = 0;
-                state.doc.forEach((node, offset) => {
-                    const isHeading = node.type.name === 'heading';
-                    const level = isHeading ? Number(node.attrs.level) || 1 : 0;
-                    // 遇到同级或更高级标题 → 折叠区间到此为止
-                    if (skipLevel && isHeading && level <= skipLevel) skipLevel = 0;
-                    if (skipLevel) {
-                        decos.push(Decoration.node(offset, offset + node.nodeSize, { class: 'gh-fold-hidden' }));
-                    } else if (isHeading && folds.has(offset)) {
-                        skipLevel = level;
-                        decos.push(Decoration.node(offset, offset + node.nodeSize, { class: 'gh-fold-title' }));
-                    }
-                });
-                return DecorationSet.create(state.doc, decos);
-            },
-        },
-    });
-}
 
 /**
  * 工具栏工具表。
@@ -1506,10 +1701,10 @@ const CTX_ACTIONS = {
 
 /** v1.3.3：媒体选中条的默认工具（可被设置里对应配置覆盖） */
 const MEDIA_DEFAULT = {
-    image: ['alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode'],
-    video: ['alignLeft', 'alignCenter', 'alignRight', '|', 'deleteNode'],
-    audio: ['alignLeft', 'alignCenter', 'alignRight', '|', 'deleteNode'],
-    file: ['alignLeft', 'alignCenter', 'alignRight', '|', 'deleteNode']
+    image: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode'],
+    video: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode'],
+    audio: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode'],
+    file: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode']
 };
 
 /** v1.3.3：选中浮层的保留名（复合控件 / 非 TOOLS 动作） */
@@ -1524,6 +1719,25 @@ const CTX_DEFAULT = {
     text: ['copy', 'cut', 'delete', 'annotate', '|', 'bold', 'italic', 'underline', 'strike'],
     paragraph: ['copy', 'cut', 'delete', 'annotate', '|', 'link', '|', 'bold', 'italic', 'underline']
 };
+
+/** v1.3.3.2：当前选中的媒体节点名（图片 / 视频 / 音频 / 附件），否则空串 */
+function mediaSelectionName(editor) {
+    if (!editor) return '';
+    const sel = editor.state.selection;
+    if (!sel || !sel.node) return '';
+    const n = sel.node.type && sel.node.type.name;
+    return ['image', 'video', 'audio', 'fileAttachment'].includes(n) ? n : '';
+}
+
+/**
+ * 媒体节点与段落共用的对齐实现。
+ * 选中媒体时改节点自身的 align（落成尾部属性 / HTML 属性），否则改段落。
+ */
+function applyBlockAlign(editor, align) {
+    const name = mediaSelectionName(editor);
+    if (name) return editor.chain().focus().updateAttributes(name, { align }).run();
+    return editor.chain().focus().updateAttributes('paragraph', { align }).run();
+}
 
 const TOOLS = {
     bold: { icon: 'bold', label: 'memo.toolBold', run: (e) => e.chain().focus().toggleBold().run(), active: (e) => e && e.isActive('bold') },
@@ -1552,52 +1766,35 @@ const TOOLS = {
         icon: 'align-left',
         label: 'memo.toolAlignLeft',
         /*
-         * v1.3.1.2（需求：对齐要对文件生效）：
-         * 选中图片（NodeSelection）时改图片的 align，否则改段落的 align。
-         * 两者用同一套值，序列化分别落成图片尾部的 {align=...} 与段落的 <p align=...>。
+         * v1.3.1.2（需求：对齐要对文件生效）
+         * v1.3.3.2：从「只认图片」扩到全部媒体节点（视频 / 音频 / 附件同权）。
          */
-        run: (e) => {
-            const sel = e.state.selection;
-            if (sel && sel.node && sel.node.type.name === 'image') {
-                return e.chain().focus().updateAttributes('image', { align: null }).run();
-            }
-            return e.chain().focus().updateAttributes('paragraph', { align: null }).run();
+        run: (e) => applyBlockAlign(e, null),
+        active: (e) => {
+            if (!e) return false;
+            const n = mediaSelectionName(e);
+            return n ? e.isActive(n, { align: null }) : e.isActive('paragraph', { align: null });
         },
-        active: (e) => e && (e.isActive('paragraph', { align: null }) || e.isActive('image', { align: null })),
     },
     alignCenter: {
         icon: 'align-center',
         label: 'memo.toolAlignCenter',
-        /*
-         * v1.3.1.2（需求：对齐要对文件生效）：
-         * 选中图片（NodeSelection）时改图片的 align，否则改段落的 align。
-         * 两者用同一套值，序列化分别落成图片尾部的 {align=...} 与段落的 <p align=...>。
-         */
-        run: (e) => {
-            const sel = e.state.selection;
-            if (sel && sel.node && sel.node.type.name === 'image') {
-                return e.chain().focus().updateAttributes('image', { align: 'center' }).run();
-            }
-            return e.chain().focus().updateAttributes('paragraph', { align: 'center' }).run();
+        run: (e) => applyBlockAlign(e, 'center'),
+        active: (e) => {
+            if (!e) return false;
+            const n = mediaSelectionName(e);
+            return n ? e.isActive(n, { align: 'center' }) : e.isActive('paragraph', { align: 'center' });
         },
-        active: (e) => e && (e.isActive('paragraph', { align: 'center' }) || e.isActive('image', { align: 'center' })),
     },
     alignRight: {
         icon: 'align-right',
         label: 'memo.toolAlignRight',
-        /*
-         * v1.3.1.2（需求：对齐要对文件生效）：
-         * 选中图片（NodeSelection）时改图片的 align，否则改段落的 align。
-         * 两者用同一套值，序列化分别落成图片尾部的 {align=...} 与段落的 <p align=...>。
-         */
-        run: (e) => {
-            const sel = e.state.selection;
-            if (sel && sel.node && sel.node.type.name === 'image') {
-                return e.chain().focus().updateAttributes('image', { align: 'right' }).run();
-            }
-            return e.chain().focus().updateAttributes('paragraph', { align: 'right' }).run();
+        run: (e) => applyBlockAlign(e, 'right'),
+        active: (e) => {
+            if (!e) return false;
+            const n = mediaSelectionName(e);
+            return n ? e.isActive(n, { align: 'right' }) : e.isActive('paragraph', { align: 'right' });
         },
-        active: (e) => e && (e.isActive('paragraph', { align: 'right' }) || e.isActive('image', { align: 'right' })),
     },
     indent: {
         icon: 'indent',
@@ -1719,15 +1916,18 @@ const TOOLS = {
         label: 'memo.toolImgSize',
         run: (e) => {
             if (!e) return;
-            const sel = e.state.selection;
-            const node = sel && sel.node;
-            if (!node || node.type.name !== 'image') return;
-            const cur = Number(node.attrs.width) || 0;
+            // v1.3.3.2：四种媒体节点都能循环尺寸，不再只认图片
+            const name = mediaSelectionName(e);
+            if (!name) return;
+            const cur = Number(e.state.selection.node.attrs.width) || 0;
             // 自动 → 600 → 400 → 260 → 自动
             const next = !cur ? 600 : (cur > 500 ? 400 : (cur > 320 ? 260 : 0));
-            e.chain().focus().updateAttributes('image', { width: next || null }).run();
+            e.chain().focus().updateAttributes(name, { width: next || null }).run();
         }
     },
+    /* v1.3.3.2（需求）：选中任意文件都能「灯箱预览」与「打开文件详情」 */
+    mediaPreview: { icon: 'eye', label: 'memo.toolMediaPreview', run: null },
+    mediaDetail: { icon: 'circle-info', label: 'memo.toolFileDetail', run: null },
     deleteNode: {
         icon: 'trash',
         label: 'memo.ctxDelete',
@@ -1885,7 +2085,7 @@ function parseToolTokens(text) {
 /** 斜杠菜单命令表 */
 export default {
     name: 'MemoEditor',
-    components: { EditorContent, FilePickerDialog, UploadTargetDialog },
+    components: { EditorContent, FilePickerDialog, UploadTargetDialog, MediaPreviewOverlay, FileDetailUnified },
     props: {
         /** 笔记详情（含 id / content / version）；null = 还没选中 */
         note: { type: Object, default: null },
@@ -1914,10 +2114,14 @@ export default {
             sourceView: null,
             saveTimer: null,
             previewHtml: '',
-            slash: { open: false, style: {}, index: 0, items: [], from: 0, to: 0, query: '' },
-            bubble: { open: false, style: {} },
+            slash: { open: false, style: {}, index: 0, items: [], from: 0, to: 0, query: '', sub: null, subStyle: {} },
+            bubble: { open: false, style: {}, from: null, to: null },
             /** v1.3.3：选中图片 / 视频 / 音频 / 附件时浮出的工具条 */
             mediaBar: { open: false, style: {}, kind: 'image' },
+            /** v1.3.3.2：选中媒体的灯箱（复用全站 MediaPreviewOverlay） */
+            lightbox: { open: false, items: [], index: 0 },
+            /** v1.3.3.2：文件详情弹窗（复用全站 FileDetailUnified） */
+            fileDlg: { open: false, file: null },
             /** 大纲浮窗（v1.3.1）：按需求做成悬浮弹窗，不做占位侧边栏 */
             outline: { open: false, items: [] },
             /**
@@ -1970,6 +2174,8 @@ export default {
             svgCode: SVG_CODE,
             /* v1.3.1.2：左侧行级栏菜单 */
             gutterMenu: { open: false, x: 0, y: 0, pos: 0, type: '' },
+            /** v1.3.3.2：左侧行号栏的每一行（按块矩形算出的绝对位置） */
+            gutterRows: [],
             /* v1.3.1.2：引用悬停预览 */
             hoverCard: { open: false, x: 0, y: 0, title: '', text: '', loading: false },
             /* v1.3.1.2：浮层 / 右键菜单 / 表格 */
@@ -2139,7 +2345,12 @@ export default {
             if (this.mode === 'preview') return this.$t('memo.modePreview');
             return this.$t('memo.modeLive');
         },
-        /** 当前生效的吸附配置（按终端取 pc / m 那一组，缺省全部 false） */
+        /**
+         * 当前生效的吸附配置（按终端取 pc / m 那一组）。
+         *
+         * v1.3.3.2（需求）：移除「辅助栏」吸附 —— 版本/时间/字数那一行不再参与吸附，
+         * 只剩工具栏与标题栏两个开关。
+         */
         stickyCfg() {
             const all = this.editorConfig?.sticky;
             const key = this.isMobileViewport ? 'm' : 'pc';
@@ -2147,7 +2358,6 @@ export default {
             return {
                 toolbar: one.toolbar === true,
                 title: one.title === true,
-                aux: one.aux === true,
             };
         },
         /** 触屏设备（与瞬间发布页同一判据：三项取或） */
@@ -2305,6 +2515,15 @@ export default {
         this.$nextTick(() => {
             this.measureToolbar();
             /*
+             * v1.3.3.2：首帧渲染完成后排版号栏（之后由 update / 滚动 / resize 触发）。
+             * 这里连补两帧：首帧时编辑器刚挂载、部分块的布局还没算出来，
+             * 只量一次会得到「一行行号都没有」的空结果（实测踩到）。
+             */
+            this.syncGutter();
+            requestAnimationFrame(() => this.syncGutter());
+            // 媒体（图片 / 视频）加载完成后块高会变，用观察器兜住这次位移
+            this.setupGutterObserver();
+            /*
              * v1.3.3.1（实测修复）：只靠 window resize 触发不够 ——
              * 目录栏拖宽、列表折叠、编辑器首帧布局完成都不会派发 resize，
              * 工具栏实际已经溢出但永远不会折叠。直接观察工具栏自身尺寸。
@@ -2338,10 +2557,25 @@ export default {
              * v1.3.2（需求）：点别处要收起 gutter 菜单 / `/` 菜单 / `[[` 面板。
              * 点到 gutter 按钮本身时不算「别处」—— 它的 click 才负责开关。
              */
-            if (this.gutterMenu.open && !hit('.me-gutter-menu') && !hit('.gh-gutter-btn')) this.closeGutter();
-            if (!hit('.me-slash') && !hit('.me-wysiwyg')) {
+            if (this.gutterMenu.open && !hit('.me-gutter-menu') && !hit('.me-gutter-no') && !hit('.me-gutter-fold')) this.closeGutter();
+            if (!hit('.me-slash') && !hit('.me-slash-sub') && !hit('.me-wysiwyg')) {
                 if (this.ref.open) this.closeRef();
                 if (this.slash.open) this.closeSlash();
+            }
+            /*
+             * v1.3.3.2：选中浮层 / 媒体工具条的关闭条件。
+             *
+             * 之前靠编辑器 onBlur 关，结果移动端点浮层里的下拉框就失焦 → 浮层消失。
+             * 现在改成「点到浮层、编辑器、下拉浮层之外」才关：
+             * 点在浮层自己的按钮 / 下拉菜单里一律不动，键盘收起也不动。
+             */
+            const inFloatUi =
+                hit('.me-wysiwyg') || hit('.me-bubble') || hit('.me-mediabar') || hit('.me-inputbar') ||
+                hit('.el-popper') || hit('.el-dropdown') || hit('.me-toolbar-wrap') || hit('.me-title-row') ||
+                hit('.me-meta') || hit('.me-tags');
+            if (!inFloatUi) {
+                if (this.bubble.open) this.bubble.open = false;
+                if (this.mediaBar.open) this.mediaBar = { open: false, style: {}, kind: 'image' };
             }
         };
         window.addEventListener('pointerdown', this.onGlobalPointer, true);
@@ -2373,6 +2607,9 @@ export default {
                 if (wrap) this.editIframe(wrap);
             };
             body.addEventListener('gohub:iframe-config', this.onIframeConfig);
+            // v1.3.3.2：媒体节点被选中后的统一同步口（见 mediaSelectOnClick 注释）
+            this.onMediaSelectPing = () => this.$nextTick(() => this.onSelectionChange());
+            body.addEventListener('gohub:media-select', this.onMediaSelectPing);
         }
         /*
          * 手柄与光标工具栏都用绝对/固定坐标，滚动或改窗口大小都得重算位置。
@@ -2383,6 +2620,11 @@ export default {
         this.onViewportChange = (e) => {
             this.syncImgBox();
             this.updateInputBar();
+            // v1.3.3.2：滚动 / 改窗口大小都要让浮层跟着内容走（需求）
+            if (e && (e.type === 'scroll' || e.type === 'resize')) {
+                this.repositionFloats();
+                this.scheduleGutter();
+            }
             /*
              * v1.3.2（需求）：移动端键盘弹出时把「反向链接」栏收起来，
              * 键盘收起再显示。用可见视口高度相对历史最大值的跌幅判断，
@@ -2416,12 +2658,27 @@ export default {
         if (body && this.onHoverStart) {
             body.removeEventListener('mouseover', this.onHoverStart);
             body.removeEventListener('mouseout', this.onHoverEnd);
+            if (this.onMediaSelectPing) body.removeEventListener('gohub:media-select', this.onMediaSelectPing);
         }
         window.removeEventListener('resize', this.onViewportChange);
         window.removeEventListener('scroll', this.onViewportChange, true);
+        if (this._gutterRaf) cancelAnimationFrame(this._gutterRaf);
+        this._gutterRaf = null;
+        if (this._gutterRO) {
+            this._gutterRO.disconnect();
+            this._gutterRO = null;
+        }
+        const _body = this.$refs.bodyEl;
+        if (_body && this._gutterLoad) {
+            _body.removeEventListener('load', this._gutterLoad, true);
+            _body.removeEventListener('loadedmetadata', this._gutterLoad, true);
+            this._gutterLoad = null;
+        }
         if (this.saveTimer) clearTimeout(this.saveTimer);
         if (this._cssEl && this._cssEl.parentNode) this._cssEl.parentNode.removeChild(this._cssEl);
         this._cssEl = null;
+        if (this._foldStyleEl && this._foldStyleEl.parentNode) this._foldStyleEl.parentNode.removeChild(this._foldStyleEl);
+        this._foldStyleEl = null;
         clearTimeout(this._tbMeasureTimer);
         if (this._tagBlurTimer) clearTimeout(this._tagBlurTimer);
         this.stopHistoryTimer();
@@ -2523,29 +2780,35 @@ export default {
                     FontSize,
                     TextColor,
                     // v1.3.1.2：左侧行级栏（点开块操作菜单）
-                    BlockGutter.configure({ onOpen: (pos, type, el) => this.openGutter(pos, type, el) }),
+                    // v1.3.3.2：改为覆盖层定位（syncGutter），不再往文档里插 widget
                     // v1.3.1.1：段落 / 标题对齐（align 属性版）
                     BlockAlign,
                     // v1.5.0 引用类行内原子节点
                     NoteRef,
                     NoteEmbed,
                     BlockRef,
-                    // 标题折叠（装饰层，不动文档结构）
-                    createFoldPlugin(() => this._folds),
                 ],
                 content: this.docOf(this.note?.content || ''),
                 editorProps: {
                     attributes: { class: 'gh-editor-content' },
                     handleKeyDown: (view, event) => this.onEditorKeyDown(view, event),
+                    handleClick: (view, pos, event) => this.onEditorClick(view, pos, event),
                     handleTextInput: (view, from, to, text) => this.onEditorTextInput(view, from, to, text),
                     handlePaste: (view, event) => this.onEditorPaste(view, event),
                     handleDrop: (view, event) => this.onEditorDrop(view, event),
                 },
                 onUpdate: () => this.onEditorUpdate(),
                 onSelectionUpdate: () => this.onSelectionChange(),
-                onBlur: () => {
-                    this.bubble.open = false;
-                },
+                /*
+                 * v1.3.3.2（需求：移动端点开字号 / 颜色下拉框后，键盘收起下拉框也没了）
+                 *
+                 * 根因就是这一行：移动端点下拉按钮 → 编辑器失焦 → onBlur 立刻把
+                 * 选中浮层收掉，挂在浮层上的 el-dropdown 自然跟着消失，
+                 * 于是「字号 / 颜色」在手机上永远点不到第二层。
+                 * 现在浮层只由「选区变化」和「点到浮层与编辑器之外」来关，
+                 * 失焦不再等于收起 —— 键盘收起也不再误伤。
+                 */
+                onBlur: () => {},
             }));
         },
 
@@ -2579,6 +2842,11 @@ export default {
             this.dirty = false;
             if (this.editor) this.editor.commands.setContent(this.docOf(md), { emitUpdate: false });
             if (this.sourceView) this.sourceView.dispatch({ changes: { from: 0, to: this.sourceView.state.doc.length, insert: md } });
+            // v1.3.3.2：换篇后行号栏要按新内容重排（否则还停在上一篇的行数上）
+            this.$nextTick(() => {
+                this.syncGutter();
+                requestAnimationFrame(() => this.syncGutter());
+            });
             this.$emit('dirty', false);
         },
 
@@ -2595,6 +2863,8 @@ export default {
         setMode(next) {
             if (next === this.mode) return;
             this.mode = next;
+            // v1.3.3.2：行号栏只在实时模式存在；切换后要重算（切回来时 DOM 刚重建）
+            this.$nextTick(() => this.syncGutter());
         },
 
         async switchMode(prev, next) {
@@ -2658,6 +2928,51 @@ export default {
             this.markDirty();
         },
 
+        /**
+         * v1.3.3.2（实测修复）：刚打开的笔记，第一次直接点图片 / 视频 / 附件选不中。
+         *
+         * 原因：ProseMirror 的「点原子节点 → NodeSelection」只在 view 已有焦点时执行
+         * （`handleClick` 里第一句就是 `if (!view.hasFocus()) return`）。用户从列表点进笔记、
+         * 第一下就点图片时，编辑器还没有焦点，这一下只是「获得焦点」，选区仍是折叠光标，
+         * 于是没有任何选中反馈 —— 要再点一次才行。
+         *
+         * 做法：点在媒体节点上时，先让 ProseMirror 走完它自己的 click 流程，再在下一个
+         * 微任务里把选区改成该节点的 NodeSelection。之所以「延后一步」而不是直接返回 true
+         * 拦下：PM 在 click 之后还会做一次选区同步，直接拦会被覆盖回折叠光标（实测）。
+         *
+         * 两个例外必须放过，否则会抢走原生交互：
+         *   · 视频 / 音频底部的控制条 —— 那是播放 / 进度条，点了要能播；
+         *   · 附件的 Ctrl / Cmd + 点击 —— 那是「在新标签打开」。
+         */
+        onEditorClick(view, pos, event) {
+            const t = event && event.target;
+            const el = t && t.closest ? t.closest('img, video, audio, a.gh-file') : null;
+            if (!el) return false;
+            if (el.tagName === 'A' && (event.ctrlKey || event.metaKey)) return false;
+            if (el.tagName === 'VIDEO' || el.tagName === 'AUDIO') {
+                const r = el.getBoundingClientRect();
+                const zone = Math.min(56, r.height * 0.35);
+                if (event.clientY > r.bottom - zone) return false;
+            }
+            /*
+             * 延后一步再设选区：ProseMirror 在 click 之后还会做一次选区同步，
+             * 直接在这里 dispatch 会被覆盖回折叠光标（实测）。
+             */
+            setTimeout(() => {
+                const ed = this.editor;
+                if (!ed) return;
+                const v = ed.view;
+                const at = selectMediaNode(v, el, event);
+                if (at < 0) return;
+                try {
+                    v.dom.dispatchEvent(new CustomEvent('gohub:media-select', { bubbles: true }));
+                } catch (e) {
+                    /* 忽略 */
+                }
+            }, 0);
+            return false;
+        },
+
         onEditorUpdate() {
             const md = this.currentMd();
             this.lastMd = md;
@@ -2676,6 +2991,8 @@ export default {
             if (this._folds && this._folds.size) {
                 this._folds.clear();
             }
+            // v1.3.3.2：块变了，行号栏要跟着重排
+            this.scheduleGutter();
             this.markDirty();
         },
 
@@ -2939,19 +3256,24 @@ export default {
          * 数值与下方的 CSS 尺寸同步维护（改了高度记得一起改这两个常量）。
          */
         /**
-         * v1.3.3（需求）：吸附矩阵 16 行的统一口径。
+         * v1.3.3.2（需求：重排吸附矩阵，并移除辅助栏）
          *
-         * 正滚：是否吸附完全按设置（工具栏 / 标题栏 / 附属栏各自独立）。
-         * 回滚：未开启的栏也临时吸住，回到自己的原始位置后自动脱离。
-         * top 偏移按「前面所有当前正在吸附的行」高度累加 —— 所以
-         *   · 工具栏吸住时，标题栏贴它最后一行下方；
-         *   · 标题栏不吸时，附属栏直接贴工具栏下方（表格 1.2.1 / 1.2.2）；
-         *   · 三行都不吸时，谁先吸谁贴顶（表格 2.x）。
+         * 按需求给的 6 行表格落成规则（1 = 工具栏开关开，2 = 工具栏开关关；
+         * 后缀 .1 = 标题栏开关开，.2 = 标题栏开关关）：
+         *
+         *   正滚（向下）: 工具栏 = 开关；标题栏 = 开关
+         *   回滚（向上）: 工具栏 = 吸住；标题栏 = 吸住（贴工具栏最后一行下方）
+         *
+         * 于是六种组合都落在同一段代码里：
+         *   1 / 1.1  正滚两行都吸，回滚两行都吸
+         *   1.2      正滚只有工具栏，回滚两行都吸
+         *   2.1      正滚只有标题栏（贴顶），回滚两行都吸
+         *   2.2      正滚都不吸，回滚两行都吸
          */
         isStickyNow(which) {
             const cfg = this.stickyCfg || {};
-            if (cfg[which]) return true;
-            return !!this.reverseSticky;
+            if (this.reverseSticky) return true;      // 回滚：工具栏与标题栏都吸住
+            return cfg[which] === true;               // 正滚：完全按设置
         },
         stickyHeight(which) {
             const host = this.$refs.bodyEl;
@@ -2963,13 +3285,11 @@ export default {
             return which === 'toolbar' ? 35 : 40;
         },
         stickyTop(which) {
-            const order = ['toolbar', 'title', 'aux'];
-            let top = 0;
-            for (const k of order) {
-                if (k === which) break;
-                if (this.isStickyNow(k)) top += this.stickyHeight(k);
+            // 标题栏永远贴在「工具栏最后一行下方」；工具栏不吸时从 0 起算
+            if (which === 'title') {
+                return this.isStickyNow('toolbar') ? `${this.stickyHeight('toolbar')}px` : '0px';
             }
-            return `${top}px`;
+            return '0px';
         },
         /** token 是不是工具组（`[组名 a b]` 解析出来的对象） */
         /**
@@ -2980,6 +3300,14 @@ export default {
         onBodyScroll(e) {
             const el = e && e.target;
             if (!el) return;
+            /*
+             * v1.3.3.2（需求：选中文本菜单 / 选中文件菜单 / `/` 命令菜单都要跟随页面滚动）
+             * 统一交给 repositionFloats：按存下来的文档位置重算视口坐标，
+             * 以鼠标点为锚的右键 / 行号菜单按滚动量等距平移。
+             */
+            this.repositionFloats();
+            // v1.3.3.2：行号栏是绝对定位的覆盖层，滚动要跟着重排
+            this.scheduleGutter();
             // v1.3.3（需求）：光标工具栏跟随页面滚动，始终贴在光标那一行
             if (this.inputBar.open) this.updateInputBar();
             const top = el.scrollTop || 0;
@@ -3090,12 +3418,15 @@ export default {
         // ---------------- 图片缩放（v1.4.0） ----------------
 
         /**
-         * 把 8 个手柄对齐到当前选中图片的矩形上。
+         * 把 8 个手柄对齐到当前选中的媒体节点矩形上。
+         *
+         * v1.3.3.2（需求）：图片之外，视频 / 音频 / 附件也要能被选中并拖框缩放，
+         * 所以这里从「只认 image」扩展成「认四种媒体节点」，几何算法完全一致。
          * 每次选择变化 / 滚动 / 窗口尺寸变化都要重算 —— 用的是绝对坐标，
          * 不重算就会出现「图片已经滚走了，手柄还钉在原地」。
          */
         syncImgBox() {
-            const empty = { open: false, boxStyle: {}, width: 0, pos: 0, nodeW: 0 };
+            const empty = { open: false, boxStyle: {}, width: 0, pos: 0, nodeW: 0, kind: '' };
             const ed = this.editor;
             const host = this.$refs.bodyEl;
             if (!ed || this.mode !== 'wysiwyg' || !host) {
@@ -3103,7 +3434,8 @@ export default {
                 return;
             }
             const sel = ed.state.selection;
-            if (!(sel instanceof NodeSelection) || sel.node.type.name !== 'image') {
+            const MEDIA_NODES = ['image', 'video', 'audio', 'fileAttachment'];
+            if (!(sel instanceof NodeSelection) || !MEDIA_NODES.includes(sel.node.type.name)) {
                 if (this.imgBox.open) this.imgBox = empty;
                 return;
             }
@@ -3116,6 +3448,7 @@ export default {
             const h = host.getBoundingClientRect();
             this.imgBox = {
                 open: true,
+                kind: sel.node.type.name,
                 pos: sel.from,
                 width: Math.round(r.width),
                 nodeW: Number(sel.node.attrs.width) || Math.round(r.width),
@@ -3141,6 +3474,8 @@ export default {
             const startY = Number(point.clientY) || 0;
             const startW = this.imgBox.nodeW || this.imgBox.width || 200;
             const pos = this.imgBox.pos;
+            // v1.3.3.2：宽度写到「当前选中的那个媒体节点」上（图片 / 视频 / 音频 / 附件）
+            const nodeName = this.imgBox.kind || 'image';
             const sign = dir.includes('e') ? 1 : dir.includes('w') ? -1 : 0;
             const apply = (w) => {
                 const ed = this.editor;
@@ -3148,7 +3483,7 @@ export default {
                 // addToHistory:false —— 拖一次不该在撤销栈里留几十步
                 ed.chain()
                     .setNodeSelection(pos)
-                    .updateAttributes('image', { width: w })
+                    .updateAttributes(nodeName, { width: w })
                     .setMeta('addToHistory', false)
                     .run();
                 this.imgBox = { ...this.imgBox, width: w, nodeW: w };
@@ -3298,6 +3633,8 @@ export default {
             if (token === 'htmlMd') return this.openHtmlMd();
             if (token === 'htmlBlock') return this.openHtmlBlock();
             if (token === 'annotate') return this.annotateSelection();
+            if (token === 'mediaPreview') return this.openMediaPreview();
+            if (token === 'mediaDetail') return this.openMediaDetail();
             if (token === 'outline') return this.openOutline();
             if (token === 'foldAll') return this.toggleFoldAll();
             if (!this.editor) return;
@@ -3319,8 +3656,142 @@ export default {
 
         // ---------------- v1.3.1.2：左侧行级栏 ----------------
 
+        /**
+         * 重算左侧行号栏的位置（v1.3.3.2 重写）。
+         *
+         * 每个顶层块 → 它自己的 DOM 矩形 → 换算成「相对 .me-body 内容原点」的 top：
+         *   · 文本块：让行号对准**首行**的垂直中心（不是块顶，否则标题行号会偏上）；
+         *   · 原子块（图片 / 视频 / 音频 / 附件 / 分割线 / 嵌入）：贴块顶 2px；
+         *   · 折叠后被隐藏的块不出现（高度为 0，直接跳过）。
+         * 位置用 rAF 合并，滚动 / 输入 / 折叠都只跑一次。
+         */
+        syncGutter() {
+            const ed = this.editor;
+            const host = this.$refs.bodyEl;
+            if (!ed || this.mode !== 'wysiwyg' || !host) {
+                if (this.gutterRows.length) this.gutterRows = [];
+                return;
+            }
+            const dom = ed.view.dom;
+            if (!dom) return;
+            const hostRect = host.getBoundingClientRect();
+            let lh = 24;
+            try {
+                const cs = window.getComputedStyle(dom);
+                const n = parseFloat(cs.lineHeight);
+                if (Number.isFinite(n) && n > 0) lh = n;
+            } catch (e) {
+                /* 用默认值 */
+            }
+            const rows = [];
+            const folds = this._folds || new Set();
+            /*
+             * 折叠区间与行号栏共用同一次遍历（v1.3.3.2）：
+             * 折叠某个标题 = 从它的下一个块开始，到下一个同级/更高级标题之前，
+             * 一律挂 .gh-fold-hidden（display:none，不改文档结构、不动 md）。
+             * 这样「按钮状态 / 行号 / 实际隐藏的块」三者永远不会各算一套。
+             */
+            let skipLevel = 0;
+            let childIdx = 0;
+            const hiddenIdx = [];
+            ed.state.doc.forEach((node, offset) => {
+                childIdx += 1; // 与 .gh-editor-content 的子元素一一对应
+                const level = node.type.name === 'heading' ? Number(node.attrs.level) || 1 : 0;
+                if (skipLevel && level > 0 && level <= skipLevel) skipLevel = 0;
+                const shouldHide = skipLevel > 0;
+                if (!shouldHide && level > 0 && folds.has(offset)) skipLevel = level;
+                if (shouldHide) hiddenIdx.push(childIdx);
+                let el = null;
+                try {
+                    el = ed.view.nodeDOM(offset);
+                } catch (err) {
+                    el = null;
+                }
+                if (!el || typeof el.getBoundingClientRect !== 'function') return;
+                if (shouldHide) return; // 隐藏的块不占行号
+                const r = el.getBoundingClientRect();
+                if (!r.height && !r.width) return;
+                const isText = node.isTextblock;
+                const top = r.top - hostRect.top + host.scrollTop;
+                const firstLine = Math.min(r.height, lh);
+                const y = isText ? top + Math.max(0, (firstLine - 20) / 2) : top + 2;
+                rows.push({
+                    pos: offset,
+                    /*
+                     * 行号在「确认要画」之后才递增：折叠隐藏 / 零高度的块不占号，
+                     * 否则会出现「6 之后直接跳到 8」这种断号。
+                     */
+                    no: rows.length + 1,
+                    type: node.type.name,
+                    level,
+                    folded: level > 0 && folds.has(offset),
+                    top: Math.round(y),
+                });
+            });
+            this.gutterRows = rows;
+            this.applyFoldCss(hiddenIdx);
+        },
+
+        /**
+         * v1.3.3.2：折叠的「隐藏」改用一张动态样式表实现。
+         *
+         * 为什么不直接给块加 class / 行内 display：ProseMirror 会监听自己的 DOM，
+         * 发现它有没管理的属性变化就按自己的节点定义**重渲染**那个节点，
+         * 我们加的 class 随即被抹掉（实测：加完 300ms 就没了，内容根本没折）。
+         * 样式表是文档级的东西，PM 完全不碰，而且 nth-child 的下标正好等于块的序号，
+         * 与 syncGutter 同一次遍历算出来的区间天然一致。
+         */
+        applyFoldCss(indexes) {
+            if (!this._foldStyleEl) {
+                const el = document.createElement('style');
+                el.id = 'gohub-memo-fold-css';
+                document.head.appendChild(el);
+                this._foldStyleEl = el;
+            }
+            const sel = (indexes || []).map((n) => `.gh-editor-content > *:nth-child(${n})`).join(',');
+            this._foldStyleEl.textContent = sel ? `${sel}{display:none !important}` : '';
+        },
+        /** rAF 合并：滚动与输入都会频繁触发，没必要每次同步重排 */
+        scheduleGutter() {
+            if (this._gutterRaf) return;
+            this._gutterRaf = requestAnimationFrame(() => {
+                this._gutterRaf = null;
+                this.syncGutter();
+            });
+        },
+
+        /**
+         * v1.3.3.2：行号栏的「布局变化」观察器。
+         *
+         * 为什么必须有：图片 / 视频的尺寸是**异步**出来的（图片解码、视频读元数据），
+         * 首帧量到的块高是占位高度，等媒体加载完，下面所有块都整体下移 ——
+         * 行号却停在旧位置，看起来就是「越往下越对不上」。
+         * 这里同时盯两件事：正文容器的尺寸变化（ResizeObserver）与媒体加载完成（load 捕获）。
+         */
+        setupGutterObserver() {
+            const body = this.$refs.bodyEl;
+            if (!body) return;
+            if (this._gutterRO) this._gutterRO.disconnect();
+            if (typeof ResizeObserver !== 'undefined') {
+                this._gutterRO = new ResizeObserver(() => this.scheduleGutter());
+                const content = body.querySelector('.gh-editor-content');
+                if (content) this._gutterRO.observe(content);
+            }
+            if (!this._gutterLoad) {
+                this._gutterLoad = () => this.scheduleGutter();
+                // 捕获阶段：img / video 的 load 不冒泡
+                body.addEventListener('load', this._gutterLoad, true);
+                body.addEventListener('loadedmetadata', this._gutterLoad, true);
+            }
+        },
+
         openGutter(pos, type, el) {
             const rect = el.getBoundingClientRect();
+            /*
+             * v1.3.3.2（需求）：行号菜单打开时把光标工具栏收起来。
+             * 记一次滚动基准，菜单随页面滚动等距平移（repositionFloats）。
+             */
+            this._floatScrollTop = (this.$refs.bodyEl && this.$refs.bodyEl.scrollTop) || 0;
             this.gutterMenu = {
                 open: true,
                 x: Math.round(rect.right + 6),
@@ -3328,6 +3799,7 @@ export default {
                 pos,
                 type,
             };
+            if (this.inputBar.open) this.inputBar = { open: false, style: {} };
             // 顺手把光标放进这个块，后续操作（删除 / 批注）以它为目标
             this.editor?.chain().focus().setTextSelection(pos + 1).run();
         },
@@ -4001,6 +4473,8 @@ export default {
             const x = Math.min(event.clientX || 0, Math.max(8, window.innerWidth - 190));
             let y = (event.clientY || 0) - menuH - 10;
             if (y < 8) y = Math.min((event.clientY || 0) + 18, Math.max(8, window.innerHeight - menuH));
+            // v1.3.3.2：菜单是 fixed 定位的，滚动时要按差值跟着走
+            this._floatScrollTop = (this.$refs.bodyEl && this.$refs.bodyEl.scrollTop) || 0;
             this.ctxMenu = { open: true, x, y, kind };
             return false;
         },
@@ -4284,8 +4758,11 @@ export default {
                     return;
                 }
             }
-            // 空事务：只为让 decorations 重算，不产生文档变更（不会标脏、不会触发保存）
-            ed.view.dispatch(ed.state.tr);
+            /*
+             * v1.3.3.2：折叠状态不在文档里，不需要发事务 —— 直接重排行号栏，
+             * 隐藏类由 syncGutter 一并挂到块 DOM 上（见该函数）。
+             */
+            this.syncGutter();
         },
 
         /** 点标题左侧的折叠标记：只折叠这一节 */
@@ -4295,7 +4772,7 @@ export default {
             const set = this._folds || (this._folds = new Set());
             if (set.has(pos)) set.delete(pos);
             else set.add(pos);
-            ed.view.dispatch(ed.state.tr);
+            this.syncGutter();
         },
 
         // ---------------- 引用搜索：`[[` 文档 / `((` 块 ----------------
@@ -4323,8 +4800,12 @@ export default {
             this.closeSlash();
             const query = (mNote ? mNote[1] : mBlock[1]) || '';
             const coords = ed.view.coordsAtPos($from.pos);
+            /**
+             * v1.3.3.2：把光标位置一起存下来 —— 面板要跟着页面滚动重算位置
+             * （repositionFloats 用 ref.pos 重新拿坐标）。
+             */
             const style = { left: `${Math.round(coords.left)}px`, top: `${Math.round(coords.bottom + 6)}px` };
-            this.ref = { ...this.ref, open: true, mode, query, style };
+            this.ref = { ...this.ref, open: true, mode, query, pos: $from.pos, style };
             // 输入即搜：300ms 防抖，避免每个字符打一次接口
             if (this._refTimer) clearTimeout(this._refTimer);
             this._refTimer = setTimeout(() => this.searchRef(), 220);
@@ -4498,6 +4979,15 @@ export default {
                 if (this.inputBar.open) this.inputBar = { open: false, style: {} };
                 return;
             }
+            /*
+             * v1.3.3.2（需求）：行号菜单打开时隐藏光标工具栏。
+             * 行号点击会把光标塞进那个块；如果那正好是个空段落，
+             * updateInputBar 会立刻把工具条又浮出来，两个浮层叠在一起。
+             */
+            if (this.gutterMenu.open) {
+                if (this.inputBar.open) this.inputBar = { open: false, style: {} };
+                return;
+            }
             const isEmptyLine = empty && $from.parent.type.name === 'paragraph' && $from.parent.content.size === 0;
             if (!isEmptyLine) {
                 if (this.inputBar.open) this.inputBar = { open: false, style: {} };
@@ -4514,11 +5004,12 @@ export default {
              *   · 箭头与光标间距再拉开 10px（14 → 24）；
              *   · 最大宽度不超过编辑区宽度的 60%；
              *   · 垂直方向让工具条中心对齐光标所在行的中心，箭头才不会偏下。
+             * v1.3.3.2（需求）：左侧再让开 5px（24 → 29），箭头不压住行首光标。
              */
             const edW = (this.$refs.bodyEl && this.$refs.bodyEl.clientWidth) || window.innerWidth;
             const maxW = Math.max(160, Math.round(edW * 0.6));
             const barW = Math.min(maxW, 560, Math.max(200, this.inputTools.length * 30 + 16));
-            const left = Math.max(8, Math.min(coords.left + 24, window.innerWidth - barW - 8));
+            const left = Math.max(8, Math.min(coords.left + 29, window.innerWidth - barW - 8));
             const lineCenter = (coords.top + coords.bottom) / 2;
             this.inputBar = {
                 open: true,
@@ -4598,8 +5089,8 @@ export default {
         },
 
         closeSlash() {
-            if (this.slash.sub) this.slash = { ...this.slash, sub: null };
-            if (this.slash.open) this.slash = { ...this.slash, open: false, items: [], index: 0 };
+            if (this.slash.sub) this.slash = { ...this.slash, sub: null, subStyle: {} };
+            if (this.slash.open) this.slash = { ...this.slash, open: false, items: [], index: 0, sub: null, subStyle: {} };
         },
 
         /**
@@ -4607,15 +5098,52 @@ export default {
          *
          * 上一版只在模板里绑了 openSlashGroup，方法本身没有落进 methods
          * （插入位置被另一次改动覆盖），于是 hover / click 都抛
-         * "t.openSlashGroup is not a function" —— 这就是二级菜单打不开的真正原因。
+         * "t.openSlashGroup is not a function" —— 这是二级菜单打不开的第一个原因。
+         *
+         * v1.3.3.2：第二个原因是裁剪 —— 二级菜单绝对定位在 .me-slash-item 里，
+         * 而 .me-slash 是 overflow:auto 的滚动容器，超出父级的部分被整块裁掉，
+         * 表现成「鼠标移上去 / 点一下都没反应」（其实展开了，只是看不见）。
+         * 现在二级菜单 Teleport 到 body 并 position:fixed，位置按组名那一行的
+         * 矩形实时算：右侧放不下就翻到左侧，上边越界就往下夹。
          */
-        openSlashGroup(cmd) {
+        openSlashGroup(cmd, evOrIndex) {
             if (!cmd || !cmd.group) return;
-            this.slash = { ...this.slash, sub: { id: cmd.id, items: cmd.tools || [] } };
+            this.slash = {
+                ...this.slash,
+                sub: { id: cmd.id, items: cmd.tools || [] },
+                subStyle: this.slashSubStyle(evOrIndex),
+            };
+        },
+        /** 鼠标悬停 / 点击组名时的统一入口（先高亮再展开） */
+        onSlashGroupHover(index, cmd, ev) {
+            if (this.slash.index !== index) this.slash.index = index;
+            if (this.slash.sub && this.slash.sub.id === cmd.id) return; // 已经开着，别重复算
+            this.openSlashGroup(cmd, ev);
+        },
+        /** 二级菜单的 fixed 坐标：贴组名右侧，放不下翻左侧 */
+        slashSubStyle(evOrIndex) {
+            let el = null;
+            if (evOrIndex && evOrIndex.currentTarget) el = evOrIndex.currentTarget;
+            else if (typeof evOrIndex === 'number') {
+                const host = this.$refs.slashEl;
+                const rows = host ? host.querySelectorAll('.me-slash-item') : [];
+                el = rows[evOrIndex] || null;
+            }
+            const w = 200;
+            if (!el) return { left: '8px', top: '8px', minWidth: `${w}px` };
+            const r = el.getBoundingClientRect();
+            const toLeft = r.right + 4 + w > window.innerWidth - 8;
+            const left = toLeft ? Math.max(8, r.left - w - 4) : r.right + 4;
+            const top = Math.min(Math.max(8, r.top - 4), Math.max(8, window.innerHeight - 72));
+            return { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`, minWidth: `${w}px` };
         },
 
         async applySlash(cmd) {
-            if (cmd && cmd.group) return this.openSlashGroup(cmd);
+            if (cmd && cmd.group) {
+                // 键盘回车展开组时没有鼠标事件，按条目下标反查那一行的矩形
+                const idx = (this.slash.items || []).findIndex((x) => x && x.id === cmd.id);
+                return this.openSlashGroup(cmd, idx >= 0 ? idx : undefined);
+            }
             const ed = this.editor;
             if (!ed || !cmd || cmd.separator) return;
             const { from, to } = this.slash;
@@ -4631,6 +5159,44 @@ export default {
              * 走同一条分派，不用在菜单里再抄一遍特判。
              */
             this.runTool(cmd.id);
+        },
+
+        /**
+         * v1.3.3.2：媒体工具条定位（可从滚动回调重复调用）。
+         * 以节点矩形为锚，水平居中于节点、垂直贴在节点上方；上方不够就翻到下方。
+         */
+        placeMediaBar(pos, kind) {
+            const ed = this.editor;
+            if (!ed) return;
+            /*
+             * 正常情况下用节点自己的矩形定位。但 nodeDOM 在边界位置（例如媒体就是文档
+             * 第一个块、pos = 0）会返回 null，这时退化成「光标坐标」定位 ——
+             * 位置略粗，但不会出现「选中了却没有工具条」。
+             */
+            let r = null;
+            const dom = ed.view.nodeDOM(pos);
+            if (dom && typeof dom.getBoundingClientRect === 'function') r = dom.getBoundingClientRect();
+            if (!r || (!r.width && !r.height)) {
+                try {
+                    const c = ed.view.coordsAtPos(Math.max(1, pos));
+                    r = { left: c.left, right: c.left, top: c.top, bottom: c.bottom, width: 0, height: c.bottom - c.top };
+                } catch (e) {
+                    return;
+                }
+            }
+            const width = Math.min(360, Math.max(180, this.mediaTools.length * 32));
+            const center = r.left + r.width / 2;
+            const left = Math.min(Math.max(8, center - width / 2), Math.max(8, window.innerWidth - width - 8));
+            const above = r.top - 44 >= 8;
+            this.mediaBar = {
+                open: true,
+                kind,
+                pos,
+                style: {
+                    left: `${Math.round(left)}px`,
+                    top: `${Math.round(above ? r.top - 44 : Math.min(r.bottom + 8, window.innerHeight - 48))}px`,
+                },
+            };
         },
 
         /**
@@ -4659,7 +5225,8 @@ export default {
                 if (['mp4', 'webm', 'mov', 'm4v', 'ogv'].includes(e)) kind = 'video';
                 else if (['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac'].includes(e)) kind = 'audio';
                 else kind = 'file';
-            }
+            } else if (name === 'video') kind = 'video';
+            else if (name === 'audio') kind = 'audio';
             if (!kind) {
                 if (this.mediaBar.open) this.mediaBar = empty;
                 return;
@@ -4669,20 +5236,183 @@ export default {
                 this.mediaBar = empty;
                 return;
             }
-            const r = dom.getBoundingClientRect();
-            const h = host.getBoundingClientRect();
-            const width = Math.min(360, Math.max(180, this.mediaTools.length * 32));
-            const center = r.left + r.width / 2;
-            const left = Math.min(Math.max(8, center - width / 2), window.innerWidth - width - 8);
-            this.mediaBar = {
-                open: true,
-                kind,
-                style: {
-                    left: `${Math.round(left)}px`,
-                    top: `${Math.round(Math.max(8, r.top - 44))}px`
-                }
-            };
+            this.placeMediaBar(sel.from, kind);
         },
+        /** v1.3.3.2：取当前选中的媒体节点（图片 / 视频 / 音频 / 附件），没有则 null */
+        selectedMedia() {
+            const ed = this.editor;
+            if (!ed) return null;
+            const sel = ed.state.selection;
+            if (!(sel instanceof NodeSelection)) return null;
+            const name = sel.node.type.name;
+            if (!['image', 'video', 'audio', 'fileAttachment'].includes(name)) return null;
+            const src = name === 'fileAttachment'
+                ? String(sel.node.attrs.href || '')
+                : String(sel.node.attrs.src || '');
+            if (!src) return null;
+            const label = name === 'fileAttachment'
+                ? String(sel.node.attrs.name || '')
+                : (name === 'image' ? String(sel.node.attrs.alt || '') : '');
+            return { name, src, label };
+        },
+
+        /** `…/file/2026/08/xxx.png` → `2026/08/xxx.png`（本站文件标识） */
+        fileIdOfSrc(src) {
+            const m = /\/file\/(.+?)(?:[?#]|$)/.exec(String(src || ''));
+            return m ? decodeURIComponent(m[1]) : '';
+        },
+
+        /** v1.3.3.2（需求）：选中文件 → 灯箱预览（复用全站媒体预览浮层） */
+        openMediaPreview() {
+            const m = this.selectedMedia();
+            if (!m) return;
+            const ext = (/\.([a-z0-9]+)(?:$|[?#])/i.exec(m.src) || [])[1]?.toLowerCase() || '';
+            const VIDEO = ['mp4', 'webm', 'mov', 'm4v', 'ogv'];
+            const AUDIO = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac'];
+            const TEXT = ['txt', 'md', 'markdown', 'json', 'csv', 'log', 'yml', 'yaml'];
+            let kind = 'other';
+            if (m.name === 'image') kind = 'image';
+            else if (m.name === 'video') kind = 'video';
+            else if (m.name === 'audio') kind = 'audio';
+            else if (ext === 'pdf') kind = 'pdf';
+            else if (VIDEO.includes(ext)) kind = 'video';
+            else if (AUDIO.includes(ext)) kind = 'audio';
+            else if (TEXT.includes(ext)) kind = 'text';
+            const fileName = m.label || decodeURIComponent(String(m.src).split('/').pop() || '') || '文件';
+            const item = { key: m.src, name: fileName, url: m.src, kind, ext };
+            this.lightbox = { open: true, items: [item], index: 0 };
+        },
+
+        /**
+         * v1.3.3.2（需求）：选中文件 → 文件详情。
+         *
+         * 先按本站文件标识拉一次元数据（大小 / 渠道 / 上传者才对得上），
+         * 拉不到（外部链接、老文件）就用「只有文件名」的最小记录兜底 ——
+         * 详情页至少能给出链接与下载，不会点了没反应。
+         */
+        async openMediaDetail() {
+            const m = this.selectedMedia();
+            if (!m) return;
+            const id = this.fileIdOfSrc(m.src);
+            const fallbackName = m.label || decodeURIComponent(String(m.src).split('/').pop() || '') || '文件';
+            this.fileDlg = { open: true, file: { name: id || fallbackName, metadata: {} } };
+            if (!id) return;
+            try {
+                const r = await loadFileDetail(id, { record: { name: id }, refresh: true });
+                if (r?.file) this.fileDlg = { open: true, file: r.file };
+            } catch (e) {
+                /* 详情拿不到就停在兜底记录上，不打断用户 */
+            }
+        },
+
+        /**
+         * v1.3.3.2：文本浮层的位置计算（可从滚动回调重复调用）。
+         *
+         * 需求：①浮层要跟随页面滚动；②左侧不能溢出编辑区左缘。
+         * 宽度只能渲染后量（配置里的工具数决定宽度），所以先按中心点摆，
+         * 下一帧再用实测宽度夹一次 —— 只夹左缘会让右侧溢出，两头都夹。
+         */
+        placeSelBubble(from, to) {
+            const ed = this.editor;
+            if (!ed) return;
+            let start;
+            let end;
+            try {
+                start = ed.view.coordsAtPos(from);
+                end = ed.view.coordsAtPos(to);
+            } catch (e) {
+                return;
+            }
+            const top = Math.min(start.top, end.top) - 46;
+            const center = (start.left + end.right) / 2;
+            this.bubble = {
+                open: true,
+                from,
+                to,
+                style: {
+                    left: `${Math.round(center)}px`,
+                    top: `${Math.max(8, Math.round(top))}px`,
+                    transform: 'translateX(-50%)',
+                },
+            };
+            this.$nextTick(() => this.clampSelBubble());
+        },
+
+        /** 用实测宽度把浮层夹进「编辑区左缘 ~ 视口右缘」之间 */
+        clampSelBubble() {
+            const el = this.$refs.bubbleEl;
+            if (!el || !this.bubble.open) return;
+            const w = el.offsetWidth || 0;
+            if (!w) return;
+            const host = this.$refs.bodyEl;
+            const hostLeft = host ? host.getBoundingClientRect().left : 0;
+            const minCenter = Math.max(8, hostLeft + 4) + w / 2;
+            const maxCenter = window.innerWidth - 8 - w / 2;
+            const cur = parseFloat(String(this.bubble.style.left || '0')) || 0;
+            const next = Math.min(Math.max(cur, minCenter), Math.max(minCenter, maxCenter));
+            if (Math.abs(next - cur) > 0.5) {
+                this.bubble = { ...this.bubble, style: { ...this.bubble.style, left: `${Math.round(next)}px` } };
+            }
+        },
+
+        /**
+         * v1.3.3.2：页面滚动 / 窗口尺寸变化时，把所有「跟着内容走」的浮层重算一遍。
+         *
+         * 它们都是 position: fixed + 打开时算死的视口坐标，不重算就会「内容滚走了、
+         * 菜单还钉在原地」。右键菜单 / 行号菜单是以鼠标点为锚的，没有文档位置概念，
+         * 只要按滚动量做等距平移即可。
+         */
+        repositionFloats() {
+            const ed = this.editor;
+            const host = this.$refs.bodyEl;
+            if (!ed || !host) return;
+            if (this.bubble.open && typeof this.bubble.from === 'number') {
+                try {
+                    const c = ed.view.coordsAtPos(this.bubble.from);
+                    const top = Math.max(8, Math.round(c.top - 46));
+                    if (this.bubble.style.top !== `${top}px`) {
+                        this.bubble = { ...this.bubble, style: { ...this.bubble.style, top: `${top}px` } };
+                    }
+                } catch (e) {
+                    this.bubble = { ...this.bubble, open: false };
+                }
+            }
+            if (this.mediaBar.open && typeof this.mediaBar.pos === 'number') {
+                this.placeMediaBar(this.mediaBar.pos, this.mediaBar.kind);
+            }
+            if (this.slash.open && typeof this.slash.to === 'number') {
+                try {
+                    const c = ed.view.coordsAtPos(this.slash.to);
+                    const st = this.slash.style || {};
+                    const next = st.top
+                        ? { top: `${Math.round(c.bottom + 6)}px` }
+                        : { bottom: `${Math.round(window.innerHeight - c.top + 6)}px` };
+                    this.slash = { ...this.slash, style: { ...st, ...next } };
+                } catch (e) {
+                    /* 位置失效就不动 */
+                }
+            }
+            if (this.ref.open && typeof this.ref.pos === 'number') {
+                try {
+                    const c = ed.view.coordsAtPos(this.ref.pos);
+                    this.ref = { ...this.ref, style: { left: `${Math.round(c.left)}px`, top: `${Math.round(c.bottom + 6)}px` } };
+                } catch (e) {
+                    /* 忽略 */
+                }
+            }
+            const dy = (host.scrollTop || 0) - (this._floatScrollTop || 0);
+            if (dy) {
+                const shift = (st, key) => {
+                    if (!st || typeof st[key] !== 'number') return st;
+                    return { ...st, [key]: st[key] - dy };
+                };
+                if (this.ctxMenu.open) this.ctxMenu = shift(this.ctxMenu, 'y');
+                if (this.gutterMenu.open) this.gutterMenu = shift(this.gutterMenu, 'y');
+            }
+            this._floatScrollTop = host.scrollTop || 0;
+            if (this.tableBar.open) this.syncTableBar();
+        },
+
         /** 选中非空时在选区上方显示浮层；位置手算，不用 Tiptap 内置 BubbleMenu */
         onSelectionChange() {
             // 图片被选中时浮出缩放手柄；其它情况一律收起
@@ -4696,29 +5426,33 @@ export default {
                 return;
             }
             const { state } = ed;
-            const { from, to, empty } = state.selection;
+            const sel = state.selection;
+            const { from, to, empty } = sel;
             /*
              * v1.3.2（需求：点别处 / 移到别处后 `[[` 与 `/` 浮层还在）
              * 选区一变就重新判断触发器；光标离开 `[[查询` 或行首 `/` 时自然关闭。
              */
             this.updateRef();
             this.updateSlash();
-            if (empty) {
+            /*
+             * v1.3.3.2（需求：只有真正选中**文本**时才出文本菜单）
+             *
+             * 之前只判 `!empty`，而选中图片 / 视频 / 文件是 NodeSelection
+             * （from 与 to 差 1、empty=false），于是选中一张图会同时冒出
+             * 「文本格式菜单 + 媒体工具条」两套浮层。
+             * 这里改成：必须是 TextSelection、且区间里真的有文字。
+             */
+            if (empty || !(sel instanceof TextSelection)) {
                 this.bubble.open = false;
                 return;
             }
-            const start = ed.view.coordsAtPos(from);
-            const end = ed.view.coordsAtPos(to);
-            const top = Math.min(start.top, end.top) - 46;
-            const left = (start.left + end.right) / 2;
-            this.bubble = {
-                open: true,
-                style: {
-                    left: `${Math.round(left)}px`,
-                    top: `${Math.max(8, Math.round(top))}px`,
-                    transform: 'translateX(-50%)',
-                },
-            };
+            const picked = state.doc.textBetween(from, to, '\n', '\n');
+            if (!picked || !picked.trim()) {
+                this.bubble.open = false;
+                return;
+            }
+            this._floatScrollTop = (this.$refs.bodyEl && this.$refs.bodyEl.scrollTop) || 0;
+            this.placeSelBubble(from, to);
         },
     },
 };
@@ -4760,6 +5494,7 @@ export default {
     /*
      * v1.3.2（需求）：元信息行上下的分隔线间距要均匀，且只保留上面一条。
      * display: contents 之后内边距要自己补；上下都取 6px，视觉上正好居中。
+     * v1.3.3.2：标签行改成上下等距（原来只有下边 10px，看着像"吊"在上面）。
      */
     padding: 6px 16px;
     border-top: 1px solid var(--el-border-color-lighter);
@@ -4801,8 +5536,12 @@ export default {
     flex-wrap: wrap;
     gap: 6px;
     min-height: 26px;
-    /* v1.3.2（需求）：标签行下方补一条分隔线，与上方元信息行的线形成上下呼应 */
-    padding: 0 16px 10px;
+    /*
+     * v1.3.2（需求）：标签行下方补一条分隔线，与上方元信息行的线形成上下呼应。
+     * v1.3.3.2（需求）：上下的间距要一样大 —— 原来上 0 下 10px，
+     * 标签行明显"贴"在元信息行上、离正文更远。现在上下各 6px。
+     */
+    padding: 6px 16px;
     border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .me-tag {
@@ -4942,9 +5681,15 @@ export default {
     width: 100%;
     height: 100%;
 }
-.me-btn-group {
+/*
+ * v1.3.3.2（需求：工具组名称被挤压成 30px）
+ * `.me-btn` 的 width:30px 写在文件后面，与 `.me-btn-group` 同特异性但更晚生效，
+ * 组名「表格工具」被硬塞进 30px。这里提高一级特异性，宽度按文字长度自适应。
+ */
+.me-btn.me-btn-group {
     width: auto;
-    padding: 0 6px;
+    min-width: 30px;
+    padding: 0 7px;
     gap: 3px;
 }
 .me-group-name {
@@ -4974,13 +5719,11 @@ export default {
     font-size: 10px;
     opacity: 0.6;
 }
-/* v1.3.2：工具组二级菜单，贴在组名右侧 */
+/* v1.3.3.2：工具组二级菜单改成独立浮层（fixed），不再被父级 overflow 裁掉 */
 .me-slash-sub {
-    position: absolute;
-    left: calc(100% + 4px);
-    top: -4px;
-    z-index: 2;
-    min-width: 170px;
+    position: fixed;
+    z-index: 3002;
+    min-width: 200px;
     max-height: 320px;
     overflow-y: auto;
     padding: 4px;
@@ -5776,21 +6519,50 @@ export default {
     box-shadow: var(--el-box-shadow-light);
 }
 
-/* 左侧行级栏（gutter）：零宽 widget，按钮绝对定位挂在正文左侧 */
-.me-wysiwyg :deep(.gh-gutter) {
-    display: inline-block;
-    width: 0;
-    /* v1.3.2：行号按块首行的行高定位，任务列表 / 标题也不会上下错位 */
-    height: 1.7em;
-    position: relative;
-    vertical-align: top;
-}
-.me-wysiwyg :deep(.gh-gutter-btn) {
+/* 左侧行号栏（v1.3.3.2）：绝对定位覆盖层，按块矩形逐行摆放 */
+.me-gutter-layer {
     position: absolute;
-    left: -25px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 20px;
+    left: 0;
+    top: 0;
+    width: 46px;
+    height: 0;
+    z-index: 4;
+    pointer-events: none;
+}
+.me-gutter-row {
+    position: absolute;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
+    width: 46px;
+    height: 20px;
+    padding-right: 4px;
+}
+.me-gutter-fold {
+    flex: 0 0 auto;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--el-text-color-placeholder);
+    font-size: 9px;
+    line-height: 1;
+    cursor: pointer;
+    pointer-events: auto;
+    opacity: 0;
+    transition: opacity 0.12s ease, background 0.12s ease;
+}
+.me-gutter-fold.is-folded {
+    opacity: 1;
+    color: var(--el-color-primary);
+}
+.me-gutter-no {
+    flex: 0 0 auto;
+    width: 22px;
     height: 20px;
     padding: 0;
     border: none;
@@ -5802,24 +6574,34 @@ export default {
     font-variant-numeric: tabular-nums;
     text-align: right;
     cursor: pointer;
+    pointer-events: auto;
     opacity: 0;
     transition: opacity 0.12s ease, background 0.12s ease;
 }
-.me-wysiwyg :deep(.gh-editor-content):hover .gh-gutter-btn,
-.me-wysiwyg :deep(.gh-gutter-btn:hover) {
+/* 悬停正文 / 行号本身时行号才显形，不打扰阅读 */
+.me-body:hover .me-gutter-layer .me-gutter-no,
+.me-gutter-row:hover .me-gutter-no {
     opacity: 1;
 }
-.me-wysiwyg :deep(.gh-gutter-btn:hover) {
+.me-gutter-row:hover .me-gutter-fold {
+    opacity: 1;
+}
+.me-gutter-no:hover {
     background: var(--el-fill-color);
     color: var(--el-color-primary);
 }
-/* v1.3.2（需求）：移动端也显示行号（原来直接隐藏） */
+.me-gutter-fold:hover {
+    background: var(--el-fill-color);
+    color: var(--el-color-primary);
+}
+/* v1.3.3.2：移动端行号常显（触屏没有 hover），列宽收窄 */
 @media (max-width: 900px) {
-    .me-wysiwyg :deep(.gh-gutter-btn) {
-        display: block;
+    .me-gutter-layer,
+    .me-gutter-row {
+        width: 40px;
+    }
+    .me-gutter-no {
         opacity: 0.65;
-        left: -20px;
-        font-size: 9px;
     }
 }
 .me-gutter-menu {
@@ -5967,7 +6749,12 @@ export default {
 .me-preview {
     /* 需求：编辑区内容一律左对齐，不居中、不两端对齐 */
     text-align: left;
-    padding: 14px 18px 80px;
+    /*
+     * v1.3.3.2（需求：行号要正对内容块）：
+     * 左侧留出 46px 给行号栏（0~46px），正文从 46px 起 —— 行号与文字互不重叠，
+     * 行号也不会因为负偏移被 .me-body 的 overflow 裁掉。移动端收窄到 40px。
+     */
+    padding: 14px 18px 80px 46px;
     min-height: 100%;
     font-size: 15px;
     /* v1.3.1.2：行高来自「样式设置」，没设置时还是 1.78 */
@@ -5976,6 +6763,12 @@ export default {
     overflow-wrap: anywhere;
     outline: none;
 }
+@media (max-width: 900px) {
+    .me-wysiwyg :deep(.gh-editor-content),
+    .me-preview {
+        padding-left: 40px;
+    }
+}
 
 .me-wysiwyg :deep(.gh-editor-content) > * + *,
 .me-preview > * + * {
@@ -5983,13 +6776,18 @@ export default {
 }
 
 /* 标题：字号/字重/间距全部走 CSS 变量，v1.4 的样式设置页直接改这些变量即可 */
+/*
+ * v1.3.3.2（需求：标题上方间隔比下方大）
+ * 原来 h1 是 `1.1em 0 0.5em` —— 上 1.1em、下 0.5em，视觉上标题"飘"在段落之间。
+ * 现在上下取同一个值（0.5em 一档），标题与上下文的呼吸感一致。
+ */
 .me-wysiwyg :deep(.gh-editor-content h1),
 .me-preview :deep(h1) {
     font-size: var(--gh-h1-size, 1.75em);
     color: var(--gh-h1-color, inherit);
     font-weight: 700;
     line-height: 1.35;
-    margin: 1.1em 0 0.5em;
+    margin: 0.5em 0;
 }
 .me-wysiwyg :deep(.gh-editor-content h2),
 .me-preview :deep(h2) {
@@ -5997,35 +6795,36 @@ export default {
     color: var(--gh-h2-color, inherit);
     font-weight: 700;
     line-height: 1.38;
-    margin: 1em 0 0.45em;
+    margin: 0.45em 0;
 }
 .me-wysiwyg :deep(.gh-editor-content h3),
 .me-preview :deep(h3) {
     font-size: var(--gh-h3-size, 1.24em);
     color: var(--gh-h3-color, inherit);
     font-weight: 600;
-    margin: 0.9em 0 0.4em;
+    /* v1.3.3.2：上下间距取同值（原来 0.9/0.4 上重下轻） */
+    margin: 0.4em 0;
 }
 .me-wysiwyg :deep(.gh-editor-content h4),
 .me-preview :deep(h4) {
     font-size: var(--gh-h4-size, 1.1em);
     color: var(--gh-h4-color, inherit);
     font-weight: 600;
-    margin: 0.85em 0 0.35em;
+    margin: 0.35em 0;
 }
 .me-wysiwyg :deep(.gh-editor-content h5),
 .me-preview :deep(h5) {
     font-size: var(--gh-h5-size, 1em);
     color: var(--gh-h5-color, inherit);
     font-weight: 600;
-    margin: 0.8em 0 0.3em;
+    margin: 0.3em 0;
 }
 .me-wysiwyg :deep(.gh-editor-content h6),
 .me-preview :deep(h6) {
     font-size: var(--gh-h6-size, 0.94em);
     color: var(--gh-h6-color, var(--el-text-color-secondary));
     font-weight: 600;
-    margin: 0.8em 0 0.3em;
+    margin: 0.3em 0;
 }
 
 /* 列表：缩进与层级线（层级线用伪元素，不引第三方） */
