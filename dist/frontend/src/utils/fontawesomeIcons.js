@@ -19,6 +19,7 @@ import { faVolumeMute } from '@fortawesome/free-solid-svg-icons/faVolumeMute';
 import { faVolumeUp } from '@fortawesome/free-solid-svg-icons/faVolumeUp';
 import { faAngleDoubleRight } from '@fortawesome/free-solid-svg-icons/faAngleDoubleRight';
 import { faArrowDown } from '@fortawesome/free-solid-svg-icons/faArrowDown';
+import { faAnglesUp } from '@fortawesome/free-solid-svg-icons/faAnglesUp';
 import { faArrowRight } from '@fortawesome/free-solid-svg-icons/faArrowRight';
 import { faArrowsLeftRight } from '@fortawesome/free-solid-svg-icons/faArrowsLeftRight';
 import { faArrowsUpDown } from '@fortawesome/free-solid-svg-icons/faArrowsUpDown';
@@ -37,6 +38,7 @@ import { faWindowMaximize } from '@fortawesome/free-solid-svg-icons/faWindowMaxi
 import { faMagnifyingGlass } from '@fortawesome/free-solid-svg-icons/faMagnifyingGlass';
 import { faFileCode } from '@fortawesome/free-solid-svg-icons/faFileCode';
 import { faCaretDown } from '@fortawesome/free-solid-svg-icons/faCaretDown';
+import { faCaretRight } from '@fortawesome/free-solid-svg-icons/faCaretRight';
 import { faArrowsAlt } from '@fortawesome/free-solid-svg-icons/faArrowsAlt';
 import { faArrowLeft } from '@fortawesome/free-solid-svg-icons/faArrowLeft';
 import { faArrowUp } from '@fortawesome/free-solid-svg-icons/faArrowUp';
@@ -207,6 +209,7 @@ export default [
     faAngleDoubleLeft,
     faAngleDoubleRight,
     faArrowDown,
+    faAnglesUp,
     faArrowRight,
     faArrowsLeftRight,
     faArrowsUpDown,
@@ -369,11 +372,13 @@ export default [
     faObjectGroup,
     faCalendarDay,
     faFaceSmile,
+    faFont,
     faShapes,
     faWindowMaximize,
     faMagnifyingGlass,
     faFileCode,
     faCaretDown,
+    faCaretRight,
     faScissors,
     faClipboard,
     faClone,

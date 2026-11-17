@@ -177,8 +177,10 @@ export default {
         return {
             // fileId → 时长文本（'' = 探测失败，不显示）
             durations: {},
-            // fileId / url → 视频首帧（dataURL，'' = 抽帧失败）
+            // fileId / url → 视频首帧（dataURL，'' = 旧版抽帧失败）
             posters: {},
+            // v1.3.2：抽帧失败时间（key → ms），15s 内不重复排队，之后允许重试
+            posterFailAt: {},
             // v1.1.2.2：附件 key → 原图宽高比（width / height），单图排版用
             aspects: {},
             // 父节点（卡片）的可用宽度，单图 / 宽度收敛都要用
@@ -344,10 +346,21 @@ export default {
                 if (it.mediaKind !== 'video' || !it.url) continue;
                 const key = it.fileId || it.url;
                 if (this.posters[key] !== undefined) continue;
+                /*
+                 * v1.3.2：抽帧失败不要写进 posters（旧写法写 ''，之后永远跳过，
+                 * 点「刷新」也不会再试）。这里只记失败时间，15s 内不重排，
+                 * 过了就允许重试 —— 与 utils/videoPoster 的负缓存口径一致。
+                 */
+                const failedAt = this.posterFailAt[key] || 0;
+                if (failedAt && Date.now() - failedAt < 15000) continue;
                 videoPoster(it.url).then((dataUrl) => {
-                    this.posters[key] = dataUrl || '';
+                    if (!dataUrl) {
+                        this.posterFailAt = { ...this.posterFailAt, [key]: Date.now() };
+                        return;
+                    }
+                    this.posters[key] = dataUrl;
                     // 单视频也要按原视频比例排：拿首帧的尺寸当宽高比
-                    if (dataUrl && !this.aspects[key]) {
+                    if (!this.aspects[key]) {
                         const probe = new Image();
                         probe.onload = () => {
                             if (probe.naturalWidth && probe.naturalHeight) {

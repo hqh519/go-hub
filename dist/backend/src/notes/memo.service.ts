@@ -740,7 +740,15 @@ export class MemoService {
         instanceId,
         type: 'note',
         ...(kw ? { name: { contains: kw, mode: 'insensitive' as const } } : {}),
-        noteTags: { some: { note: { author: viewer, instanceId } } },
+        /*
+         * v1.3.2（需求：已经存过的标签读不到）
+         *
+         * 旧条件是 `noteTags: { some: { note: { author: viewer } } }` ——
+         * 只列「当前还挂在某篇笔记上」的标签。一旦某篇笔记把标签删掉，
+         * 这条 Tag 还在表里，却再也不会出现在候选里，看起来就像"没存进去"。
+         * 现在按归属判断：新数据 scope=当前用户，老数据 owner=当前用户（scope 为空）。
+         */
+        OR: [{ scope: String(viewer || '') }, { owner: String(viewer || '') }],
       },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },

@@ -131,6 +131,28 @@
                 >
                     <font-awesome-icon :icon="m.icon" class="crop-mode-icon" />{{ $t(m.label) }}
                 </button>
+                <!--
+                    v1.3.3（需求）：左转 / 右转从底栏挪到「马赛克」后面，和工具排成一行。
+                    度数值不在这里 —— 它跟着「输出尺寸」一起显示（见下面 .crop-hint）。
+                -->
+                <button
+                    type="button"
+                    class="crop-mode is-action"
+                    :disabled="rotating"
+                    :title="$t('uploadCrop.rotateLeft')"
+                    @click="rotate(-1)"
+                >
+                    <font-awesome-icon icon="undo" class="crop-mode-icon" />{{ $t('uploadCrop.rotateLeft') }}
+                </button>
+                <button
+                    type="button"
+                    class="crop-mode is-action"
+                    :disabled="rotating"
+                    :title="$t('uploadCrop.rotateRight')"
+                    @click="rotate(1)"
+                >
+                    <font-awesome-icon icon="redo" class="crop-mode-icon" />{{ $t('uploadCrop.rotateRight') }}
+                </button>
                 <span class="crop-modes-sep"></span>
                 <!-- 翻转是「一次性动作」，不是工具模式，所以没有 is-active -->
                 <button
@@ -206,6 +228,8 @@
         -->
         <p v-if="outputSize" class="crop-hint">
             <span class="crop-size">{{ $t('uploadCrop.outputSize', { w: outputSize.w, h: outputSize.h }) }}</span>
+            <!-- v1.3.3（需求）：只有转过角度才显示，未旋转不占位 -->
+            <span v-if="rotation" class="crop-angle-inline">{{ rotation }}°</span>
         </p>
 
         <template #footer>
@@ -216,24 +240,13 @@
                 撤销、恢复、重置已经挪到右上角，底部不再重复。
             -->
             <div class="crop-footer">
-                <!--
-                    v1.3.1.2（需求）：左转 / 右转 / 度数直接排在「取消」左边，整行靠左对齐。
-                    原来它们在最左侧、取消/保存在最右侧，宽屏下两者相隔一整个屏幕，
-                    点完旋转还要横跨回去点保存。
-                -->
-                <button type="button" class="crop-rot-btn" :disabled="rotating" :title="$t('uploadCrop.rotateLeft')" @click="rotate(-1)">
-                    <font-awesome-icon icon="undo" />
-                    <span>{{ $t('uploadCrop.rotateLeft') }}</span>
-                </button>
-                <button type="button" class="crop-rot-btn" :disabled="rotating" :title="$t('uploadCrop.rotateRight')" @click="rotate(1)">
-                    <font-awesome-icon icon="redo" />
-                    <span>{{ $t('uploadCrop.rotateRight') }}</span>
-                </button>
-                <span class="crop-angle">{{ rotation }}°</span>
-                <el-button class="crop-footer-cancel" @click="$emit('update:modelValue', false)">{{ $t('common.cancel') }}</el-button>
-                <el-button type="primary" :loading="exporting" :disabled="!canCrop" @click="confirm">
-                    {{ $t(confirmKey) }}
-                </el-button>
+                <!-- v1.3.3（需求）：旋转已移到工具行，底栏只留取消 / 保存 -->
+                <div class="crop-footer-right">
+                    <el-button class="crop-footer-cancel" @click="$emit('update:modelValue', false)">{{ $t('common.cancel') }}</el-button>
+                    <el-button type="primary" :loading="exporting" :disabled="!canCrop" @click="confirm">
+                        {{ $t(confirmKey) }}
+                    </el-button>
+                </div>
             </div>
         </template>
     </el-dialog>
@@ -1542,6 +1555,17 @@ export default {
     color: var(--el-text-color-secondary);
 }
 
+.crop-angle-inline {
+    /* v1.3.3：跟在输出尺寸后面的旋转角度 */
+    margin-left: 10px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
+    font-variant-numeric: tabular-nums;
+    font-size: 11.5px;
+}
+
 .crop-size {
     font-size: 12px;
     color: var(--el-text-color-secondary);
@@ -1568,9 +1592,13 @@ export default {
     display: flex;
     align-items: center;
     gap: 8px;
-    /* el-dialog 自带的关闭按钮绝对定位在右上角，留出它的位置 */
-    padding-right: 28px;
-    min-height: 24px;
+    /*
+     * v1.3.2（需求）：关闭按钮贴右边框，且与「重置」的间距再加大 10px。
+     * 关闭按钮固定 28px 宽、right: 4px（下面有覆盖），这里留 40px：
+     * 40 + header 左内边距 6 - (4 + 28) = 14px，比原来的间距多 10px 左右。
+     */
+    padding-right: 40px;
+    min-height: 28px;
 }
 .crop-head-title {
     flex: 1 1 auto;
@@ -1723,6 +1751,33 @@ export default {
 }
 
 /*
+ * v1.3.2（需求）：右上角 撤销 / 恢复 / 重置 / 关闭 四个按钮同尺寸、同水平线。
+ * Element Plus 默认的关闭按钮是 48px 的大热区，这里收成 28px，
+ * 与 .crop-icon-btn 对齐；right: 4px 让它贴住弹窗右边框。
+ */
+.image-crop-dialog .el-dialog__headerbtn {
+    top: 6px;
+    right: 4px;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+}
+
+.image-crop-dialog .el-dialog__headerbtn .el-dialog__close {
+    font-size: 14px;
+}
+
+/*
+ * v1.3.2（需求：剪辑页顶部有一行渐变透明度，去掉）
+ * 来源是全局 global.css 给 .el-dialog__body 加的 20px 上下遮罩，
+ * 用于柔化滚动边缘；剪辑页是整屏画布，这条渐变看起来像"顶上多了一行"。
+ */
+.image-crop-dialog > .el-dialog__body {
+    -webkit-mask-image: none;
+    mask-image: none;
+}
+
+/*
  * v1.1.9.3：「重置选区 / 撤销 / 清空」搬到「取消」左侧后，底部行改成左右两组：
  * 左侧操作组贴左，取消 / 保存贴右（原来是整行居右，左侧这几个按钮就没地方站）。
  */
@@ -1731,20 +1786,31 @@ export default {
  * 左转 / 右转 / 度数 紧挨着「取消」「保存」，不再左右分组。
  * 移动端宽度不够时换行（flex-wrap），保证「保存」永远点得到。
  */
+/* v1.3.2（需求）：旋转控件靠左、取消/保存靠右，整行两端对齐 */
 .crop-footer {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: space-between;
     flex-wrap: wrap;
     gap: 8px;
+}
+.crop-footer-left,
+.crop-footer-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.crop-footer-right {
+    margin-left: auto;
+    justify-content: flex-end;
 }
 .crop-footer .crop-rot-btn,
 .crop-footer .crop-angle {
     flex: 0 0 auto;
 }
 .crop-footer-cancel {
-    /* 旋转控件与「取消」之间留一点视觉分隔（两者性质不同：一个是操作、一个是退出） */
-    margin-left: 6px;
+    margin-left: 0;
 }
 
 @media (max-width: 768px) {

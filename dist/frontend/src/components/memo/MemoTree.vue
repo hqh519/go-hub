@@ -64,9 +64,13 @@
             >
                 <template #default="{ data }">
                     <div class="mt-node" :class="{ 'is-current': data.id === active }">
-                        <font-awesome-icon :icon="data.children && data.children.length ? 'folder-open' : 'folder'" class="mt-node-icon" />
-                        <span class="mt-name" :title="data.name">{{ data.name }}</span>
-                        <span class="mt-count">{{ data.total }}</span>
+                        <!-- v1.3.2：选中底色只包住「图标 + 名称」，不再铺满整行（三角形不染色） -->
+                        <span class="mt-node-main">
+                            <font-awesome-icon :icon="data.children && data.children.length ? 'folder-open' : 'folder'" class="mt-node-icon" />
+                            <span class="mt-name" :title="data.name">{{ data.name }}</span>
+                        </span>
+                        <!-- v1.3.2（需求）：自身笔记数 / 含所有子目录的总数 -->
+                        <span class="mt-count">{{ data.count }}/{{ data.total }}</span>
                         <el-dropdown trigger="click" class="mt-node-more" @command="(cmd) => onCommand(cmd, data)" @click.stop>
                             <button type="button" class="mt-more-btn" @click.stop>
                                 <font-awesome-icon icon="ellipsis-h" />
@@ -319,12 +323,19 @@ export default {
  */
 .mt-tree :deep(.el-tree-node__children) {
     position: relative;
-    padding-left: 8px;
+    /*
+     * v1.3.2（需求：关系线要落在倒三角正下方）
+     *
+     * 缩进从 8px 加到 20px：三角形在 el-tree 的 content 里占 24px（12px 图标 + 左右各 6px
+     * padding），中心在 12px 处。缩进必须大于 12px，子项内容才不会跑到三角形中心左边；
+     * 竖线固定在 left: 12px，每一层都正好穿过父级三角形的中心。
+     */
+    padding-left: 20px;
 }
 .mt-tree :deep(.el-tree-node__children)::before {
     content: '';
     position: absolute;
-    left: 4px;
+    left: 12px;
     top: 0;
     /* 最后一项的下半行不需要竖线，留出行高的一半 */
     bottom: 13px;
@@ -337,6 +348,7 @@ export default {
 .mt-tree :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content)::before {
     content: '';
     position: absolute;
+    /* 从竖线（12px）连到子项内容左缘（20px） */
     left: -8px;
     top: 50%;
     width: 8px;
@@ -353,6 +365,23 @@ export default {
     padding-right: 4px;
     font-size: 13px;
     text-align: left;
+}
+/* v1.3.2：选中底色只作用于「图标 + 名称」这一小段 */
+.mt-node-main {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    padding: 2px 6px;
+    margin-left: -6px;
+    border-radius: 6px;
+}
+.mt-node.is-current .mt-node-main {
+    background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.12));
+}
+/* el-tree 自带的 highlight-current 会把整行（含三角形）染色，这里关掉 */
+.mt-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
+    background: transparent;
 }
 .mt-node-icon {
     flex: 0 0 auto;

@@ -38,6 +38,13 @@ export const TOOLBAR_TOKENS = [
     'hardBreak', 'paragraph', 'upload', 'linkExtract',
     'tableAddRow', 'tableAddCol', 'tableDelRow', 'tableDelCol', 'tableMerge', 'tableSplit', 'tableDelete',
     'clear', 'undo', 'redo',
+    // v1.3.1.2 新增但上一版漏登记的 16 个
+    'tableAddRowBefore', 'tableAddColBefore',
+    'selectLine', 'selectAll',
+    'dateYmd', 'dateSlash', 'dateDash', 'dateCn', 'timeHms',
+    'emoji', 'symbol', 'iframe', 'findReplace', 'htmlMd', 'htmlBlock', 'annotate',
+    // v1.3.2 新增
+    'insertLineBelow', 'paste', 'pasteKeep', 'pastePlain', 'pasteEscaped',
 ];
 
 export default DEFAULT_TOOLBAR_LINES;

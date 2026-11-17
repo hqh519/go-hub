@@ -62,8 +62,21 @@
 
         <div class="memo-cols">
             <!-- 左：目录 -->
-            <aside v-if="!isMobile" class="memo-col memo-col-tree">
+            <aside
+                v-if="!isMobile"
+                class="memo-col memo-col-tree"
+                :style="{ flexBasis: `${treeWidth}px`, maxWidth: `${treeWidth}px` }"
+            >
                 <MemoTree v-model:active="activeFolder" :instance-id="instanceId" @loaded="onTreeLoaded" />
+                <!--
+                    v1.3.3（需求）：桌面端目录栏可以拖边框改宽度。
+                    宽度存 localStorage，下次进来还是上次的宽度。
+                -->
+                <span
+                    class="memo-tree-resizer"
+                    :title="$t('memo.treeResize')"
+                    @pointerdown.prevent="startTreeResize"
+                ></span>
             </aside>
 
             <!-- 中：列表 -->
@@ -135,9 +148,21 @@
                 <label class="ms-label">{{ $t('memo.toolbarConfig') }}</label>
                 <p class="ms-tip">{{ $t('memo.toolbarTip') }}</p>
                 <textarea v-model="settingsDraft.toolbar" class="ms-textarea" rows="5" spellcheck="false"></textarea>
-                <p class="ms-tip ms-avail">
-                    {{ $t('memo.toolbarAvail') }}：<code>{{ availableTokens }}</code>
-                </p>
+                <!--
+                    v1.3.2（需求）：可用工具改为可点击 —— 点一下复制工具名，
+                    并在最下方显示刚复制的是哪一个（方便直接粘进上面的配置框）。
+                -->
+                <p class="ms-tip ms-avail">{{ $t('memo.toolbarAvail') }}：</p>
+                <div class="ms-token-list">
+                    <button
+                        v-for="tk in availableToolList"
+                        :key="'tk-' + tk"
+                        type="button"
+                        class="ms-token"
+                        @click="copyToken(tk)"
+                    >{{ tk }}</button>
+                </div>
+                <p class="ms-copied">{{ copiedTool ? $t('memo.tokenCopied', { name: copiedTool }) : $t('memo.tokenCopyTip') }}</p>
             </div>
             <!--
                 v1.3.1.2（需求）：「输入工具配置」改名「光标工具栏配置」，
@@ -155,36 +180,47 @@
                 <p class="ms-tip">{{ $t('memo.slashToolsTip') }}</p>
                 <textarea v-model="settingsDraft.slashTools" class="ms-textarea" rows="4" spellcheck="false"></textarea>
             </div>
-            <!-- v1.3.1.2：H1-H6 与正文样式（写进 CSS 变量，样式表不用改） -->
+            <!-- v1.3.2（需求）：右键与各类选中对象的工具配置 -->
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.ctxToolsConfig') }}</label>
+                <p class="ms-tip">{{ $t('memo.ctxToolsTip') }}</p>
+                <textarea v-model="settingsDraft.rightClickTools" class="ms-textarea" rows="3" spellcheck="false"></textarea>
+            </div>
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.selTextToolsConfig') }}</label>
+                <p class="ms-tip">{{ $t('memo.selToolsTip') }}</p>
+                <textarea v-model="settingsDraft.selectionTools" class="ms-textarea" rows="3" spellcheck="false"></textarea>
+            </div>
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.selImageToolsConfig') }}</label>
+                <textarea v-model="settingsDraft.selectImageTools" class="ms-textarea" rows="2" spellcheck="false"></textarea>
+            </div>
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.selVideoToolsConfig') }}</label>
+                <textarea v-model="settingsDraft.selectVideoTools" class="ms-textarea" rows="2" spellcheck="false"></textarea>
+            </div>
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.selAudioToolsConfig') }}</label>
+                <textarea v-model="settingsDraft.selectAudioTools" class="ms-textarea" rows="2" spellcheck="false"></textarea>
+            </div>
+            <div class="ms-field">
+                <label class="ms-label">{{ $t('memo.selFileToolsConfig') }}</label>
+                <textarea v-model="settingsDraft.selectFileTools" class="ms-textarea" rows="2" spellcheck="false"></textarea>
+            </div>
+            <!--
+                v1.3.2（需求）：原来的 H1-H6 数字输入框太小，改成多行 CSS。
+                选择器会自动限定在编辑器正文区（.me-wysiwyg）内，不会污染全站样式。
+            -->
             <div class="ms-field">
                 <label class="ms-label">{{ $t('memo.styleTitle') }}</label>
-                <p class="ms-tip">{{ $t('memo.styleTip') }}</p>
-                <div class="ms-style-grid">
-                    <label v-for="lv in 6" :key="`hs-${lv}`" class="ms-style-item">
-                        <span>H{{ lv }}</span>
-                        <el-input-number
-                            v-model="settingsDraft.styles[`h${lv}`]"
-                            :min="0.75"
-                            :max="3"
-                            :step="0.05"
-                            :precision="2"
-                            size="small"
-                            controls-position="right"
-                        />
-                    </label>
-                    <label class="ms-style-item">
-                        <span>{{ $t('memo.styleLineHeight') }}</span>
-                        <el-input-number
-                            v-model="settingsDraft.styles.lineHeight"
-                            :min="1.2"
-                            :max="2.4"
-                            :step="0.05"
-                            :precision="2"
-                            size="small"
-                            controls-position="right"
-                        />
-                    </label>
-                </div>
+                <p class="ms-tip">{{ $t('memo.styleCssTip') }}</p>
+                <textarea
+                    v-model="settingsDraft.customCss"
+                    class="ms-textarea ms-css-textarea"
+                    rows="6"
+                    spellcheck="false"
+                    :placeholder="cssPlaceholder"
+                ></textarea>
             </div>
 
             <!-- v1.3.1.2：滚动吸附（PC / 移动端各自独立） -->
@@ -268,6 +304,8 @@ export default {
             currentNote: null,
             treeDrawer: false,
             settingsVisible: false,
+            /** v1.3.2：刚复制的工具名（显示在可用工具列表最下方） */
+            copiedTool: '',
             settingsSaving: false,
             editorSettings: {
                 toolbarLines: DEFAULT_TOOLBAR_LINES.slice(),
@@ -290,9 +328,17 @@ export default {
                 theme: 'auto',
                 inputTools: '',
                 slashTools: '',
+                rightClickTools: '',
+                selectionTools: '',
+                selectImageTools: '',
+                selectVideoTools: '',
+                selectAudioTools: '',
+                selectFileTools: '',
                 historyInterval: 3,
                 /* v1.3.1.2：标题与正文样式 */
-                styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75 },
+                styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '' },
+                /* v1.3.2：自定义 CSS（草稿层单独放一份，确认后才写回 styles.customCss） */
+                customCss: '',
                 /* v1.3.1.2：PC / 移动端各自的吸附开关，默认全关 */
                 sticky: {
                     pc: { toolbar: false, title: false, aux: false },
@@ -313,9 +359,20 @@ export default {
             instances: [],
             topbarHidden: false,
             lastScrollTop: 0,
+            /** v1.3.3：左侧目录栏宽度（桌面端可拖拽） */
+            treeWidth: 210,
         };
     },
     computed: {
+        /** v1.3.2：CSS 示例（不放 i18n —— 花括号会被当成插值占位符） */
+        cssPlaceholder() {
+            return 'h1 { font-size: 1.9em; color: #1f2937 }\np { line-height: 1.9 }';
+        },
+        /** v1.3.2：可用工具改成数组渲染，点一下即可复制 */
+        availableToolList() {
+            return Array.isArray(TOOLBAR_TOKENS) ? TOOLBAR_TOKENS : [];
+        },
+
         /** 设置页里展示的「可用工具名」，与编辑器里的工具表同源，避免写死一份会漂移的文案 */
         availableTokens() {
             return TOOLBAR_TOKENS.join(' ');
@@ -369,6 +426,7 @@ export default {
         },
     },
     async mounted() {
+        this.restoreTreeWidth();
         this.syncViewport();
         window.addEventListener('resize', this.syncViewport);
         /*
@@ -611,6 +669,14 @@ export default {
 
         // ---------------- 编辑器设置 ----------------
 
+        restoreTreeWidth() {
+            try {
+                const raw = Number(localStorage.getItem('gohub_memo_tree_width'));
+                if (raw && raw >= 160 && raw <= 420) this.treeWidth = Math.round(raw);
+            } catch (e) {
+                /* 忽略 */
+            }
+        },
         async loadSettings() {
             try {
                 const res = await axios.get('/api/notes/settings', { params: { instanceId: this.instanceId } });
@@ -624,6 +690,12 @@ export default {
                     theme: editor.theme === 'light' || editor.theme === 'dark' ? editor.theme : 'auto',
                     inputLines: Array.isArray(editor.inputLines) ? editor.inputLines.map((x) => String(x || '')) : [],
                     slashLines: Array.isArray(editor.slashLines) ? editor.slashLines.map((x) => String(x || '')) : [],
+                    rightClickLines: Array.isArray(editor.rightClickLines) ? editor.rightClickLines.map((x) => String(x || '')) : [],
+                    selectionLines: Array.isArray(editor.selectionLines) ? editor.selectionLines.map((x) => String(x || '')) : [],
+                    selectImageLines: Array.isArray(editor.selectImageLines) ? editor.selectImageLines.map((x) => String(x || '')) : [],
+                    selectVideoLines: Array.isArray(editor.selectVideoLines) ? editor.selectVideoLines.map((x) => String(x || '')) : [],
+                    selectAudioLines: Array.isArray(editor.selectAudioLines) ? editor.selectAudioLines.map((x) => String(x || '')) : [],
+                    selectFileLines: Array.isArray(editor.selectFileLines) ? editor.selectFileLines.map((x) => String(x || '')) : [],
                     historyInterval: Number(editor.historyInterval) > 0 ? Number(editor.historyInterval) : 3,
                     // v1.3.1.2：样式（后端已归一）
                     styles: {
@@ -634,6 +706,7 @@ export default {
                         h5: Number(editor?.styles?.h5) || 1,
                         h6: Number(editor?.styles?.h6) || 0.94,
                         lineHeight: Number(editor?.styles?.lineHeight) || 1.75,
+                        customCss: String(editor?.styles?.customCss || ''),
                     },
                     // v1.3.1.2：吸附配置（后端已归一并保证结构完整，这里再兜一层）
                     sticky: {
@@ -657,14 +730,42 @@ export default {
                     theme: 'auto',
                     inputLines: [],
                     slashLines: [],
+                    rightClickLines: [],
+                    selectionLines: [],
+                    selectImageLines: [],
+                    selectVideoLines: [],
+                    selectAudioLines: [],
+                    selectFileLines: [],
                     historyInterval: 3,
-                    styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75 },
+                    styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '' },
                     sticky: {
                         pc: { toolbar: false, title: false, aux: false },
                         m: { toolbar: false, title: false, aux: false },
                     },
                 };
             }
+        },
+        /** v1.3.3：拖动目录栏右边框改宽度 */
+        startTreeResize(e) {
+            const startX = e.clientX || 0;
+            const startW = this.treeWidth;
+            const move = (ev) => {
+                const dx = (ev.clientX || 0) - startX;
+                this.treeWidth = Math.round(Math.min(420, Math.max(160, startW + dx)));
+            };
+            const up = () => {
+                document.removeEventListener('pointermove', move, true);
+                document.removeEventListener('pointerup', up, true);
+                document.body.classList.remove('is-col-resizing');
+                try {
+                    localStorage.setItem('gohub_memo_tree_width', String(this.treeWidth));
+                } catch (err) {
+                    /* 隐私模式忽略 */
+                }
+            };
+            document.body.classList.add('is-col-resizing');
+            document.addEventListener('pointermove', move, true);
+            document.addEventListener('pointerup', up, true);
         },
         openSettings() {
             this.settingsDraft = {
@@ -673,9 +774,16 @@ export default {
                 theme: this.editorSettings.theme || 'auto',
                 inputTools: (this.editorSettings.inputLines || []).join('\n'),
                 slashTools: (this.editorSettings.slashLines || []).join('\n'),
+                rightClickTools: (this.editorSettings.rightClickLines || []).join('\n'),
+                selectionTools: (this.editorSettings.selectionLines || []).join('\n'),
+                selectImageTools: (this.editorSettings.selectImageLines || []).join('\n'),
+                selectVideoTools: (this.editorSettings.selectVideoLines || []).join('\n'),
+                selectAudioTools: (this.editorSettings.selectAudioLines || []).join('\n'),
+                selectFileTools: (this.editorSettings.selectFileLines || []).join('\n'),
                 historyInterval: this.editorSettings.historyInterval || 3,
+                customCss: String(this.editorSettings.styles?.customCss || ''),
                 styles: JSON.parse(JSON.stringify(this.editorSettings.styles || {
-                    h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75,
+                    h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '',
                 })),
                 // 深拷贝：弹窗里改开关不能立刻影响编辑器，点「确定」才生效
                 sticky: JSON.parse(JSON.stringify(this.editorSettings.sticky || {
@@ -684,6 +792,28 @@ export default {
                 })),
             };
             this.settingsVisible = true;
+        },
+        /** v1.3.2：点工具名 → 复制，并在列表下方回显 */
+        async copyToken(name) {
+            const text = String(name || '');
+            if (!text) return;
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                }
+                this.copiedTool = text;
+            } catch (e) {
+                this.copiedTool = text;
+            }
         },
         async saveSettings() {
             const lines = String(this.settingsDraft.toolbar || '')
@@ -699,10 +829,20 @@ export default {
                 theme: ['auto', 'light', 'dark'].includes(this.settingsDraft.theme) ? this.settingsDraft.theme : 'auto',
                 inputLines: splitLines(this.settingsDraft.inputTools).slice(0, 8),
                 slashLines: splitLines(this.settingsDraft.slashTools).slice(0, 12),
+                rightClickLines: splitLines(this.settingsDraft.rightClickTools).slice(0, 12),
+                selectionLines: splitLines(this.settingsDraft.selectionTools).slice(0, 12),
+                selectImageLines: splitLines(this.settingsDraft.selectImageTools).slice(0, 8),
+                selectVideoLines: splitLines(this.settingsDraft.selectVideoTools).slice(0, 8),
+                selectAudioLines: splitLines(this.settingsDraft.selectAudioTools).slice(0, 8),
+                selectFileLines: splitLines(this.settingsDraft.selectFileTools).slice(0, 8),
                 historyInterval: Math.min(120, Math.max(1, Number(this.settingsDraft.historyInterval) || 3)),
-                styles: JSON.parse(JSON.stringify(this.settingsDraft.styles || {
-                    h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75,
-                })),
+                styles: {
+                    ...JSON.parse(JSON.stringify(this.settingsDraft.styles || {
+                        h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '',
+                    })),
+                    // v1.3.2：CSS 在草稿里是顶层字段，落库要挂回 styles 下
+                    customCss: String(this.settingsDraft.customCss || '').slice(0, 4000),
+                },
                 sticky: JSON.parse(JSON.stringify(this.settingsDraft.sticky || {
                     pc: { toolbar: false, title: false, aux: false },
                     m: { toolbar: false, title: false, aux: false },
@@ -888,8 +1028,27 @@ export default {
     overflow: hidden;
 }
 .memo-col-tree {
+    position: relative;
+    /* v1.3.3：宽度由 treeWidth 行内样式覆盖，这里只是首帧兜底 */
     flex: 0 0 210px;
     max-width: 210px;
+}
+.memo-tree-resizer {
+    position: absolute;
+    top: 0;
+    right: -3px;
+    width: 6px;
+    height: 100%;
+    z-index: 5;
+    cursor: col-resize;
+    background: transparent;
+}
+.memo-tree-resizer:hover {
+    background: var(--el-color-primary-light-7);
+}
+:global(body.is-col-resizing) {
+    cursor: col-resize;
+    user-select: none;
 }
 .memo-col-list {
     flex: 0 0 280px;
@@ -1090,5 +1249,42 @@ export default {
     font-size: 11px;
     word-break: break-all;
     opacity: 0.85;
+}
+
+/* v1.3.2：可用工具改成可点击的 chip，点一下就复制 */
+.ms-token-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 132px;
+    overflow-y: auto;
+    padding: 6px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+    background: var(--el-fill-color-lighter);
+}
+.ms-token {
+    padding: 2px 7px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 5px;
+    background: var(--el-bg-color);
+    color: var(--el-text-color-regular);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    cursor: pointer;
+}
+.ms-token:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+}
+.ms-copied {
+    margin: 6px 0 0;
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+}
+.ms-css-textarea {
+    min-height: 120px;
+    line-height: 1.6;
 }
 </style>

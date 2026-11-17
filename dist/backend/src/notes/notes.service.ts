@@ -888,7 +888,13 @@ export class NotesService {
                 },
               }
             : {}),
-          ...(tagRows
+          /*
+           * v1.3.2 修复：这里原来的判断是 `tagRows ?`，而 tagRows 是**始终存在的数组**
+           * （`[]` 在 JS 里为真），于是「只改发布时间、不传 tagNames」的 PUT 也会走进
+           * 这个分支，把 note_tags 全删掉 —— 表现就是「改完发布时间标签没了」。
+           * 正确的判断是「前端到底有没有传 tagNames」：传 [] 才代表清空，没传就不动。
+           */
+          ...(tagNames
             ? {
                 tags: {
                   deleteMany: {},

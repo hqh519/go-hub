@@ -785,7 +785,7 @@ const ZH = {
         { t: '移动端笔记灯箱：边缘滑动改为「关灯箱」', d: '以前从屏幕左右边缘往里滑，灯箱不关、页面却后退一格，等于同时干了两件事。现在改成：边缘横滑（超过 26px 起手、64px 判定）先把灯箱关掉，同时吞掉这次手势、禁止页面后退，一次手势只做一件事。手势落点在输入框、下拉框、类型标签条这些元素上时直接放行，不影响原来的交互。' },
         { t: '瞬间卡片：视频不再有边框和背景框', d: '九宫格里的封面如果来自视频且已有海报图，就去掉那层底色与内边距，让海报图铺满整格，与图片格子的观感一致；没有海报图时才保留占位底色。' },
         { t: '瞬间卡片：「全文」按钮回到文字末尾', d: '正文超过限高时，「全文」不再另起一行顶在左下角，而是浮在最后一行文字的末尾（用一块等宽行内占位把末行缩短，按钮绝对定位在右下），读起来像句子自然收尾；展开后「收起」按钮仍单独一行。' },
-        { t: '瞬间编辑页：默认上传目录自动带年月', d: '点「本地上传」选完文件，进到上传目标页时「上传目录」已经填好 /notes/瞬间/{年}/{月}；「挂载文件」上传到图床时同样自动填这一路径。年月取当前时间，和已有笔记目录的习惯保持一致，不用每次手打。' },
+        { t: '瞬间编辑页：默认上传目录自动带年月', d: '点「本地上传」选完文件，进到上传目标页时「上传目录」已经填好 /notes/moment/{年}/{月}；「挂载文件」上传到图床时同样自动填这一路径。年月取当前时间，和已有笔记目录的习惯保持一致，不用每次手打。' },
         { t: '挂载视频上传后损坏（本版重点修复）', d: '现象：从「挂载文件」里选一个视频上传，图床里能看到记录、大小也正常，但点开是 404 / 无法播放。根因是后置压缩（转码 / 压缩）产物的对象 key 与原文件相同 —— 默认命名模板取的是原文件 MD5，压缩改了内容却没改 MD5；而本地上传用的是硬链接，写同名文件等于直接改到源文件，随后「删除旧对象」又把刚写好的产物删掉，磁盘上只剩一个没人引用的原位文件。修复分三处：产物 key 与旧 key 相同时自动换一个唯一名；删除旧对象前先比对新旧 key，相同就不删；本地存储适配器在落盘前探测目标是否已存在，已存在就换唯一名，硬链接报 EEXIST 时重试一次再退回复制。' },
         { t: '小眼睛预览不再重复下载', d: '挂载文件模式下，小眼睛预览以前会拿原始文件地址重新下一遍，明明格子里缩略图已经加载完了还要再等一次。现在直接复用已经缓存的那张缩略图，点开即显。' },
         { t: '本地上传：放开文件类型', d: '发布瞬间时的「本地上传」不再限制只能选图片 / 视频 / 音频，任何类型都能选；确认后照常进入上传目标页。' },
@@ -1070,6 +1070,52 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1331',
+      title: '五十五、v1.3.3.1 修复',
+      intro: '补丁版，只修「看起来修好、实际用不了」的问题，不加新功能。',
+      items: [
+        { t: '设置生效', d: '编辑器设置里的自定义样式保存后真正作用到正文（此前保存即抛错）。' },
+        { t: '斜杠菜单', d: '`/` 菜单里的工具组可以正常展开二级菜单，选中后插入正确块。' },
+        { t: '链接提取', d: '填写直链后能正常转存并插入正文，不再弹「guessMimeByName is not defined」。' },
+        { t: '工具栏', d: '桌面端工具放不下时，行末出现下拉箭头收纳溢出工具；工具组鼠标悬停即展开。' },
+        { t: '历史与互转', d: '历史记录弹窗、HTML/MD 互转页恢复接近全屏，左右/上下分栏各自滚动。' }
+      ]
+    },
+    {
+      id: 'whatsnew-133',
+      title: '五十四、v1.3.3 更新要点',
+      intro: '这一版围绕「设置要真的生效」和「浮层不要打架」两件事：编辑器设置里的自定义样式与六类工具配置全部接通，滚动吸附按 16 种组合重写，瞬间编辑页的输入框与预览、灯箱透明度、剪辑页按钮位置也一并调整。',
+      items: [
+        { t: '瞬间编辑', d: '输入框失焦后回到打开时的高度（根因是 CSS 变量停在软键盘态）；附件小眼睛预览改为与「选择文件」弹窗同一套浮层（同尺寸、同贴边方位、同动画）。' },
+        { t: '灯箱', d: '顶部标题栏与右侧按钮去掉透明度；视频的目录 / 设置按钮及其弹出页不再半透明，弹出层级压在上一页 / 下一页之上；数量圆点下移 10px。' },
+        { t: '图片剪辑', d: '左转 / 右转移到「马赛克」后面，和工具排成一行；旋转角度跟在「输出尺寸」后面显示，没旋转时不占位。' },
+        { t: '笔记', d: '桌面端左侧目录栏可以拖动右边框改宽度，宽度会记住。' },
+        { t: '编辑器设置', d: '自定义 CSS 现在能真正覆盖标题样式（之前被组件 scoped 样式以更高特异性压住）；右键菜单、选中文本、选中图片 / 视频 / 音频 / 文件六类配置都会按填写内容渲染，留空则用内置默认。' },
+        { t: '滚动吸附', d: '按 16 行矩阵重写：正滚完全按设置，回滚时未开启的栏也临时吸住；吸附偏移按「前面正在吸附的行」高度累加，所以标题栏不吸时附属栏会直接贴工具栏下方。' },
+        { t: '编辑区交互', d: '有选中内容时不再弹右键菜单，改显示选中浮层；光标工具栏不进表格，并随滚动贴着光标行；`[[` 悬停预览按上下空间择向；选中图片 / 附件时浮出对应工具条；文件对齐后选框立即跟随。' },
+        { t: '块与页面', d: '网页嵌入块右上角新增设置按钮，可改地址与高度；HTML / MD 互转页改为 98% 视口，移动端改为上 HTML 下 MD。' },
+        { t: '其它', d: '符号工具补上图标；编辑器设置弹窗此前因文案中的花括号被当成插值而整窗渲染失败，已修复。' },
+        { t: '升级兼容', d: '不新增表、不改列；编辑器设置仍是 JSON 字段，新增配置项缺省即内置默认，旧数据直接可用。' }
+      ]
+    },
+    {
+      id: 'whatsnew-132',
+      title: '五十三、v1.3.2 更新要点',
+      intro: '这一版主要修「用起来别扭」的地方：瞬间的标签与输入框、视频封面，视频灯箱控件位置，图片剪辑页对齐，笔记历史弹窗与目录树，编辑器的吸附级联、工具栏溢出与自定义 CSS，以及一批菜单/浮层的开关逻辑与移动端宽度。',
+      items: [
+        { t: '瞬间', d: '修复「只改发布时间，标签被清空」（后端把空数组误当成清空指令）；输入框失焦后恢复打开时的高度；视频附件封面加载失败后可重试，不再需要整页刷新；编辑页附件区显示视频首帧，左下角新增预览（小眼睛），排序按钮移到右下角；浏览器地址栏收放不再让附件与正文跟着变尺寸。' },
+        { t: '视频灯箱', d: '目录、设置、播放进度记忆与数量圆点统一移到标题行的下一行；目录列表与设置面板改为在各自按钮下方展开。' },
+        { t: '图片剪辑', d: '左转/右转/度数靠左，取消/保存靠右；右上角撤销、恢复、重置、关闭四个按钮尺寸一致并贴右边框；去掉顶部那条 20px 渐变遮罩。' },
+        { t: '笔记管理', d: '标签候选不再要求「必须还挂在某篇笔记上」，存过的标签都能重新选到；历史弹窗宽高改为视口 98%，左右两栏各自独立滚动，移动端左侧列表改成顶部下拉框；目录树的层级线对准折叠三角，选中底色只包住图标与名称，计数改为「自身/含子目录总数」。' },
+        { t: '编辑器设置', d: '标题与正文样式改为多行自定义 CSS（自动限定在正文区）；新增右键、选中文本、选中图片/视频/音频/文件六类工具配置；可用工具改成点一下复制并在下方回显；工具栏放不下时在行末出现下拉箭头收纳溢出工具。' },
+        { t: '吸附', d: '标题栏与附属栏能真正吸住（原来被父容器高度限制）；吸附按工具栏 → 标题栏 → 附属栏依次叠放；关闭吸附时往上滚不吸、往下回滚临时吸住，回到原位自动脱离。' },
+        { t: '编辑区', d: '实时/源码/预览合并成文字下拉框；右键菜单改成光标上方的一行，移动端最宽 70% 可横滑；`/` 菜单支持工具组二级菜单与分隔线；`[[` 选中后立即变成引用节点并清掉输入的两个方括号；光标工具栏与光标行居中对齐、最宽为编辑区 60%；行级栏改成行号，移动端也显示；标签候选在失焦后收起；键盘弹出时反向链接栏隐藏。' },
+        { t: '工具', d: '补齐上一版漏登记的 16 个工具名；链接提取按图片/视频/音频插入，识别不出才落成附件；桌面端工具组鼠标悬停即展开；合并单元格与折叠全部补上图标；「下方插入空行」和四种粘贴拆成独立工具。' },
+        { t: '其它', d: '网页标题的 {pagename} 支持笔记管理页；页面从休眠恢复时解除可能残留的滚动锁并重排一次布局。' },
+        { t: '升级兼容', d: '不新增表、不改列：编辑器设置只多了六个数组字段与 styles.customCss，缺省即默认值；旧数据可直接升级。' }
+      ]
+    },
+    {
       id: 'whatsnew-1312',
       title: '五十二、v1.3.1.2 更新要点',
       intro: '这一版把编辑器往「顺手」上推：左侧行级栏、右键菜单、选中文本/文件/表格浮层、插入表格数量选择、查找替换、表情符号、网页嵌入、HTML 块与 HTML/MD 互转、日期时间快捷键、引用悬停预览与嵌入块惰性渲染全部补齐；标签按「用户 + 实例 + 内容类型」三层隔离；工具栏/标题栏/辅助栏的滚动吸附可以按终端分别开关；H1-H6 与正文样式可以在设置里直接调。',
@@ -1104,7 +1150,7 @@ const ZH = {
         { t: '笔记管理页', d: '页面切换下拉新增「切换实例」，切换后目录 / 笔记 / 标签全部按新实例隔离；顶栏随页面下滚隐藏、回滚显示；移动端去掉顶部第二条「返回 + 标题」，返回收进顶栏；左侧目录缩进减半并画出层级关系线；笔记列表用分隔线隔开每篇。' },
         { t: '实例与渠道', d: '实例属性页可以单独指定主 / 备份存储渠道（留空则跟随账户、再跟随全局），优先级为「上传面板选择 &gt; 实例 &gt; 账户 &gt; 全局」。另外：从某实例切走再切回来，需要重新输入一次实例密码。' },
         { t: '图片剪辑', d: '新增水平翻转、垂直翻转、箭头、椭圆、矩形、马赛克；工具并入一行可左右滑动；撤销 / 恢复 / 重置移到右上角关闭按钮左侧；左转 / 右转 / 角度移到底部「取消」旁边并去掉复位按钮；顶部标题行与底部按钮行更矮，图片区更宽；「保存并替换」改名为「保存」。' },
-        { t: '其它', d: '网页设置的「公告」输入框改为随内容自动增高（手动拖拽的高度作为最小高度）；视频灯箱在「目录」与「设置」之间显示数量圆点（超过 20 个改显示 x/总数），跟随控件显隐；瞬间编辑框文案改为「发一条瞬间，存一份记忆…」，触屏设备的正文框随内容自适应（聚焦时最高 40% 视口）。' },
+        { t: '其它', d: '网页设置的「公告」输入框改为随内容自动增高（手动拖拽的高度作为最小高度）；视频灯箱在「目录」与「设置」之间显示数量圆点（超过 20 个改显示 x/总数），跟随控件显隐；瞬间编辑框文案改为「一条瞬间，一份记忆」，触屏设备的正文框随内容自适应（聚焦时最高 40% 视口）。' },
         { t: '升级兼容', d: '只新增一张历史快照表（note_histories），不改任何既有表；编辑器设置从「实例级」平滑升级到「用户级」—— 读过用户级没有再读实例级，老配置继续生效。' }
       ]
     },
@@ -1847,7 +1893,7 @@ const EN = {
         { t: 'Mobile notes lightbox: the edge swipe closes the lightbox', d: 'Swiping in from the left or right edge used to leave the lightbox open while the page navigated back. Now the edge swipe (26px to start, 64px to trigger) closes the lightbox and swallows the gesture so the page does not go back - one gesture, one action. Gestures starting on inputs, selects or the type tab strip are left alone.' },
         { t: 'Moment cards: videos lose the frame and background', d: 'When a video cover already has a poster, the extra background and padding are dropped so the poster fills the cell like an image does. The placeholder background only remains when there is no poster.' },
         { t: 'Moment cards: the More button sits at the end of the text', d: 'When the body exceeds its height limit, More no longer starts a new line at the bottom left; it floats at the end of the last text line (an inline spacer shortens that line and the button is positioned there), so the paragraph reads as if it ends naturally. Collapse still gets its own line.' },
-        { t: 'Moment editor: the upload folder fills itself in', d: 'After picking files with Upload from device, the upload target page already has /notes/瞬间/{year}/{month} filled in; uploading mounted files to the library fills the same path. The year and month come from the current time, matching the folder habit used by notes.' },
+        { t: 'Moment editor: the upload folder fills itself in', d: 'After picking files with Upload from device, the upload target page already has /notes/moment/{year}/{month} filled in; uploading mounted files to the library fills the same path. The year and month come from the current time, matching the folder habit used by notes.' },
         { t: 'Mounted video arrives corrupted (the headline fix)', d: 'A video uploaded from Mounted files showed up in the library with the right name and size but returned 404 and refused to play. The post-processing (compress / transcode) output reused the object key of the original file, because the default naming template takes the MD5 of the source and compression does not change that MD5. Local storage uploads are hard links, so writing the same name modified the source file, and the following delete-the-old-object step removed the freshly written output, leaving only an orphan on disk. Three fixes: a colliding output key is renamed to a unique one; the old object is not deleted when the keys match; the local adapter probes the target before writing, switches to a unique name if it exists, and retries once on EEXIST before falling back to a copy.' },
         { t: 'The eye preview reuses the cached thumbnail', d: 'In Mounted files mode the eye preview used to download the original again even though the cell thumbnail had already loaded. It now reuses that cached thumbnail and appears instantly.' },
         { t: 'Upload from device accepts any file type', d: 'The device picker inside the moment composer no longer restricts itself to images, videos and audio - any file can be chosen and continues to the upload target page.' },
@@ -2129,6 +2175,52 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'whatsnew-1331',
+      title: '55. Fixes in v1.3.3.1',
+      intro: 'A patch release: only fixes for things that looked done but were not usable.',
+      items: [
+        { t: 'Settings', d: 'Custom CSS from the editor settings now really applies (saving used to throw and change nothing).' },
+        { t: 'Slash menu', d: 'Tool groups in the slash menu expand into a submenu and insert the right block.' },
+        { t: 'Link import', d: 'Pasting a direct file URL now uploads and inserts it instead of failing.' },
+        { t: 'Toolbar', d: 'On desktop, tools that do not fit collapse into a dropdown at the end of the row; groups expand on hover.' },
+        { t: 'Dialogs', d: 'History and the HTML/MD converter fill the viewport again, with independently scrolling panes.' }
+      ]
+    },
+    {
+      id: 'whatsnew-133',
+      title: '54. What is new in v1.3.3',
+      intro: 'This release focuses on making settings actually take effect and keeping floating layers out of each other\'s way: custom styles and the six tool configurations are wired through, scroll pinning follows a 16-row matrix, and the moment composer, lightbox and image editor get a round of fixes.',
+      items: [
+        { t: 'Moments', d: 'The textarea returns to its opened height on blur (the CSS variable used to stay at the keyboard-time value). The attachment eye now uses the same floating preview as the file picker: same size, same edge-aware placement, same animation.' },
+        { t: 'Lightbox', d: 'The top bar and its right-hand buttons are fully opaque. Video contents and settings buttons and their panels are opaque too, and their panels now sit above the prev/next arrows. Page dots moved down 10px.' },
+        { t: 'Image editor', d: 'Rotate left/right moved next to Mosaic on the tool row; the angle appears after the output size and only when rotated.' },
+        { t: 'Notes', d: 'The desktop folder pane can be resized by dragging its edge, and the width is remembered.' },
+        { t: 'Editor settings', d: 'Custom CSS now really overrides heading styles (it used to lose to the component\'s scoped rules). The context menu plus text / image / video / audio / file tool configurations render from the saved lists, falling back to built-ins when empty.' },
+        { t: 'Pinning', d: 'Rewritten against the 16-row matrix: scrolling down follows the switches, scrolling back temporarily pins every bar, and offsets accumulate over the bars currently pinned — so the auxiliary bar sits directly under the toolbar when the title bar is not pinned.' },
+        { t: 'Editing surface', d: 'A non-empty selection no longer opens the context menu; the selection bubble is shown instead. The caret toolbar stays out of tables and follows its line while scrolling. The [[ hover card picks the side with more room. Selecting an image or attachment shows its tool strip. The image selection frame follows alignment changes immediately.' },
+        { t: 'Blocks and pages', d: 'Web embeds gained a settings button for URL and height. The HTML / MD converter fills 98% of the viewport and stacks vertically on mobile.' },
+        { t: 'Other', d: 'The symbol tool has an icon again, and the editor settings dialog renders again (a CSS brace in a translated string was parsed as an interpolation).' },
+        { t: 'Upgrade compatibility', d: 'No new tables or columns. New settings keys default to the built-in behaviour, so existing data works as-is.' }
+      ]
+    },
+    {
+      id: 'whatsnew-132',
+      title: '53. What is new in v1.3.2',
+      intro: 'This release fixes the friction: moment tags and textarea height, video covers, video lightbox control placement, image editor alignment, the history dialog and folder tree, editor pinning cascade, toolbar overflow and custom CSS, plus a round of menu/dismiss logic and mobile widths.',
+      items: [
+        { t: 'Moments', d: 'Fixed tags being cleared when only the publish time changed (an empty array was treated as "clear"). The textarea returns to its opened height on blur. Video posters retry after a failure instead of requiring a full page reload. The composer shows video first frames, adds an eye button for preview, moves the reorder arrows to the bottom right, and no longer resizes when the browser chrome collapses.' },
+        { t: 'Video lightbox', d: 'Contents, settings, resume hint and page dots moved to the row below the title; the contents list and settings panel open below their buttons.' },
+        { t: 'Image editor', d: 'Rotate controls align left, Cancel and Save align right; undo, redo, reset and close share one size and sit on the right edge; the 20px top fade is gone.' },
+        { t: 'Notes', d: 'Tag suggestions no longer require a tag to still be attached to a note, so saved tags are selectable again. The history dialog fills 98% of the viewport with two independently scrolling panes, and the left list becomes a dropdown on mobile. Folder guide lines sit under the disclosure triangle, the selected background wraps only the icon and name, and the count reads "own / including children".' },
+        { t: 'Editor settings', d: 'Heading and body styles are now a multi-line custom CSS box scoped to the editor. Six new tool configurations cover the context menu and text / image / video / audio / file selections. Available tools are click-to-copy with a status line. Overflowing toolbar tools collapse into a dropdown at the end of the row.' },
+        { t: 'Pinning', d: 'Title and auxiliary bars now actually stick (the parent box used to limit them). Bars stack toolbar, title, auxiliary in order. When pinning is off, a bar does not stick while scrolling down but does stick while scrolling back, releasing at its original position.' },
+        { t: 'Editing surface', d: 'Live / source / preview merged into one text dropdown. The context menu is a single row above the caret, capped at 70% width and horizontally scrollable on mobile. The slash menu supports grouped submenus and separators. Picking a [[ reference inserts the node immediately and removes the two brackets. The caret toolbar centres on the caret line and is capped at 60% of the editor width. The gutter shows line numbers, including on mobile. Tag suggestions close on blur, and the backlinks bar hides while the keyboard is open.' },
+        { t: 'Tools', d: 'Sixteen tool names missing from the previous release are registered. Link extraction inserts images, video and audio by type and only falls back to a file attachment when the type is unknown. Tool groups expand on hover on desktop. Merge cells and collapse all got icons. Insert-line-below and the four paste modes are now standalone tools.' },
+        { t: 'Other', d: '{pagename} now resolves for the notes page, and waking a sleeping tab clears any stale scroll lock and forces one layout pass.' },
+        { t: 'Upgrade compatibility', d: 'No new tables or columns: editor settings gained six array fields and styles.customCss, with defaults when absent. Existing data upgrades in place.' }
       ]
     },
     {

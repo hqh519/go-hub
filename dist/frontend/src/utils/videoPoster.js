@@ -12,7 +12,16 @@
  *   · 抽帧失败（编码不支持 / 网络中断）返回空串，调用方退回图标卡，不显示破图。
  */
 
-const cache = new Map(); // url -> dataURL（'' = 已知失败）
+const cache = new Map(); // url -> dataURL（只存成功，避免失败结果把整个会话钉死）
+/*
+ * v1.3.2（需求：瞬间里的视频封面「等好久 / 刷新按钮也不行，整页刷新才有」）
+ *
+ * 旧实现把失败也写进 cache（''），而 cache 是模块级的，SPA 内点「刷新」只是重新渲染，
+ * 模块不重建 → 永远读到那个空串，只有整页刷新才会清空。现在失败只进一个短时效的
+ * 负缓存（15s），过期后允许重试；真正的成功结果仍然永久缓存。
+ */
+const failures = new Map(); // url -> { at, times }
+const FAIL_TTL = 15000;
 const queue = [];
 let running = 0;
 
@@ -27,11 +36,18 @@ function pump() {
         running += 1;
         grab(job.url)
             .then((dataUrl) => {
-                cache.set(job.url, dataUrl || '');
+                if (dataUrl) {
+                    cache.set(job.url, dataUrl);
+                    failures.delete(job.url);
+                } else {
+                    const prev = failures.get(job.url);
+                    failures.set(job.url, { at: Date.now(), times: (prev && prev.times ? prev.times : 0) + 1 });
+                }
                 job.resolve(dataUrl || '');
             })
             .catch(() => {
-                cache.set(job.url, '');
+                const prev = failures.get(job.url);
+                failures.set(job.url, { at: Date.now(), times: (prev && prev.times ? prev.times : 0) + 1 });
                 job.resolve('');
             })
             .finally(() => {
@@ -103,6 +119,9 @@ export function videoPoster(url) {
     const key = String(url || '');
     if (!key) return Promise.resolve('');
     if (cache.has(key)) return Promise.resolve(cache.get(key));
+    const bad = failures.get(key);
+    if (bad && Date.now() - bad.at < FAIL_TTL) return Promise.resolve('');
+    if (bad) failures.delete(key);
     return new Promise((resolve) => {
         queue.push({ url: key, resolve });
         pump();

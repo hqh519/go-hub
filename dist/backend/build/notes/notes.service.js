@@ -565,7 +565,7 @@ let NotesService = class NotesService {
                             },
                         }
                         : {}),
-                    ...(tagRows
+                    ...(tagNames
                         ? {
                             tags: {
                                 deleteMany: {},

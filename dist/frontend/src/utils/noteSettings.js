@@ -427,6 +427,8 @@ export function writePreviewCache(ratio, vh, heights) {
 export const viewportHeight = ref(typeof window === 'undefined' ? 800 : window.innerHeight);
 
 let heightBound = false;
+/** v1.3.2：触屏设备上用于判断「是否旋屏」的基准宽度（同宽只变高 → 视为浏览器栏收放） */
+let baseWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
 function bindViewportHeight() {
     if (heightBound || typeof window === 'undefined') return;
     heightBound = true;
@@ -460,6 +462,23 @@ function bindViewportHeight() {
         if (!h || h === viewportHeight.value) return;
         // 键盘遮挡：聚焦输入框时高度骤减 → 不更新（保留布局，避免整页重排把人挤走）
         if (editableFocused() && h < viewportHeight.value - 60) return;
+        /*
+         * v1.3.2（需求：浏览器收起顶部/底部栏时附件与内容区跟着变尺寸，页面跳动）：
+         *
+         * 手机浏览器的地址栏、底部导航收起时，innerHeight 会突然变高 60~120px；
+         * 而附件尺寸、正文上限都按这个值算，于是整页重排一次，看起来就是"跳一下"。
+         * 这里在触屏设备上**只在宽度明显变化（旋屏）时才更新基准**，
+         * 同方向的高度变化一律视为浏览器 chrome 收放，继续沿用首次进入页面时的高度。
+         *
+         * 比"存 Cookie"更省事：Cookie 要处理过期 / 跨实例 / 隐私模式，
+         * 而这里只需要"本次会话内不变"——模块级 ref 天生就是这个生命周期。
+         */
+        const coarse =
+            (typeof window.matchMedia === 'function' &&
+                (window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(hover: none)').matches)) ||
+            (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0);
+        if (coarse && Math.abs(window.innerWidth - baseWidth) < 80) return;
+        baseWidth = window.innerWidth;
         viewportHeight.value = h;
     };
 

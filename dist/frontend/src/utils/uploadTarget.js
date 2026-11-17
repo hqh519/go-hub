@@ -22,13 +22,13 @@
  * 目录形如 `/notes/瞬间/2026/11`。
  */
 const FOLDER_PREFIX = {
-    moment: '/notes/瞬间',
+    moment: '/notes/moment',
     // v1.3.0：笔记（memo）编辑器里粘贴 / 拖拽的图片落到这里
-    memo: '/notes/笔记',
-    article: '/notes/文章',
-    todo: '/notes/待办',
-    nav: '/notes/导航',
-    collection: '/notes/收集'
+    memo: '/notes/memo',
+    article: '/notes/article',
+    todo: '/notes/todo',
+    nav: '/notes/nav',
+    collection: '/notes/collection'
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');

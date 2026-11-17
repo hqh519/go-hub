@@ -2770,8 +2770,9 @@ export default {
      * 用 opacity 而不是给每个子按钮单独调色 —— 一次覆盖这一行的全部控件，
      * 将来往顶栏加东西也不会漏掉。控件隐藏时被下面的 .is-idle 规则压回 0。
      * v1.3.1.2（需求）：50% → 90%，标题行不再淡到看不清。
+     * v1.3.3（需求）：**彻底去掉透明度** —— 标题栏和右边那排按钮都要完全不透明。
      */
-    opacity: 0.9;
+    opacity: 1;
 }
 .media-viewer.is-idle .mv-top {
     opacity: 0;
@@ -3097,12 +3098,13 @@ export default {
    v3.0.0（R12）：「更多设置」移到右下角 —— 与「下一页」箭头同一条垂直线（right 对齐），
    贴底放置（bottom: 14px），不再与箭头同高。 */
 .mv-video-settings {
-    position: absolute;
-    right: 10px;
-    /* v1.3.1.2（需求）：右下角「设置」按钮透明度 90% */
-    opacity: 0.9;
-    /* v3.0.0（R16）：「更多设置」按钮固定在页面高度下方 20vh 处 */
-    bottom: 20vh;
+    /* v1.3.2（需求）：与目录按钮同一条「标题行下一行」 */
+    position: fixed;
+    right: 14px;
+    /* v1.3.3（需求）：去掉透明度；层级压在「上一页 / 下一页」之上 */
+    opacity: 1;
+    z-index: 8;
+    top: 60px;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
@@ -3118,14 +3120,17 @@ export default {
     width: 200px;
     padding: 10px 12px;
     border-radius: 10px;
-    background: rgba(38, 40, 45, 0.96);
+    /* v1.3.3（需求）：设置弹出页去掉透明度 */
+    background: #26282d;
     border: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 /* v3.0.0 设置弹出页显示在按钮正上方（bottom: 100% 方向），按钮本身不位移 */
 .mv-video-menu {
+    /* v1.3.2（需求）：设置页显示在按钮下方 */
     position: absolute;
-    bottom: calc(100% + 8px);
+    top: calc(100% + 8px);
+    bottom: auto;
     right: 0;
     z-index: 3;
 }
@@ -3214,12 +3219,13 @@ export default {
    v3.0.0（R12）：「目录预览」移到左下角 —— 与「上一页」箭头同一条垂直线（left 对齐），
    贴底放置（bottom: 14px），不再与箭头同高。 */
 .mv-video-toc {
-    position: absolute;
-    left: 10px;
-    /* v1.3.1.2（需求）：左下角「目录」按钮透明度 90% */
-    opacity: 0.9;
-    /* v3.0.0（R16）：「目录」按钮固定在页面高度下方 20vh 处 */
-    bottom: 20vh;
+    /* v1.3.2（需求）：目录 / 设置 / 进度点从画面下缘移到标题行的下一行 */
+    position: fixed;
+    left: 14px;
+    /* v1.3.3（需求）：去掉透明度；层级压在「上一页 / 下一页」之上 */
+    opacity: 1;
+    z-index: 8;
+    top: 60px;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -3236,9 +3242,10 @@ export default {
  * 竖直位置与两个按钮齐平（bottom: 20vh），高度也对齐按钮，视觉上是一条提示条。
  */
 .mv-resume-tip {
-    position: absolute;
+    position: fixed;
     left: 50%;
-    bottom: calc(20vh + 2px);
+    /* v1.3.2：进度记忆提示放在数量点下方一行，避免和圆点叠在一起 */
+    top: 104px;
     transform: translateX(-50%);
     display: inline-flex;
     align-items: center;
@@ -3319,16 +3326,24 @@ export default {
     }
 }
 .mv-toc-menu {
+    /* v1.3.2（需求）：目录列表显示在目录按钮下方 */
     position: absolute;
-    bottom: calc(100% + 8px);
+    top: calc(100% + 8px);
+    bottom: auto;
     left: 0;
     width: min(300px, 80vw);
     max-height: 52vh;
     overflow: auto;
-    z-index: 3;
+    z-index: 5;
     display: flex;
     flex-direction: column;
     gap: 4px;
+    /* v1.3.3（需求）：目录弹出页去掉透明度，给自己一块实底 */
+    padding: 6px;
+    border-radius: 10px;
+    background: #26282d;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 .mv-toc-item {
     display: flex;
@@ -3337,7 +3352,8 @@ export default {
     padding: 6px;
     border: 1px solid transparent;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.05);
+    /* v1.3.3：条目本身也不再半透明 */
+    background: #33363c;
     color: #e9eaec;
     font-size: 12px;
     text-align: left;
@@ -3934,8 +3950,11 @@ export default {
  * 位置压在左下「目录」与右下「设置」之间的那条 20vh 线上。
  */
 .mv-video-dots {
-    bottom: 20vh;
-    z-index: 4;
+    /* v1.3.2（需求）：数量点移到标题行下一行，与目录 / 设置同一水平线 */
+    /* v1.3.3（需求）：再往下 10px */
+    bottom: auto;
+    top: 80px;
+    z-index: 5;
 }
 /*
  * v1.3.1.2（需求：视频灯箱的数量点一直显示、不跟控件走）

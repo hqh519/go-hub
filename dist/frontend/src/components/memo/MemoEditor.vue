@@ -17,27 +17,42 @@
             每一块各自按设置决定 position: sticky 还是普通跟随滚动。
             默认全部不吸附 —— 与需求「默认为关闭状态」一致。
         -->
-        <div ref="bodyEl" class="me-body" @contextmenu="onContextMenu" @click="onBodyClick">
+        <div ref="bodyEl" class="me-body" @contextmenu="onContextMenu" @click="onBodyClick" @scroll.passive="onBodyScroll">
             <!-- 工具栏：按设置里的行配置渲染，`|` 生成分隔线 -->
             <div
+                ref="toolbarWrap"
                 class="me-toolbar-wrap"
-                :class="{ 'is-sticky': stickyCfg.toolbar }"
+                :class="{ 'is-sticky': isStickyNow('toolbar') }"
                 :style="{ top: stickyTop('toolbar') }"
             >
                 <div v-for="(line, li) in toolbarLines" :key="`tl-${li}`" class="me-toolbar">
                     <template v-for="(token, ti) in line" :key="`${li}-${ti}`">
-                        <span v-if="token === '|'" class="me-sep"></span>
+                        <span
+                            v-if="token === '|'"
+                            class="me-sep"
+                            :data-ti="ti"
+                            :class="{ 'is-tb-hidden': isTbHidden(li, ti) }"
+                        ></span>
                         <!--
                             工具组：配置里写 `[组名 bold italic]` 时，这一整组渲染成一个下拉按钮，
                             点开才是组内工具。v1.3.1.2 起组名可自定义（第一个词是组名）。
                         -->
                         <el-dropdown
                             v-else-if="isGroupToken(token)"
-                            trigger="click"
+                            :trigger="isTouchUi ? 'click' : 'hover'"
+                            :show-timeout="80"
+                            :hide-timeout="120"
                             placement="bottom-start"
                             @command="(cmd) => runTool(cmd)"
                         >
-                            <button type="button" class="me-btn me-btn-group" :title="groupLabel(token)" @mousedown.prevent>
+                            <button
+                                type="button"
+                                class="me-btn me-btn-group"
+                                :title="groupLabel(token)"
+                                :data-ti="ti"
+                                :class="{ 'is-tb-hidden': isTbHidden(li, ti) }"
+                                @mousedown.prevent
+                            >
                                 <span class="me-group-name">{{ groupLabel(token) }}</span>
                                 <font-awesome-icon icon="caret-down" class="me-group-caret" />
                             </button>
@@ -54,7 +69,11 @@
                             v-else-if="toolsOf(token)"
                             type="button"
                             class="me-btn"
-                            :class="{ 'is-active': toolsOf(token).active ? toolsOf(token).active(editor) : false }"
+                            :data-ti="ti"
+                            :class="{
+                                'is-active': toolsOf(token).active ? toolsOf(token).active(editor) : false,
+                                'is-tb-hidden': isTbHidden(li, ti),
+                            }"
                             :title="$t(toolsOf(token).label)"
                             @mousedown.prevent
                             @click="runTool(token, $event)"
@@ -66,18 +85,47 @@
                             <font-awesome-icon v-else-if="toolsOf(token).icon" :icon="toolsOf(token).icon" />
                         </button>
                     </template>
+                    <!--
+                        v1.3.2（需求）：桌面端工具放不下时，在行末固定一个下拉箭头，
+                        点开就是被挤出可视区的那些工具（移动端仍然横滑，不折叠）。
+                    -->
+                    <el-dropdown
+                        v-if="toolbarOverflowTools[li] && toolbarOverflowTools[li].length"
+                        trigger="click"
+                        placement="bottom-end"
+                        class="me-toolbar-more"
+                        @command="(cmd) => runTool(cmd)"
+                    >
+                        <button type="button" class="me-btn" :title="$t('memo.toolbarMore')" @mousedown.prevent>
+                            <font-awesome-icon icon="caret-down" />
+                            <span class="me-more-count">{{ toolbarOverflowTools[li].length }}</span>
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item v-for="g in toolbarOverflowTools[li]" :key="`ov-${li}-${g}`" :command="g">
+                                    <font-awesome-icon v-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
+                                    <span class="me-group-label">{{ toolsOf(g) ? $t(toolsOf(g).label) : g }}</span>
+                                </el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
                     <!-- 每行末尾都跟一组固定的「视图 / 保存」，它不属于可配置工具 -->
                     <span class="me-grow"></span>
                     <template v-if="li === toolbarLines.length - 1">
-                        <button type="button" class="me-btn" :class="{ 'is-active': mode === 'wysiwyg' }" :title="$t('memo.modeLive')" @mousedown.prevent @click="setMode('wysiwyg')">
-                            <font-awesome-icon icon="pen-to-square" />
-                        </button>
-                        <button type="button" class="me-btn" :class="{ 'is-active': mode === 'source' }" :title="$t('memo.modeSource')" @mousedown.prevent @click="setMode('source')">
-                            <font-awesome-icon icon="code" />
-                        </button>
-                        <button type="button" class="me-btn" :class="{ 'is-active': mode === 'preview' }" :title="$t('memo.modePreview')" @mousedown.prevent @click="setMode('preview')">
-                            <font-awesome-icon icon="eye" />
-                        </button>
+                        <!-- v1.3.2（需求）：三个模式按钮合并成一个文字下拉框 -->
+                        <el-dropdown trigger="click" placement="bottom-end" @command="setMode">
+                            <button type="button" class="me-btn me-mode-btn" :title="$t('memo.modeLabel')" @mousedown.prevent>
+                                <span class="me-mode-text">{{ modeLabel }}</span>
+                                <font-awesome-icon icon="caret-down" class="me-mode-caret" />
+                            </button>
+                            <template #dropdown>
+                                <el-dropdown-menu>
+                                    <el-dropdown-item command="wysiwyg" :class="{ 'is-active': mode === 'wysiwyg' }">{{ $t('memo.modeLive') }}</el-dropdown-item>
+                                    <el-dropdown-item command="source" :class="{ 'is-active': mode === 'source' }">{{ $t('memo.modeSource') }}</el-dropdown-item>
+                                    <el-dropdown-item command="preview" :class="{ 'is-active': mode === 'preview' }">{{ $t('memo.modePreview') }}</el-dropdown-item>
+                                </el-dropdown-menu>
+                            </template>
+                        </el-dropdown>
                         <button type="button" class="me-btn" :title="$t('memo.save')" @mousedown.prevent @click="saveNow">
                             <font-awesome-icon icon="save" />
                         </button>
@@ -89,7 +137,7 @@
             <div class="me-head">
                 <div
                     class="me-title-row"
-                    :class="{ 'is-sticky': stickyCfg.title }"
+                    :class="{ 'is-sticky': isStickyNow('title') }"
                     :style="{ top: stickyTop('title') }"
                 >
                     <input
@@ -102,7 +150,7 @@
                 </div>
                 <div
                     class="me-meta"
-                    :class="{ 'is-sticky': stickyCfg.aux }"
+                    :class="{ 'is-sticky': isStickyNow('aux') }"
                     :style="{ top: stickyTop('aux') }"
                 >
                     <button type="button" class="me-meta-btn" :title="$t('memo.historyOpen')" @click="openHistory">
@@ -138,6 +186,7 @@
                         @keydown.delete="onTagBackspace"
                         @input="onTagInput"
                         @focus="loadTagCandidates"
+                        @blur="onTagBlur"
                     />
                     <div v-if="tagCandidates.length" class="me-tag-suggest">
                         <button
@@ -177,7 +226,7 @@
         </div>
 
         <!-- 反向链接（v1.5.0）：哪些笔记引用了本篇 -->
-        <div class="me-backlinks" :class="{ 'is-open': backlinksOpen }">
+        <div class="me-backlinks" :class="{ 'is-open': backlinksOpen, 'is-kb-hidden': kbOpen }">
             <button type="button" class="me-bl-head" @click="backlinksOpen = !backlinksOpen">
                 <font-awesome-icon icon="link" class="me-bl-icon" />
                 <span class="me-bl-title">{{ $t('memo.backlinks') }}</span>
@@ -216,6 +265,7 @@
         <UploadTargetDialog
             v-model="uploadTargetVisible"
             :busy="uploadBusy"
+            :prefill="uploadPrefill"
             :title="$t('memo.uploadToBed')"
             :hint="$t('memo.uploadHint', { n: pendingUploadFiles.length })"
             @confirm="confirmUploadTarget"
@@ -226,11 +276,38 @@
             <div v-if="slash.open" class="me-slash" :style="slash.style" @mousedown.prevent>
                 <template v-for="(cmd, i) in slash.items" :key="cmd.id">
                     <div v-if="cmd.separator" class="me-slash-sep"></div>
+                    <!--
+                        v1.3.2（需求）：`/` 菜单支持 [组名 a b] 工具组 ——
+                        鼠标移上去在右侧展开二级菜单，点组名本身不执行任何命令。
+                    -->
+                    <div
+                        v-else-if="cmd.group"
+                        class="me-slash-item me-slash-group"
+                        :class="{ 'is-active': i === slash.index }"
+                        @mouseenter="slash.index = i; openSlashGroup(cmd)"
+                        @click="openSlashGroup(cmd)"
+                    >
+                        <font-awesome-icon icon="folder" class="me-slash-icon" />
+                        <span class="me-slash-label">{{ cmd.label }}</span>
+                        <font-awesome-icon icon="caret-right" class="me-slash-caret" />
+                        <div v-if="slash.sub && slash.sub.id === cmd.id" class="me-slash-sub" @click.stop>
+                            <div
+                                v-for="c in slash.sub.items"
+                                :key="'sub-' + c.id"
+                                class="me-slash-item"
+                                @click.stop="applySlash(c)"
+                            >
+                                <font-awesome-icon v-if="c.icon" :icon="c.icon" class="me-slash-icon" />
+                                <span class="me-slash-label">{{ $t(c.label) }}</span>
+                                <span class="me-slash-hint">{{ c.hint }}</span>
+                            </div>
+                        </div>
+                    </div>
                     <div
                         v-else
                         class="me-slash-item"
                         :class="{ 'is-active': i === slash.index }"
-                        @mouseenter="slash.index = i"
+                        @mouseenter="slash.index = i; slash.sub = null"
                         @click="applySlash(cmd)"
                     >
                     <font-awesome-icon :icon="cmd.icon" class="me-slash-icon" />
@@ -267,76 +344,113 @@
                 v1.3.1.2（需求）：选中文本时的浮层，按飞书那套顺序排 ——
                 标题▾ / 对齐▾ | 加粗 删除线 斜体 下划线 链接 行代码 | 字号▾ 颜色▾ | 批注 发布到瞬间。
             -->
+            <!--
+                v1.3.3（需求）：选中浮层也改成配置驱动。
+                「设置 → 选中文本工具配置」里填什么就渲染什么，没填用内置默认。
+                标题 / 对齐 / 字号 / 颜色是复合控件，用保留名 heading / align / fontSize / textColor 表示。
+            -->
             <div v-if="bubble.open" class="me-bubble" :style="bubble.style" @mousedown.prevent>
-                <el-dropdown trigger="click" placement="top-start" @command="(c) => runTool(c)">
-                    <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubHeading')">
-                        <span class="me-bub-t">T</span>
-                        <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                <template v-for="(it, i) in selItems" :key="`sel-${i}`">
+                    <span v-if="it.sep" class="me-bub-sep"></span>
+                    <el-dropdown v-else-if="it.id === 'heading'" trigger="click" placement="top-start" @command="(c) => runTool(c)">
+                        <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubHeading')">
+                            <span class="me-bub-head">H</span>
+                            <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="h1">H1</el-dropdown-item>
+                                <el-dropdown-item command="h2">H2</el-dropdown-item>
+                                <el-dropdown-item command="h3">H3</el-dropdown-item>
+                                <el-dropdown-item command="h4">H4</el-dropdown-item>
+                                <el-dropdown-item command="h5">H5</el-dropdown-item>
+                                <el-dropdown-item command="h6">H6</el-dropdown-item>
+                                <el-dropdown-item command="paragraph" divided>{{ $t('memo.bubParagraph') }}</el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
+                    <el-dropdown v-else-if="it.id === 'align'" trigger="click" placement="top-start" @command="(c) => runTool(c)">
+                        <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubAlign')">
+                            <font-awesome-icon icon="align-left" />
+                            <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="alignLeft">{{ $t('memo.toolAlignLeft') }}</el-dropdown-item>
+                                <el-dropdown-item command="alignCenter">{{ $t('memo.toolAlignCenter') }}</el-dropdown-item>
+                                <el-dropdown-item command="alignRight">{{ $t('memo.toolAlignRight') }}</el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
+                    <el-dropdown v-else-if="it.id === 'fontSize'" trigger="click" placement="top-start" @command="setFontSize">
+                        <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubFontSize')">
+                            <span class="me-bub-font">A</span>
+                            <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="s">{{ $t('memo.fontSmall') }}</el-dropdown-item>
+                                <el-dropdown-item command="m">{{ $t('memo.fontNormal') }}</el-dropdown-item>
+                                <el-dropdown-item command="l">{{ $t('memo.fontLarge') }}</el-dropdown-item>
+                                <el-dropdown-item command="clear" divided>{{ $t('memo.fontDefault') }}</el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
+                    <el-dropdown v-else-if="it.id === 'textColor'" trigger="click" placement="top-start" @command="setTextColor">
+                        <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubColor')">
+                            <span class="me-bub-color-preview"></span>
+                            <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item v-for="c in TEXT_COLORS" :key="`c-${c}`" :command="c">
+                                    <span class="me-color-dot" :class="`is-${c}`"></span>{{ $t(`memo.color_${c}`) }}
+                                </el-dropdown-item>
+                                <el-dropdown-item command="clear" divided>{{ $t('memo.colorClear') }}</el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
+                    <button
+                        v-else-if="it.id === 'publish'"
+                        type="button"
+                        class="me-bub-btn"
+                        :title="$t('memo.publishToMoment')"
+                        @click="publishSelectionToMoment"
+                    >
+                        <font-awesome-icon icon="paper-plane" />
                     </button>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item command="h1">H1</el-dropdown-item>
-                            <el-dropdown-item command="h2">H2</el-dropdown-item>
-                            <el-dropdown-item command="h3">H3</el-dropdown-item>
-                            <el-dropdown-item command="h4">H4</el-dropdown-item>
-                            <el-dropdown-item command="h5">H5</el-dropdown-item>
-                            <el-dropdown-item command="h6">H6</el-dropdown-item>
-                            <el-dropdown-item command="paragraph" divided>{{ $t('memo.bubParagraph') }}</el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
-                <el-dropdown trigger="click" placement="top-start" @command="(c) => runTool(c)">
-                    <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubAlign')">
-                        <font-awesome-icon icon="align-left" />
-                        <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                    <button
+                        v-else
+                        type="button"
+                        class="me-bub-btn"
+                        :class="{ 'is-on': isToolActive(it.id) }"
+                        :title="it.label ? $t(it.label) : it.id"
+                        @click="runTool(it.id)"
+                    >
+                        <span v-if="bubLetter(it.id)" class="me-bub-letter">{{ bubLetter(it.id) }}</span>
+                        <font-awesome-icon v-else-if="it.icon" :icon="it.icon" />
+                        <span v-else>{{ it.id }}</span>
                     </button>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item command="alignLeft">{{ $t('memo.toolAlignLeft') }}</el-dropdown-item>
-                            <el-dropdown-item command="alignCenter">{{ $t('memo.toolAlignCenter') }}</el-dropdown-item>
-                            <el-dropdown-item command="alignRight">{{ $t('memo.toolAlignRight') }}</el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
-                <span class="me-bub-sep"></span>
-                <button type="button" class="me-bub-btn" :class="{ 'is-on': editor && editor.isActive('bold') }" @click="runTool('bold')"><b>B</b></button>
-                <button type="button" class="me-bub-btn" :class="{ 'is-on': editor && editor.isActive('strike') }" @click="runTool('strike')"><s>S</s></button>
-                <button type="button" class="me-bub-btn" :class="{ 'is-on': editor && editor.isActive('italic') }" @click="runTool('italic')"><i>I</i></button>
-                <button type="button" class="me-bub-btn" :class="{ 'is-on': editor && editor.isActive('underline') }" @click="runTool('underline')"><u>U</u></button>
-                <button type="button" class="me-bub-btn" :class="{ 'is-on': editor && editor.isActive('link') }" @click="runTool('link')"><font-awesome-icon icon="link" /></button>
-                <button type="button" class="me-bub-btn" :class="{ 'is-on': editor && editor.isActive('code') }" @click="runTool('code')"><font-awesome-icon icon="code" /></button>
-                <span class="me-bub-sep"></span>
-                <el-dropdown trigger="click" placement="top-start" @command="setFontSize">
-                    <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubFontSize')">
-                        <span class="me-bub-font">A</span>
-                        <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                </template>
+            </div>
+
+            <!--
+                v1.3.3（需求）：选中图片 / 视频 / 音频 / 附件时的工具带。
+                工具来自「设置 → 选中图片/视频/音频/文件工具配置」，未配置用内置默认。
+            -->
+            <div v-if="mediaBar.open" class="me-bubble me-mediabar" :style="mediaBar.style" @mousedown.prevent>
+                <template v-for="(it, i) in mediaTools" :key="`mb-${i}`">
+                    <span v-if="it.sep" class="me-bub-sep"></span>
+                    <button
+                        v-else
+                        type="button"
+                        class="me-bub-btn"
+                        :title="it.label ? $t(it.label) : it.id"
+                        @click="runTool(it.id)"
+                    >
+                        <font-awesome-icon :icon="it.icon" />
                     </button>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item command="s">{{ $t('memo.fontSmall') }}</el-dropdown-item>
-                            <el-dropdown-item command="m">{{ $t('memo.fontNormal') }}</el-dropdown-item>
-                            <el-dropdown-item command="l">{{ $t('memo.fontLarge') }}</el-dropdown-item>
-                            <el-dropdown-item command="clear" divided>{{ $t('memo.fontDefault') }}</el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
-                <el-dropdown trigger="click" placement="top-start" @command="setTextColor">
-                    <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubColor')">
-                        <span class="me-bub-color-preview"></span>
-                        <font-awesome-icon icon="caret-down" class="me-bub-caret" />
-                    </button>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item v-for="c in TEXT_COLORS" :key="`c-${c}`" :command="c">
-                                <span class="me-color-dot" :class="`is-${c}`"></span>{{ $t(`memo.color_${c}`) }}
-                            </el-dropdown-item>
-                            <el-dropdown-item command="clear" divided>{{ $t('memo.colorClear') }}</el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
-                <span class="me-bub-sep"></span>
-                <button type="button" class="me-bub-btn" :title="$t('memo.toolAnnotate')" @click="annotateSelection"><font-awesome-icon icon="comment-dots" /></button>
-                <button type="button" class="me-bub-btn" :title="$t('memo.publishToMoment')" @click="publishSelectionToMoment"><font-awesome-icon icon="paper-plane" /></button>
+                </template>
             </div>
 
             <!-- 引用悬停预览（v1.3.1.2） -->
@@ -349,7 +463,14 @@
                 表格操作条（v1.3.1.2）：光标落在任意单元格里就浮在表格上方。
                 比工具栏里的「表格组」更顺手 —— 眼睛在表格上，手不用回去找按钮。
             -->
-            <div v-if="tableBar.open" class="me-tablebar" :style="tableBar.style" @mousedown.prevent>
+            <div
+                v-if="tableBar.open"
+                class="me-tablebar"
+                :class="{ 'is-below': !tableBar.above }"
+                :style="tableBar.style"
+                @mousedown.prevent
+            >
+                <span class="me-tablebar-arrow" aria-hidden="true"></span>
                 <button type="button" class="me-bub-btn" :title="$t('memo.tblAddRowBefore')" @click="runTool('tableAddRowBefore')"><font-awesome-icon icon="arrow-up" /></button>
                 <button type="button" class="me-bub-btn" :title="$t('memo.tblAddRow')" @click="runTool('tableAddRow')"><font-awesome-icon icon="arrow-down" /></button>
                 <button type="button" class="me-bub-btn" :title="$t('memo.tblAddColBefore')" @click="runTool('tableAddColBefore')"><font-awesome-icon icon="arrow-left" /></button>
@@ -370,48 +491,16 @@
                 :style="{ left: `${ctxMenu.x}px`, top: `${ctxMenu.y}px` }"
                 @mousedown.stop
             >
-                <template v-if="ctxMenu.kind === 'empty'">
-                    <button type="button" class="me-ctx-item" @click="ctxPaste('rich')">
-                        <font-awesome-icon icon="clipboard" class="me-ctx-icon" />
-                        <span>{{ $t('memo.ctxPaste') }}</span>
-                        <span class="me-ctx-key">Ctrl+V</span>
-                    </button>
-                    <button type="button" class="me-ctx-item" @click="ctxPaste('keep')">{{ $t('memo.ctxPasteKeep') }}</button>
-                    <button type="button" class="me-ctx-item" @click="ctxPaste('plain')">
-                        <span>{{ $t('memo.ctxPastePlain') }}</span>
-                        <span class="me-ctx-key">Ctrl+Shift+V</span>
-                    </button>
-                    <button type="button" class="me-ctx-item" @click="ctxPaste('escaped')">{{ $t('memo.ctxPasteEscaped') }}</button>
-                    <div class="me-ctx-sep"></div>
-                    <button type="button" class="me-ctx-item" @click="ctxSelectAll">
-                        <font-awesome-icon icon="object-group" class="me-ctx-icon" />
-                        <span>{{ $t('memo.ctxSelectAll') }}</span>
-                        <span class="me-ctx-key">Ctrl+A</span>
-                    </button>
-                </template>
-                <template v-else>
-                    <button type="button" class="me-ctx-item" @click="ctxCopy">
-                        <font-awesome-icon icon="copy" class="me-ctx-icon" />
-                        <span>{{ $t('memo.ctxCopy') }}</span>
-                        <span class="me-ctx-key">Ctrl+C</span>
-                    </button>
-                    <button type="button" class="me-ctx-item" @click="ctxCut">
-                        <font-awesome-icon icon="scissors" class="me-ctx-icon" />
-                        <span>{{ $t('memo.ctxCut') }}</span>
-                        <span class="me-ctx-key">Ctrl+X</span>
-                    </button>
-                    <button type="button" class="me-ctx-item" @click="ctxDelete">
-                        <font-awesome-icon icon="trash" class="me-ctx-icon" />
-                        <span>{{ $t('memo.ctxDelete') }}</span>
-                    </button>
-                    <button type="button" class="me-ctx-item" @click="ctxAnnotate">
-                        <font-awesome-icon icon="comment-dots" class="me-ctx-icon" />
-                        <span>{{ $t('memo.ctxAnnotate') }}</span>
-                    </button>
-                    <!-- 标题与文件没有超链接语义，按需求只给段落 / 其它对象显示 -->
-                    <button v-if="ctxMenu.kind === 'paragraph'" type="button" class="me-ctx-item" @click="ctxLink">
-                        <font-awesome-icon icon="link" class="me-ctx-icon" />
-                        <span>{{ $t('memo.ctxLink') }}</span>
+                <!--
+                    v1.3.3（需求）：右键菜单不再写死 —— 按「设置 → 右键菜单工具配置」渲染。
+                    配置为空时用内置默认（空白处=粘贴类，段落=复制/剪切/删除/批注/链接）。
+                -->
+                <template v-for="(item, i) in ctxMenuItems" :key="`ctx-${i}`">
+                    <div v-if="item.sep" class="me-ctx-sep"></div>
+                    <button v-else type="button" class="me-ctx-item" @click="runCtx(item)">
+                        <font-awesome-icon v-if="item.icon" :icon="item.icon" class="me-ctx-icon" />
+                        <span>{{ $t(item.label) }}</span>
+                        <span v-if="item.hint" class="me-ctx-key">{{ item.hint }}</span>
                     </button>
                 </template>
             </div>
@@ -612,7 +701,7 @@
         </el-dialog>
 
         <!-- HTML ↔ MD（v1.3.1.2） -->
-        <el-dialog v-model="htmlDlg.visible" :title="$t('memo.toolHtmlMd')" width="880px" top="6vh" append-to-body class="me-htmlmd-dialog">
+        <el-dialog v-model="htmlDlg.visible" :title="$t('memo.toolHtmlMd')" append-to-body class="me-htmlmd-dialog">
             <div class="me-htmlmd">
                 <div class="me-htmlmd-col">
                     <label class="me-htmlmd-label">HTML</label>
@@ -656,8 +745,28 @@
             append-to-body
             class="me-history-dialog"
         >
-            <div class="me-hist-wrap">
-                <div class="me-hist-list" v-loading="historyLoading">
+            <!--
+                v1.3.2（需求）：移动端左侧列表改成顶部下拉框。
+                桌面端仍然左右分栏，各自独立滚动。
+            -->
+            <div v-if="isMobileViewport" class="me-hist-mobile">
+                <el-select
+                    v-model="historySelectedId"
+                    class="me-hist-select"
+                    size="small"
+                    :placeholder="$t('memo.historyPick')"
+                    @change="onHistorySelect"
+                >
+                    <el-option
+                        v-for="h in historyItems"
+                        :key="'hm-' + h.id"
+                        :value="h.id"
+                        :label="formatHistoryTime(h.createdAt) + ' · v' + h.version"
+                    />
+                </el-select>
+            </div>
+            <div class="me-hist-wrap" :class="{ 'is-mobile': isMobileViewport }">
+                <div v-if="!isMobileViewport" class="me-hist-list" v-loading="historyLoading">
                     <button
                         v-for="h in historyItems"
                         :key="h.id"
@@ -746,6 +855,31 @@ import DOMPurify from 'dompurify';
 import { htmlToMd } from '@/utils/htmlToMd';
 
 /**
+ * v1.3.3：按文件名猜 MIME。
+ *
+ * 链接提取的转存接口在「服务端直接回字节流」这条路径上不带 mime，
+ * 视频 / 音频 / 图片要按媒体类型插入，只能靠后缀兜一层；
+ * 仍然猜不出时才落成 `![[file:…]]` 附件。
+ *
+ * 注意：上一版这个方法在调用处被引用、但定义没有落进文件，
+ * 表现为点「开始上传」后弹 `guessMimeByName is not defined`，
+ * 文件其实已经传进图床，只是插入被这一步打断。
+ */
+function guessMimeByName(name) {
+    const m = /\.([a-z0-9]+)$/i.exec(String(name || ''));
+    if (!m) return '';
+    const ext = m[1].toLowerCase();
+    const map = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+        webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml',
+        mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', m4v: 'video/x-m4v', ogv: 'video/ogg',
+        mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', ogg: 'audio/ogg', flac: 'audio/flac', aac: 'audio/aac',
+        pdf: 'application/pdf', zip: 'application/zip', txt: 'text/plain', md: 'text/markdown'
+    };
+    return map[ext] || '';
+}
+
+/**
  * 左侧行级栏（gutter，v1.3.1.2）。
  *
  * 每个顶层块的开头放一个零宽的 widget，里面是一枚「⠿」小按钮 ——
@@ -769,7 +903,10 @@ const BlockGutter = Extension.create({
                 props: {
                     decorations(state) {
                         const decos = [];
+                        /* v1.3.2（需求）：用行号代替 ⠿ 图标，点击行为不变 */
+                        let lineNo = 0;
                         state.doc.forEach((node, offset) => {
+                            lineNo += 1;
                             const wrap = document.createElement('span');
                             wrap.className = 'gh-gutter';
                             wrap.contentEditable = 'false';
@@ -777,7 +914,7 @@ const BlockGutter = Extension.create({
                             btn.type = 'button';
                             btn.className = 'gh-gutter-btn';
                             btn.title = '块操作';
-                            btn.textContent = '⠿';
+                            btn.textContent = String(lineNo);
                             btn.addEventListener('mousedown', (e) => e.preventDefault());
                             btn.addEventListener('click', (e) => {
                                 e.preventDefault();
@@ -1016,7 +1153,33 @@ const IframeBlock = Node.create({
             frame.referrerPolicy = 'no-referrer';
             frame.style.height = `${Math.max(120, Number(node.attrs.height) || 420)}px`;
             wrap.appendChild(frame);
-            return { dom: wrap };
+            /*
+             * v1.3.3（需求）：嵌入区里加一个设置按钮，可以改地址与高度。
+             * NodeView 在模块作用域拿不到组件实例，这里靠自定义事件冒泡给编辑器，
+             * 由组件弹表单并用 posAtDOM 反查节点位置。
+             */
+            const gear = document.createElement('button');
+            gear.type = 'button';
+            gear.className = 'gh-iframe-config';
+            gear.title = '嵌入设置';
+            gear.textContent = '⚙';
+            gear.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                wrap.dispatchEvent(new CustomEvent('gohub:iframe-config', { bubbles: true }));
+            });
+            wrap.appendChild(gear);
+            return {
+                dom: wrap,
+                update(updated) {
+                    if (updated.type.name !== 'iframe') return false;
+                    const next = String(updated.attrs.src || '');
+                    if (!/^https?:\/\//i.test(next)) return false;
+                    frame.src = next;
+                    frame.style.height = `${Math.max(120, Number(updated.attrs.height) || 420)}px`;
+                    return true;
+                }
+            };
         };
     },
 });
@@ -1281,6 +1444,87 @@ function createFoldPlugin(getFolds) {
  * 每一项只描述「长什么样 + 点了做什么」，具体渲染哪一行、哪几个由设置里的字符串决定。
  * 这样「设置页改工具栏」就是改一个数组，不需要动模板。
  */
+/**
+ * v1.3.2（需求：粘贴拆成独立工具）
+ *
+ * 浏览器的富文本剪贴板只能通过 paste 事件拿到，按钮里退一步用
+ * navigator.clipboard.read()（支持时）/ readText()：拿到 text/html 就按 HTML 插，
+ * 拿不到就按纯文本插。escaped 会把 HTML 当普通文字插进去（写教程时要展示源码）。
+ */
+async function pasteFromClipboard(editor, mode) {
+    if (!editor) return;
+    let html = '';
+    let text = '';
+    try {
+        if (navigator.clipboard && navigator.clipboard.read) {
+            const items = await navigator.clipboard.read();
+            for (const it of items) {
+                if (it.types.includes('text/html')) html = await (await it.getType('text/html')).text();
+                if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+                if (html || text) break;
+            }
+        }
+        if (!html && !text && navigator.clipboard && navigator.clipboard.readText) {
+            text = await navigator.clipboard.readText();
+        }
+    } catch (e) {
+        return;
+    }
+    const esc = (v) => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (mode === 'rich') {
+        editor.chain().focus().insertContent(html || esc(text).replace(/\n/g, '<br>')).run();
+    } else if (mode === 'keep') {
+        editor.chain().focus().insertContent(String(text || html).split(/\n/).map((l) => ({ type: 'paragraph', content: l ? [{ type: 'text', text: l }] : [] }))).run();
+    } else if (mode === 'escaped') {
+        editor.chain().focus().insertContent(esc(html || text)).run();
+    } else {
+        editor.chain().focus().insertContent(esc(text)).run();
+    }
+}
+
+/**
+ * v1.3.3（需求）：右键菜单动作表。
+ *
+ * id 同时也是「编辑器设置 → 右键菜单工具配置」里可以填的工具名，
+ * 所以这张表既是渲染清单，也是配置白名单。kinds 决定该动作在哪种上下文出现：
+ *   empty     —— 空白处右键（粘贴类）
+ *   text      —— 选中文本时（剪切/复制/删除/批注）
+ *   paragraph —— 段落里（额外给「链接」）
+ */
+const CTX_ACTIONS = {
+    paste: { icon: 'clipboard', label: 'memo.ctxPaste', hint: 'Ctrl+V', call: 'ctxPasteRich', kinds: ['empty'] },
+    pasteKeep: { icon: 'clipboard', label: 'memo.ctxPasteKeep', call: 'ctxPasteKeep', kinds: ['empty'] },
+    pastePlain: { icon: 'paste', label: 'memo.ctxPastePlain', hint: 'Ctrl+Shift+V', call: 'ctxPastePlain', kinds: ['empty'] },
+    pasteEscaped: { icon: 'code', label: 'memo.ctxPasteEscaped', call: 'ctxPasteEscaped', kinds: ['empty'] },
+    selectAll: { icon: 'object-group', label: 'memo.ctxSelectAll', hint: 'Ctrl+A', call: 'ctxSelectAll', kinds: ['empty', 'paragraph'] },
+    copy: { icon: 'copy', label: 'memo.ctxCopy', hint: 'Ctrl+C', call: 'ctxCopy', kinds: ['text', 'paragraph'] },
+    cut: { icon: 'scissors', label: 'memo.ctxCut', hint: 'Ctrl+X', call: 'ctxCut', kinds: ['text', 'paragraph'] },
+    delete: { icon: 'trash', label: 'memo.ctxDelete', call: 'ctxDelete', kinds: ['text', 'paragraph'] },
+    annotate: { icon: 'comment-dots', label: 'memo.ctxAnnotate', call: 'ctxAnnotate', kinds: ['text', 'paragraph'] },
+    link: { icon: 'link', label: 'memo.ctxLink', call: 'ctxLink', kinds: ['paragraph'] }
+};
+
+/** v1.3.3：媒体选中条的默认工具（可被设置里对应配置覆盖） */
+const MEDIA_DEFAULT = {
+    image: ['alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode'],
+    video: ['alignLeft', 'alignCenter', 'alignRight', '|', 'deleteNode'],
+    audio: ['alignLeft', 'alignCenter', 'alignRight', '|', 'deleteNode'],
+    file: ['alignLeft', 'alignCenter', 'alignRight', '|', 'deleteNode']
+};
+
+/** v1.3.3：选中浮层的保留名（复合控件 / 非 TOOLS 动作） */
+const SEL_RESERVED = ['heading', 'align', 'fontSize', 'textColor', 'publish'];
+const SEL_DEFAULT = [
+    'heading', 'align', '|', 'bold', 'strike', 'italic', 'underline', 'link', 'code',
+    '|', 'fontSize', 'textColor', '|', 'annotate', 'publish'
+];
+
+const CTX_DEFAULT = {
+    empty: ['paste', 'pasteKeep', 'pastePlain', 'pasteEscaped', '|', 'selectAll'],
+    text: ['copy', 'cut', 'delete', 'annotate', '|', 'bold', 'italic', 'underline', 'strike'],
+    paragraph: ['copy', 'cut', 'delete', 'annotate', '|', 'link', '|', 'bold', 'italic', 'underline']
+};
+
 const TOOLS = {
     bold: { icon: 'bold', label: 'memo.toolBold', run: (e) => e.chain().focus().toggleBold().run(), active: (e) => e && e.isActive('bold') },
     italic: { icon: 'italic', label: 'memo.toolItalic', run: (e) => e.chain().focus().toggleItalic().run(), active: (e) => e && e.isActive('italic') },
@@ -1386,6 +1630,26 @@ const TOOLS = {
         },
     },
     hardBreak: { icon: 'arrow-turn-down', label: 'memo.toolLineBreak', run: (e) => e.chain().focus().setHardBreak().run() },
+    /* v1.3.2（需求）：把「下方插入空行」提成独立工具 */
+    insertLineBelow: {
+        icon: 'arrow-down',
+        label: 'memo.toolInsertLineBelow',
+        run: (e) => {
+            const { $from } = e.state.selection;
+            let pos = $from.pos;
+            try {
+                pos = $from.after(1);
+            } catch (err) {
+                pos = $from.pos;
+            }
+            e.chain().focus().insertContentAt(pos, { type: 'paragraph' }).run();
+        },
+    },
+    /* v1.3.2（需求）：粘贴的四种模式拆成独立工具 */
+    paste: { icon: 'paste', label: 'memo.toolPaste', run: (e) => pasteFromClipboard(e, 'rich') },
+    pasteKeep: { icon: 'clipboard', label: 'memo.toolPasteKeep', run: (e) => pasteFromClipboard(e, 'keep') },
+    pastePlain: { icon: 'paste', label: 'memo.toolPastePlain', run: (e) => pasteFromClipboard(e, 'plain') },
+    pasteEscaped: { icon: 'code', label: 'memo.toolPasteEscaped', run: (e) => pasteFromClipboard(e, 'escaped') },
     paragraph: { icon: 'paragraph', label: 'memo.toolParagraph', run: (e) => e.chain().focus().setParagraph().unsetAllMarks().run() },
     linkExtract: { icon: 'cloud-arrow-down', label: 'memo.toolLinkExtract', run: null },
     /* 表格操作（需求：插入后要能加/删行列、合并拆分） */
@@ -1393,7 +1657,7 @@ const TOOLS = {
     tableAddCol: { icon: 'plus', label: 'memo.tblAddCol', run: (e) => e.chain().focus().addColumnAfter().run() },
     tableDelRow: { icon: 'minus', label: 'memo.tblDelRow', run: (e) => e.chain().focus().deleteRow().run() },
     tableDelCol: { icon: 'minus', label: 'memo.tblDelCol', run: (e) => e.chain().focus().deleteColumn().run() },
-    tableMerge: { icon: 'compress', label: 'memo.tblMerge', run: (e) => e.chain().focus().mergeCells().run() },
+    tableMerge: { icon: 'compress-alt', label: 'memo.tblMerge', run: (e) => e.chain().focus().mergeCells().run() },
     tableSplit: { icon: 'expand', label: 'memo.tblSplit', run: (e) => e.chain().focus().splitCell().run() },
     tableDelete: { icon: 'trash', label: 'memo.tblDelete', run: (e) => e.chain().focus().deleteTable().run() },
     file: { icon: 'folder-open', label: 'memo.toolFile', run: null },
@@ -1411,7 +1675,7 @@ const TOOLS = {
     audio: { icon: 'file-audio', label: 'memo.toolAudio', run: null },
     highlight: { icon: 'highlighter', label: 'memo.toolHighlight', run: (e) => e.chain().focus().toggleHighlight().run(), active: (e) => e && e.isActive('highlight') },
     outline: { icon: 'list', label: 'memo.toolOutline', run: null },
-    foldAll: { icon: 'compress', label: 'memo.toolFoldAll', run: null },
+    foldAll: { icon: 'angles-up', label: 'memo.toolFoldAll', run: null },
     clear: { icon: 'eraser', label: 'memo.toolClear', run: (e) => e.chain().focus().unsetAllMarks().clearNodes().run() },
     undo: { icon: 'undo', label: 'memo.toolUndo', run: (e) => e.chain().focus().undo().run() },
     redo: { icon: 'redo', label: 'memo.toolRedo', run: (e) => e.chain().focus().redo().run() },
@@ -1439,7 +1703,7 @@ const TOOLS = {
     timeHms: { icon: 'clock', label: 'memo.toolTimeHms', run: null },
     /* 表情 / 符号面板 */
     emoji: { icon: 'face-smile', label: 'memo.toolEmoji', run: null },
-    symbol: { icon: 'omega', label: 'memo.toolSymbol', run: null },
+    symbol: { icon: 'font', label: 'memo.toolSymbol', run: null },
     /* 网页嵌入 */
     iframe: { icon: 'window-maximize', label: 'memo.toolIframe', run: null },
     /* 查找替换 */
@@ -1449,6 +1713,26 @@ const TOOLS = {
     htmlBlock: { icon: 'file-code', label: 'memo.toolHtmlBlock', run: null },
     /* 批注（选中文本后添加） */
     annotate: { icon: 'comment-dots', label: 'memo.toolAnnotate', run: null },
+    /* v1.3.3（需求）：媒体选中条用的两个通用动作 */
+    imgSizeCycle: {
+        icon: 'up-right-and-down-left-from-center',
+        label: 'memo.toolImgSize',
+        run: (e) => {
+            if (!e) return;
+            const sel = e.state.selection;
+            const node = sel && sel.node;
+            if (!node || node.type.name !== 'image') return;
+            const cur = Number(node.attrs.width) || 0;
+            // 自动 → 600 → 400 → 260 → 自动
+            const next = !cur ? 600 : (cur > 500 ? 400 : (cur > 320 ? 260 : 0));
+            e.chain().focus().updateAttributes('image', { width: next || null }).run();
+        }
+    },
+    deleteNode: {
+        icon: 'trash',
+        label: 'memo.ctxDelete',
+        run: (e) => e && e.chain().focus().deleteSelection().run()
+    },
 };
 
 /**
@@ -1632,6 +1916,8 @@ export default {
             previewHtml: '',
             slash: { open: false, style: {}, index: 0, items: [], from: 0, to: 0, query: '' },
             bubble: { open: false, style: {} },
+            /** v1.3.3：选中图片 / 视频 / 音频 / 附件时浮出的工具条 */
+            mediaBar: { open: false, style: {}, kind: 'image' },
             /** 大纲浮窗（v1.3.1）：按需求做成悬浮弹窗，不做占位侧边栏 */
             outline: { open: false, items: [] },
             /**
@@ -1644,6 +1930,8 @@ export default {
             /** 反向链接面板（v1.5.0）：默认收起，避免把正文顶下去 */
             backlinks: [],
             backlinksOpen: false,
+            /** v1.3.2：移动端软键盘是否弹起（用于收起反向链接栏） */
+            kbOpen: false,
             /** 图片缩放手柄浮层（v1.4.0） */
             imgBox: { open: false, boxStyle: {}, width: 0, pos: 0, nodeW: 0 },
             /* ── v1.3.1.1：标题区元信息 + 标签 + 历史记录 ── */
@@ -1659,6 +1947,8 @@ export default {
             historyLoading: false,
             historyItems: [],
             historyPreview: null,
+            /** v1.3.2：移动端历史下拉框的当前项 */
+            historySelectedId: '',
             /** 历史快照定时器（间隔来自设置，分钟） */
             historyTimer: null,
             /** 上次压历史时的正文，用来判断「真的变了」 */
@@ -1684,8 +1974,14 @@ export default {
             hoverCard: { open: false, x: 0, y: 0, title: '', text: '', loading: false },
             /* v1.3.1.2：浮层 / 右键菜单 / 表格 */
             TEXT_COLORS,
-            tableBar: { open: false, style: {} },
+            tableBar: { open: false, above: true, style: {} },
             ctxMenu: { open: false, x: 0, y: 0, kind: 'text' },
+            /** v1.3.2：桌面端每行工具栏的第一个溢出下标（li → ti） */
+            toolbarOverflow: {},
+            /** v1.3.2：每行被折叠的工具 id 列表 */
+            toolbarOverflowTools: {},
+            /** v1.3.2：回滚（滚向顶部）时，未开启吸附的栏也临时吸住 */
+            reverseSticky: false,
             tablePicker: { open: false, hover: { r: 3, c: 3 } },
             /* ── v1.3.1.2：表情 / 符号面板 ── */
             insertPanelVisible: false,
@@ -1704,6 +2000,8 @@ export default {
             inputBar: { open: false, style: {} },
             /** 上传面板（v1.3.1.1）：选完文件后先问目标渠道 / 实例 / 目录 */
             uploadTargetVisible: false,
+            /** v1.3.2：上传目标弹窗的默认值（目录固定 /notes/memo/年/月） */
+            uploadPrefill: { channelId: '', instanceId: '', uploadFolder: '' },
             uploadBusy: false,
             pendingUploadFiles: [],
             /** 'files' = 本地上传 | 'url' = 链接提取（共用同一个目标面板） */
@@ -1734,6 +2032,113 @@ export default {
                 '--gh-line-height': `${v(st.lineHeight, 1.75)}`,
             };
         },
+        /**
+         * v1.3.3（需求）：右键菜单的渲染清单。
+         * 配置过就按配置（未知 id 静默忽略），没配置按上下文用内置默认。
+         */
+        ctxMenuItems() {
+            const kind = this.ctxMenu.kind || 'text';
+            const raw = (this.editorConfig?.rightClickLines || []).join(' ').trim();
+            const tokens = raw
+                ? raw.split(/\s+/).filter(Boolean)
+                : (CTX_DEFAULT[kind] || CTX_DEFAULT.text).slice();
+            const out = [];
+            let lastSep = true;
+            tokens.forEach((id) => {
+                if (id === '|') {
+                    if (!lastSep) {
+                        out.push({ sep: true });
+                        lastSep = true;
+                    }
+                    return;
+                }
+                const meta = CTX_ACTIONS[id];
+                if (meta) {
+                    if (!(meta.kinds || []).includes(kind)) return;
+                    out.push({ id, ...meta });
+                    lastSep = false;
+                    return;
+                }
+                const tool = TOOLS[id];
+                if (tool) {
+                    out.push({ id, icon: tool.icon, label: tool.label, tool: true });
+                    lastSep = false;
+                }
+            });
+            while (out.length && out[out.length - 1].sep) out.pop();
+            return out;
+        },
+        /**
+         * v1.3.3（需求）：媒体选中条的工具清单。
+         * 按 kind 取对应配置（selectImageLines / selectVideoLines / …），空则用默认。
+         */
+        mediaTools() {
+            const kind = this.mediaBar.kind || 'image';
+            const keyMap = {
+                image: 'selectImageLines',
+                video: 'selectVideoLines',
+                audio: 'selectAudioLines',
+                file: 'selectFileLines'
+            };
+            const raw = (this.editorConfig?.[keyMap[kind]] || []).join(' ').trim();
+            const tokens = raw ? raw.split(/\s+/).filter(Boolean) : (MEDIA_DEFAULT[kind] || MEDIA_DEFAULT.file).slice();
+            const out = [];
+            let lastSep = true;
+            tokens.forEach((id) => {
+                if (id === '|') {
+                    if (!lastSep) {
+                        out.push({ sep: true });
+                        lastSep = true;
+                    }
+                    return;
+                }
+                const tool = TOOLS[id];
+                if (tool) {
+                    out.push({ id, icon: tool.icon, label: tool.label, tool: true });
+                    lastSep = false;
+                }
+            });
+            while (out.length && out[out.length - 1].sep) out.pop();
+            return out;
+        },
+        /**
+         * v1.3.3（需求）：选中浮层的渲染清单。
+         * 保留名：heading / align / fontSize / textColor / annotate / publish；
+         * 其余按 TOOLS 里的工具 id 渲染（未知 id 静默忽略）。
+         */
+        selItems() {
+            const raw = (this.editorConfig?.selectionLines || []).join(' ').trim();
+            const tokens = raw ? raw.split(/\s+/).filter(Boolean) : SEL_DEFAULT.slice();
+            const out = [];
+            let lastSep = true;
+            tokens.forEach((id) => {
+                if (id === '|') {
+                    if (!lastSep) {
+                        out.push({ sep: true });
+                        lastSep = true;
+                    }
+                    return;
+                }
+                if (SEL_RESERVED.includes(id)) {
+                    out.push({ id });
+                    lastSep = false;
+                    return;
+                }
+                const tool = TOOLS[id];
+                if (tool) {
+                    out.push({ id, icon: tool.icon, label: tool.label, tool: true });
+                    lastSep = false;
+                }
+            });
+            while (out.length && out[out.length - 1].sep) out.pop();
+            return out;
+        },
+        /** v1.3.2：模式下拉框上显示的文字 */
+        modeLabel() {
+            if (this.mode === 'source') return this.$t('memo.modeSource');
+            if (this.mode === 'preview') return this.$t('memo.modePreview');
+            return this.$t('memo.modeLive');
+        },
         /** 当前生效的吸附配置（按终端取 pc / m 那一组，缺省全部 false） */
         stickyCfg() {
             const all = this.editorConfig?.sticky;
@@ -1751,10 +2156,24 @@ export default {
             const mq = (q) => !!(window.matchMedia && window.matchMedia(q).matches);
             return (navigator.maxTouchPoints || 0) > 0 || mq('(hover: none)') || mq('(pointer: coarse)');
         },
-        /** 当前视口是否移动端口径（工具栏 pc= / m= 前缀的判定依据） */
+        /**
+         * v1.3.3.1（实测修复）：把「布局口径」和「交互口径」拆开。
+         *
+         * 原来只有 isMobileViewport，且判定里含「是否触摸」：
+         *   · 触摸屏笔记本（maxTouchPoints > 0，但用鼠标）会被当成移动端；
+         *   · 无指针设备的环境（headless / 部分远程桌面）`(pointer: coarse)` 命中，
+         *     1280px 宽也被判成移动端。
+         * 结果就是工具栏永不折叠、历史弹窗永远走移动端布局。
+         *
+         * 现在：
+         *   · isMobileViewport = **只看宽度**（布局用：折叠、弹窗分栏、吸附取 pc/m）
+         *   · isTouchUi       = 是否触摸（交互用：工具组 hover/click、长按）
+         */
         isMobileViewport() {
-            if (this.isTouchDevice) return true;
             return typeof window !== 'undefined' && window.innerWidth <= 900;
+        },
+        isTouchUi() {
+            return typeof this.isTouchDevice === 'function' ? this.isTouchDevice() : !!this.isTouchDevice;
         },
         /** 生效的配色：light / dark；auto 时跟随 html 上的 dark 类（全站主题） */
         editorTheme() {
@@ -1829,12 +2248,24 @@ export default {
             for (const raw of lines) {
                 const { scope, text } = splitScope(String(raw || ''));
                 if (scope && scope !== device) continue;
-                for (const token of String(text || '').split(/\s+/).filter(Boolean)) {
+                for (const token of parseToolTokens(text)) {
                     if (token === '|') {
                         out.push({ id: '__sep__', separator: true });
                         continue;
                     }
-                    if (token.startsWith('[')) continue;
+                    if (token && typeof token === 'object' && Array.isArray(token.tools)) {
+                        const tools = token.tools.map((id) => SLASH_COMMANDS.find((c) => c.id === id)).filter(Boolean);
+                        if (tools.length) {
+                            out.push({
+                                id: `__group__:${token.group}`,
+                                group: true,
+                                label: token.group,
+                                groupName: token.group,
+                                tools,
+                            });
+                        }
+                        continue;
+                    }
                     const cmd = SLASH_COMMANDS.find((c) => c.id === token);
                     if (cmd) out.push(cmd);
                 }
@@ -1855,11 +2286,43 @@ export default {
         mode(next, prev) {
             this.switchMode(prev, next);
         },
+        /* v1.3.2：工具配置变了要重新量一次溢出（宽度不变，但按钮数量变了） */
+        toolbarLines: {
+            deep: true,
+            handler() {
+                this.$nextTick(() => this.measureToolbar());
+            },
+        },
+        'editorConfig.styles.customCss': {
+            handler() {
+                this.applyCustomCss();
+            },
+        },
     },
     mounted() {
         this.createEditor();
+        this.applyCustomCss();
+        this.$nextTick(() => {
+            this.measureToolbar();
+            /*
+             * v1.3.3.1（实测修复）：只靠 window resize 触发不够 ——
+             * 目录栏拖宽、列表折叠、编辑器首帧布局完成都不会派发 resize，
+             * 工具栏实际已经溢出但永远不会折叠。直接观察工具栏自身尺寸。
+             */
+            this.setupToolbarObserver();
+        });
         // Ctrl/Cmd + S 保存（浏览器默认的「保存网页」在这里没有意义）
         this.onKeydownGlobal = (e) => {
+            // v1.3.2（需求）：Esc 收起所有编辑区浮层
+            if (String(e.key) === 'Escape') {
+                this.closeRef();
+                this.closeSlash();
+                this.closeCtxMenu();
+                this.bubble.open = false;
+                this.tableBar.open = false;
+                this.gutterMenu = { open: false };
+                return;
+            }
             if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') {
                 e.preventDefault();
                 this.saveNow();
@@ -1868,10 +2331,18 @@ export default {
         window.addEventListener('keydown', this.onKeydownGlobal);
         // 点空白 / 按 Esc 都要收起右键菜单
         this.onGlobalPointer = (e) => {
-            if (!this.ctxMenu.open) return;
             const el = e.target;
-            if (el && el.closest && el.closest('.me-ctx')) return;
-            this.closeCtxMenu();
+            const hit = (sel) => !!(el && el.closest && el.closest(sel));
+            if (this.ctxMenu.open && !hit('.me-ctx')) this.closeCtxMenu();
+            /*
+             * v1.3.2（需求）：点别处要收起 gutter 菜单 / `/` 菜单 / `[[` 面板。
+             * 点到 gutter 按钮本身时不算「别处」—— 它的 click 才负责开关。
+             */
+            if (this.gutterMenu.open && !hit('.me-gutter-menu') && !hit('.gh-gutter-btn')) this.closeGutter();
+            if (!hit('.me-slash') && !hit('.me-wysiwyg')) {
+                if (this.ref.open) this.closeRef();
+                if (this.slash.open) this.closeSlash();
+            }
         };
         window.addEventListener('pointerdown', this.onGlobalPointer, true);
         /*
@@ -1896,6 +2367,12 @@ export default {
         if (body) {
             body.addEventListener('mouseover', this.onHoverStart);
             body.addEventListener('mouseout', this.onHoverEnd);
+            // v1.3.3：嵌入块里的齿轮 → 弹设置
+            this.onIframeConfig = (e) => {
+                const wrap = e.target && e.target.closest && e.target.closest('.gh-iframe-wrap');
+                if (wrap) this.editIframe(wrap);
+            };
+            body.addEventListener('gohub:iframe-config', this.onIframeConfig);
         }
         /*
          * 手柄与光标工具栏都用绝对/固定坐标，滚动或改窗口大小都得重算位置。
@@ -1903,9 +2380,30 @@ export default {
          * 看起来像一条与正文无关的浮条。scroll 不冒泡，但捕获阶段能收到，
          * 所以一个 window 级 capture 监听就覆盖了编辑器内部容器的滚动。
          */
-        this.onViewportChange = () => {
+        this.onViewportChange = (e) => {
             this.syncImgBox();
             this.updateInputBar();
+            /*
+             * v1.3.2（需求）：移动端键盘弹出时把「反向链接」栏收起来，
+             * 键盘收起再显示。用可见视口高度相对历史最大值的跌幅判断，
+             * 比监听 focus 可靠（部分浏览器焦点在 ProseMirror 内部节点上）。
+             */
+            if (this.isMobileViewport && typeof window !== 'undefined') {
+                const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 0;
+                if (!this._maxVh || vh > this._maxVh) this._maxVh = vh;
+                const nextKb = vh > 0 && vh < this._maxVh * 0.75;
+                if (this.kbOpen !== nextKb) this.kbOpen = nextKb;
+            }
+            // v1.3.2：窗口宽度变了要重新算工具栏溢出（滚动事件不重算，太频繁）
+            if (e && e.type === 'resize') {
+                clearTimeout(this._tbMeasureTimer);
+        if (this._tbRaf) cancelAnimationFrame(this._tbRaf);
+        if (this._tbRO) {
+            this._tbRO.disconnect();
+            this._tbRO = null;
+        }
+                this._tbMeasureTimer = setTimeout(() => this.measureToolbar(), 200);
+            }
         };
         window.addEventListener('resize', this.onViewportChange);
         window.addEventListener('scroll', this.onViewportChange, true);
@@ -1922,6 +2420,10 @@ export default {
         window.removeEventListener('resize', this.onViewportChange);
         window.removeEventListener('scroll', this.onViewportChange, true);
         if (this.saveTimer) clearTimeout(this.saveTimer);
+        if (this._cssEl && this._cssEl.parentNode) this._cssEl.parentNode.removeChild(this._cssEl);
+        this._cssEl = null;
+        clearTimeout(this._tbMeasureTimer);
+        if (this._tagBlurTimer) clearTimeout(this._tagBlurTimer);
         this.stopHistoryTimer();
         if (this._tagTimer) clearTimeout(this._tagTimer);
         if (this._tipTimer) clearTimeout(this._tipTimer);
@@ -1935,6 +2437,52 @@ export default {
         }
     },
     methods: {
+        /**
+         * v1.3.2 / v1.3.3：把设置里的自定义 CSS 限定在正文区内。
+         *
+         * v1.3.3 修过一次特异性：scoped 样式编译成 `.me-wysiwyg[data-v] .gh-editor-content h1`（0,3,1），
+         * 注入的全局规则只有（0,2,1），永远打不过内置样式。前缀加 #app 提到（1,3,1）。
+         *
+         * 注意：这是**方法**，不是 computed —— 之前误放进 computed，
+         * 结果 `this.applyCustomCss()` 直接抛 "is not a function"，设置页保存后整块逻辑断在这里。
+         */
+        applyCustomCss() {
+            const raw = String(this.editorConfig?.styles?.customCss || '').trim();
+            if (!this._cssEl) {
+                this._cssEl = document.createElement('style');
+                this._cssEl.setAttribute('data-memo-custom', '1');
+                document.head.appendChild(this._cssEl);
+            }
+            if (!raw) {
+                this._cssEl.textContent = '';
+                return;
+            }
+            /*
+             * 只给「普通选择器」加作用域前缀；@media / @supports 这类块原样保留 ——
+             * 它们内部的规则由用户自己保证不越界（设置页的提示里也写了）。
+             */
+            /*
+             * v1.3.3（需求：设置里的标题/正文样式不生效）
+             *
+             * 根因是**特异性**：本组件的样式是 scoped，编译后变成
+             * `.me-wysiwyg[data-v-xxx] .gh-editor-content h1`（0,3,1）；
+             * 而注入的全局规则只有 `.me-wysiwyg .gh-editor-content h1`（0,2,1），
+             * 永远打不过内置规则，看起来就是「设置了没反应」。
+             * 前面加一个 #app（id 选择器，1,3,1）稳定压过 scoped 规则。
+             */
+            const scope = '#app .me-wysiwyg .gh-editor-content';
+            const scoped = String(raw).replace(/(^|})\s*([^{}@]+)\{/g, (m, pre, sel) => {
+                const list = String(sel)
+                    .split(',')
+                    .map((x) => x.trim())
+                    .filter(Boolean)
+                    .map((x) => `${scope} ${x}`)
+                    .join(', ');
+                return `${pre} ${list} {`;
+            });
+            this._cssEl.textContent = scoped;
+        },
+
         // ---------------- 初始化 ----------------
 
         createEditor() {
@@ -2225,6 +2773,14 @@ export default {
             }
         },
         /** 空格 / 回车都算确认；空串忽略；重复忽略 */
+        /** v1.3.2（需求）：标签输入框失焦后收起候选下拉 */
+        onTagBlur() {
+            if (this._tagBlurTimer) clearTimeout(this._tagBlurTimer);
+            this._tagBlurTimer = setTimeout(() => {
+                this.tagCandidates = [];
+                this._tagBlurTimer = null;
+            }, 120);
+        },
         commitTag() {
             const name = String(this.tagInput || '').trim().replace(/\s+/g, ' ').slice(0, 20);
             this.tagInput = '';
@@ -2272,6 +2828,7 @@ export default {
         async openHistory() {
             this.historyVisible = true;
             this.historyPreview = null;
+            this.historySelectedId = '';
             await this.loadHistory();
         },
         async loadHistory() {
@@ -2290,11 +2847,17 @@ export default {
         async viewHistory(item) {
             const id = this.note?.id;
             if (!id || !item?.id) return;
+            this.historySelectedId = item.id;
             try {
                 this.historyPreview = await fetchNoteHistoryItem(id, item.id);
             } catch (e) {
                 ElMessage.error(this.$t('memo.historyLoadFail'));
             }
+        },
+        /** v1.3.2：移动端下拉框选版本 */
+        onHistorySelect(hid) {
+            const hit = (this.historyItems || []).find((h) => h.id === hid);
+            if (hit) this.viewHistory(hit);
         },
         async restoreHistoryItem(item) {
             const id = this.note?.id;
@@ -2375,14 +2938,123 @@ export default {
          *   工具栏 35px（min-height 34 + 1px 分隔），标题行 40px。
          * 数值与下方的 CSS 尺寸同步维护（改了高度记得一起改这两个常量）。
          */
+        /**
+         * v1.3.3（需求）：吸附矩阵 16 行的统一口径。
+         *
+         * 正滚：是否吸附完全按设置（工具栏 / 标题栏 / 附属栏各自独立）。
+         * 回滚：未开启的栏也临时吸住，回到自己的原始位置后自动脱离。
+         * top 偏移按「前面所有当前正在吸附的行」高度累加 —— 所以
+         *   · 工具栏吸住时，标题栏贴它最后一行下方；
+         *   · 标题栏不吸时，附属栏直接贴工具栏下方（表格 1.2.1 / 1.2.2）；
+         *   · 三行都不吸时，谁先吸谁贴顶（表格 2.x）。
+         */
+        isStickyNow(which) {
+            const cfg = this.stickyCfg || {};
+            if (cfg[which]) return true;
+            return !!this.reverseSticky;
+        },
+        stickyHeight(which) {
+            const host = this.$refs.bodyEl;
+            if (host) {
+                const sel = which === 'toolbar' ? '.me-toolbar-wrap' : (which === 'title' ? '.me-title-row' : '.me-meta');
+                const el = host.querySelector(sel);
+                if (el && el.offsetHeight) return el.offsetHeight;
+            }
+            return which === 'toolbar' ? 35 : 40;
+        },
         stickyTop(which) {
-            const s = this.stickyCfg;
+            const order = ['toolbar', 'title', 'aux'];
             let top = 0;
-            if (which !== 'toolbar' && s.toolbar) top += 35;
-            if (which === 'aux' && s.title) top += 40;
+            for (const k of order) {
+                if (k === which) break;
+                if (this.isStickyNow(k)) top += this.stickyHeight(k);
+            }
             return `${top}px`;
         },
         /** token 是不是工具组（`[组名 a b]` 解析出来的对象） */
+        /**
+         * v1.3.2（需求）：关闭吸附不代表永不吸附 ——
+         * 往上滚（scrollTop 变大）时不吸，往下回滚（scrollTop 变小）时临时吸住，
+         * 回到它自己的原始位置后由 sticky 自动脱离。CSS 只负责"吸"，方向由这个类控制。
+         */
+        onBodyScroll(e) {
+            const el = e && e.target;
+            if (!el) return;
+            // v1.3.3（需求）：光标工具栏跟随页面滚动，始终贴在光标那一行
+            if (this.inputBar.open) this.updateInputBar();
+            const top = el.scrollTop || 0;
+            const back = top < (this._lastScrollTop || 0) - 1;
+            this._lastScrollTop = top;
+            if (this.reverseSticky !== back) this.reverseSticky = back;
+        },
+        /** v1.3.2：该工具是否被折叠进行末下拉 */
+        isTbHidden(li, ti) {
+            const start = this.toolbarOverflow[li];
+            return typeof start === 'number' && ti >= start;
+        },
+        /**
+         * v1.3.2：测量每一行工具栏，把超出可视宽度的工具折叠进行末下拉。
+         * 只在桌面端做；移动端保留横滑（手指滑动比点两层菜单快）。
+         */
+        /** v1.3.3.1：观察工具栏尺寸，变化即重算溢出（rAF 合并多次回调） */
+        setupToolbarObserver() {
+            const wrap = this.$refs.toolbarWrap;
+            if (!wrap || typeof ResizeObserver === 'undefined') return;
+            if (this._tbRO) this._tbRO.disconnect();
+            this._tbRO = new ResizeObserver(() => {
+                if (this._tbRaf) cancelAnimationFrame(this._tbRaf);
+                this._tbRaf = requestAnimationFrame(() => {
+                    this._tbRaf = null;
+                    this.measureToolbar();
+                });
+            });
+            this._tbRO.observe(wrap);
+        },
+        measureToolbar() {
+            if (this.isMobileViewport) {
+                this.toolbarOverflow = {};
+                this.toolbarOverflowTools = {};
+                return;
+            }
+            const wrap = this.$refs.toolbarWrap;
+            if (!wrap) return;
+            const nextOverflow = {};
+            const nextTools = {};
+            Array.from(wrap.querySelectorAll('.me-toolbar')).forEach((lineEl, li) => {
+                const tokens = this.toolbarLines[li] || [];
+                /*
+                 * v1.3.3.1（实测修复）：不能在原 DOM 上「先移除隐藏类再量」——
+                 * 移除后触发的是上一帧的布局，量完又立刻隐藏，第二次测量读到的
+                 * 就是残缺宽度，结果 first 反复变化：下拉里有工具、原按钮却没隐掉。
+                 * 改成克隆一份到屏幕外（强制全部显示、同宽），在克隆上量。
+                 */
+                const clone = lineEl.cloneNode(true);
+                clone.style.cssText = `position:absolute;top:-9999px;left:0;visibility:hidden;pointer-events:none;width:${lineEl.clientWidth}px;display:flex;flex-wrap:nowrap;overflow:visible`;
+                clone.querySelectorAll('.is-tb-hidden').forEach((el) => el.classList.remove('is-tb-hidden'));
+                document.body.appendChild(clone);
+                const cells = Array.from(clone.querySelectorAll('[data-ti]'));
+                const limit = lineEl.clientWidth - 38;
+                let first = -1;
+                cells.forEach((c) => {
+                    const ti = Number(c.dataset.ti);
+                    if (first < 0 && c.offsetLeft + c.offsetWidth > limit) first = ti;
+                });
+                document.body.removeChild(clone);
+                if (first < 0) return;
+                const ids = [];
+                tokens.forEach((tk, ti) => {
+                    if (ti < first || tk === '|') return;
+                    if (this.isGroupToken(tk)) ids.push(...this.groupTools(tk));
+                    else if (this.toolsOf(tk)) ids.push(tk);
+                });
+                if (!ids.length) return;
+                nextOverflow[li] = first;
+                nextTools[li] = ids;
+            });
+            this.toolbarOverflow = nextOverflow;
+            this.toolbarOverflowTools = nextTools;
+
+        },
         isGroupToken(token) {
             return !!token && typeof token === 'object' && Array.isArray(token.tools);
         },
@@ -2603,7 +3275,8 @@ export default {
             // 需求：点击顶部按钮时在按钮上方显示名称，2 秒后消失
             if (evt) this.showToolName(token, evt);
             if (token === 'link') return this.insertLink();
-            if (token === 'image') return this.openImagePicker();
+            // v1.3.2（需求）：图片工具也要先调出「上传到图床」选择页，不再直接弹文件选择
+            if (token === 'image') return this.openUploadPicker();
             if (token === 'upload') return this.openUploadPicker();
             if (token === 'linkExtract') return this.extractLink();
             if (token === 'file' || token === 'video' || token === 'audio') {
@@ -2631,6 +3304,17 @@ export default {
             if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
             tool.run(this.editor);
             this.onEditorUpdate();
+            /*
+             * v1.3.3（需求：文件对齐后选框不跟随）
+             *
+             * 对齐改的是节点属性，选区没变 → 不会触发 selectionChange，
+             * 选框就停在旧位置。工具执行完主动重算一次几何。
+             */
+            this.$nextTick(() => {
+                this.syncImgBox();
+                this.syncMediaBar();
+                this.syncTableBar();
+            });
         },
 
         // ---------------- v1.3.1.2：左侧行级栏 ----------------
@@ -2699,14 +3383,72 @@ export default {
             this.onEditorUpdate();
         },
 
+        /** v1.3.3：改嵌入块的地址与高度（两步输入，避免做一个只为两行的表单弹窗） */
+        async editIframe(wrap) {
+            const ed = this.editor;
+            if (!ed) return;
+            let pos = -1;
+            try {
+                pos = ed.view.posAtDOM(wrap, 0);
+                pos -= 1;
+            } catch (e) {
+                return;
+            }
+            const node = ed.state.doc.nodeAt(pos);
+            if (!node || node.type.name !== 'iframe') return;
+            try {
+                const r1 = await ElMessageBox.prompt(this.$t('memo.iframeUrlPrompt'), this.$t('memo.iframeSettings'), {
+                    inputValue: String(node.attrs.src || ''),
+                    inputPlaceholder: 'https://…',
+                    inputValidator: (v) => (/^https?:\/\//i.test(String(v || '').trim()) ? true : this.$t('memo.linkInvalid')),
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel')
+                });
+                const r2 = await ElMessageBox.prompt(this.$t('memo.iframeHeightPrompt'), this.$t('memo.iframeSettings'), {
+                    inputValue: String(node.attrs.height || 420),
+                    inputPattern: /^\d{2,4}$/,
+                    inputErrorMessage: this.$t('memo.iframeHeightInvalid'),
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel')
+                });
+                ed.chain()
+                    .focus()
+                    .command(({ tr }) => {
+                        tr.setNodeMarkup(pos, undefined, {
+                            ...node.attrs,
+                            src: String(r1.value || '').trim(),
+                            height: Math.min(2000, Math.max(120, Number(r2.value) || 420))
+                        });
+                        return true;
+                    })
+                    .run();
+                this.onEditorUpdate();
+            } catch (e) {
+                /* 取消 */
+            }
+        },
+
         // ---------------- v1.3.1.2：引用悬停预览 ----------------
 
         async loadHoverCard(el, rect) {
             const noteId = el.getAttribute('data-note-id') || '';
             const blockId = el.getAttribute('data-block-id') || '';
             if (!noteId && !blockId) return;
-            const x = Math.min(rect.left, Math.max(8, window.innerWidth - 320));
-            const y = Math.min(rect.bottom + 8, Math.max(8, window.innerHeight - 180));
+            /*
+             * v1.3.3（需求）：`[[` 悬停预览按「上下哪边空间大」决定方位。
+             * 卡片高度按 158 估（标题一行 + 正文 3 行 + 内边距），上下都不够时贴视口边。
+             */
+            const CARD_W = 300;
+            const CARD_H = 158;
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            const spaceBelow = vh - rect.bottom - 8;
+            const spaceAbove = rect.top - 8;
+            const above = spaceAbove > spaceBelow && spaceAbove > 120;
+            const x = Math.max(8, Math.min(rect.left, vw - CARD_W - 8));
+            const y = above
+                ? Math.max(8, Math.min(rect.top - CARD_H - 8, vh - CARD_H - 8))
+                : Math.min(rect.bottom + 8, vh - CARD_H - 8);
             this.hoverCard = { open: true, x, y, title: '', text: '', loading: true };
             try {
                 if (blockId) {
@@ -3069,13 +3811,22 @@ export default {
             el.value = '';
             el.click();
         },
+        /** v1.3.2（需求）：每次打开都按当前月份回填 /notes/memo/年/月 */
+        openUploadTarget() {
+            this.uploadPrefill = {
+                channelId: '',
+                instanceId: this.instanceId || '',
+                uploadFolder: defaultUploadFolder('memo'),
+            };
+            this.uploadTargetVisible = true;
+        },
         onAnyFileChange(event) {
             const files = Array.from(event?.target?.files || []);
             if (event?.target) event.target.value = '';
             if (!files.length) return;
             this.pendingUploadFiles = files;
             // 需求：选完文件先调出「上传到图床」面板，确认后才上传
-            this.uploadTargetVisible = true;
+            this.openUploadTarget();
         },
         /**
          * 链接提取（需求：与瞬间编辑页的链接提取一致）。
@@ -3098,7 +3849,7 @@ export default {
             this.pendingLinkUrl = url;
             this.pendingUploadFiles = [];
             this.uploadMode = 'url';
-            this.uploadTargetVisible = true;
+            this.openUploadTarget();
         },
 
         /** 面板确认：按选定的渠道 / 实例 / 目录逐个上传，再插到光标处 */
@@ -3109,7 +3860,16 @@ export default {
                     const hit = await importUrlToBed(this.pendingLinkUrl, target || {});
                     const id = String(hit?.id || hit?.name || '');
                     if (id) {
-                        this.onPicked([{ id, name: hit?.originalName || hit?.name || id, mime: hit?.mime || '' }]);
+                        /*
+                         * v1.3.2（需求：链接提取要把图片 / 视频 / 音频按媒体插入，
+                         * 而不是一律当附件）
+                         *
+                         * 转存接口不一定回 mime，这里按文件名后缀兜一层；
+                         * 仍然判不出类型时才落成 ![[file:...]] 附件。
+                         */
+                        const nm = String(hit?.originalName || hit?.name || id);
+                        const mime = String(hit?.mime || hit?.type || guessMimeByName(nm) || '');
+                        this.onPicked([{ id, name: nm, mime }]);
                     }
                     this.uploadTargetVisible = false;
                     this.pendingLinkUrl = '';
@@ -3218,18 +3978,61 @@ export default {
             event.preventDefault();
             if (!this.editor || this.mode !== 'wysiwyg') return false;
             const sel = this.editor.state.selection;
+            /*
+             * v1.3.3（需求）：只要选中有内容，右键 / 长按一律不弹「编辑菜单」，
+             * 交给选中浮层（复制/剪切/加粗…）。桌面端原来还会弹一份重复的右键菜单，
+             * 两套菜单同时出现既挤又容易点错。
+             */
+            if (!sel.empty) {
+                this.closeCtxMenu();
+                this.$nextTick(() => this.onSelectionChange());
+                return false;
+            }
             let kind = 'empty';
             if (!sel.empty) {
                 // 「段落」与「标题 / 文件 / 其他」在需求里只在「有没有超链接」上有差别
                 kind = this.editor.isActive('paragraph') ? 'paragraph' : 'other';
             }
+            /*
+             * v1.3.2（需求）：菜单以「一行」显示在光标所在行的上方。
+             * 先按条目数估个高度，放不下就翻到光标下方 —— 顶部边缘右键时不至于被裁掉。
+             */
+            const menuH = 46;
             const x = Math.min(event.clientX || 0, Math.max(8, window.innerWidth - 190));
-            const y = Math.min(event.clientY || 0, Math.max(8, window.innerHeight - 260));
+            let y = (event.clientY || 0) - menuH - 10;
+            if (y < 8) y = Math.min((event.clientY || 0) + 18, Math.max(8, window.innerHeight - menuH));
             this.ctxMenu = { open: true, x, y, kind };
             return false;
         },
         closeCtxMenu() {
             if (this.ctxMenu.open) this.ctxMenu = { ...this.ctxMenu, open: false };
+        },
+        /** v1.3.3：浮层里 B / I / U / S 用字母更直观 */
+        bubLetter(id) {
+            return { bold: 'B', italic: 'I', underline: 'U', strike: 'S' }[id] || '';
+        },
+        isToolActive(id) {
+            const tool = TOOLS[id];
+            return !!(tool && tool.active && tool.active(this.editor));
+        },
+        /** v1.3.3：按 id 执行右键菜单项（编辑工具走 runTool，其余走动作表） */
+        runCtx(item) {
+            if (!item || item.sep) return;
+            if (item.tool) return this.runTool(item.id);
+            const fn = item.call && this[item.call];
+            if (typeof fn === 'function') return fn.call(this);
+        },
+        ctxPasteRich() {
+            return this.ctxPaste('rich');
+        },
+        ctxPasteKeep() {
+            return this.ctxPaste('keep');
+        },
+        ctxPastePlain() {
+            return this.ctxPaste('plain');
+        },
+        ctxPasteEscaped() {
+            return this.ctxPaste('escaped');
         },
         ctxCopy() {
             this.closeCtxMenu();
@@ -3345,14 +4148,37 @@ export default {
             }
             try {
                 const { from } = ed.state.selection;
-                const coords = ed.view.coordsAtPos(from);
-                this.tableBar = {
-                    open: true,
-                    style: {
-                        left: `${Math.round(Math.max(8, coords.left))}px`,
-                        top: `${Math.round(Math.max(8, coords.top - 40))}px`,
-                    },
-                };
+                /*
+                 * v1.3.2（需求）：表格操作条贴在表格第一行上方 / 最后一行下方，
+                 * 哪边在可视区就放哪边，并用箭头指向表格。
+                 */
+                const at = ed.view.domAtPos(from);
+                let el = at && at.node;
+                if (el && el.nodeType === 3) el = el.parentElement;
+                const table = el && el.closest ? el.closest('table') : null;
+                const r = table ? table.getBoundingClientRect() : null;
+                if (r) {
+                    const above = r.top > 64;
+                    const left = Math.max(8, Math.min(r.left, window.innerWidth - 320));
+                    this.tableBar = {
+                        open: true,
+                        above,
+                        style: {
+                            left: `${Math.round(left)}px`,
+                            top: `${Math.round(above ? r.top - 42 : r.bottom + 8)}px`,
+                        },
+                    };
+                } else {
+                    const coords = ed.view.coordsAtPos(from);
+                    this.tableBar = {
+                        open: true,
+                        above: true,
+                        style: {
+                            left: `${Math.round(Math.max(8, coords.left))}px`,
+                            top: `${Math.round(Math.max(8, coords.top - 40))}px`,
+                        },
+                    };
+                }
             } catch (e) {
                 this.tableBar = { open: false, style: {} };
             }
@@ -3544,8 +4370,28 @@ export default {
         applyRef(item) {
             const ed = this.editor;
             if (!ed || !item) return;
+            const mode = this.ref.mode;
+            const query = String(this.ref.query || '');
             this.closeRef();
-            ed.chain().focus().insertContent(item.insert).run();
+            /*
+             * v1.3.2（需求）：选中后要清掉刚才输入的 `[[`（以及查询词），
+             * 并且**立刻**换成引用节点，不再等下一次刷新。
+             * 旧实现是 insertContent('[[note:..]]') —— 插进去的是一段纯文本，
+             * 只有重新打开笔记走 mdToDoc 时才会变成 gh-noteref，所以看起来"没生效"。
+             */
+            const { $from } = ed.state.selection;
+            const from = Math.max(0, $from.pos - 2 - query.length);
+            const node = mode === 'block'
+                ? { type: 'blockRef', attrs: { blockId: String(item.id || '') } }
+                : {
+                    type: 'noteRef',
+                    attrs: { noteId: String(item.id || ''), blockId: null, label: String(item.label || '') },
+                };
+            ed.chain()
+                .focus()
+                .deleteRange({ from, to: $from.pos })
+                .insertContent(node)
+                .run();
             this.onEditorUpdate();
         },
 
@@ -3644,6 +4490,14 @@ export default {
             }
             const { state } = ed;
             const { $from, empty } = state.selection;
+            /*
+             * v1.3.3（需求）：光标工具栏不要出现在表格里 ——
+             * 表格有自己的操作条，两条浮层叠在同一个单元格上会互相挡。
+             */
+            if (ed.isActive('table')) {
+                if (this.inputBar.open) this.inputBar = { open: false, style: {} };
+                return;
+            }
             const isEmptyLine = empty && $from.parent.type.name === 'paragraph' && $from.parent.content.size === 0;
             if (!isEmptyLine) {
                 if (this.inputBar.open) this.inputBar = { open: false, style: {} };
@@ -3655,13 +4509,23 @@ export default {
              * left 让出光标本身与左箭头的位置（+14px）。
              * 右边贴到窗口时把整条往左推，避免出屏（宽度先用经验值 320 兜，真实宽度由 CSS 决定）。
              */
-            const barW = Math.min(560, Math.max(200, this.inputTools.length * 30 + 16));
-            const left = Math.max(8, Math.min(coords.left + 14, window.innerWidth - barW - 8));
+            /*
+             * v1.3.2（需求）：
+             *   · 箭头与光标间距再拉开 10px（14 → 24）；
+             *   · 最大宽度不超过编辑区宽度的 60%；
+             *   · 垂直方向让工具条中心对齐光标所在行的中心，箭头才不会偏下。
+             */
+            const edW = (this.$refs.bodyEl && this.$refs.bodyEl.clientWidth) || window.innerWidth;
+            const maxW = Math.max(160, Math.round(edW * 0.6));
+            const barW = Math.min(maxW, 560, Math.max(200, this.inputTools.length * 30 + 16));
+            const left = Math.max(8, Math.min(coords.left + 24, window.innerWidth - barW - 8));
+            const lineCenter = (coords.top + coords.bottom) / 2;
             this.inputBar = {
                 open: true,
                 style: {
                     left: `${Math.round(left)}px`,
-                    top: `${Math.round(coords.top - 3)}px`,
+                    top: `${Math.round(lineCenter - 17)}px`,
+                    maxWidth: `${maxW}px`,
                 },
             };
         },
@@ -3685,6 +4549,13 @@ export default {
             const items = base.filter((c) => {
                 if (c.separator) return !query;
                 if (!query) return true;
+                if (c.group) {
+                    const name = String(c.label || '').toLowerCase();
+                    if (name.includes(query)) return true;
+                    return (c.tools || []).some((t) =>
+                        this.$t(t.label).toLowerCase().includes(query) || String(t.id).toLowerCase().includes(query),
+                    );
+                }
                 return this.$t(c.label).toLowerCase().includes(query) || String(c.id).toLowerCase().includes(query);
             });
             const coords = ed.view.coordsAtPos($from.pos);
@@ -3698,6 +4569,7 @@ export default {
             const openUp = spaceBelow < estHeight && coords.top > spaceBelow;
             this.slash = {
                 open: true,
+                sub: null,
                 index: Math.min(this.slash.index, Math.max(0, items.length - 1)),
                 items,
                 /*
@@ -3726,10 +4598,24 @@ export default {
         },
 
         closeSlash() {
+            if (this.slash.sub) this.slash = { ...this.slash, sub: null };
             if (this.slash.open) this.slash = { ...this.slash, open: false, items: [], index: 0 };
         },
 
+        /**
+         * v1.3.3：展开 `/` 菜单里的工具组二级菜单。
+         *
+         * 上一版只在模板里绑了 openSlashGroup，方法本身没有落进 methods
+         * （插入位置被另一次改动覆盖），于是 hover / click 都抛
+         * "t.openSlashGroup is not a function" —— 这就是二级菜单打不开的真正原因。
+         */
+        openSlashGroup(cmd) {
+            if (!cmd || !cmd.group) return;
+            this.slash = { ...this.slash, sub: { id: cmd.id, items: cmd.tools || [] } };
+        },
+
         async applySlash(cmd) {
+            if (cmd && cmd.group) return this.openSlashGroup(cmd);
             const ed = this.editor;
             if (!ed || !cmd || cmd.separator) return;
             const { from, to } = this.slash;
@@ -3747,10 +4633,61 @@ export default {
             this.runTool(cmd.id);
         },
 
+        /**
+         * v1.3.3（需求）：选中图片 / 视频 / 音频 / 附件时，浮出一条工具带。
+         * 视频 / 音频 / 附件在文档里都是 fileAttachment 节点，按 href 扩展名区分。
+         */
+        syncMediaBar() {
+            const empty = { open: false, style: {}, kind: 'image' };
+            const ed = this.editor;
+            const host = this.$refs.bodyEl;
+            if (!ed || this.mode !== 'wysiwyg' || !host) {
+                if (this.mediaBar.open) this.mediaBar = empty;
+                return;
+            }
+            const sel = ed.state.selection;
+            if (!(sel instanceof NodeSelection)) {
+                if (this.mediaBar.open) this.mediaBar = empty;
+                return;
+            }
+            const name = sel.node.type.name;
+            let kind = '';
+            if (name === 'image') kind = 'image';
+            else if (name === 'fileAttachment') {
+                const ext = (/\.([a-z0-9]+)(?:$|[?#])/i.exec(String(sel.node.attrs.href || '')) || [])[1] || '';
+                const e = ext.toLowerCase();
+                if (['mp4', 'webm', 'mov', 'm4v', 'ogv'].includes(e)) kind = 'video';
+                else if (['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac'].includes(e)) kind = 'audio';
+                else kind = 'file';
+            }
+            if (!kind) {
+                if (this.mediaBar.open) this.mediaBar = empty;
+                return;
+            }
+            const dom = ed.view.nodeDOM(sel.from);
+            if (!dom || typeof dom.getBoundingClientRect !== 'function') {
+                this.mediaBar = empty;
+                return;
+            }
+            const r = dom.getBoundingClientRect();
+            const h = host.getBoundingClientRect();
+            const width = Math.min(360, Math.max(180, this.mediaTools.length * 32));
+            const center = r.left + r.width / 2;
+            const left = Math.min(Math.max(8, center - width / 2), window.innerWidth - width - 8);
+            this.mediaBar = {
+                open: true,
+                kind,
+                style: {
+                    left: `${Math.round(left)}px`,
+                    top: `${Math.round(Math.max(8, r.top - 44))}px`
+                }
+            };
+        },
         /** 选中非空时在选区上方显示浮层；位置手算，不用 Tiptap 内置 BubbleMenu */
         onSelectionChange() {
             // 图片被选中时浮出缩放手柄；其它情况一律收起
             this.syncImgBox();
+            this.syncMediaBar();
             this.updateInputBar();
             this.syncTableBar();
             const ed = this.editor;
@@ -3760,6 +4697,12 @@ export default {
             }
             const { state } = ed;
             const { from, to, empty } = state.selection;
+            /*
+             * v1.3.2（需求：点别处 / 移到别处后 `[[` 与 `/` 浮层还在）
+             * 选区一变就重新判断触发器；光标离开 `[[查询` 或行首 `/` 时自然关闭。
+             */
+            this.updateRef();
+            this.updateSlash();
             if (empty) {
                 this.bubble.open = false;
                 return;
@@ -3796,10 +4739,16 @@ export default {
  * 标题独占一行（块级），下面两行分别是时间信息与标签。
  */
 .me-head {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    padding: 12px 16px 8px;
+    /*
+     * v1.3.2（需求：标题栏 / 附属栏开启吸附后行为异常）
+     *
+     * 根因：sticky 元素只能在自己**父元素的高度范围内**吸住。三行原来都包在
+     * `.me-head` 里，而 `.me-head` 只有这三行高 —— 一滚过它，标题就被"顶"走了，
+     * 看起来像"没吸住"或"吸一下就跑了"。
+     * display: contents 让三行直接成为滚动容器（.me-body）的子项，
+     * 吸住范围就变成整篇正文；原来的内边距/间距改由每个子块自己承担。
+     */
+    display: contents;
 }
 .me-meta {
     display: flex;
@@ -3808,6 +4757,13 @@ export default {
     gap: 10px;
     font-size: 12px;
     color: var(--el-text-color-secondary);
+    /*
+     * v1.3.2（需求）：元信息行上下的分隔线间距要均匀，且只保留上面一条。
+     * display: contents 之后内边距要自己补；上下都取 6px，视觉上正好居中。
+     */
+    padding: 6px 16px;
+    border-top: 1px solid var(--el-border-color-lighter);
+    border-bottom: 0;
 }
 .me-meta-item {
     display: inline-flex;
@@ -3845,6 +4801,9 @@ export default {
     flex-wrap: wrap;
     gap: 6px;
     min-height: 26px;
+    /* v1.3.2（需求）：标签行下方补一条分隔线，与上方元信息行的线形成上下呼应 */
+    padding: 0 16px 10px;
+    border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .me-tag {
     display: inline-flex;
@@ -3942,6 +4901,7 @@ export default {
 /* 左指三角：旋转一个方块，只露左边那一半 */
 .me-inputbar-arrow {
     position: absolute;
+    /* v1.3.2：箭头仍贴在工具条左侧（工具条整体已右移 10px，间距随之加大） */
     left: -5px;
     top: 50%;
     width: 9px;
@@ -3958,6 +4918,8 @@ export default {
     display: flex;
     align-items: center;
     gap: 2px;
+    /* v1.3.2：宽度上限由 JS 按编辑区 60% 写在 .me-inputbar 上 */
+    max-width: 100%;
     overflow-x: auto;
     scrollbar-width: none;
     -webkit-overflow-scrolling: touch;
@@ -4004,6 +4966,29 @@ export default {
     font-size: 13px;
 }
 /* 斜杠菜单分隔线 */
+.me-slash-group {
+    position: relative;
+}
+.me-slash-caret {
+    margin-left: auto;
+    font-size: 10px;
+    opacity: 0.6;
+}
+/* v1.3.2：工具组二级菜单，贴在组名右侧 */
+.me-slash-sub {
+    position: absolute;
+    left: calc(100% + 4px);
+    top: -4px;
+    z-index: 2;
+    min-width: 170px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 4px;
+    border: 1px solid var(--el-border-color-light);
+    border-radius: 9px;
+    background: var(--el-bg-color-overlay);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
 .me-slash-sep {
     height: 1px;
     margin: 4px 6px;
@@ -4192,7 +5177,77 @@ export default {
     border-radius: 8px;
     background: var(--el-fill-color-lighter);
 }
+/*
+ * v1.3.3（需求）：HTML / MD 互转页改成视口 98%，移动端上下布局。
+ * 桌面左右对照、移动端上 HTML 下 MD —— 横向放两栏在手机上每栏只剩 150px，没法看。
+ */
+/* v1.3.3.1：这两条 dialog 规则移到文件末尾的非 scoped 块（根节点没有 data-v） */
+.me-htmlmd {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+    min-height: 0;
+}
+.me-htmlmd-col {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.me-htmlmd-label {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+.me-htmlmd-text {
+    flex: 1 1 auto;
+    min-height: 200px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+    color: var(--el-text-color-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    resize: none;
+}
+@media (max-width: 900px) {
+    .me-htmlmd {
+        flex-direction: column;
+    }
+    .me-htmlmd-text {
+        min-height: 0;
+    }
+}
+
+.me-wysiwyg :deep(.gh-iframe-config) {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 3;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--el-border-color-light);
+    border-radius: 6px;
+    background: var(--el-bg-color-overlay);
+    color: var(--el-text-color-regular);
+    font-size: 13px;
+    line-height: 22px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+.me-wysiwyg :deep(.gh-iframe-wrap:hover .gh-iframe-config) {
+    opacity: 1;
+}
+
 .me-wysiwyg :deep(.gh-iframe-wrap) {
+    /* v1.3.3：齿轮按钮绝对定位，容器必须有定位上下文 */
+    position: relative;
     border: 1px solid var(--el-border-color-lighter);
     border-radius: 8px;
     overflow: hidden;
@@ -4213,25 +5268,35 @@ export default {
  * 高度这里算：100vh - 顶部 1vh - 标题行 - 底部按钮行，粗略扣 110px，
  * 再把弹窗自身限制成 98vh，就不会顶出屏幕、也不需要页面滚。
  */
-.me-history-dialog {
-    max-width: 98vw;
-    margin-bottom: 1vh;
-}
-.me-history-dialog .el-dialog__body {
-    height: calc(98vh - 112px);
-    padding-top: 8px;
+/*
+ * v1.3.2（需求：历史弹窗宽高改为视口 98%，左右两栏各自独立滚动）
+ *
+ * 原来的 `.me-history-dialog .el-dialog__body` 没有 `:deep()` —— scoped 样式会把
+ * 选择器编译成 `.el-dialog__body[data-v-xxx]`，而 Dialog 的 body 是 Element Plus
+ * 自己的节点，不带这个属性，于是那条高度规则从来没生效过：弹窗高度由内容撑，
+ * 列表和预览就跟着整个 body 一起滚。
+ * 现在用 :deep() 真正把 body 变成 flex 容器，两栏各自 overflow。
+ */
+/* v1.3.3.1：这两条 dialog 规则移到文件末尾的非 scoped 块（根节点没有 data-v） */
+.me-hist-mobile {
     padding-bottom: 8px;
-    box-sizing: border-box;
+}
+.me-hist-select {
+    width: 100%;
 }
 .me-hist-wrap {
     display: flex;
     gap: 12px;
     height: 100%;
-    min-height: 240px;
+    min-height: 0;
+}
+.me-hist-wrap.is-mobile {
+    flex-direction: column;
 }
 .me-hist-list {
     flex: 0 0 260px;
     max-width: 260px;
+    min-height: 0;
     overflow-y: auto;
     border-right: 1px solid var(--el-border-color-lighter);
     padding-right: 8px;
@@ -4276,6 +5341,7 @@ export default {
 .me-hist-preview {
     flex: 1 1 auto;
     min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
 }
@@ -4355,23 +5421,43 @@ export default {
    压住正文、给底色、补一条分隔线。 */
 .me-toolbar-wrap.is-sticky,
 .me-title-row.is-sticky,
+.me-meta.is-sticky,
+.me-toolbar-wrap.is-sticky,
+.me-title-row.is-sticky,
 .me-meta.is-sticky {
     position: sticky;
     z-index: 6;
     background: var(--el-bg-color);
 }
+/* 工具栏永远压在最上层；标题其次，附属栏最低（需求：工具栏层级最高） */
+.me-toolbar-wrap.is-sticky,
+.me-toolbar-wrap.is-sticky {
+    z-index: 9;
+}
+.me-title-row.is-sticky,
+.me-title-row.is-sticky {
+    z-index: 8;
+}
+.me-meta.is-sticky,
+.me-meta.is-sticky {
+    z-index: 7;
+}
 .me-title-row {
     display: flex;
     align-items: center;
+    /* v1.3.2：原 .me-head 的内边距下放（display: contents 后它不再产生盒子） */
+    padding: 12px 16px 0;
 }
 .me-title-row.is-sticky {
     /* 标题吸住时补一条极淡的分隔，否则正文会「贴着」标题滑过去 */
     box-shadow: inset 0 -1px 0 var(--el-border-color-lighter);
     min-height: 40px;
 }
+.me-meta.is-sticky,
 .me-meta.is-sticky {
-    box-shadow: inset 0 -1px 0 var(--el-border-color-lighter);
-    padding-bottom: 2px;
+    /* v1.3.2：下分隔线已由 .me-tags 承担，这里不再画一条 */
+    box-shadow: none;
+    padding-bottom: 6px;
 }
 .me-toolbar {
     display: flex;
@@ -4384,6 +5470,19 @@ export default {
 }
 .me-toolbar::-webkit-scrollbar {
     display: none;
+}
+/* v1.3.2：桌面端溢出折叠 —— 被折叠的工具从行里移除，改从行末下拉里点 */
+.me-toolbar .is-tb-hidden {
+    display: none !important;
+}
+.me-toolbar-more .me-btn {
+    width: auto;
+    padding: 0 5px;
+    gap: 2px;
+}
+.me-more-count {
+    font-size: 10px;
+    opacity: 0.7;
 }
 .me-btn {
     flex: 0 0 auto;
@@ -4398,6 +5497,18 @@ export default {
     color: var(--el-text-color-regular);
     font-size: 13px;
     cursor: pointer;
+}
+.me-mode-btn {
+    width: auto;
+    padding: 0 7px;
+    gap: 4px;
+}
+.me-mode-text {
+    font-size: 12px;
+}
+.me-mode-caret {
+    font-size: 10px;
+    opacity: 0.65;
 }
 .me-btn:hover {
     background: var(--el-fill-color);
@@ -4495,6 +5606,10 @@ export default {
     font-size: 12px;
     color: var(--el-text-color-secondary);
 }
+.me-mediabar {
+    z-index: 3001;
+}
+
 .me-bubble {
     position: fixed;
     z-index: 3000;
@@ -4506,6 +5621,26 @@ export default {
     background: var(--el-bg-color-overlay);
     border: 1px solid var(--el-border-color-light);
     box-shadow: var(--el-box-shadow-light);
+}
+/* v1.3.2（需求）：移动端所有悬浮工具栏最宽不超过编辑区的 70%，超出横滑 */
+@media (max-width: 900px), (hover: none) {
+    .me-bubble,
+    .me-tablebar {
+        max-width: 70%;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+    .me-bubble::-webkit-scrollbar,
+    .me-tablebar::-webkit-scrollbar {
+        display: none;
+    }
+    .me-inputbar {
+        max-width: 70%;
+    }
+    .me-inputbar-scroll {
+        max-width: 100%;
+        min-width: 0;
+    }
 }
 .me-bub-sep {
     width: 1px;
@@ -4609,6 +5744,25 @@ export default {
 }
 
 /* 表格操作条：与选区浮层同一套观感，浮在表格上方 */
+.me-tablebar-arrow {
+    position: absolute;
+    left: 18px;
+    bottom: -5px;
+    width: 9px;
+    height: 9px;
+    background: var(--el-bg-color-overlay);
+    border-right: 1px solid var(--el-border-color-light);
+    border-bottom: 1px solid var(--el-border-color-light);
+    transform: rotate(45deg);
+}
+.me-tablebar.is-below .me-tablebar-arrow {
+    bottom: auto;
+    top: -5px;
+    border-right: none;
+    border-bottom: none;
+    border-left: 1px solid var(--el-border-color-light);
+    border-top: 1px solid var(--el-border-color-light);
+}
 .me-tablebar {
     position: fixed;
     z-index: 2900;
@@ -4626,23 +5780,27 @@ export default {
 .me-wysiwyg :deep(.gh-gutter) {
     display: inline-block;
     width: 0;
-    height: 1.2em;
+    /* v1.3.2：行号按块首行的行高定位，任务列表 / 标题也不会上下错位 */
+    height: 1.7em;
     position: relative;
-    vertical-align: middle;
+    vertical-align: top;
 }
 .me-wysiwyg :deep(.gh-gutter-btn) {
     position: absolute;
-    left: -24px;
-    top: -3px;
-    width: 18px;
-    height: 22px;
+    left: -25px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 20px;
+    height: 20px;
     padding: 0;
     border: none;
     border-radius: 4px;
     background: transparent;
     color: var(--el-text-color-placeholder);
-    font-size: 13px;
-    line-height: 22px;
+    font-size: 10px;
+    line-height: 20px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
     cursor: pointer;
     opacity: 0;
     transition: opacity 0.12s ease, background 0.12s ease;
@@ -4655,10 +5813,13 @@ export default {
     background: var(--el-fill-color);
     color: var(--el-color-primary);
 }
-/* 移动端没有 hover，行级栏一直显示会把正文挤得太窄 —— 直接隐藏 */
+/* v1.3.2（需求）：移动端也显示行号（原来直接隐藏） */
 @media (max-width: 900px) {
     .me-wysiwyg :deep(.gh-gutter-btn) {
-        display: none;
+        display: block;
+        opacity: 0.65;
+        left: -20px;
+        font-size: 9px;
     }
 }
 .me-gutter-menu {
@@ -4669,18 +5830,31 @@ export default {
 .me-ctx {
     position: fixed;
     z-index: 3100;
-    min-width: 178px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 2px;
+    min-width: 0;
+    /* v1.3.2（需求）：右键菜单改成一行；移动端最宽 70%，超出横滑 */
+    max-width: min(70vw, 620px);
+    overflow-x: auto;
     padding: 5px;
     border: 1px solid var(--el-border-color-light);
     border-radius: 10px;
     background: var(--el-bg-color-overlay);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+    scrollbar-width: none;
+}
+.me-ctx::-webkit-scrollbar {
+    display: none;
 }
 .me-ctx-item {
     display: flex;
     align-items: center;
-    gap: 8px;
-    width: 100%;
+    gap: 6px;
+    width: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
     padding: 6px 8px;
     border: none;
     border-radius: 6px;
@@ -4897,6 +6071,14 @@ export default {
 }
 .me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > label input) {
     margin: 0;
+}
+/* v1.3.2（需求：勾选框 / 文字 / 行号三者仍不在一条线上） */
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > div) {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > div > p:first-child) {
+    margin-top: 0;
 }
 .me-preview :deep(ul:has(input[type='checkbox']) li) {
     align-items: center;
@@ -5310,6 +6492,9 @@ export default {
 /* ============================================================
    反向链接面板（v1.5.0）
    ============================================================ */
+.me-backlinks.is-kb-hidden {
+    display: none;
+}
 .me-backlinks {
     flex: 0 0 auto;
     border-top: 1px solid var(--el-border-color-lighter);
@@ -5402,5 +6587,53 @@ export default {
     padding: 6px;
     font-size: 12px;
     color: var(--el-text-color-secondary);
+}
+</style>
+
+<style>
+/*
+ * v1.3.3.1（实测修复）：Element Plus 的 el-dialog 根节点不带父组件的 data-v，
+ * scoped 里的 `.me-history-dialog` / `.me-htmlmd-dialog` 规则永远匹配不到，
+ * 表现是「历史弹窗高度只有 284px、互转页不铺满」。
+ * 这里用非 scoped 块承接。注意不能用 `#app` 做前缀：dialog 被 teleport 到 body，
+ * 根本不在 #app 的子树里，加了前缀反而一条都匹配不到（这就是第一次没生效的原因）。
+ */
+.me-history-dialog {
+    max-width: 98vw;
+    height: 98vh;
+    max-height: 98vh !important;
+    margin: 1vh auto !important;
+    display: flex;
+    flex-direction: column;
+}
+.me-history-dialog .el-dialog__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    height: auto;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+.me-history-dialog .el-dialog__header,
+.me-history-dialog .el-dialog__footer {
+    flex: 0 0 auto;
+}
+
+.me-htmlmd-dialog {
+    width: 98vw !important;
+    max-width: 98vw;
+    height: 98vh;
+    max-height: 98vh !important;
+    margin: 1vh auto !important;
+    display: flex;
+    flex-direction: column;
+}
+.me-htmlmd-dialog .el-dialog__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    padding: 8px 10px;
+    box-sizing: border-box;
 }
 </style>

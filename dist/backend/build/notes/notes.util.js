@@ -82,6 +82,7 @@ exports.DEFAULT_EDITOR_STYLES = {
     h5: 1,
     h6: 0.94,
     lineHeight: 1.75,
+    customCss: '',
 };
 function normalizeEditorStyles(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
@@ -99,6 +100,7 @@ function normalizeEditorStyles(raw) {
         h5: num(o.h5, 0.8, 1.8, exports.DEFAULT_EDITOR_STYLES.h5),
         h6: num(o.h6, 0.75, 1.6, exports.DEFAULT_EDITOR_STYLES.h6),
         lineHeight: num(o.lineHeight, 1.2, 2.4, exports.DEFAULT_EDITOR_STYLES.lineHeight),
+        customCss: String(o.customCss || '').slice(0, 4000),
     };
 }
 function normalizeSticky(raw) {
@@ -135,6 +137,12 @@ function normalizeEditorSettings(raw) {
         theme: themeRaw === 'light' || themeRaw === 'dark' ? themeRaw : 'auto',
         inputLines: normalizeToolLines(o.inputLines, 8),
         slashLines: normalizeToolLines(o.slashLines, 12),
+        rightClickLines: normalizeToolLines(o.rightClickLines, 12),
+        selectionLines: normalizeToolLines(o.selectionLines, 12),
+        selectImageLines: normalizeToolLines(o.selectImageLines, 8),
+        selectVideoLines: normalizeToolLines(o.selectVideoLines, 8),
+        selectAudioLines: normalizeToolLines(o.selectAudioLines, 8),
+        selectFileLines: normalizeToolLines(o.selectFileLines, 8),
         historyInterval: Number.isFinite(interval)
             ? Math.min(exports.HISTORY_INTERVAL_MAX, Math.max(exports.HISTORY_INTERVAL_MIN, interval))
             : exports.DEFAULT_HISTORY_INTERVAL,

@@ -570,7 +570,7 @@ let MemoService = class MemoService {
                 instanceId,
                 type: 'note',
                 ...(kw ? { name: { contains: kw, mode: 'insensitive' } } : {}),
-                noteTags: { some: { note: { author: viewer, instanceId } } },
+                OR: [{ scope: String(viewer || '') }, { owner: String(viewer || '') }],
             },
             select: { id: true, name: true },
             orderBy: { name: 'asc' },

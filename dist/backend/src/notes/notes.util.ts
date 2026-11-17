@@ -199,6 +199,16 @@ export interface EditorSettings {
   inputLines: string[];
   /** v1.3.1.1：「/」菜单工具配置（一行一条，支持 | 分隔线） */
   slashLines: string[];
+  /*
+   * v1.3.2（需求）：六类「上下文工具」各自可配。
+   * 空数组 = 没配置过，前端用内置默认；这样升级后不会突然丢掉原来的菜单。
+   */
+  rightClickLines: string[];
+  selectionLines: string[];
+  selectImageLines: string[];
+  selectVideoLines: string[];
+  selectAudioLines: string[];
+  selectFileLines: string[];
   /** v1.3.1.1：历史记录自动保存间隔（分钟） */
   historyInterval: number;
   /**
@@ -223,6 +233,8 @@ export interface EditorStyleSettings {
   h6: number;
   /** 正文行高（1.2 ~ 2.4） */
   lineHeight: number;
+  /** v1.3.2：自定义 CSS（作用于编辑器正文区，选择器会自动加上作用域前缀） */
+  customCss: string;
 }
 
 export const DEFAULT_EDITOR_STYLES: EditorStyleSettings = {
@@ -233,6 +245,7 @@ export const DEFAULT_EDITOR_STYLES: EditorStyleSettings = {
   h5: 1,
   h6: 0.94,
   lineHeight: 1.75,
+  customCss: '',
 };
 
 /** 样式归一：数值夹在合理区间，防止「字号 0」这种把正文弄没的配置 */
@@ -251,6 +264,8 @@ export function normalizeEditorStyles(raw: unknown): EditorStyleSettings {
     h5: num(o.h5, 0.8, 1.8, DEFAULT_EDITOR_STYLES.h5),
     h6: num(o.h6, 0.75, 1.6, DEFAULT_EDITOR_STYLES.h6),
     lineHeight: num(o.lineHeight, 1.2, 2.4, DEFAULT_EDITOR_STYLES.lineHeight),
+    // v1.3.2：自定义 CSS，长度封顶 4000 字，避免把整张设置行撑爆
+    customCss: String(o.customCss || '').slice(0, 4000),
   };
 }
 
@@ -312,6 +327,12 @@ export function normalizeEditorSettings(raw: unknown): EditorSettings {
      */
     inputLines: normalizeToolLines(o.inputLines, 8),
     slashLines: normalizeToolLines(o.slashLines, 12),
+    rightClickLines: normalizeToolLines(o.rightClickLines, 12),
+    selectionLines: normalizeToolLines(o.selectionLines, 12),
+    selectImageLines: normalizeToolLines(o.selectImageLines, 8),
+    selectVideoLines: normalizeToolLines(o.selectVideoLines, 8),
+    selectAudioLines: normalizeToolLines(o.selectAudioLines, 8),
+    selectFileLines: normalizeToolLines(o.selectFileLines, 8),
     historyInterval: Number.isFinite(interval)
       ? Math.min(HISTORY_INTERVAL_MAX, Math.max(HISTORY_INTERVAL_MIN, interval))
       : DEFAULT_HISTORY_INTERVAL,

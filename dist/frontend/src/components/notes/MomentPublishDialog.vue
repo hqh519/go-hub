@@ -163,12 +163,30 @@
                     @pointercancel="onAssetPointerUp"
                 >
                     <img v-if="a.mediaKind === 'image'" :src="a.thumbUrl || a.url" class="mp-asset-img" alt="" />
+                    <!--
+                        v1.3.2（需求）：编辑页的附件区，视频也要显示封面。
+                        复用 utils/videoPoster 抽首帧；抽不出来时保留原来的胶片图标，不显示破图。
+                    -->
+                    <img
+                        v-else-if="a.mediaKind === 'video' && posters[a.fileId]"
+                        :src="posters[a.fileId]"
+                        class="mp-asset-img"
+                        alt=""
+                    />
                     <span v-else class="mp-asset-cover">
                         <font-awesome-icon :icon="a.mediaKind === 'video' ? 'film' : (a.mediaKind === 'audio' ? 'music' : 'file')" />
                         <span class="mp-asset-name">{{ a.originalName }}</span>
                     </span>
+                    <!-- v1.3.2：视频封面上的播放角标，和未抽帧的胶片图标区分开 -->
+                    <span v-if="a.mediaKind === 'video' && posters[a.fileId]" class="mp-asset-play">
+                        <font-awesome-icon icon="play" />
+                    </span>
                     <button type="button" class="mp-asset-del" :title="$t('notes.removeAsset')" @click.stop="removeAsset(i)">
                         <font-awesome-icon icon="times" />
+                    </button>
+                    <!-- v1.3.2（需求）：小眼睛放到左下角，点击预览附件（与文件选择器的小眼睛同义） -->
+                    <button type="button" class="mp-asset-eye" :title="$t('notes.preview')" @click.stop="toggleAssetPreview(i, $event)">
+                        <font-awesome-icon icon="eye" />
                     </button>
                     <!-- 触屏没有拖拽手柄，用左右微调按钮（桌面端也保留，作为无障碍替代） -->
                     <span class="mp-asset-move">
@@ -312,6 +330,23 @@
                 <span v-if="tipText" class="mp-name-tip is-floating" :style="tipStyle">{{ tipText }}</span>
             </transition>
         </Teleport>
+
+        <!--
+            v1.3.2（需求）：附件左下角小眼睛 → 预览。
+            放在 el-dialog 外面（Teleport 到 body），避免被弹窗的滚动容器裁切。
+        -->
+        <!--
+            v1.3.3（需求）：预览浮层与小眼睛统一为「选择文件」弹窗里的那一套
+            （AssetPreviewFloat 与 FilePickerDialog 同尺寸、同方位策略），
+            所以这里不再自己画一个遮罩弹窗。
+        -->
+        <AssetPreviewFloat
+            :visible="!!assetFloat"
+            :src="assetFloat ? assetFloat.src : ''"
+            :kind="assetFloat ? assetFloat.kind : 'image'"
+            :name="assetFloat ? assetFloat.name : ''"
+            :anchor="assetFloat ? assetFloat.anchor : null"
+        />
     </el-dialog>
 </template>
 
@@ -320,8 +355,10 @@ import thumbUrl from '@/utils/thumb';
 import fetchWithAuth from '@/utils/fetchWithAuth';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import FilePickerDialog from './FilePickerDialog.vue';
+import AssetPreviewFloat from './AssetPreviewFloat.vue';
 import { defaultUploadFolder, uploadOne, importUrlToBed } from '@/utils/uploadTarget';
 import { bindDialogLayers } from '@/utils/layerStack';
+import { videoPoster } from '@/utils/videoPoster';
 import {
     MOOD_OPTIONS,
     WEATHER_OPTIONS,
@@ -369,7 +406,7 @@ function isTouchDevice() {
 
 export default {
     name: 'MomentPublishDialog',
-    components: { UploadTargetDialog, FilePickerDialog },
+    components: { UploadTargetDialog, FilePickerDialog, AssetPreviewFloat },
     props: {
         modelValue: { type: Boolean, default: false },
         /** 编辑时传入原始笔记对象；新建时为 null */
@@ -397,6 +434,11 @@ export default {
             },
             // 已选附件（顺序即九宫格顺序）
             assets: [],
+            /** v1.3.2：视频附件首帧（fileId → dataURL），抽不出来时为空 */
+            posters: {},
+            /** v1.3.2：小眼睛预览的附件对象 */
+            /** v1.3.3：小眼睛浮层的状态（src / kind / name / 锚点） */
+            assetFloat: null,
             tagOptions: [],
             maxChars: MOMENT_MAX_CHARS,
             submitting: false,
@@ -430,7 +472,14 @@ export default {
              * 触屏自适应高度用它决定上限 —— 聚焦时被软键盘占掉半屏，只能给到视口 40%；
              * 失焦时页面空间是完整的，可以放到 80%。
              */
-            editorFocused: false
+            editorFocused: false,
+            /*
+             * v1.3.2（需求：失焦后输入框没有恢复「刚打开时」的高度）：
+             * 记下「打开弹窗那一刻」的视口高度。聚焦时用当前可见视口（要跟着软键盘缩），
+             * 失焦后回到这个稳定值 —— 否则键盘还在收起的动画里，visualViewport 仍是矮的，
+             * 算出来的下限/上限都偏小，输入框就停在压缩状态了。
+             */
+            openedViewportPx: 0
         };
     },
     computed: {
@@ -540,7 +589,11 @@ export default {
         },
         assets: {
             deep: true,
-            handler: 'scheduleSave'
+            handler() {
+                this.scheduleSave();
+                // v1.3.2：附件一变就补抽视频首帧（已抽过的走 utils 内部缓存，不会重复解码）
+                this.loadAssetPosters();
+            }
         }
     },
     /*
@@ -552,6 +605,21 @@ export default {
         this._layerUnbind = bindDialogLayers(this, {
             visible: { id: 'moment-publish', close: () => { this.visible = false; } }
         });
+        /*
+         * v1.3.3：小眼睛浮层的关闭条件 —— 点浮层与按钮以外的地方，或按 Esc。
+         * 用捕获阶段：编辑区自己的 pointerdown 可能会 stopPropagation，冒泡收不到。
+         */
+        this._floatDown = (e) => {
+            if (!this.assetFloat) return;
+            const t = e.target;
+            if (t && t.closest && (t.closest('.mp-asset-eye') || t.closest('.np-preview'))) return;
+            this.closeAssetFloat();
+        };
+        this._floatEsc = (e) => {
+            if (String(e.key) === 'Escape' && this.assetFloat) this.closeAssetFloat();
+        };
+        document.addEventListener('pointerdown', this._floatDown, true);
+        document.addEventListener('keydown', this._floatEsc, true);
     },
     beforeUnmount() {
         // v1.1.3：长按计时器必须清掉，否则弹窗关了还会在 320ms 后改一次状态
@@ -561,6 +629,8 @@ export default {
         }
         // v1.2.1：弹窗高度的观察者要跟着销毁，避免弹窗关掉后还在算
         this.teardownEditorObserver();
+        if (this._floatDown) document.removeEventListener('pointerdown', this._floatDown, true);
+        if (this._floatEsc) document.removeEventListener('keydown', this._floatEsc, true);
         if (this._layerUnbind) {
             this._layerUnbind();
             this._layerUnbind = null;
@@ -596,12 +666,59 @@ export default {
              *         顺序反了会让 min-height 短暂沿用上一轮的旧值。
              */
             this.$nextTick(() => {
+                // v1.3.2：先记住「键盘还没弹」时的视口高度，失焦后用它恢复
+                this.openedViewportPx = this.currentViewportPx();
                 this.updateEditorMin();
                 this.resetEditorHeight();
                 this.setupEditorObserver();
                 // 恢复草稿 / 编辑已有内容时正文可能已经很长，先按内容量一次高度
                 this.syncEditorHeight();
             });
+        },
+        /** 当前可见视口高度（软键盘弹出后 visualViewport 会变小） */
+        currentViewportPx() {
+            if (typeof window === 'undefined') return 0;
+            const vv = window.visualViewport;
+            return Math.round((vv && vv.height) || window.innerHeight || 0);
+        },
+        /** v1.3.2：给视频附件抽首帧（失败的保持胶片图标，不显示破图） */
+        loadAssetPosters() {
+            (this.assets || []).forEach((a) => {
+                if (a.mediaKind !== 'video' || !a.url) return;
+                if (this.posters[a.fileId] !== undefined) return;
+                videoPoster(a.url).then((dataUrl) => {
+                    if (!dataUrl) return;
+                    this.posters = { ...this.posters, [a.fileId]: dataUrl };
+                });
+            });
+        },
+        /**
+         * v1.3.3：小眼睛改为「点一下开、再点一下关」，并带锚点定位。
+         * 关闭交给 document 上的 pointerdown（点浮层和按钮以外的地方）或 Esc。
+         */
+        toggleAssetPreview(index, e) {
+            const a = this.assets[index];
+            if (!a) return;
+            const same = this.assetFloat && this.assetFloat.key === (a.fileId || a.url);
+            if (same) {
+                this.assetFloat = null;
+                return;
+            }
+            const rect = e && e.currentTarget && e.currentTarget.getBoundingClientRect
+                ? e.currentTarget.getBoundingClientRect()
+                : null;
+            this.assetFloat = {
+                key: a.fileId || a.url,
+                src: a.mediaKind === 'image' ? (a.thumbUrl || a.url) : a.url,
+                kind: a.mediaKind || 'file',
+                name: a.originalName || a.name || '',
+                anchor: rect
+                    ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
+                    : null
+            };
+        },
+        closeAssetFloat() {
+            if (this.assetFloat) this.assetFloat = null;
         },
         /**
          * v1.2.4（需求）：移动端（手机 + 平板）**一律按可见视口的 40% 作为最小高度**，
@@ -628,9 +745,12 @@ export default {
          */
         editorMinPx() {
             if (typeof window === 'undefined') return 0;
-            const vv = window.visualViewport;
-            // 当前真正可见的视口高度（键盘弹出后就是「剩下的那块」）
-            const cur = Math.round((vv && vv.height) || window.innerHeight || 0);
+            /*
+             * v1.3.2：聚焦时跟着可见视口（软键盘弹出会变小），
+             * 失焦后回到「打开弹窗时」的视口高度 —— 见 openedViewportPx 的注释。
+             */
+            const raw = this.currentViewportPx();
+            const cur = !this.editorFocused && this.openedViewportPx ? this.openedViewportPx : raw;
             if (!cur) return 0;
             /*
              * 「是不是触屏」不再要求媒体查询同时成立。
@@ -644,11 +764,38 @@ export default {
             // v1.3.1（需求）：移动端一律最小 30%，不再区分聚焦/失焦与档位
             return Math.round(cur * (touch ? 0.3 : 0.45));
         },
+        /**
+         * v1.3.3：**静止基准** —— 打开弹窗那一刻的可见视口高度。
+         *
+         * 上一版把 `--mp-editor-min` 按「当前视口」写变量，聚焦弹键盘时变量被改小，
+         * 失焦后没有任何地方把它改回来：CSS 的 min-height 一直停在键盘态的小值，
+         * 于是输入框回不到打开时的高度。现在变量只认静止基准，键盘态的高度
+         * 只由 JS 写行内 height（见 syncEditorHeight），失焦自然恢复。
+         */
+        restingViewportPx() {
+            return this.openedViewportPx || this.currentViewportPx();
+        },
+        restingMinPx() {
+            const h = this.restingViewportPx();
+            if (!h) return 0;
+            return Math.round(h * (isTouchDevice() ? 0.3 : 0.45));
+        },
         /** 把算出来的下限写进 CSS 变量（.mp-editor-wrap / .mp-textarea 都读它） */
         updateEditorMin() {
             const body = this.$refs.bodyEl;
             if (!body) return;
-            const px = this.editorMinPx();
+            /*
+             * v1.3.2：失焦状态下视口变大（软键盘收起 / 旋屏），说明「正常视口」变了，
+             * 把它记成新的基准；视口变小则多半是键盘又弹起来了，不能覆盖基准值。
+             */
+            if (!this.editorFocused) {
+                const cur = this.currentViewportPx();
+                if (cur && (!this.openedViewportPx || cur > this.openedViewportPx * 0.95)) {
+                    this.openedViewportPx = cur;
+                }
+            }
+            // v1.3.3：变量恒用静止基准，不再随软键盘缩小（否则失焦后回不去）
+            const px = this.restingMinPx();
             if (!px) return;
             body.style.setProperty('--mp-editor-min', `${px}px`);
             // 视口变了（键盘弹起 / 旋屏 / 地址栏收起）以后，上限也跟着变，重算一次内容高度
@@ -706,6 +853,16 @@ export default {
             if (!el || !wrap) return;
             const base = this.editorMinPx() || 180;
             if (!isTouchDevice()) {
+                if (!this.editorFocused) {
+                    /*
+                     * v1.3.3：失焦时把聚焦期间可能写入的临时高度全部清掉，
+                     * 交回 CSS（min-height 变量刚在 onEditorBlur 里恢复成静止口径）。
+                     */
+                    el.style.height = '';
+                    el.style.overflowY = '';
+                    wrap.style.minHeight = '';
+                    return;
+                }
                 const h = el.offsetHeight;
                 wrap.style.minHeight = h > base + 1 ? `${Math.round(h)}px` : '';
                 return;
@@ -738,8 +895,8 @@ export default {
         /** 触屏正文框的高度上限：聚焦 40%，失焦按页面给（留出标题/工具栏/底栏） */
         editorMaxPx() {
             if (typeof window === 'undefined') return 400;
-            const vv = window.visualViewport;
-            const cur = Math.round((vv && vv.height) || window.innerHeight || 0);
+            const raw = this.currentViewportPx();
+            const cur = !this.editorFocused && this.openedViewportPx ? this.openedViewportPx : raw;
             if (!cur) return 400;
             return Math.round(cur * (this.editorFocused ? 0.4 : 0.8));
         },
@@ -749,7 +906,19 @@ export default {
         },
         onEditorBlur() {
             this.editorFocused = false;
+            // v1.3.3：先把 CSS 变量恢复成静止基准，再重算高度 —— 顺序反了会读到键盘态的小值
+            this.updateEditorMin();
             this.syncEditorHeight();
+            /*
+             * v1.3.2：软键盘收起有 200~300ms 动画，部分浏览器在这期间不派发
+             * visualViewport.resize。补一次延时重算，保证失焦后回到「刚打开」的高度。
+             */
+            if (this._blurTimer) window.clearTimeout(this._blurTimer);
+            this._blurTimer = window.setTimeout(() => {
+                this._blurTimer = null;
+                this.updateEditorMin();
+                this.syncEditorHeight();
+            }, 320);
         },
         /** 重新打开弹窗时把上一次拉伸留下的行内高度清掉，回到默认下限起点 */
         resetEditorHeight() {
@@ -767,6 +936,10 @@ export default {
             this.editorFocused = false;
         },
         onClosed() {
+            if (this._blurTimer) {
+                window.clearTimeout(this._blurTimer);
+                this._blurTimer = null;
+            }
             // 关闭（含 Esc / 点遮罩 / 点取消）都留草稿；只有「发布成功」才跳过
             if (!this.skipDraftSave) this.saveDraft();
             this.skipDraftSave = false;
@@ -1604,9 +1777,54 @@ export default {
     background: var(--el-color-danger);
 }
 
-.mp-asset-move {
+/* v1.3.2：附件左下角的小眼睛（预览） */
+.mp-asset-eye {
     position: absolute;
     left: 2px;
+    bottom: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 9px;
+    cursor: pointer;
+}
+
+.mp-asset-eye:hover {
+    background: var(--el-color-primary);
+}
+
+/* v1.3.2：视频封面上的播放角标 */
+.mp-asset-play {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin: -13px 0 0 -13px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.45);
+    color: #fff;
+    font-size: 11px;
+    pointer-events: none;
+}
+
+/* v1.3.2：附件预览遮罩 */
+/* v1.3.3：旧的遮罩式预览已删除，改由 AssetPreviewFloat 统一渲染 */
+
+.mp-asset-move {
+    position: absolute;
+    /* v1.3.2（需求）：排序按钮从左下角移到右下角，左下角让给小眼睛 */
+    right: 2px;
     bottom: 2px;
     display: flex;
     gap: 2px;

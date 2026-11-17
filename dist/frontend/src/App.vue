@@ -91,6 +91,27 @@ export default {
         lastActive = now
         this.$store.dispatch('fetchUserConfig').catch(() => {})
         window.dispatchEvent(new CustomEvent('gohub:activate', { detail: { reason } }))
+        /*
+         * v1.3.2（需求：休眠回来「页面能加载但点不动 / 滚不动」）
+         *
+         * 两个真实成因：
+         *   1) 页面冻结时如果正好关着弹窗 / 抽屉，Element Plus 给 body 加的
+         *      `el-popup-parent--hidden`（overflow: hidden）可能来不及摘掉，
+         *      回来以后整页就滚不动了；
+         *   2) 移动端回到前台时 visualViewport 高度还是 0，页面按 0 高度算，
+         *      所有 fixed 容器叠在一起，点击命中不到真正的按钮。
+         * 这里只做「确认没有弹窗时才解锁」，有弹窗时不动它，避免误伤正在编辑的表单。
+         */
+        if (!document.querySelector('.el-overlay')) {
+          document.body.classList.remove('el-popup-parent--hidden')
+          document.body.style.overflow = ''
+          document.body.style.paddingRight = ''
+        }
+        this.$nextTick(() => {
+          // 强制一次重排 + resize：让按视口高度算的布局重新量一遍
+          void document.body.offsetHeight
+          window.dispatchEvent(new Event('resize'))
+        })
         if (reason === 'pageshow') {
           // bfcache 恢复：滚动条实例已失效，重建一次（触屏设备不启用 OS，跳过）
           try {
