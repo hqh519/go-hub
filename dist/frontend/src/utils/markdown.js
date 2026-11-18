@@ -289,6 +289,27 @@ function paragraphOf(text) {
 }
 
 /** 列表：按缩进组装成嵌套结构（Tiptap 的 list 是 container 节点） */
+/**
+ * 去掉一段行的公共缩进（v1.3.4.2）。
+ *
+ * 列表项下的子块（引述 / 代码块 / 图片 / 附件…）在 md 里是靠「比父项多缩进一级」
+ * 表达层级的；但把这几行直接交给 mdToDoc 时，4 空格以上的缩进会被 markdown
+ * 当成普通段落（blockquote 只允许 ≤3 空格），于是 `> 引述` 变成一行带 `>` 的正文、
+ * 代码围栏变成正文里的反引号 —— 保存刷新后就是「子块被拍平」。
+ * 解析前先还原到第 0 列，层级由 buildList 挂到 listItem 的 content 上。
+ */
+function dedentLines(lines) {
+  const indents = [];
+  for (const l of lines) {
+    if (!l.trim()) continue;
+    const m = /^[ \t]*/.exec(l);
+    indents.push(m ? m[0].length : 0);
+  }
+  const min = indents.length ? Math.min(...indents) : 0;
+  if (!min) return lines;
+  return lines.map((l) => (l.trim() ? l.slice(min) : l));
+}
+
 function buildList(kind, items) {
   const root = { children: [] };
   /*
@@ -339,7 +360,7 @@ function buildList(kind, items) {
        */
       if (e.sub && e.sub.length) {
         try {
-          const subDoc = mdToDoc(e.sub.join('\n'));
+          const subDoc = mdToDoc(dedentLines(e.sub).join('\n'));
           for (const n of subDoc.content || []) inner.push(n);
         } catch (err) {
           // 子块解析失败：当成普通文本续行，不丢字
@@ -369,16 +390,31 @@ function buildList(kind, items) {
 function grabIndented(lines, start, baseIndent) {
   const out = [];
   let i = start;
+  let blanks = 0;
   while (i < lines.length) {
     const line = lines[i];
-    if (!line.trim()) break;
+    if (!line.trim()) {
+      /*
+       * v1.3.4.2：空行先记着不立刻 break。
+       * 松散列表（listItemToMd 保存图片 / 文字子块时用的格式）会在子块之间留空行，
+       * 一遇到空行就截断，后面的子块就全丢了。
+       */
+      blanks += 1;
+      i += 1;
+      continue;
+    }
     const m = /^(\s*)/.exec(line);
     const ind = indentLevel(m ? m[1] : '');
     if (ind <= baseIndent) break;
+    if (blanks) {
+      out.push('');
+      blanks = 0;
+    }
     out.push(line);
     i += 1;
   }
-  return [out, i];
+  // 末尾多读的空行不属于子块，回退给外层
+  return [out, i - blanks];
 }
 
 /**
@@ -448,14 +484,23 @@ function collectList(lines, start, kind) {
        * 缩进行如果是「块级起始语法」，就不能并进上一条的文本 ——
        * 收进 sub，交给 buildList 用 mdToDoc 解析成真正的子块挂到 listItem 里。
        */
+      /*
+       * v1.3.4.2（需求：列表下级可以放图片 / 文件 / 引述 / 代码块且保存后保持层级）
+       * 这里判断「这一行是不是一个独立块的开始」。漏掉图片（`![`）与分隔线时，
+       * 它们会被当成上一项文字的续行拼进去 —— 表现就是刷新后图片跑到列表外、
+       * 或 `> 引述` 变成 `66666 > 引述` 这样一行。
+       */
       const isBlockStart = /^(>|```|~~~|:::)/.test(trimmed)
         || /^#{1,6}\s/.test(trimmed)
         || /^<[a-z!/]/i.test(trimmed)
-        || /^\|/.test(trimmed);
+        || /^\|/.test(trimmed)
+        || /^!\[/.test(trimmed)
+        || /^(-{3,}|\*{3,}|_{3,})$/.test(trimmed);
       if (isBlockStart) {
         const [sub, next] = grabIndented(lines, i, last.level);
         last.sub = (last.sub || []).concat(sub);
-        i = next;
+        // v1.3.4.2：缩进不够时 grabIndented 会原地返回，必须自己前进一步，否则死循环
+        i = next > i ? next : i + 1;
         continue;
       }
       last.text += ` ${trimmed}`;
@@ -465,6 +510,22 @@ function collectList(lines, start, kind) {
     // 列表项内部的空行后面若还是列表，继续；否则结束
     if (!line.trim() && i + 1 < lines.length) {
       const nextLine = lines[i + 1];
+      const last = items[items.length - 1];
+      const nextIndent = indentLevel((/^\s*/.exec(nextLine) || [''])[0]);
+      /*
+       * v1.3.4.2（需求：列表下级的文字 / 图片 / 文件等保存后保持格式）
+       * 空行后跟着「比当前项缩进更深」的内容 → 属于本项的子块（标准松散列表写法）。
+       * 这里必须在「下一行是不是列表」之前判断：图片、纯文字都不匹配列表正则，
+       * 以前会直接 break，把子块甩到列表外面变成顶层内容。
+       */
+      if (last && nextLine.trim() && nextIndent > last.level) {
+        const [sub, next] = grabIndented(lines, i, last.level);
+        if (sub.length) {
+          last.sub = (last.sub || []).concat(sub);
+          i = next > i ? next : i + 1;
+          continue;
+        }
+      }
       if (TASK_RE.test(nextLine) || BULLET_RE.test(nextLine) || ORDERED_RE.test(nextLine)) {
         i += 1;
         continue;
@@ -855,7 +916,15 @@ function listItemToMd(item, kind, depth, index) {
       lines.push(sub);
     } else {
       const subPad = '  '.repeat(depth + 1);
-      lines.push(sub.split('\n').map((l) => (l.trim() ? subPad + l : l)).join('\n'));
+      const wrapped = sub.split('\n').map((l) => (l.trim() ? subPad + l : l)).join('\n');
+      /*
+       * v1.3.4.2（需求：列表下级的文字 / 图片 / 文件 / 引述等保存后保持格式）
+       * 非列表子块前留一个空行，写成 markdown 的「松散列表」：
+       * 不留空行时，缩进的纯文字会被并进上一项的文字里（`- 二级 我是子内容`），
+       * 图片也会因为缺少块边界而被当成行内元素合并到同一段。
+       */
+      lines.push('');
+      lines.push(wrapped);
     }
   }
   return lines.join('\n');

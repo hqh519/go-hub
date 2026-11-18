@@ -72,8 +72,9 @@
                         <!-- v1.3.2（需求）：自身笔记数 / 含所有子目录的总数 -->
                         <span class="mt-count">{{ data.count }}/{{ data.total }}</span>
                         <el-dropdown trigger="click" class="mt-node-more" @command="(cmd) => onCommand(cmd, data)" @click.stop>
+                            <!-- v1.3.4.2（需求）：目录后面的「更多」改成竖三点 -->
                             <button type="button" class="mt-more-btn" @click.stop>
-                                <font-awesome-icon icon="ellipsis-h" />
+                                <font-awesome-icon icon="ellipsis-v" />
                             </button>
                             <template #dropdown>
                                 <el-dropdown-menu>

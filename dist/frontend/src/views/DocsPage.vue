@@ -1070,6 +1070,26 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1342',
+      title: '六十、v1.3.4.2 更新要点',
+      intro: '这一版把「发布瞬间」与笔记编辑器里几处长期别扭的地方收口：发布页正文框改由键盘状态驱动高度、附件小眼睛改为长按预览；列表下级终于能稳定承载文字 / 图片 / 文件 / 引述 / 代码块，任务列表勾选上级会联动下级；网页嵌入能正常加载与编辑，块引用框补上来源标题并可更换引用块。',
+      items: [
+        { t: '发布瞬间：正文高度', d: '正文输入框不再用「聚焦 / 失焦」判断，而是看软键盘是否弹起：键盘弹出时压缩到可见视口的 42%，收起时按页面高度自适应到 80%，输入过程中不会再越变越小。同时修掉了「聚焦一次、失焦后就不再自适应」的问题。' },
+        { t: '发布瞬间：附件预览', d: '附件左下角的小眼睛由「点一下开关」改为「按住才预览、松手立即关闭」：按住约 0.3 秒弹出，松手或手指移动超过 10px 就收起。关闭时会显式暂停视频 / 音频并回到开头，不会留在后台继续播放。预览框也放大到最多 90% 视口，按真实比例显示，并自动选择上 / 下 / 左 / 右空间更大的一侧贴在眼睛旁边。' },
+        { t: '笔记目录与列表', d: '目录名称后的「更多」由横三点改为竖三点；笔记列表里时间后面的「N 字」改为统计字数（汉字 + 字母），与编辑器顶部的「字数」同一口径，旧笔记在首次打开列表时也会即时按字数计算。' },
+        { t: '顶部栏与横向滑动', d: '移动端顶栏隐藏后，左右滑动编辑器的工具栏不会再把它弹出来；只有真正把页面滚到距顶部 50px 以内才会显示。' },
+        { t: '网页嵌入', d: '修复插入网页嵌入后内容框里加载不出页面、点编辑按钮也没反应的问题：地址读取与节点位置的解析都做了纠正，编辑按钮现在能正常改地址与高度，点标题栏可选中并拖动右下角改变大小。' },
+        { t: '块内容引用', d: '块引用内容框第一行会显示所引用块的来源笔记标题；「编辑」按钮改为「更换引用块」，点开两级引用面板重新选一个块即可替换。同时去掉了内容框上下多出来的一行空白，并让它与行号左缘对齐。' },
+        { t: '引用面板', d: '输入 [[ / 【【 / (( / （（ 打开的引用面板会判断光标上方与下方哪边空间更大，显示在空间更大的那一侧，不再固定朝下被屏幕裁掉。' },
+        { t: '创建子页并引用', d: '创建子页成功后，引用会插入到打开弹窗时的光标位置，不再跑到文首或文末。位置失效时会按「父块起点 + 段内偏移」重算，最后才退回文档末尾。' },
+        { t: '层级与标题', d: '文件灯箱的层级提高到工具栏、标题栏以及各类悬浮菜单之上，打开灯箱不会再被顶栏压住。光标停在标题末尾时，点「折叠标题」后按钮会立刻变成向下箭头（表示可展开）。' },
+        { t: '列表下级内容', d: '列表项下方现在可以稳定承载文字、图片、文件、引述、行内代码与代码块：保存时按松散列表写法留出空行并缩进，重新打开仍是该列表项的下级，不会再被拍平成顶层内容，也不会把「> 引述」并进上一行的文字里。' },
+        { t: '任务列表', d: '勾选上级任务时，它下面的所有子任务会一起勾选；取消勾选也一起取消，删除线随之出现或消失。层级关系线的末端与最后一行内容齐平，不再多出一截。' },
+        { t: '其它', d: '移动端长按编辑区弹出的右键菜单改为竖版；行级栏块菜单的「复制 / 剪切 / 删除」改名为「复制块 / 剪切块 / 删除块」，并在删除后新增「清除格式」、末尾新增「在下方插入换行」；桌面端光标工具栏距光标再拉开 20px；未配置「/命令菜单配置」时，斜杠菜单默认加载全部工具，并按「文字格式 → 标题段落 → 列表 → 插入内容 → 对齐换行 → 引用结构」重排，同类工具相邻。' },
+        { t: '升级兼容', d: '本版没有数据库结构变更。列表字数只是笔记 metas 里新增一个字段，旧笔记无需迁移；编辑器保存的列表格式仍是标准 markdown，旧笔记打开后照常显示。' }
+      ]
+    },
+    {
       id: 'whatsnew-1341',
       title: '五十九、v1.3.4.1 更新要点',
       intro: '这一版继续收口编辑器的悬浮菜单与列表结构：菜单打开时顶部吸附不再失效、行号永远对齐第二列、列表任意层级的折叠按钮统一到第一列；同时补齐文件默认尺寸与宽高快捷设置、块引用两级菜单与内容框、网页嵌入块标题栏，以及编辑器内的媒体灯箱。',
@@ -2250,6 +2270,26 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1342',
+      title: '60. What is new in v1.3.4.2',
+      intro: 'This release closes several long-standing rough edges in the "Publish a moment" dialog and the notes editor: the body field now follows the soft keyboard instead of focus, attachment previews are press-and-hold, list items can reliably carry paragraphs, images, files, quotes and code blocks, checking a parent task checks its children, web embeds load and edit again, and block reference cards show their source note title and can be swapped.',
+      items: [
+        { t: 'Publish a moment: body height', d: 'The body field no longer keys off focus / blur. It watches the soft keyboard instead: when the keyboard opens it shrinks to a compact height that fits the visible viewport, and when it closes it grows back to follow the page. Typing no longer makes the field smaller and smaller, and the old "focus once, then blur, and it never resizes again" bug is gone. The resize observer on the dialog itself was removed to stop a layout feedback loop.' },
+        { t: 'Publish a moment: attachment preview', d: 'The little eye on an attachment is now press-and-hold: hold for about 0.3 seconds to preview, release (or move more than 10px) to dismiss. Closing explicitly pauses video / audio and rewinds to the start, so nothing keeps playing in the background. The preview itself is much larger - up to 90% of the viewport, sized to the real aspect ratio - and it picks whichever of the four sides around the eye has the most free space, following the same placement rule as the older file manager.' },
+        { t: 'Folders and the note list', d: 'The "more" button after a folder name is now a vertical ellipsis instead of a horizontal one. The "N chars" next to the timestamp in the note list now counts words (Chinese characters + Latin letters), the same measure as the editor header; older notes get it computed on the fly when their page loads, without a database migration.' },
+        { t: 'Top bar and horizontal swipes', d: 'On mobile, once the top bar is hidden, swiping the editor toolbar sideways no longer brings it back. Scroll events from containers that can scroll horizontally but not vertically are ignored; the bar only reappears when the page is actually scrolled to within 50px of the top.' },
+        { t: 'Web embeds', d: 'Fixed web embeds not loading inside their content frame and the edit button doing nothing: the builder was handed the whole node instead of its attrs (so the URL was always undefined), and the position lookup subtracted one unconditionally, landing on the previous block. The edit button now changes the URL and height, and clicking the header selects the block so the bottom-right handle can resize it.' },
+        { t: 'Block references', d: 'The first line of a block reference card now shows the title of the note that owns the referenced block, and "Edit" is replaced by "Change reference", which opens the two-level reference panel again so you can pick a different block and replace it in place. The extra blank line above and below the card is removed and the card aligns with the gutter.' },
+        { t: 'Reference panel', d: 'The panel opened by [[ / 【【 / (( / （（ now compares the space above and below the cursor and opens on whichever side has more room, instead of always dropping down and being clipped at the bottom of the screen.' },
+        { t: 'Create subpage and reference', d: 'After a subpage is created, its reference is inserted at the cursor position captured when the dialog opened, not at the start or end of the document. If that position becomes stale it is recomputed from the parent block start plus the offset inside the paragraph, with the document end only as a last resort.' },
+        { t: 'Layering and headings', d: 'The file lightbox is raised above the toolbar, title row and every floating menu, so opening it is no longer covered by the top bars. When the cursor sits at the end of a heading, clicking "Fold heading" immediately turns the button into a down arrow (meaning it can be expanded).' },
+        { t: 'Content under list items', d: 'A list item can now reliably hold paragraphs, images, files, quotes, inline code and code blocks underneath it. Saving writes loose-list markdown with blank lines and indentation, so reopening keeps them as children of that item instead of flattening them to top level or merging "> quote" into the previous line of text.' },
+        { t: 'Task lists', d: 'Checking a parent task now checks every task beneath it, and unchecking clears them all; the strikethrough follows the checked state. The level guide ends level with the last line of content instead of running past it.' },
+        { t: 'Other', d: 'The long-press context menu in the mobile editor is now vertical. In the gutter block menu, Copy / Cut / Delete are renamed Copy block / Cut block / Delete block, with "Clear formatting" added after Delete block and "Insert line break below" at the end. The desktop cursor toolbar sits another 20px away from the cursor. When no /command menu configuration exists, the slash menu loads every tool by default, regrouped as text formatting, headings and paragraphs, lists, insert content, alignment and breaks, references and structure - so related tools sit together.' },
+        { t: 'Upgrade compatibility', d: 'No database schema changes. The word count is just one more field in the note metas; old notes need no migration because the list endpoint computes it on the fly for them. Lists are still written as standard markdown, so existing notes open unchanged.' }
       ]
     },
     {

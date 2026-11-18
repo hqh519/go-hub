@@ -19,7 +19,7 @@ import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
 import { safeParse, normalizeTagNames } from './notes.util';
 import { findOrCreateTag } from '../common/tags';
-import { countMemoChars, excerptOf, titleFromContent, withBlockIds } from './memo.util';
+import { countMemoChars, countMemoWords, excerptOf, titleFromContent, withBlockIds } from './memo.util';
 import { parseBlocks, parseLinks } from './memo-block.util';
 
 /** 列表项（前端契约）—— 刻意不含 content */
@@ -29,6 +29,11 @@ export interface MemoListItem {
   excerpt: string;
   folderId: string;
   charCount: number;
+  /**
+   * v1.3.4.2（需求）：列表显示「字数」（汉字 + 字母）。
+   * 旧笔记的 metas 里没有这个字段，返回 null 让前端回退到 charCount。
+   */
+  wordCount: number | null;
   version: number;
   status: string;
   createdAt: number;
@@ -299,14 +304,38 @@ export class MemoService {
         select: this.LIST_SELECT as any,
       }),
     ]);
+    /*
+     * v1.3.4.2（需求：列表显示字数）
+     * 旧笔记的 metas 里只有 charCount，没有 wordCount。列表接口为了性能不返回正文，
+     * 所以这里只对本页「缺 wordCount」的少量旧笔记补查一次 content 现算，
+     * 不写库、不改旧数据 —— 等用户下次保存，metas 里自然就有 wordCount 了。
+     */
+    const needWord = (rows as any[])
+      .filter((r) => safeParse(r.metas, {}).wordCount == null)
+      .map((r) => String(r.id));
+    let wordMap: Map<string, number> | null = null;
+    if (needWord.length) {
+      const full = await prisma.note.findMany({
+        where: { id: { in: needWord } },
+        select: { id: true, content: true },
+      });
+      wordMap = new Map(full.map((f) => [String(f.id), countMemoWords(f.content)]));
+    }
     const list: MemoListItem[] = (rows as any[]).map((r) => {
       const metas = safeParse(r.metas, {});
+      const id = String(r.id);
       return {
-        id: String(r.id),
+        id,
         title: String(r.title || ''),
         excerpt: String(metas.excerpt || ''),
         folderId: String(r.folderId || ''),
         charCount: asInt(metas.charCount),
+        wordCount:
+          metas.wordCount != null
+            ? asInt(metas.wordCount)
+            : wordMap && wordMap.has(id)
+              ? wordMap.get(id)!
+              : null,
         version: asInt(r.version, 1),
         status: String(r.status || ''),
         createdAt: timeOf(r.createdAt),
@@ -395,7 +424,7 @@ export class MemoService {
         // 与瞬间同一口径：publishedAt 是「发布时刻」，笔记创建即发布（草稿态由 status 表达）
         publishedAt: new Date(),
         firstPublishedAt: new Date(),
-        metas: JSON.stringify({ excerpt: excerptOf(content), charCount: countMemoChars(content) }),
+        metas: JSON.stringify({ excerpt: excerptOf(content), charCount: countMemoChars(content), wordCount: countMemoWords(content) }),
       },
     });
     // 新建即建索引：否则「刚建好就引用它的块」会查不到，得等第一次保存
@@ -879,7 +908,7 @@ export class MemoService {
         content,
         title: row.title || String(note.title || ''),
         version: { increment: 1 },
-        metas: JSON.stringify({ excerpt: excerptOf(content), charCount: countMemoChars(content) }),
+        metas: JSON.stringify({ excerpt: excerptOf(content), charCount: countMemoChars(content), wordCount: countMemoWords(content) }),
       },
       select: { version: true, updatedAt: true },
     });

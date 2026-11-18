@@ -35,8 +35,14 @@
 </template>
 
 <script>
-/** 浮层最长边（v1.3.3.3 由 300 上调到 360；手机上还会按视口 84% 收） */
-const PREVIEW_MAX = 360;
+/**
+ * v1.3.4.2（需求：长按预览的框要大一些，参考旧版图床管理页的小眼睛）
+ *
+ * 旧版 HoverPreview 的策略是「高度优先、最长 90% 视口」；
+ * 这里沿用同一口径，同时保留一个桌面端的绝对上限，避免大屏上夸张。
+ */
+const PREVIEW_MAX = 760;
+const PREVIEW_VIEWPORT = 0.9;
 const PREVIEW_MIN = 120;
 const PREVIEW_MARGIN = 8;
 const PREVIEW_GAP = 8;
@@ -75,6 +81,8 @@ export default {
     watch: {
         visible(v) {
             if (v) this.layout();
+            // v1.3.4.2：浮层一关就停掉音视频，绝不能留到后台继续播
+            else this.pauseMedia();
         },
         src() {
             if (this.visible) this.layout();
@@ -134,65 +142,92 @@ export default {
             const vw = window.innerWidth;
             const vh = window.innerHeight;
             /*
-             * v1.3.3.3（需求：预览框还是太小）：
-             * 小屏（手机）上 300px 的最长边只占 390 视口的 3/4，看着仍然很小。
-             * 现在最长边取「min(360, 视口的 84%)」—— 手机上直接铺到接近满宽，
-             * 桌面上仍是 360 的克制尺寸，不会盖住半个屏幕。
+             * v1.3.4.2（需求：预览框要更大）
+             * 旧版（图床管理页的小眼睛）是「高度优先、最长 90% 视口」；
+             * 这里照同一套来：先按 90vh 定高、按真实比例算宽，宽超 90vw 再反算。
+             * 之前固定 360 的正方形，横图只能显示成 360×202，手机上尤其小。
              */
-            const maxSide = Math.round(Math.min(PREVIEW_MAX, Math.max(200, Math.min(vw, vh) * 0.84)));
-            let w = maxSide;
-            let h = maxSide;
+            const maxW = Math.max(200, Math.round(Math.min(vw * PREVIEW_VIEWPORT, PREVIEW_MAX)));
+            const maxH = Math.max(140, Math.round(vh * PREVIEW_VIEWPORT) - PREVIEW_HEAD_H);
+            let w;
+            let h;
             if (ratio && Number.isFinite(ratio) && ratio > 0) {
-                if (ratio >= 1) {
-                    w = maxSide;
-                    h = Math.max(PREVIEW_MIN, Math.round(maxSide / ratio));
-                } else {
-                    h = maxSide;
-                    w = Math.max(PREVIEW_MIN, Math.round(maxSide * ratio));
+                h = maxH;
+                w = Math.round(h * ratio);
+                if (w > maxW) {
+                    w = maxW;
+                    h = Math.round(w / ratio);
+                }
+                // 极端长图 / 长条横幅：保证两个方向都还有可见面积
+                if (w < PREVIEW_MIN) {
+                    w = PREVIEW_MIN;
+                    h = Math.max(PREVIEW_MIN, Math.round(w / ratio));
+                }
+                if (h < PREVIEW_MIN) {
+                    h = PREVIEW_MIN;
+                    w = Math.max(PREVIEW_MIN, Math.round(h * ratio));
                 }
             } else if (this.type === 'audio') {
-                w = 260;
+                w = Math.min(420, maxW);
                 h = 96;
             } else if (this.type === 'file') {
-                w = Math.min(280, maxSide);
-                h = Math.max(140, Math.round(w * 0.5));
+                w = Math.min(420, maxW);
+                h = Math.max(160, Math.round(w * 0.6));
+            } else {
+                // 比例未知（图片还没加载出来）：给一个偏大的方框，加载完会再收敛
+                w = Math.min(maxW, 520);
+                h = Math.min(maxH, 520);
             }
-            w = Math.min(w, vw - PREVIEW_MARGIN * 2);
-            h = Math.min(h, vh - PREVIEW_MARGIN * 2);
-            const boxH = h + PREVIEW_HEAD_H;
+            w = Math.min(w, maxW);
+            h = Math.min(h, maxH);
 
             let left = (vw - w) / 2;
-            let top = (vh - boxH) / 2;
+            let top = (vh - h - PREVIEW_HEAD_H) / 2;
             if (anchor) {
+                /*
+                 * 贴着眼睛四向择大（与旧版 anchoredStyle 一致）：
+                 * 先选空间最大的一侧，再把浮层缩进该侧可用区域，保证不覆盖小眼睛、
+                 * 也不越出视口。空间不足时宁可缩小，也不翻到更窄的一侧。
+                 */
                 const space = {
                     right: vw - anchor.right - PREVIEW_GAP - PREVIEW_MARGIN,
                     left: anchor.left - PREVIEW_GAP - PREVIEW_MARGIN,
                     bottom: vh - anchor.bottom - PREVIEW_GAP - PREVIEW_MARGIN,
                     top: anchor.top - PREVIEW_GAP - PREVIEW_MARGIN
                 };
-                const fits = {
-                    right: space.right >= w,
-                    left: space.left >= w,
-                    bottom: space.bottom >= boxH,
-                    top: space.top >= boxH
-                };
-                const sides = ['right', 'left', 'bottom', 'top'];
-                const able = sides.filter((s) => fits[s]).sort((a, b) => space[b] - space[a]);
-                const side = able[0] || sides.slice().sort((a, b) => space[b] - space[a])[0];
+                const sides = ['right', 'bottom', 'top', 'left'];
+                let side = sides[0];
+                let best = -Infinity;
+                for (const s of sides) {
+                    if (space[s] > best) {
+                        best = space[s];
+                        side = s;
+                    }
+                }
+                const availW = (side === 'left' || side === 'right')
+                    ? Math.max(80, space[side])
+                    : Math.max(80, vw - PREVIEW_MARGIN * 2);
+                const availH = (side === 'top' || side === 'bottom')
+                    ? Math.max(80, space[side])
+                    : Math.max(80, vh - PREVIEW_MARGIN * 2);
+                const scale = Math.min(1, availW / Math.max(1, w), availH / Math.max(1, h + PREVIEW_HEAD_H));
+                w = Math.round(w * scale);
+                h = Math.round(h * scale);
                 if (side === 'right') {
                     left = anchor.right + PREVIEW_GAP;
-                    top = anchor.top + anchor.height / 2 - boxH / 2;
+                    top = anchor.top + anchor.height / 2 - (h + PREVIEW_HEAD_H) / 2;
                 } else if (side === 'left') {
                     left = anchor.left - PREVIEW_GAP - w;
-                    top = anchor.top + anchor.height / 2 - boxH / 2;
+                    top = anchor.top + anchor.height / 2 - (h + PREVIEW_HEAD_H) / 2;
                 } else if (side === 'bottom') {
                     top = anchor.bottom + PREVIEW_GAP;
                     left = anchor.left + anchor.width / 2 - w / 2;
                 } else {
-                    top = anchor.top - PREVIEW_GAP - boxH;
+                    top = anchor.top - PREVIEW_GAP - (h + PREVIEW_HEAD_H);
                     left = anchor.left + anchor.width / 2 - w / 2;
                 }
             }
+            const boxH = h + PREVIEW_HEAD_H;
             left = Math.min(Math.max(PREVIEW_MARGIN, left), Math.max(PREVIEW_MARGIN, vw - w - PREVIEW_MARGIN));
             top = Math.min(Math.max(PREVIEW_MARGIN, top), Math.max(PREVIEW_MARGIN, vh - boxH - PREVIEW_MARGIN));
 
@@ -201,6 +236,24 @@ export default {
             this.left = Math.round(left);
             this.top = Math.round(top);
             this.$nextTick(() => this.startPlayback());
+        },
+        /**
+         * v1.3.4.2：停掉预览里的媒体。
+         * 除了 pause，还把 currentTime 归零 —— 下次长按同一附件时从头播，
+         * 而不是接着上一次的进度继续（用户预期是一次新的预览）。
+         */
+        pauseMedia() {
+            const v = this.$refs.videoEl;
+            const a = this.$refs.audioEl;
+            for (const el of [v, a]) {
+                if (!el) continue;
+                try {
+                    if (!el.paused) el.pause();
+                    el.currentTime = 0;
+                } catch (e) {
+                    /* 元素已卸载 / 元数据未就绪时忽略 */
+                }
+            }
         },
         startPlayback() {
             const el = this.$refs.videoEl || this.$refs.audioEl;

@@ -213,14 +213,31 @@ let MemoService = class MemoService {
                 select: this.LIST_SELECT,
             }),
         ]);
+        const needWord = rows
+            .filter((r) => (0, notes_util_1.safeParse)(r.metas, {}).wordCount == null)
+            .map((r) => String(r.id));
+        let wordMap = null;
+        if (needWord.length) {
+            const full = await prisma_1.prisma.note.findMany({
+                where: { id: { in: needWord } },
+                select: { id: true, content: true },
+            });
+            wordMap = new Map(full.map((f) => [String(f.id), (0, memo_util_1.countMemoWords)(f.content)]));
+        }
         const list = rows.map((r) => {
             const metas = (0, notes_util_1.safeParse)(r.metas, {});
+            const id = String(r.id);
             return {
-                id: String(r.id),
+                id,
                 title: String(r.title || ''),
                 excerpt: String(metas.excerpt || ''),
                 folderId: String(r.folderId || ''),
                 charCount: asInt(metas.charCount),
+                wordCount: metas.wordCount != null
+                    ? asInt(metas.wordCount)
+                    : wordMap && wordMap.has(id)
+                        ? wordMap.get(id)
+                        : null,
                 version: asInt(r.version, 1),
                 status: String(r.status || ''),
                 createdAt: timeOf(r.createdAt),
@@ -288,7 +305,7 @@ let MemoService = class MemoService {
                 status: 'published',
                 publishedAt: new Date(),
                 firstPublishedAt: new Date(),
-                metas: JSON.stringify({ excerpt: (0, memo_util_1.excerptOf)(content), charCount: (0, memo_util_1.countMemoChars)(content) }),
+                metas: JSON.stringify({ excerpt: (0, memo_util_1.excerptOf)(content), charCount: (0, memo_util_1.countMemoChars)(content), wordCount: (0, memo_util_1.countMemoWords)(content) }),
             },
         });
         await this.rebuildNoteIndex(row.id, content, viewer, instanceId);
@@ -679,7 +696,7 @@ let MemoService = class MemoService {
                 content,
                 title: row.title || String(note.title || ''),
                 version: { increment: 1 },
-                metas: JSON.stringify({ excerpt: (0, memo_util_1.excerptOf)(content), charCount: (0, memo_util_1.countMemoChars)(content) }),
+                metas: JSON.stringify({ excerpt: (0, memo_util_1.excerptOf)(content), charCount: (0, memo_util_1.countMemoChars)(content), wordCount: (0, memo_util_1.countMemoWords)(content) }),
             },
             select: { version: true, updatedAt: true },
         });

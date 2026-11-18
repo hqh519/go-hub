@@ -209,6 +209,20 @@ export function countMemoChars(md: unknown): number {
   return n;
 }
 
+/**
+ * v1.3.4.2（需求：笔记列表的「N 字」要统计字数，不是字符数）
+ *
+ * 口径与编辑器顶部辅助栏的「字数」完全一致：**汉字 + 字母**。
+ * 数字、标点、空白都不计入，所以同一篇笔记的字数一定小于等于 countMemoChars。
+ * 两者并存：wordCount 给列表展示，charCount 继续留给历史记录与旧数据兜底。
+ */
+export function countMemoWords(md: unknown): number {
+  const text = stripBlockIds(plainTextOf(md));
+  const cn = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+  const en = (text.match(/[a-zA-Z]/g) || []).length;
+  return cn + en;
+}
+
 /** 从正文首行推一个标题（新建笔记没填标题时给列表一个可读的名字） */
 export function titleFromContent(md: unknown, max = 40): string {
   const text = plainTextOf(md);

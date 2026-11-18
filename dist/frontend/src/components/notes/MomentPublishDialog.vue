@@ -184,8 +184,24 @@
                     <button type="button" class="mp-asset-del" :title="$t('notes.removeAsset')" @click.stop="removeAsset(i)">
                         <font-awesome-icon icon="times" />
                     </button>
-                    <!-- v1.3.2（需求）：小眼睛放到左下角，点击预览附件（与文件选择器的小眼睛同义） -->
-                    <button type="button" class="mp-asset-eye" :title="$t('notes.preview')" @click.stop="toggleAssetPreview(i, $event)">
+                    <!--
+                        v1.3.4.2（需求）：小眼睛改为「按住才预览，松手就关闭」。
+                        pointer 事件同时覆盖鼠标与触屏；按下 320ms 才弹出，
+                        期间移动超过 10px 视为滚动/拖动，取消预览。
+                        长按会触发原生右键菜单与 click，这里一并拦掉。
+                    -->
+                    <button
+                        type="button"
+                        class="mp-asset-eye"
+                        :title="$t('notes.preview')"
+                        @click.stop.prevent
+                        @contextmenu.prevent
+                        @pointerdown.stop.prevent="eyePressStart(i, $event)"
+                        @pointermove.stop="eyePressMove"
+                        @pointerup.stop.prevent="eyePressEnd"
+                        @pointercancel.stop.prevent="eyePressEnd"
+                        @pointerleave="eyePressEnd"
+                    >
                         <font-awesome-icon icon="eye" />
                     </button>
                     <!-- 触屏没有拖拽手柄，用左右微调按钮（桌面端也保留，作为无障碍替代） -->
@@ -341,6 +357,7 @@
             所以这里不再自己画一个遮罩弹窗。
         -->
         <AssetPreviewFloat
+            ref="assetFloatRef"
             :visible="!!assetFloat"
             :src="assetFloat ? assetFloat.src : ''"
             :kind="assetFloat ? assetFloat.kind : 'image'"
@@ -610,6 +627,11 @@ export default {
      * 登记之后「先关里层、再关编辑页」的顺序才和视觉层级一致。
      */
     mounted() {
+        // v1.3.4.2：高度重算的重入锁 / 合帧句柄 / 小眼睛长按计时器
+        this._syncingHeight = false;
+        this._minRaf = 0;
+        this._eyeTimer = null;
+        this._eyeShowing = false;
         this._layerUnbind = bindDialogLayers(this, {
             visible: { id: 'moment-publish', close: () => { this.visible = false; } }
         });
@@ -630,6 +652,23 @@ export default {
         document.addEventListener('keydown', this._floatEsc, true);
     },
     beforeUnmount() {
+        /*
+         * v1.3.4.2（需求：松开小眼睛不能还有音视频在后台播）
+         * 弹窗被直接关掉时（不走 pointerup），也要把长按计时器与正在预览的媒体收掉。
+         */
+        if (this._eyeTimer) {
+            window.clearTimeout(this._eyeTimer);
+            this._eyeTimer = null;
+        }
+        if (this._eyeShowing) {
+            this._eyeShowing = false;
+            const f = this.$refs.assetFloatRef;
+            if (f && typeof f.pauseMedia === 'function') f.pauseMedia();
+        }
+        if (this._minRaf) {
+            window.cancelAnimationFrame(this._minRaf);
+            this._minRaf = 0;
+        }
         // v1.1.3：长按计时器必须清掉，否则弹窗关了还会在 320ms 后改一次状态
         if (this._pressTimer) {
             window.clearTimeout(this._pressTimer);
@@ -705,28 +744,51 @@ export default {
             });
         },
         /**
-         * v1.3.3：小眼睛改为「点一下开、再点一下关」，并带锚点定位。
-         * 关闭交给 document 上的 pointerdown（点浮层和按钮以外的地方）或 Esc。
+         * v1.3.4.2（需求）：小眼睛由「点一下开关」改为「按住预览、松手关闭」。
+         * 320ms 才弹出，避免手指滑过附件时闪一下；按下后位移超过 10px 视为
+         * 滚动或拖动，直接取消长按，不会误弹。
          */
-        toggleAssetPreview(index, e) {
+        eyePressStart(index, e) {
             const a = this.assets[index];
             if (!a) return;
-            const same = this.assetFloat && this.assetFloat.key === (a.fileId || a.url);
-            if (same) {
-                this.assetFloat = null;
-                return;
-            }
+            this.eyePressEnd();
             const rect = e && e.currentTarget && e.currentTarget.getBoundingClientRect
                 ? e.currentTarget.getBoundingClientRect()
                 : null;
+            this._eyeStartX = Number(e && e.clientX) || 0;
+            this._eyeStartY = Number(e && e.clientY) || 0;
+            this._eyeIndex = index;
+            this._eyeTimer = window.setTimeout(() => {
+                this._eyeTimer = null;
+                this._eyeShowing = true;
+                this.showAssetPreview(index, rect);
+            }, 320);
+        },
+        eyePressMove(e) {
+            if (!this._eyeTimer && !this._eyeShowing) return;
+            const dx = (Number(e && e.clientX) || 0) - this._eyeStartX;
+            const dy = (Number(e && e.clientY) || 0) - this._eyeStartY;
+            if (dx * dx + dy * dy > 100) this.eyePressEnd();
+        },
+        eyePressEnd() {
+            if (this._eyeTimer) {
+                window.clearTimeout(this._eyeTimer);
+                this._eyeTimer = null;
+            }
+            if (this._eyeShowing) {
+                this._eyeShowing = false;
+                this.closeAssetFloat();
+            }
+        },
+        /** 打开指定附件的预览浮层（长按到点后调用，锚点是眼睛按钮的矩形） */
+        showAssetPreview(index, rect) {
+            const a = this.assets[index];
+            if (!a) return;
             this.assetFloat = {
                 key: a.fileId || a.url,
                 /*
-                 * v1.3.3.3（需求：小眼睛预览框还是太小）：
-                 * 原来图片传的是 thumbUrl —— 缩略图本身只有一两百像素宽，
-                 * 浮层虽然给了 300px 的框，图片按自身尺寸渲染出来仍然很小。
-                 * 这里改用原图地址（同一台机器、刚上传完，基本都在缓存里），
-                 * 配合浮层里 object-fit: contain 的铺满规则，才是「看得清」的预览。
+                 * 用原图地址而不是 thumbUrl —— 缩略图本身只有一两百像素宽，
+                 * 浮层给再大的框也只是把小图放大，看不清细节。
                  */
                 src: a.url || a.thumbUrl || '',
                 kind: a.mediaKind || 'file',
@@ -737,6 +799,14 @@ export default {
             };
         },
         closeAssetFloat() {
+            /*
+             * v1.3.4.2（需求：松手后视频/音频不能还在后台播）
+             * 让浮层组件先把 <video>/<audio> 暂停并归零，再销毁节点；
+             * 只把 visible 置 false 虽然会卸载元素，但 Safari 上有过
+             * 元素移除后音频仍在播放的个例，显式 pause 最稳。
+             */
+            const f = this.$refs.assetFloatRef;
+            if (f && typeof f.pauseMedia === 'function') f.pauseMedia();
             if (this.assetFloat) this.assetFloat = null;
         },
         /**
@@ -796,91 +866,100 @@ export default {
             const px = this.editorMinPx();
             if (!px) return;
             body.style.setProperty('--mp-editor-min', `${px}px`);
-            // 视口变了（键盘弹起 / 旋屏 / 地址栏收起）以后，上限也跟着变，重算一次内容高度
-            this.syncEditorHeight();
+            /*
+             * v1.3.4.2：视口变化（键盘弹起/收起、旋屏、地址栏）常常一次派发多个事件，
+             * 合到一帧里重算一次就够。之前的实现每次都同步改高度，
+             * 高度变化又会触发下面的 ResizeObserver，形成「改→量→改」的自激循环，
+             * 正文框在输入过程中被一轮轮压缩，看起来就是「越来越小」。
+             */
+            if (this._minRaf) return;
+            this._minRaf = window.requestAnimationFrame(() => {
+                this._minRaf = 0;
+                this.syncEditorHeight();
+            });
         },
         /**
-         * 盯着高度变化：弹窗自身（ResizeObserver）+ 可见视口（visualViewport.resize）。
-         * 软键盘弹出、旋屏、窗口缩放、浏览器地址栏收起都会触发其中之一。
+         * 盯视口变化：可见视口（soft keyboard）+ window.resize 兜底。
+         *
+         * v1.3.4.2：不再观察 .el-dialog 的尺寸 —— 正文框自身高度就是弹窗尺寸的一部分，
+         * 观察它等于让「改高度」反过来触发「再改高度」。驱动因素本来只有视口，
+         * 观察视口就够了。
          */
         setupEditorObserver() {
-            const body = this.$refs.bodyEl;
-            const dlg = body && body.closest('.el-dialog');
-            if (!dlg) return;
             this.teardownEditorObserver();
-            if (typeof ResizeObserver !== 'undefined') {
-                this._editorRO = new ResizeObserver(() => this.updateEditorMin());
-                this._editorRO.observe(dlg);
-            }
             const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+            this._editorVV = () => this.updateEditorMin();
             if (vv && vv.addEventListener) {
-                this._editorVV = () => this.updateEditorMin();
                 vv.addEventListener('resize', this._editorVV);
                 vv.addEventListener('scroll', this._editorVV);
             }
+            // 部分 Android WebView 的 visualViewport 不派发 resize，用 window 事件兜底
+            window.addEventListener('resize', this._editorVV, { passive: true });
+            window.addEventListener('orientationchange', this._editorVV, { passive: true });
         },
         teardownEditorObserver() {
-            if (this._editorRO) {
-                this._editorRO.disconnect();
-                this._editorRO = null;
-            }
             const vv = typeof window !== 'undefined' ? window.visualViewport : null;
             if (vv && this._editorVV) {
                 vv.removeEventListener('resize', this._editorVV);
                 vv.removeEventListener('scroll', this._editorVV);
-                this._editorVV = null;
             }
+            if (this._editorVV) {
+                window.removeEventListener('resize', this._editorVV);
+                window.removeEventListener('orientationchange', this._editorVV);
+            }
+            this._editorVV = null;
         },
         /**
          * 正文输入框的高度。
          *
-         * 触屏设备（需求原文：最小值锁死、最大值随页面自适应）：
-         *   · 量出内容真正需要的高度 natural；
-         *   · 高度 = clamp(natural, 下限, 上限) —— 内容少时撑到下限，内容多时按内容长高；
-         *   · 上限：键盘弹起时是可见视口的 42%（再高会被键盘顶出屏幕），
-         *          键盘收起时是静止视口的 80%（剩下的交给弹窗滚动）。
-         * 桌面端保持原样（固定高度 + 手动拖拽）。
+         * v1.3.4.2（需求：失焦后不再自适应、输入过程中越变越小）——两条根因都改掉：
+         *   1) 判据只看「键盘弹起 / 收起」，不再看 focus / blur。
+         *      手机上 focus/blur 与键盘并不同步（blur 可能早 300ms，也可能根本不触发）；
+         *      桌面分支原来还拿 editorFocused 当门控，onOpen 与 watch.visible 的
+         *      focus 抢先后会把它清掉，清掉之后所有输入都不再重算。
+         *   2) 量内容高度时把 height 设成 0px 而不是 auto。
+         *      父级是 flex 容器且默认 align-items: stretch，height:auto 会被拉到
+         *      上一轮的 minHeight，scrollHeight 读到的是旧高度，clamp 之后只会一轮轮
+         *      变小 —— 这就是「越输越小」。
+         * 宽视口（真桌面）仍保留原来的「固定高度 + 手动拖拽」，不改变桌面观感。
          */
         syncEditorHeight() {
             const el = this.$refs.textarea;
             const wrap = el && el.parentElement;
             if (!el || !wrap) return;
-            const base = this.editorMinPx() || 180;
-            if (!isTouchDevice()) {
-                if (!this.editorFocused) {
+            // 改高度会再次触发观察回调，用重入锁挡住自激循环
+            if (this._syncingHeight) return;
+            this._syncingHeight = true;
+            try {
+                const base = this.editorMinPx() || 180;
+                const compact = isTouchDevice() || window.innerWidth <= 900;
+                if (!compact) {
                     el.style.height = '';
                     el.style.overflowY = '';
-                    wrap.style.minHeight = '';
+                    const h = el.offsetHeight;
+                    wrap.style.minHeight = h > base + 1 ? `${Math.round(h)}px` : '';
                     return;
                 }
-                const h = el.offsetHeight;
-                wrap.style.minHeight = h > base + 1 ? `${Math.round(h)}px` : '';
-                return;
+                const prevHeight = el.style.height;
+                const prevOverflow = el.style.overflowY;
+                el.style.height = '0px';
+                el.style.overflowY = 'hidden';
+                const natural = el.scrollHeight;
+                el.style.height = prevHeight;
+                el.style.overflowY = prevOverflow;
+                const max = this.editorMaxPx();
+                const target = Math.max(base, Math.min(natural, max));
+                el.style.height = `${Math.round(target)}px`;
+                /*
+                 * v1.3.1.2：wrap 按内容收缩，右下角字数统计才贴在输入框下沿；
+                 * v1.3.4.2：minHeight 每次都覆盖成当前 target，允许随内容变矮（原来只增不减）。
+                 */
+                wrap.style.flex = '0 0 auto';
+                wrap.style.minHeight = `${Math.round(target)}px`;
+                el.style.overflowY = natural > max ? 'auto' : 'hidden';
+            } finally {
+                this._syncingHeight = false;
             }
-            /*
-             * 先量「内容真正需要多高」：把行内 height 清成 auto 才不会读到上一次的高度。
-             * scrollHeight 含 padding，正好可以直接当 height 用（box-sizing: border-box）。
-             */
-            const prev = el.style.height;
-            el.style.height = 'auto';
-            const natural = el.scrollHeight;
-            el.style.height = prev;
-            const max = this.editorMaxPx();
-            const target = Math.max(base, Math.min(natural, max));
-            el.style.height = `${Math.round(target)}px`;
-            /*
-             * v1.3.1.2（需求：移动端/平板聚焦时字数统计跑到输入框外面）：
-             *
-             * 原来 `.mp-editor-wrap` 是 `flex: 1 1 auto` —— 弹窗里还有剩余空间时它会
-             * 一直撑到剩余空间用完，而 textarea 的高度只到 target。右下角的字数统计
-             * 是相对 wrap 绝对定位的，于是被推到 wrap 底部 —— 也就是输入框下沿之外。
-             * 触屏下这里把 wrap 改成按内容收缩（flex: 0 0 auto），wrap 高度 == textarea 高度，
-             * 字数统计就贴在输入框右下角了；桌面端保持原样（固定高度、随弹窗撑满）。
-             */
-            wrap.style.flex = '0 0 auto';
-            wrap.style.minHeight = `${Math.round(target)}px`;
-            // 撞到上限时内部滚动，用户仍然能看到自己写的最后一行
-            el.style.overflowY = natural > max ? 'auto' : 'hidden';
         },
         /** 正文框的高度上限：键盘弹起时按当前视口，收起时按静止视口 */
         editorMaxPx() {
@@ -928,12 +1007,20 @@ export default {
             // v1.3.3.3：键盘态与基准一起重置，否则下次打开会沿用上一轮的矮视口
             this.keyboardOpen = false;
             this._maxVh = 0;
+            // v1.3.4.2：重入锁一并归零，避免上一次卸载时正好卡在测量中间
+            this._syncingHeight = false;
         },
         onClosed() {
             if (this._kbTimers) {
                 this._kbTimers.forEach((t) => window.clearTimeout(t));
                 this._kbTimers = null;
             }
+            // v1.3.4.2：关窗时把待执行的高度重算与小眼睛长按一并收掉
+            if (this._minRaf) {
+                window.cancelAnimationFrame(this._minRaf);
+                this._minRaf = 0;
+            }
+            this.eyePressEnd();
             // 关闭（含 Esc / 点遮罩 / 点取消）都留草稿；只有「发布成功」才跳过
             if (!this.skipDraftSave) this.saveDraft();
             this.skipDraftSave = false;
@@ -1788,6 +1875,11 @@ export default {
     color: #fff;
     font-size: 9px;
     cursor: pointer;
+    /* v1.3.4.2：长按预览 —— 按住时不要触发页面滚动、文字选中与 iOS 长按菜单 */
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .mp-asset-eye:hover {

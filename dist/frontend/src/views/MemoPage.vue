@@ -703,8 +703,18 @@ export default {
                 return;
             }
             if (!el || typeof el.scrollTop !== 'number') return;
+            /*
+             * v1.3.4.2（需求：左右滑动工具栏会误触发顶栏显示）
+             * 编辑器工具栏、标签行这类「只能横向滚、纵向不可滚」的容器，
+             * 它们的 scroll 会被 .memo-page 上的捕获监听收到（scroll 不冒泡，
+             * 捕获阶段能看见所有后代）。横向滑动与页面位置无关，
+             * 直接不参与顶栏显隐，避免顶栏被滑出来。
+             */
+            const scrollX = el.scrollWidth - el.clientWidth;
+            const scrollY = el.scrollHeight - el.clientHeight;
+            if (scrollX > 4 && scrollY < 80) return;
             // 容器不可滚（内容比视口短）时直接不参与，顶栏常显
-            if (el.scrollHeight - el.clientHeight < 80) {
+            if (scrollY < 80) {
                 if (this.topbarHidden) this.topbarHidden = false;
                 return;
             }

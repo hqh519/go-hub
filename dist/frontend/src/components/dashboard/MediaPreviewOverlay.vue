@@ -2708,7 +2708,12 @@ export default {
 .media-viewer {
     position: fixed;
     inset: 0;
-    z-index: 3200;
+    /*
+     * v1.3.4.2（需求：工具栏和标题栏的层级不能高过文件灯箱）
+     * 编辑器里的浮层最高到 3502（引用面板二级），悬浮菜单 3300，工具提示 3400。
+     * 灯箱是模态层，必须盖住它们，所以从 3200 抬到 3600。
+     */
+    z-index: 3600;
     display: flex;
     flex-direction: column;
     /*

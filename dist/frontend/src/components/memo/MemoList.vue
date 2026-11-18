@@ -42,11 +42,11 @@
                         <div class="ml-item-meta">
                             <span>{{ formatTime(n.updatedAt) }}</span>
                             <!--
-                                v1.3.3.3（需求：字数只显示一个「字」）
-                                memo.charUnit 的值就是「字」，里面没有 {n} 占位符，
-                                所以传 n 进去也不会有数字。这里换成带占位符的 listChars。
+                                v1.3.4.2（需求：这里要显示「字数」，不是「字符数」）
+                                wordCount = 汉字 + 字母，与编辑器顶部一致；
+                                旧笔记 metas 里没有 wordCount（后端给 null），回退到 charCount。
                             -->
-                            <span v-if="n.charCount" class="ml-item-chars">{{ $t('memo.listChars', { n: n.charCount }) }}</span>
+                            <span v-if="n.wordCount || n.charCount" class="ml-item-chars">{{ $t('memo.listChars', { n: n.wordCount ?? n.charCount }) }}</span>
                         </div>
                     </div>
                     <el-dropdown trigger="click" class="ml-item-more" @command="(cmd) => onCommand(cmd, n)" @click.stop>
@@ -277,6 +277,8 @@ export default {
             if (patch.title !== undefined) hit.title = patch.title;
             if (patch.updatedAt) hit.updatedAt = patch.updatedAt;
             if (patch.charCount !== undefined) hit.charCount = patch.charCount;
+            // v1.3.4.2：保存后同步「字数」，列表不用重新拉接口
+            if (patch.wordCount !== undefined) hit.wordCount = patch.wordCount;
         },
         prependItem(item) {
             this.notes = [item, ...this.notes];

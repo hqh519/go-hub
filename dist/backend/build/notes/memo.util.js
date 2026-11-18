@@ -7,6 +7,7 @@ exports.withBlockIds = withBlockIds;
 exports.plainTextOf = plainTextOf;
 exports.excerptOf = excerptOf;
 exports.countMemoChars = countMemoChars;
+exports.countMemoWords = countMemoWords;
 exports.titleFromContent = titleFromContent;
 const crypto_1 = require("crypto");
 exports.BLOCK_ID_PREFIX = 'blk_';
@@ -141,6 +142,12 @@ function countMemoChars(md) {
             n += 1;
     }
     return n;
+}
+function countMemoWords(md) {
+    const text = stripBlockIds(plainTextOf(md));
+    const cn = (text.match(/[\u4e00-\u9fa5]/g) || []).length;
+    const en = (text.match(/[a-zA-Z]/g) || []).length;
+    return cn + en;
 }
 function titleFromContent(md, max = 40) {
     const text = plainTextOf(md);

@@ -732,7 +732,11 @@
                 </template>
             </div>
 
-            <!-- 左侧行级栏的块操作菜单（v1.3.3.3：按需求固定为这五项） -->
+            <!--
+                左侧行级栏的块操作菜单
+                v1.3.4.2（需求）：复制/剪切/删除改成「复制块/剪切块/删除块」，
+                「删除块」后加「清除格式」，末尾加「在下方插入换行」。
+            -->
             <div
                 v-if="gutterMenu.open"
                 class="me-ctx me-gutter-menu"
@@ -743,17 +747,23 @@
                     <font-awesome-icon icon="hashtag" class="me-ctx-icon" /><span>{{ $t('memo.gutterCopyId') }}</span>
                 </button>
                 <button type="button" class="me-ctx-item" @click="gutterAction('copy')">
-                    <font-awesome-icon icon="copy" class="me-ctx-icon" /><span>{{ $t('memo.ctxCopy') }}</span>
+                    <font-awesome-icon icon="copy" class="me-ctx-icon" /><span>{{ $t('memo.gutterCopyBlock') }}</span>
                 </button>
                 <button type="button" class="me-ctx-item" @click="gutterAction('cut')">
-                    <font-awesome-icon icon="scissors" class="me-ctx-icon" /><span>{{ $t('memo.ctxCut') }}</span>
+                    <font-awesome-icon icon="scissors" class="me-ctx-icon" /><span>{{ $t('memo.gutterCutBlock') }}</span>
                 </button>
                 <button type="button" class="me-ctx-item" @click="gutterAction('delete')">
-                    <font-awesome-icon icon="trash" class="me-ctx-icon" /><span>{{ $t('memo.ctxDelete') }}</span>
+                    <font-awesome-icon icon="trash" class="me-ctx-icon" /><span>{{ $t('memo.gutterDeleteBlock') }}</span>
+                </button>
+                <button type="button" class="me-ctx-item" @click="gutterAction('clearFormat')">
+                    <font-awesome-icon icon="eraser" class="me-ctx-icon" /><span>{{ $t('memo.gutterClearFormat') }}</span>
                 </button>
                 <div class="me-ctx-sep"></div>
                 <button type="button" class="me-ctx-item" @click="gutterAction('insertAfter')">
                     <font-awesome-icon icon="plus" class="me-ctx-icon" /><span>{{ $t('memo.gutterInsertAfter') }}</span>
+                </button>
+                <button type="button" class="me-ctx-item" @click="gutterAction('insertBreak')">
+                    <font-awesome-icon icon="arrow-down" class="me-ctx-icon" /><span>{{ $t('memo.gutterInsertBreak') }}</span>
                 </button>
             </div>
 
@@ -1799,7 +1809,13 @@ const IframeBlock = Node.create({
                 if (Number(attrs.width) > 0) frame.style.width = `${Math.max(200, Number(attrs.width))}px`;
                 else frame.style.width = '';
             };
-            build(node);
+            /*
+             * v1.3.4.2（需求：插入网页嵌入后内容框里加载不出来）
+             * 上一版写的是 build(node) —— 形参叫 attrs，读的却是 attrs.src，
+             * 而 node.src 恒为 undefined，于是每次都走「地址无效」分支：
+             * iframe 从没被创建，缩放手柄也没 append 进来。这里统一传 node.attrs。
+             */
+            build(node.attrs);
 
             const commit = (w, h) => {
                 const pos = typeof getPos === 'function' ? getPos() : null;
@@ -1871,7 +1887,8 @@ const IframeBlock = Node.create({
                 update(updated) {
                     if (updated.type.name !== 'iframe') return false;
                     cur = updated;
-                    build(updated);
+                    // v1.3.4.2：与首次 build 同一口径，传 attrs 而不是节点
+                    build(updated.attrs);
                     return true;
                 },
             };
@@ -2101,7 +2118,7 @@ const BlockRef = Node.create({
      * NodeView 在模块作用域拿不到组件实例，跳转靠自定义事件冒泡上去。
      */
     addNodeView() {
-        return ({ node }) => {
+        return ({ node, getPos, view }) => {
             const wrap = document.createElement('span');
             wrap.className = 'gh-blockref-card';
             wrap.setAttribute('data-block-ref', 'true');
@@ -2118,15 +2135,23 @@ const BlockRef = Node.create({
             const label = document.createElement('span');
             label.className = 'gh-br-label';
             label.textContent = '块内容引用';
+            /*
+             * v1.3.4.2（需求）：内容框第一行要显示「所引用块的笔记来源标题」。
+             * resolveBlock 已经返回 noteTitle，这里单列一个 span 显示，
+             * 超长时由 CSS 省略，不挤掉右侧的编辑按钮。
+             */
+            const source = document.createElement('span');
+            source.className = 'gh-br-source';
             const grow = document.createElement('span');
             grow.className = 'gh-cb-grow';
             const edit = document.createElement('button');
             edit.type = 'button';
             edit.className = 'gh-cb-btn gh-br-edit';
-            edit.title = '编辑';
+            edit.title = '更换引用块';
             edit.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
             bar.appendChild(fold);
             bar.appendChild(label);
+            bar.appendChild(source);
             bar.appendChild(grow);
             bar.appendChild(edit);
 
@@ -2144,17 +2169,39 @@ const BlockRef = Node.create({
                 ev.preventDefault();
                 wrap.classList.toggle('is-collapsed');
             });
+            /*
+             * v1.3.4.2（需求）：这里的「编辑」由「跳回源笔记」改为「更换引用块」。
+             * 组件收到事件后打开两级引用面板，选完块直接把本节点的 blockId 换掉。
+             */
             edit.addEventListener('click', (ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
-                wrap.dispatchEvent(new CustomEvent('gohub:blockref-edit', { bubbles: true }));
+                wrap.dispatchEvent(new CustomEvent('gohub:blockref-change', { bubbles: true }));
+            });
+            /* 点标题栏：选中这个行内原子，方便整块删除 / 键盘操作 */
+            bar.addEventListener('click', (ev) => {
+                if (ev.target === edit || ev.target === fold) return;
+                const pos = typeof getPos === 'function' ? getPos() : null;
+                if (typeof pos === 'number' && view) {
+                    try {
+                        view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
+                    } catch (e) { /* 忽略 */ }
+                }
             });
 
+            /* 连续更换时只认最后一次请求的返回，避免旧请求把新内容盖回去 */
+            let seq = 0;
             const load = async () => {
+                const mine = ++seq;
+                const blockId = String(node.attrs.blockId || '');
                 try {
-                    const r = await resolveBlock(node.attrs.blockId);
+                    const r = await resolveBlock(blockId);
+                    if (mine !== seq) return;
+                    source.textContent = r?.noteTitle ? `· ${r.noteTitle}` : '';
                     body.textContent = String(r?.plainText || '（源块为空）');
                 } catch (e) {
+                    if (mine !== seq) return;
+                    source.textContent = '';
                     body.textContent = '（源内容已删除或无权访问）';
                 }
             };
@@ -2996,17 +3043,62 @@ const SVG_SELECT_ALL =
 const SVG_REDO =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>';
 
-/** 由 TOOLS 生成完整的命令清单（顺序即 TOOLS 的书写顺序，工具表就是唯一真源） */
-const SLASH_COMMANDS = Object.keys(TOOLS).map((id) => ({
-    id,
-    icon: TOOLS[id].icon || '',
-    /* v1.3.3.3：内联图标 / 字形图标的工具，斜杠菜单也要跟着显示，不能空着 */
-    svgKey: TOOLS[id].svgKey || '',
-    glyph: TOOLS[id].glyph || '',
-    label: TOOLS[id].label,
-    hint: TOOL_HINTS[id] || '',
-    separator: false,
-}));
+function slashCmdOf(id) {
+    return {
+        id,
+        icon: TOOLS[id].icon || '',
+        /* v1.3.3.3：内联图标 / 字形图标的工具，斜杠菜单也要跟着显示，不能空着 */
+        svgKey: TOOLS[id].svgKey || '',
+        glyph: TOOLS[id].glyph || '',
+        label: TOOLS[id].label,
+        hint: TOOL_HINTS[id] || '',
+        separator: false,
+    };
+}
+
+/**
+ * 默认斜杠菜单的分组与顺序（v1.3.4.2 需求）。
+ *
+ * 没有配置 `/命令菜单配置` 时，原来直接按 TOOLS 的书写顺序铺开 ——
+ * 那是「代码里的定义顺序」，不是「用户找工具的顺序」：加粗后面跟着 h1，
+ * 隔很远才是斜体，同类工具散落各处。这里按使用频次与功能聚类重排：
+ *   1) 行内文字格式（最高频）
+ *   2) 标题与段落
+ *   3) 列表与缩进
+ *   4) 插入内容（媒体 / 文件 / 表格 / 代码 / 嵌入）
+ *   5) 对齐与换行
+ *   6) 引用、大纲与查找
+ * 未在这里点名的工具不会被丢掉 —— 它们会分组追加到末尾（默认必须加载全部工具）。
+ */
+const SLASH_DEFAULT_GROUPS = [
+    ['bold', 'italic', 'underline', 'strike', 'highlight', 'code', 'link'],
+    ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'blockquote', 'callout', 'hr'],
+    ['bulletList', 'orderedList', 'taskList', 'indent', 'outdent'],
+    ['image', 'upload', 'file', 'video', 'audio', 'linkExtract', 'iframe', 'table', 'codeBlock'],
+    ['alignLeft', 'alignCenter', 'alignRight', 'hardBreak', 'insertLineBelow'],
+    ['subDoc', 'outline', 'foldAll', 'findReplace'],
+];
+
+/** 由 TOOLS 生成完整的命令清单（默认顺序见 SLASH_DEFAULT_GROUPS） */
+const SLASH_COMMANDS = (() => {
+    const out = [];
+    const used = new Set();
+    for (const ids of SLASH_DEFAULT_GROUPS) {
+        const valid = ids.filter((id) => TOOLS[id] && !used.has(id));
+        if (!valid.length) continue;
+        if (out.length) out.push({ id: `__sep_${out.length}`, separator: true });
+        for (const id of valid) {
+            used.add(id);
+            out.push(slashCmdOf(id));
+        }
+    }
+    const rest = Object.keys(TOOLS).filter((id) => !used.has(id));
+    if (rest.length) {
+        out.push({ id: '__sep_rest', separator: true });
+        for (const id of rest) out.push(slashCmdOf(id));
+    }
+    return out;
+})();
 
 /**
  * 工具栏配置行 → { scope, text }
@@ -3105,7 +3197,7 @@ export default {
              * 引用搜索（v1.3.1 · v1.5.0 计划）：
              * `[[` 搜文档、`((` 搜块。两者共用一个面板，靠 mode 区分。
              */
-            ref: { open: false, mode: '', level: 'list', noteId: '', noteTitle: '', query: '', items: [], index: 0, style: {}, loading: false },
+            ref: { open: false, mode: '', level: 'list', noteId: '', noteTitle: '', query: '', items: [], index: 0, style: {}, loading: false, replacePos: null },
             // 上传中的图片占位：避免连点多次上传把同一张图插两遍
             uploading: false,
             /** 反向链接面板（v1.5.0）：默认收起，避免把正文顶下去 */
@@ -3187,7 +3279,7 @@ export default {
             /* ── 查找替换 ── */
             findDlg: { visible: false, find: '', replace: '', count: 0, tip: '', index: 0 },
             /** v1.3.3.3：创建子文档（pos 是发起时的光标位置） */
-            subDoc: { visible: false, title: '', content: '', busy: false, pos: 0 },
+            subDoc: { visible: false, title: '', content: '', busy: false, pos: 0, blockStart: -1, offset: 0 },
             /* ── HTML ↔ MD 互转 ── */
             htmlDlg: { visible: false, html: '', md: '' },
             /* ── HTML 块 ── */
@@ -3700,14 +3792,32 @@ export default {
                 if (pos >= 0) this.openHtmlBlock(pos);
             };
             body.addEventListener('gohub:html-edit', this.onHtmlEdit);
-            /* v1.3.4.1：块引用内容框的「编辑」→ 跳回源笔记并定位块 */
-            this.onBlockRefEdit = (e) => {
+            /*
+             * v1.3.4.2（需求）：块引用内容框的「编辑」改为「更换引用块」。
+             * NodeView 拿不到组件实例，事件冒泡上来后再用 posAtDOM 反查位置
+             * （与 onHtmlEdit 一致，节点前 / 节点内两种偏移都试）。
+             */
+            this.onBlockRefChange = (e) => {
                 const card = e.target && e.target.closest && e.target.closest('.gh-blockref-card');
-                if (!card) return;
-                const blockId = String(card.getAttribute('data-block-id') || '').trim();
-                if (blockId) this.openBlockRef(blockId);
+                if (!card || !this.editor) return;
+                let pos = -1;
+                try {
+                    pos = this.editor.view.posAtDOM(card, 0);
+                } catch (err) {
+                    return;
+                }
+                let node = this.editor.state.doc.nodeAt(pos);
+                if (!node || node.type.name !== 'blockRef') {
+                    const before = this.editor.state.doc.nodeAt(pos - 1);
+                    if (before && before.type.name === 'blockRef') {
+                        pos -= 1;
+                        node = before;
+                    }
+                }
+                if (!node || node.type.name !== 'blockRef') return;
+                this.openBlockRefPicker(pos);
             };
-            body.addEventListener('gohub:blockref-edit', this.onBlockRefEdit);
+            body.addEventListener('gohub:blockref-change', this.onBlockRefChange);
             // v1.3.3.2：媒体节点被选中后的统一同步口（见 mediaSelectOnClick 注释）
             this.onMediaSelectPing = () => this.$nextTick(() => this.onSelectionChange());
             body.addEventListener('gohub:media-select', this.onMediaSelectPing);
@@ -3726,6 +3836,55 @@ export default {
                 this.onEditorUpdate();
             };
             body.addEventListener('beforeinput', this.onCodeBeforeInput, true);
+            /*
+             * v1.3.4.2（需求：勾选上级任务时，下级任务列表也要一起勾选）
+             *
+             * Tiptap 的 TaskItem 只改它自己的 checked，不会向下联动。
+             * 这里在 change 冒泡后（Tiptap 已把当前项写好）收集该 taskItem 的
+             * 所有后代 taskItem，统一写成同一个 checked 值。
+             */
+            this.onTaskCheck = (e) => {
+                const input = e.target;
+                if (!input || input.type !== 'checkbox' || this._taskSync) return;
+                const li = input.closest && input.closest('li[data-checked]');
+                if (!li || !this.editor) return;
+                const checked = !!input.checked;
+                let pos = -1;
+                try {
+                    pos = this.editor.view.posAtDOM(li, 0);
+                } catch (err) {
+                    return;
+                }
+                let node = this.editor.state.doc.nodeAt(pos);
+                if (!node || node.type.name !== 'taskItem') {
+                    const before = this.editor.state.doc.nodeAt(pos - 1);
+                    if (before && before.type.name === 'taskItem') {
+                        pos -= 1;
+                        node = before;
+                    }
+                }
+                if (!node || node.type.name !== 'taskItem') return;
+                const targets = [];
+                node.descendants((child, rel) => {
+                    if (child.type.name === 'taskItem') targets.push(pos + 1 + rel);
+                });
+                if (!targets.length) return;
+                const tr = this.editor.state.tr;
+                let changed = false;
+                for (const at of targets) {
+                    const n = tr.doc.nodeAt(at);
+                    if (!n || n.type.name !== 'taskItem') continue;
+                    if (!!n.attrs.checked === checked) continue;
+                    tr.setNodeMarkup(at, undefined, { ...n.attrs, checked });
+                    changed = true;
+                }
+                if (!changed) return;
+                this._taskSync = true;
+                this.editor.view.dispatch(tr);
+                this._taskSync = false;
+                this.onEditorUpdate();
+            };
+            body.addEventListener('change', this.onTaskCheck);
         }
         /*
          * 手柄与光标工具栏都用绝对/固定坐标，滚动或改窗口大小都得重算位置。
@@ -3777,7 +3936,8 @@ export default {
             body.removeEventListener('mouseout', this.onHoverEnd);
             if (this.onMediaSelectPing) body.removeEventListener('gohub:media-select', this.onMediaSelectPing);
             if (this.onCodeBeforeInput) body.removeEventListener('beforeinput', this.onCodeBeforeInput, true);
-            if (this.onBlockRefEdit) body.removeEventListener('gohub:blockref-edit', this.onBlockRefEdit);
+            if (this.onBlockRefChange) body.removeEventListener('gohub:blockref-change', this.onBlockRefChange);
+            if (this.onTaskCheck) body.removeEventListener('change', this.onTaskCheck);
         }
         window.removeEventListener('resize', this.onViewportChange);
         window.removeEventListener('scroll', this.onViewportChange, true);
@@ -4797,6 +4957,8 @@ export default {
                     version: this.version,
                     updatedAt: r?.updatedAt || Date.now(),
                     charCount: this.charCount,
+                    // v1.3.4.2：列表显示「字数」，保存后一并回填
+                    wordCount: this.wordCount,
                 });
                 // 正文里的引用可能变了，反链要跟着刷新（失败也不影响保存）
                 this.loadBacklinks();
@@ -5287,6 +5449,26 @@ export default {
             }
             if (action === 'delete') {
                 ed.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
+            } else if (action === 'clearFormat') {
+                /*
+                 * v1.3.4.2（需求）：块菜单里加「清除格式」。
+                 * 只清行内标记（加粗/斜体/下划线/颜色/字号等），保留块本身的结构 ——
+                 * 在块操作菜单里点「清除格式」的预期是「把这坨文字洗回朴素」，
+                 * 不是把标题降级成段落、把列表拆散（那是 clearNodes 的副作用）。
+                 */
+                const from = pos + 1;
+                const to = Math.max(from, pos + node.nodeSize - 1);
+                if (!node.isAtom && to > from) {
+                    ed.chain().focus().setTextSelection({ from, to }).unsetAllMarks().run();
+                }
+            } else if (action === 'insertBreak') {
+                /* v1.3.4.2（需求）：在块下方插入一个换行，并把光标落到新行上 */
+                const at = pos + node.nodeSize;
+                ed.chain()
+                    .focus()
+                    .insertContentAt(at, { type: 'paragraph' })
+                    .setTextSelection(at + 1)
+                    .run();
             } else if (action === 'duplicate') {
                 ed.chain().focus().insertContentAt(pos + node.nodeSize, node.toJSON()).run();
             } else if (action === 'insertAfter') {
@@ -5369,11 +5551,24 @@ export default {
             let pos = -1;
             try {
                 pos = ed.view.posAtDOM(wrap, 0);
-                pos -= 1;
             } catch (e) {
                 return;
             }
-            const node = ed.state.doc.nodeAt(pos);
+            /*
+             * v1.3.4.2（需求：点「编辑」没反应）
+             * posAtDOM 在不同结构下可能返回「节点前」也可能返回「节点内」。
+             * 上一版写死 pos -= 1，一旦它本来就在节点内，减去 1 就落到前一个块上，
+             * nodeAt 校验不通过便静默 return —— 表现就是按钮点了完全没反应。
+             * 与 onHtmlEdit 一致：两个位置都试一次。
+             */
+            let node = ed.state.doc.nodeAt(pos);
+            if (!node || node.type.name !== 'iframe') {
+                const before = ed.state.doc.nodeAt(pos - 1);
+                if (before && before.type.name === 'iframe') {
+                    pos -= 1;
+                    node = before;
+                }
+            }
             if (!node || node.type.name !== 'iframe') return;
             try {
                 const r1 = await ElMessageBox.prompt(this.$t('memo.iframeUrlPrompt'), this.$t('memo.iframeSettings'), {
@@ -5679,10 +5874,25 @@ export default {
              * v1.3.4（修「创建成功却没引用到光标处」）：
              * 点工具栏 / 菜单时编辑器可能已经失焦，selection 被重置成文档开头（pos=1），
              * 直接读它就会把引用插到文首。这里优先用失焦前记下的最后一个光标位置。
+             * v1.3.4.2：再额外记住「父块起点 + 段内偏移」，插入失败时可以用它重算，
+             * 不依赖一个可能已经失效的绝对位置。
              */
-            const from = ed.state.selection.from;
-            const pos = from <= 1 && this._lastSelFrom > 1 ? this._lastSelFrom : from;
-            this.subDoc = { visible: true, title: '', content: '', busy: false, pos };
+            const { $from } = ed.state.selection;
+            const from = $from.pos;
+            const useFallback = from <= 1 && this._lastSelFrom > 1;
+            const pos = useFallback ? this._lastSelFrom : from;
+            let blockStart = -1;
+            let offset = 0;
+            if (!useFallback) {
+                try {
+                    blockStart = $from.before($from.depth);
+                    offset = $from.parentOffset;
+                } catch (e) {
+                    blockStart = -1;
+                    offset = 0;
+                }
+            }
+            this.subDoc = { visible: true, title: '', content: '', busy: false, pos, blockStart, offset };
         },
         /** 创建子文档 → 在当前笔记同目录下建一篇 → 把引用插到刚才的光标处 */
         async createSubDoc() {
@@ -5699,16 +5909,45 @@ export default {
                 if (!r?.id) throw new Error('create failed');
                 const ed = this.editor;
                 const max = ed.state.doc.content.size;
-                const pos = Math.min(Math.max(1, Number(this.subDoc.pos) || this._lastSelFrom || 1), max);
                 const atom = { type: 'noteRef', attrs: { noteId: r.id, blockId: null, label: title } };
-                let ok = ed.chain().focus().insertContentAt(pos, atom).run();
-                if (!ok) {
-                    // 极少数位置（比如刚好在文档边界）插不进去，退回到最后一个可编辑位置
-                    ok = ed.chain().focus().insertContentAt(Math.max(1, max - 1), atom).run();
+                /*
+                 * v1.3.4.2（需求：创建成功后引用没插到光标处）
+                 * 绝对位置可能因为弹窗期间文档变动而失效，直接 fallback 到文末就会
+                 * 让人以为「引用没插进去」。这里按优先级逐个尝试：
+                 *   1) 打开弹窗时的光标位置；
+                 *   2) 父块起点 + 当时的段内偏移（重算，位置失效也能回到原段落）；
+                 *   3) 当前选区；
+                 *   4) 父块开头；
+                 *   5) 文档末尾（最后的兜底）。
+                 * 不再调用 .focus()：focus 会把失焦后被重置的选区写回去，反而添乱。
+                 */
+                const clamp = (v) => Math.min(Math.max(1, Number(v) || 1), max);
+                const tryInsert = (at) => {
+                    const p = clamp(at);
+                    try {
+                        return ed.chain().insertContentAt(p, atom).run();
+                    } catch (e) {
+                        return false;
+                    }
+                };
+                const candidates = [this.subDoc.pos];
+                if (Number(this.subDoc.blockStart) >= 0) {
+                    candidates.push(Number(this.subDoc.blockStart) + 1 + (Number(this.subDoc.offset) || 0));
+                    candidates.push(Number(this.subDoc.blockStart) + 1);
+                }
+                candidates.push(ed.state.selection.from);
+                candidates.push(max - 1);
+                let ok = false;
+                for (const c of candidates) {
+                    if (c === null || c === undefined) continue;
+                    if (tryInsert(c)) {
+                        ok = true;
+                        break;
+                    }
                 }
                 if (!ok) throw new Error(this.$t('memo.saveFail'));
                 this.onEditorUpdate();
-                this.subDoc = { visible: false, title: '', content: '', busy: false, pos: 0 };
+                this.subDoc = { visible: false, title: '', content: '', busy: false, pos: 0, blockStart: -1, offset: 0 };
                 ElMessage.success(this.$t('memo.subDocDone'));
                 // 让父页面刷新目录/列表（新笔记要出现在列表里）
                 this.$emit('reload', this.note?.id || '');
@@ -6458,7 +6697,57 @@ export default {
         // ---------------- 引用搜索：`[[` 文档 / `((` 块 ----------------
 
         closeRef() {
-            if (this.ref.open) this.ref = { ...this.ref, open: false, items: [], index: 0, mode: '' };
+            if (this.ref.open) this.ref = { ...this.ref, open: false, items: [], index: 0, mode: '', replacePos: null };
+        },
+
+        /**
+         * v1.3.4.2（需求）：引用面板按上下可用空间更大的一侧展开。
+         *
+         * 需求原文是「判断上方和下方哪里的位置空间更大，然后显示在更大的那个位置区域」，
+         * 所以这里直接比大小，不再像斜杠菜单那样只在下方放不下时才翻上去。
+         * 之前固定向下（coords.bottom + 6），光标落在视口下半部分时面板会被裁掉。
+         */
+        refStyleAt(pos) {
+            const ed = this.editor;
+            if (!ed) return {};
+            let c;
+            try {
+                c = ed.view.coordsAtPos(pos);
+            } catch (e) {
+                return {};
+            }
+            const below = window.innerHeight - c.bottom;
+            const above = c.top;
+            const openUp = above > below;
+            return openUp
+                ? { left: `${Math.round(c.left)}px`, bottom: `${Math.round(window.innerHeight - c.top + 6)}px` }
+                : { left: `${Math.round(c.left)}px`, top: `${Math.round(c.bottom + 6)}px` };
+        },
+
+        /**
+         * v1.3.4.2（需求）：从块引用内容框的「编辑」进入 —— 打开两级面板，
+         * 选完块后替换该节点的 blockId，而不是在光标处再插一个引用。
+         */
+        openBlockRefPicker(pos) {
+            const ed = this.editor;
+            if (!ed) return;
+            this.closeAllFloats('ref');
+            this.ref = {
+                ...this.ref,
+                open: true,
+                mode: 'block',
+                level: 'notes',
+                noteId: '',
+                noteTitle: '',
+                items: [],
+                index: 0,
+                query: '',
+                loading: true,
+                pos,
+                replacePos: pos,
+                style: this.refStyleAt(pos),
+            };
+            this.searchRef();
         },
 
         /**
@@ -6485,12 +6774,10 @@ export default {
             if (!mode) return this.closeRef();
             this.closeSlash();
             const query = (mNote ? mNote[1] : mBlock[1]) || '';
-            const coords = ed.view.coordsAtPos($from.pos);
-            /**
-             * v1.3.3.2：把光标位置一起存下来 —— 面板要跟着页面滚动重算位置
-             * （repositionFloats 用 ref.pos 重新拿坐标）。
+            /*
+             * v1.3.4.2（需求）：引用面板按上下空间择大展开（原来固定朝下）。
              */
-            const style = { left: `${Math.round(coords.left)}px`, top: `${Math.round(coords.bottom + 6)}px` };
+            const style = this.refStyleAt($from.pos);
             /*
              * v1.3.4.1：块引用先进入「笔记一级」（level=notes），
              * 点某个笔记标题后再进「块二级」（level=blocks）。
@@ -6507,6 +6794,8 @@ export default {
                 loading: true,
                 query,
                 pos: $from.pos,
+                /* 输入触发的面板永远是「插入」，不能带着上一次「更换块」的目标 */
+                replacePos: null,
                 style,
             };
             // 输入即搜：300ms 防抖，避免每个字符打一次接口
@@ -6599,6 +6888,25 @@ export default {
              */
             if (mode === 'block' && this.ref.level === 'notes') {
                 this.loadBlockRefItems(item.id, item.label);
+                return;
+            }
+            /*
+             * v1.3.4.2（需求）：从「块内容引用框」的编辑按钮进来时，选完块是**替换**
+             * 该节点引用的块，不是在光标处再插一个引用。
+             */
+            if (mode === 'block' && this.ref.level === 'blocks' && this.ref.replacePos != null) {
+                const pos = Number(this.ref.replacePos);
+                this.closeRef();
+                if (!Number.isFinite(pos) || pos < 0) return;
+                try {
+                    ed.chain().focus().command(({ tr }) => {
+                        tr.setNodeMarkup(pos, undefined, { blockId: String(item.id || '') });
+                        return true;
+                    }).run();
+                    this.onEditorUpdate();
+                } catch (e) {
+                    /* 节点已被删除 / 位置失效：静默放弃，不插入新内容 */
+                }
                 return;
             }
             const query = String(this.ref.query || '');
@@ -6896,7 +7204,17 @@ export default {
                 if (action === 'fold') {
                     const { $from } = ed.state.selection;
                     const pos = this.headingPosOf($from);
-                    if (pos >= 0) this.toggleFoldAt(pos);
+                    if (pos >= 0) {
+                        this.toggleFoldAt(pos);
+                        /*
+                         * v1.3.4.2（需求：折叠后按钮要变成向下箭头）
+                         * lineBar.folded 只在 syncLineMenu 里算，折叠本身不发文档事务，
+                         * 菜单不会重建，按钮就一直是「向上」。这里折完立刻同步一次状态。
+                         */
+                        if (this.lineBar.kind === 'heading') {
+                            this.lineBar = { ...this.lineBar, folded: !!(this._folds && this._folds.has(pos)) };
+                        }
+                    }
                     return;
                 }
                 const level = /^h([2-6])$/.exec(action);
@@ -7064,8 +7382,9 @@ export default {
             /*
              * v1.3.4.1（需求）：桌面端菜单栏距光标再拉开 15px（29 → 44），
              * 移动端拉开 5px（29 → 34）。只改水平间距，垂直仍与光标同一行居中。
+             * v1.3.4.2（需求）：桌面端再拉开 20px（44 → 64）。
              */
-            const cursorGap = this.isMobileViewport ? 34 : 44;
+            const cursorGap = this.isMobileViewport ? 34 : 64;
             const left = Math.max(8, Math.min(coords.left + cursorGap, window.innerWidth - barW - 8));
             const lineCenter = (coords.top + coords.bottom) / 2;
             this.inputBar = {
@@ -7537,8 +7856,8 @@ export default {
             }
             if (this.ref.open && typeof this.ref.pos === 'number') {
                 try {
-                    const c = ed.view.coordsAtPos(this.ref.pos);
-                    this.ref = { ...this.ref, style: { left: `${Math.round(c.left)}px`, top: `${Math.round(c.bottom + 6)}px` } };
+                    // v1.3.4.2：滚动时也按上下空间重新择向
+                    this.ref = { ...this.ref, style: this.refStyleAt(this.ref.pos) };
                 } catch (e) {
                     /* 忽略 */
                 }
@@ -9089,13 +9408,16 @@ export default {
     position: fixed;
     z-index: 3100;
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 2px;
-    min-width: 0;
-    /* 移动端：右键（长按）菜单保持一行，最宽 70%，超出横滑 */
-    max-width: min(70vw, 620px);
-    overflow-x: auto;
+    /* v1.3.4.2（需求）：移动端长按弹出的右键菜单也改成竖版 */
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1px;
+    min-width: 168px;
+    /* 竖版后按内容宽度收敛，最多 78% 视口宽；纵向超长时自己滚 */
+    max-width: min(78vw, 260px);
+    max-height: min(70vh, 420px);
+    overflow-x: hidden;
+    overflow-y: auto;
     padding: 5px;
     border: 1px solid var(--el-border-color-light);
     border-radius: 10px;
@@ -9412,6 +9734,12 @@ export default {
 .me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li:has(> div > ul))::after,
 .me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li:has(> div > ol))::after {
     left: 0.42em;
+    /*
+     * v1.3.4.2（需求：关系线末尾要与最后一个内容齐平）
+     * li 的高度还包着子列表的 margin-bottom(0.5em) 与末项 margin(0.18em)，
+     * 原来的 0.65em 会让线尾多出一小截。把这段空隙补掉，线就停在最后一行内容下沿。
+     */
+    bottom: 1.05em;
 }
 /* 有序列表的数字比圆点宽，竖线再往左一点才对得上数字中心 */
 .me-wysiwyg :deep(.gh-editor-content ol > li:has(> ul))::after,
@@ -10065,9 +10393,14 @@ export default {
     border-top: none;
 }
 /* v1.3.4.1：块引用内容框 */
+/* v1.3.4.2（需求：上下各多一行空白、没对齐行号）——根因是 inline 节点里放 block 元素，
+   浏览器会给它补匿名行盒；改成 inline-block + 满宽，行盒高度就等于卡片高度。 */
 .me-wysiwyg :deep(.gh-blockref-card) {
-    display: block;
-    margin: 0.4em 0;
+    display: inline-block;
+    vertical-align: top;
+    width: 100%;
+    margin: 0;
+    box-sizing: border-box;
     border: 1px solid var(--el-border-color-lighter);
     border-radius: 8px;
     background: var(--el-fill-color-lighter);
@@ -10084,9 +10417,18 @@ export default {
     color: var(--el-text-color-secondary);
 }
 .me-wysiwyg :deep(.gh-br-label) { flex: 0 0 auto; }
+/* v1.3.4.2：第一行的来源笔记标题，超长省略，不挤掉右侧按钮 */
+.me-wysiwyg :deep(.gh-br-source) {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.8;
+}
 .me-wysiwyg :deep(.gh-br-body) {
     display: block;
-    padding: 8px 10px;
+    padding: 6px 10px;
     font-size: 0.95em;
     color: var(--el-text-color-regular);
     white-space: pre-wrap;
