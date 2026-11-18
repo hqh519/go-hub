@@ -10,7 +10,7 @@
         「md 是真源」的落地方式：任何一次切换 / 保存都先取当前视图的 md，
         再把它喂给另一个视图 —— 富文本里的 JSON 只是派生缓存，从不单独落库。
     -->
-    <div class="me-root" :class="`theme-${editorTheme}`" :style="styleVars">
+    <div class="me-root" :class="[`theme-${editorTheme}`, { 'is-float-open': anyFloatOpen }]" :style="styleVars">
         <!--
             v1.3.1.2（需求：滚动吸附可配置）
             工具栏、标题栏、辅助栏（版本/时间/字数那一行）都挪进滚动容器 `.me-body`，
@@ -43,6 +43,7 @@
                             :show-timeout="80"
                             :hide-timeout="120"
                             placement="bottom-start"
+                            popper-class="me-tb-popper"
                             @command="(cmd) => runTool(cmd)"
                         >
                             <button
@@ -61,6 +62,41 @@
                                     <el-dropdown-item v-for="g in groupTools(token)" :key="`g-${li}-${ti}-${g}`" :command="g">
                                         <font-awesome-icon v-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
                                         <span class="me-group-label">{{ toolsOf(g) ? $t(toolsOf(g).label) : g }}</span>
+                                    </el-dropdown-item>
+                                </el-dropdown-menu>
+                            </template>
+                        </el-dropdown>
+                        <!-- v1.3.4：字号 / 颜色 / 列表转换在工具栏里是「按钮 + 下拉」 -->
+                        <el-dropdown
+                            v-else-if="toolDropdown(token)"
+                            :trigger="isTouchUi ? 'click' : 'hover'"
+                            :show-timeout="60"
+                            :hide-timeout="140"
+                            placement="bottom-start"
+                            popper-class="me-tb-popper"
+                            @command="(c) => runDropdownTool(token, c)"
+                        >
+                            <button
+                                type="button"
+                                class="me-btn me-btn-dd"
+                                :data-ti="ti"
+                                :class="{ 'is-tb-hidden': isTbHidden(li, ti) }"
+                                :title="$t(toolsOf(token) ? toolsOf(token).label : token)"
+                                @mousedown.prevent
+                            >
+                                <font-awesome-icon v-if="toolsOf(token) && toolsOf(token).icon" :icon="toolsOf(token).icon" />
+                                <font-awesome-icon icon="caret-down" class="me-dd-caret" />
+                            </button>
+                            <template #dropdown>
+                                <el-dropdown-menu>
+                                    <el-dropdown-item
+                                        v-for="d in toolDropdown(token).items"
+                                        :key="`dd-${d.command}`"
+                                        :command="d.command"
+                                        :divided="!!d.divided"
+                                        :class="{ 'is-active': token === 'listConvert' && d.command === currentListType() }"
+                                    >
+                                        <span v-if="d.dot" class="me-color-dot" :class="`is-${d.dot}`"></span>{{ $t(d.label) }}
                                     </el-dropdown-item>
                                 </el-dropdown-menu>
                             </template>
@@ -102,6 +138,7 @@
                         :hide-timeout="120"
                         placement="bottom-end"
                         class="me-toolbar-more"
+                        popper-class="me-tb-popper"
                         @command="(cmd) => runTool(cmd)"
                     >
                         <button type="button" class="me-btn" :title="$t('memo.toolbarMore')" @mousedown.prevent>
@@ -120,6 +157,12 @@
                     <!-- 每行末尾都跟一组固定的「视图 / 保存」，它不属于可配置工具 -->
                     <span class="me-grow"></span>
                     <template v-if="li === toolbarLines.length - 1">
+                        <!--
+                            v1.3.4（需求）：移动端把「编辑/源码/预览」钉在行末，横滑时不动。
+                            sticky 在横向滚动容器里就是干这个的：正常位置在末尾，
+                            滑到左边时它仍贴在可视区右边缘。保存按钮已移到顶部栏。
+                        -->
+                        <span class="me-mode-tail">
                         <!-- v1.3.2（需求）：三个模式按钮合并成一个文字下拉框 -->
                         <!-- v1.3.3.3（需求）：鼠标移到按钮上就展开下拉 -->
                         <el-dropdown
@@ -127,6 +170,7 @@
                             :show-timeout="60"
                             :hide-timeout="120"
                             placement="bottom-end"
+                            popper-class="me-tb-popper"
                             @command="setMode"
                         >
                             <button type="button" class="me-btn me-mode-btn" :title="$t('memo.modeLabel')" @mousedown.prevent>
@@ -141,9 +185,7 @@
                                 </el-dropdown-menu>
                             </template>
                         </el-dropdown>
-                        <button type="button" class="me-btn" :title="$t('memo.save')" @mousedown.prevent @click="saveNow">
-                            <font-awesome-icon icon="save" />
-                        </button>
+                        </span>
                     </template>
                 </div>
             </div>
@@ -187,8 +229,13 @@
                         <font-awesome-icon icon="clock" class="me-meta-icon" />
                         {{ updatedText }}
                     </span>
-                    <span class="me-meta-item">{{ $t('memo.wordCount', { n: wordCount }) }}</span>
-                    <span class="me-meta-item">{{ $t('memo.charCountAll', { n: charCount }) }}</span>
+                    <!--
+                        v1.3.4（需求）：字数 / 字符的统计口径互换。
+                        「字数」= 正文总字符数（与列表里的「N 字」同一口径，含标点、不含空白）；
+                        「字符」= 汉字 + 字母数。原来两边的值正好相反，看着就像标签写反了。
+                    -->
+                    <span class="me-meta-item">{{ $t('memo.wordCount', { n: charCount }) }}</span>
+                    <span class="me-meta-item">{{ $t('memo.charCountAll', { n: wordCount }) }}</span>
                     <span class="me-status">
                         <span v-if="saving" class="me-status-text">{{ $t('memo.saving') }}</span>
                         <span v-else-if="dirty" class="me-status-text is-dirty">{{ $t('memo.unsaved') }}</span>
@@ -264,6 +311,28 @@
                         @mousedown.prevent
                         @click.stop="openGutter(row.pos, row.type, $event.currentTarget)"
                     >{{ row.no }}</button>
+                </div>
+                <!--
+                    v1.3.4（需求）：任意层级的列表项都能折叠自己的下级。
+                    按钮落在该项「符号」的位置上（普通列表 = 圆点中心，任务列表 = 勾选框中心），
+                    平时透明，鼠标移到符号上才出现 —— 不干扰正文阅读。
+                -->
+                <div
+                    v-for="row in listFoldRows"
+                    :key="`lf-${row.key}`"
+                    class="me-listfold-row"
+                    :class="{ 'is-folded': row.folded }"
+                    :style="{ left: `${row.left}px`, top: `${row.top}px` }"
+                >
+                    <button
+                        type="button"
+                        class="me-listfold-btn"
+                        :title="row.folded ? $t('memo.unfoldTitle') : $t('memo.listFold')"
+                        @mousedown.prevent
+                        @click.stop="toggleListFold(row.key)"
+                    >
+                        <font-awesome-icon :icon="row.folded ? 'caret-right' : 'caret-down'" />
+                    </button>
                 </div>
             </div>
 
@@ -438,6 +507,32 @@
             <div v-if="bubble.open" ref="bubbleEl" class="me-bubble" :style="bubble.style" @mousedown.prevent>
                 <template v-for="(it, i) in selItems" :key="`sel-${i}`">
                     <span v-if="it.sep" class="me-bub-sep"></span>
+                    <!--
+                        v1.3.4（需求：选中文本工具组加载不出来）
+                        `[组名 bold italic]` 先被整体解析成一个 group 项，再在这里渲染成下拉；
+                        桌面端 hover 即展开（Element Plus 的 trigger=hover），移动端点击展开。
+                    -->
+                    <el-dropdown
+                        v-else-if="it.group"
+                        :trigger="isTouchUi ? 'click' : 'hover'"
+                        :show-timeout="60"
+                        :hide-timeout="140"
+                        placement="top-start"
+                        @command="(c) => runTool(c)"
+                    >
+                        <button type="button" class="me-bub-btn me-bub-dd" :title="it.name">
+                            <span class="me-bub-group">{{ it.name }}</span>
+                            <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item v-for="g in it.items" :key="`selg-${g}`" :command="g">
+                                    <font-awesome-icon v-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
+                                    <span class="me-group-label">{{ toolsOf(g) ? $t(toolsOf(g).label) : g }}</span>
+                                </el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
                     <el-dropdown v-else-if="it.id === 'heading'" :trigger="isTouchUi ? 'click' : 'hover'" :show-timeout="60" :hide-timeout="140" placement="top-start" @command="(c) => runTool(c)">
                         <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubHeading')">
                             <span class="me-bub-head">H</span>
@@ -680,12 +775,38 @@
             <div
                 v-if="lineBar.open"
                 class="me-linebar"
-                :class="{ 'is-list': lineBar.kind === 'list' }"
+                :class="{ 'is-list': lineBar.kind === 'list', 'is-fresh': lineBar.fresh }"
                 :style="lineBar.style"
                 @mousedown.prevent
             >
                 <div class="me-linebar-scroll">
                     <template v-if="lineBar.kind === 'list'">
+                        <!--
+                            v1.3.4（需求）：列表行末菜单最前面加「转换」。
+                            鼠标移上去展开下拉，选任务 / 无序 / 有序 —— 转换的是**同级整段列表**，
+                            不是光标那一行（ProseMirror 里同级项本来就同属一个 list 节点）。
+                        -->
+                        <el-dropdown
+                            :trigger="'click'"
+                            :show-timeout="60"
+                            :hide-timeout="140"
+                            placement="top-start"
+                            @command="lineAction"
+                        >
+                            <button type="button" class="me-btn me-lb-convert" :title="$t('memo.toolListConvert')">
+                                <font-awesome-icon icon="right-left" />
+                                <span>{{ $t('memo.toolListConvert') }}</span>
+                                <font-awesome-icon icon="caret-down" class="me-lb-caret" />
+                            </button>
+                            <template #dropdown>
+                                <el-dropdown-menu>
+                                    <el-dropdown-item command="convert:taskList">{{ $t('memo.toolTask') }}</el-dropdown-item>
+                                    <el-dropdown-item command="convert:bulletList">{{ $t('memo.toolBullet') }}</el-dropdown-item>
+                                    <el-dropdown-item command="convert:orderedList">{{ $t('memo.toolOrdered') }}</el-dropdown-item>
+                                </el-dropdown-menu>
+                            </template>
+                        </el-dropdown>
+                        <span class="me-sep"></span>
                         <button type="button" class="me-btn" :title="$t('memo.listAddIndent')" @click="lineAction('indent')">
                             <font-awesome-icon icon="indent" />
                         </button>
@@ -717,7 +838,15 @@
                             <font-awesome-icon :icon="lineBar.folded ? 'angles-down' : 'angles-up'" />
                         </button>
                         <span class="me-sep"></span>
-                        <button v-for="lv in 5" :key="`lb-h${lv + 1}`" type="button" class="me-btn me-hbtn" @click="lineAction('h' + (lv + 1))">
+                        <button
+                            v-for="lv in 5"
+                            :key="`lb-h${lv + 1}`"
+                            type="button"
+                            class="me-btn me-hbtn"
+                            :class="{ 'is-active': lineBar.level === lv + 1 }"
+                            :title="`H${lv + 1}`"
+                            @click="lineAction('h' + (lv + 1))"
+                        >
                             <span class="me-hlabel">H{{ lv + 1 }}</span>
                         </button>
                         <span class="me-sep"></span>
@@ -897,7 +1026,8 @@
         <el-dialog
             v-model="subDoc.visible"
             :title="$t('memo.subDoc')"
-            width="620px"
+            :width="isMobileViewport ? '98vw' : '80vw'"
+            top="1vh"
             append-to-body
             class="me-subdoc-dialog"
         >
@@ -907,7 +1037,6 @@
                 v-model="subDoc.content"
                 class="me-subdoc-text"
                 spellcheck="false"
-                :placeholder="$t('notes.contentPlaceholder')"
             ></textarea>
             <template #footer>
                 <el-button @click="subDoc.visible = false">{{ $t('common.cancel') }}</el-button>
@@ -1344,8 +1473,19 @@ const Video = Node.create({
             video.className = 'gh-video';
             video.src = String(node.attrs.src || '');
             if (node.attrs.poster) video.poster = String(node.attrs.poster);
+            /*
+             * v1.3.4（修拖缩放手柄时视频抖动 / 不按比例）：
+             *   · src 只在真的变了才重新赋值 —— 每次 update 都赋同一个地址也会触发重新加载；
+             *   · 元数据到了以后把宽高比写进 aspect-ratio，改宽度时高度自动跟随。
+             */
+            video.addEventListener('loadedmetadata', () => {
+                if (video.videoWidth && video.videoHeight) {
+                    video.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+                }
+            });
             const apply = (n) => {
-                video.src = String(n.attrs.src || '');
+                const src = String(n.attrs.src || '');
+                if (video.getAttribute('src') !== src) video.src = src;
                 if (n.attrs.width) video.setAttribute('width', String(Math.round(Number(n.attrs.width))));
                 else video.removeAttribute('width');
                 if (n.attrs.align) video.setAttribute('align', String(n.attrs.align));
@@ -1443,17 +1583,80 @@ const HtmlBlock = Node.create({
     },
     addNodeView() {
         return ({ node }) => {
-            const dom = document.createElement('div');
-            dom.className = 'gh-html-block';
-            dom.setAttribute('data-html-block', 'true');
-            dom.contentEditable = 'false';
-            dom.innerHTML = DOMPurify.sanitize(String(node.attrs.html || ''), {
-                ADD_ATTR: ['align', 'target'],
+            /*
+             * v1.3.4（需求）：HTML 块补一条标题行（与代码块同款）。
+             * 左侧折叠按钮 + 「HTML 块」提示，右侧编辑按钮 —— 块本身仍然原子、
+             * contentEditable=false，改内容走弹窗，所以标题行不会污染文档结构。
+             */
+            const wrap = document.createElement('div');
+            wrap.className = 'gh-html-block-wrap';
+            wrap.setAttribute('data-html-block', 'true');
+
+            const bar = document.createElement('div');
+            bar.className = 'gh-html-bar';
+            bar.contentEditable = 'false';
+
+            const fold = document.createElement('button');
+            fold.type = 'button';
+            fold.className = 'gh-cb-btn gh-html-fold';
+            fold.title = '折叠 / 展开';
+            fold.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+
+            const label = document.createElement('span');
+            label.className = 'gh-html-label';
+            label.textContent = 'HTML 块';
+
+            const grow = document.createElement('span');
+            grow.className = 'gh-cb-grow';
+
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'gh-cb-btn gh-html-edit';
+            edit.title = '编辑';
+            edit.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+            bar.appendChild(fold);
+            bar.appendChild(label);
+            bar.appendChild(grow);
+            bar.appendChild(edit);
+
+            const body = document.createElement('div');
+            body.className = 'gh-html-block';
+            body.contentEditable = 'false';
+            const paint = (html) => {
+                body.innerHTML = DOMPurify.sanitize(String(html || ''), { ADD_ATTR: ['align', 'target'] });
+                if (!body.innerHTML.trim()) body.innerHTML = '<span class="gh-html-empty">HTML 块（空）</span>';
+            };
+            paint(node.attrs.html);
+
+            wrap.appendChild(bar);
+            wrap.appendChild(body);
+
+            const stop = (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+            };
+            fold.addEventListener('mousedown', stop);
+            edit.addEventListener('mousedown', stop);
+            fold.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                wrap.classList.toggle('is-collapsed');
             });
-            if (!dom.innerHTML.trim()) {
-                dom.innerHTML = '<span class="gh-html-empty">HTML 块（空）</span>';
-            }
-            return { dom };
+            edit.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                wrap.dispatchEvent(new CustomEvent('gohub:html-edit', { bubbles: true }));
+            });
+
+            return {
+                dom: wrap,
+                update(next) {
+                    if (next.type.name !== 'htmlBlock') return false;
+                    paint(next.attrs.html);
+                    return true;
+                },
+                ignoreMutation: () => true,
+            };
         };
     },
 });
@@ -1880,6 +2083,54 @@ const MEDIA_DEFAULT = {
 
 /** v1.3.3：选中浮层的保留名（复合控件 / 非 TOOLS 动作） */
 const SEL_RESERVED = ['heading', 'align', 'fontSize', 'textColor', 'publish'];
+
+/**
+ * v1.3.4：把配置文本切成「工具 / 分隔线 / 工具组」。
+ *
+ * 上一版所有配置都直接 `split(/\s+/)`，`[组名 bold italic]` 会被切成
+ * `[组名`、`bold`、`italic]` 三个残缺 token，组自然就消失了 ——
+ * 这正是「选中文本工具配置里写了工具组却加载不出来」的原因。
+ */
+function splitToolTokens(raw) {
+    const s = String(raw || '');
+    const out = [];
+    let buf = '';
+    let inGroup = false;
+    for (const ch of s) {
+        if (ch === '[' && !inGroup) {
+            if (buf.trim()) out.push(buf.trim());
+            buf = '';
+            inGroup = true;
+            continue;
+        }
+        if (ch === ']' && inGroup) {
+            const body = buf.trim();
+            if (body) out.push(`[${body}]`);
+            buf = '';
+            inGroup = false;
+            continue;
+        }
+        if (!inGroup && /\s/.test(ch)) {
+            if (buf.trim()) out.push(buf.trim());
+            buf = '';
+            continue;
+        }
+        buf += ch;
+    }
+    if (buf.trim()) out.push(inGroup ? `[${buf.trim()}]` : buf.trim());
+    return out;
+}
+
+/** 解析 `[组名 a b]` → { name, items }；不是组返回 null */
+function parseGroupToken(token) {
+    const m = /^\[(.+)\]$/.exec(String(token || '').trim());
+    if (!m) return null;
+    const parts = m[1].split(/\s+/).filter(Boolean);
+    const name = parts.shift() || '';
+    const items = parts.filter((id) => !!TOOLS[id]);
+    return items.length ? { name: name || items[0], items } : null;
+}
+
 const SEL_DEFAULT = [
     'heading', 'align', '|', 'bold', 'strike', 'italic', 'underline', 'link', 'code',
     '|', 'fontSize', 'textColor', '|', 'annotate', 'publish'
@@ -1949,12 +2200,10 @@ const CodeBlockView = CodeBlock.extend({
             fold.title = '折叠 / 展开';
             fold.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 
-            const lang = document.createElement('span');
-            lang.className = 'gh-cb-lang';
-
-            const grow = document.createElement('span');
-            grow.className = 'gh-cb-grow';
-
+            /*
+             * v1.3.4（需求）：代码类型下拉框挪到左侧，原来那个「代码类型」文字标签去掉。
+             * 顺序变成：折叠 / 类型下拉 / 弹性空白 / 换行 / 复制。
+             */
             const sel = document.createElement('select');
             sel.className = 'gh-cb-select';
             sel.title = '代码类型';
@@ -1965,22 +2214,26 @@ const CodeBlockView = CodeBlock.extend({
                 sel.appendChild(o);
             });
 
+            const grow = document.createElement('span');
+            grow.className = 'gh-cb-grow';
+
             const wrapBtn = document.createElement('button');
             wrapBtn.type = 'button';
             wrapBtn.className = 'gh-cb-btn gh-cb-wrapbtn';
             wrapBtn.title = '自动换行';
-            wrapBtn.textContent = '↩';
+            // v1.3.4（需求）：图标改成文字
+            wrapBtn.textContent = '换行';
 
             const copy = document.createElement('button');
             copy.type = 'button';
             copy.className = 'gh-cb-btn gh-cb-copy';
             copy.title = '复制代码';
-            copy.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>';
+            // v1.3.4（需求）：图标改成文字
+            copy.textContent = '复制';
 
             bar.appendChild(fold);
-            bar.appendChild(lang);
-            bar.appendChild(grow);
             bar.appendChild(sel);
+            bar.appendChild(grow);
             bar.appendChild(wrapBtn);
             bar.appendChild(copy);
 
@@ -1989,14 +2242,84 @@ const CodeBlockView = CodeBlock.extend({
             pre.className = 'gh-cb-pre gh-code-block';
             const code = document.createElement('code');
             pre.appendChild(code);
+            /*
+             * v1.3.4（需求）：代码块左侧行号列。
+             * 行号是纯装饰层（contenteditable=false），绝对定位在 pre 左边；
+             * 正文的 padding-left 让出这一列，编辑光标不会跑到行号上。
+             */
+            const lines = document.createElement('div');
+            lines.className = 'gh-cb-lines';
+            lines.contentEditable = 'false';
+            /*
+             * 行号层挂在**外壳**上而不是 pre 里：pre 的 contentDOM 由 ProseMirror 管，
+             * 往里塞兄弟节点会被它在重渲染时清掉（实测行号一直是空的）。
+             * 外壳是 NodeView 自己的 DOM，PM 不碰。
+             */
             wrap.appendChild(bar);
             wrap.appendChild(pre);
+            wrap.appendChild(lines);
 
             let cur = node;
+            let linesRaf = 0;
+            const renderLines = () => {
+                // 自动换行时逻辑行会折成多行，纯按行高排的序号必然错位 —— 这种情况下不显示
+                if (wrap.classList.contains('is-wrap')) {
+                    lines.innerHTML = '';
+                    return;
+                }
+                let cs;
+                try {
+                    // 行高取 pre 的：code 上还有一条全局「行内代码」样式（font-size 0.92em），
+                    // 拿它算会差 1~2px，越往下越明显。
+                    cs = window.getComputedStyle(pre);
+                } catch (e) {
+                    return;
+                }
+                let lh = parseFloat(cs.lineHeight);
+                if (!Number.isFinite(lh) || lh <= 0) lh = (parseFloat(cs.fontSize) || 13) * 1.5;
+                const n = Math.max(1, String(code.textContent || '').split('\n').length);
+                if (lines.childElementCount !== n) {
+                    lines.innerHTML = '';
+                    const frag = document.createDocumentFragment();
+                    for (let i = 1; i <= n; i += 1) {
+                        const sp = document.createElement('span');
+                        sp.textContent = String(i);
+                        frag.appendChild(sp);
+                    }
+                    lines.appendChild(frag);
+                }
+                lines.style.lineHeight = `${lh}px`;
+                const barH = bar.getBoundingClientRect().height || 28;
+                /*
+                 * 顶部内边距要取 **pre** 的，不是 code 的 —— 代码块的内边距在 pre 上，
+                 * 取 code 会得到 0，行号整体上移一行（第一行没有号、最后一行多一个号）。
+                 */
+                const prePad = parseFloat(window.getComputedStyle(pre).paddingTop) || 0;
+                lines.style.top = `${barH + prePad}px`;
+            };
+            const scheduleLines = () => {
+                if (linesRaf) return;
+                linesRaf = requestAnimationFrame(() => {
+                    linesRaf = 0;
+                    renderLines();
+                });
+                /*
+                 * 某些环境（后台标签页 / 无头浏览器）rAF 会被节流甚至不派发，
+                 * 行号就一直是空的。补一个 120ms 的兜底：只要还是空的就再算一次。
+                 * 行号是纯展示，重复计算没有副作用。
+                 */
+                setTimeout(() => {
+                    if (linesRaf) {
+                        cancelAnimationFrame(linesRaf);
+                        linesRaf = 0;
+                    }
+                    renderLines();
+                }, 120);
+            };
             const sync = () => {
                 const l = String(cur.attrs?.language || 'text') || 'text';
-                lang.textContent = l;
                 sel.value = CODE_LANGS.includes(l) ? l : 'text';
+                scheduleLines();
             };
             sync();
 
@@ -2025,10 +2348,11 @@ const CodeBlockView = CodeBlock.extend({
             wrapBtn.addEventListener('click', (ev) => {
                 ev.preventDefault();
                 wrap.classList.toggle('is-wrap');
+                scheduleLines();
             });
             copy.addEventListener('click', (ev) => {
                 ev.preventDefault();
-                const text = pre.textContent || '';
+                const text = code.textContent || '';
                 const done = () => {
                     copy.classList.add('is-ok');
                     window.setTimeout(() => copy.classList.remove('is-ok'), 1200);
@@ -2061,8 +2385,13 @@ const CodeBlockView = CodeBlock.extend({
                     return true;
                 },
                 ignoreMutation(m) {
-                    // 壳内部（按钮栏 / 折叠状态）的变化不归 PM 管
-                    return m.type === 'attributes' || m.target === wrap || m.target === bar;
+                    /*
+                     * v1.3.4：行号层会频繁改 DOM（重建 span / 改 style）。
+                     * 不把这些变化挡掉，ProseMirror 会认为「节点被外部改动」→ 重建 NodeView →
+                     * 又触发一次行号渲染，形成死循环（实测 7 秒内 594 次）。
+                     */
+                    if (m.type === 'attributes') return true;
+                    return m.target === wrap || m.target === bar || m.target === lines;
                 },
             };
         };
@@ -2279,6 +2608,15 @@ const TOOLS = {
         label: 'memo.ctxDelete',
         run: (e) => e && e.chain().focus().deleteSelection().run()
     },
+    /*
+     * v1.3.4（需求：把这几项提取成独立工具，可配进工具栏 / 光标栏 / 右键菜单）
+     * fontSize / textColor / listConvert 在工具栏里渲染成下拉（见 TOOL_DROPDOWNS）；
+     * publish 是普通按钮，直接把当前选中文字发到瞬间。
+     */
+    fontSize: { icon: 'font', label: 'memo.bubFontSize', run: null },
+    textColor: { icon: 'paintbrush', label: 'memo.bubColor', run: null },
+    publish: { icon: 'paper-plane', label: 'memo.publishToMoment', run: null },
+    listConvert: { icon: 'right-left', label: 'memo.toolListConvert', run: null },
 };
 
 /**
@@ -2352,6 +2690,37 @@ const SYMBOL_GROUPS = [
 
 /** 文字颜色预设（v1.3.1.2）：与 markdown.js 的 gh-c-* 类一一对应 */
 const TEXT_COLORS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray'];
+
+/**
+ * v1.3.4：工具栏里的「下拉型工具」。
+ *
+ * 字号 / 文字颜色 / 列表转换本质是「一个按钮 + 一组选项」，
+ * 做成普通按钮只能执行其中一个固定值。这里声明成下拉，
+ * 工具栏与光标工具栏共用同一份定义；列表行末菜单复用同一套命令。
+ */
+const TOOL_DROPDOWNS = {
+    fontSize: {
+        items: [
+            { command: 's', label: 'memo.fontSmall' },
+            { command: 'm', label: 'memo.fontNormal' },
+            { command: 'l', label: 'memo.fontLarge' },
+            { command: 'clear', label: 'memo.fontDefault', divided: true },
+        ],
+    },
+    textColor: {
+        items: [
+            ...TEXT_COLORS.map((c) => ({ command: c, label: `memo.color_${c}`, dot: c })),
+            { command: 'clear', label: 'memo.colorClear', divided: true },
+        ],
+    },
+    listConvert: {
+        items: [
+            { command: 'taskList', label: 'memo.toolTask' },
+            { command: 'bulletList', label: 'memo.toolBullet' },
+            { command: 'orderedList', label: 'memo.toolOrdered' },
+        ],
+    },
+};
 
 /**
  * 撤销 / 重做用的两枚箭头（v1.3.1.2 需求给了参考图）。
@@ -2544,6 +2913,11 @@ export default {
             gutterMenu: { open: false, x: 0, y: 0, pos: 0, type: '' },
             /** v1.3.3.2：左侧行号栏的每一行（按块矩形算出的绝对位置） */
             gutterRows: [],
+            /**
+             * v1.3.4：列表项自己的折叠按钮（每个有下级的 li 一个）。
+             * 与行号栏分开存：行号是「顶层块」的，这个是「任意层级 li」的。
+             */
+            listFoldRows: [],
             /** v1.3.3.3：折叠状态的版本号（_folds 是非响应式 Set，靠它触发 computed 重算） */
             foldsRev: 0,
             /* v1.3.1.2：引用悬停预览 */
@@ -2577,7 +2951,7 @@ export default {
             /** 输入工具条（光标停在空行时浮在光标上方） */
             inputBar: { open: false, style: {} },
             /** v1.3.3.3（需求）：列表 / 标题末尾的行级操作条 */
-            lineBar: { open: false, kind: '', style: {}, folded: false },
+            lineBar: { open: false, kind: '', style: {}, folded: false, level: 0 },
             /** 上传面板（v1.3.1.1）：选完文件后先问目标渠道 / 实例 / 目录 */
             uploadTargetVisible: false,
             /** v1.3.2：上传目标弹窗的默认值（目录固定 /notes/memo/年/月） */
@@ -2653,15 +3027,13 @@ export default {
          * 按 kind 取对应配置（selectImageLines / selectVideoLines / …），空则用默认。
          */
         mediaTools() {
+            /*
+             * v1.3.4（需求）：媒体选中条不再读「设置 → 选中图片/视频/音频/文件工具配置」，
+             * 统一用内置默认。四个配置项已从设置页移除 —— 留着读取逻辑只会让人以为
+             * 改了配置还有用。
+             */
             const kind = this.mediaBar.kind || 'image';
-            const keyMap = {
-                image: 'selectImageLines',
-                video: 'selectVideoLines',
-                audio: 'selectAudioLines',
-                file: 'selectFileLines'
-            };
-            const raw = (this.editorConfig?.[keyMap[kind]] || []).join(' ').trim();
-            const tokens = raw ? raw.split(/\s+/).filter(Boolean) : (MEDIA_DEFAULT[kind] || MEDIA_DEFAULT.file).slice();
+            const tokens = (MEDIA_DEFAULT[kind] || MEDIA_DEFAULT.file).slice();
             const out = [];
             let lastSep = true;
             tokens.forEach((id) => {
@@ -2674,7 +3046,14 @@ export default {
                 }
                 const tool = TOOLS[id];
                 if (tool) {
-                    out.push({ id, icon: tool.icon, label: tool.label, tool: true });
+                    out.push({
+                        id,
+                        icon: tool.icon,
+                        svgKey: tool.svgKey || '',
+                        glyph: tool.glyph || '',
+                        label: tool.label,
+                        tool: true,
+                    });
                     lastSep = false;
                 }
             });
@@ -2688,7 +3067,7 @@ export default {
          */
         selItems() {
             const raw = (this.editorConfig?.selectionLines || []).join(' ').trim();
-            const tokens = raw ? raw.split(/\s+/).filter(Boolean) : SEL_DEFAULT.slice();
+            const tokens = raw ? splitToolTokens(raw) : SEL_DEFAULT.slice();
             const out = [];
             let lastSep = true;
             tokens.forEach((id) => {
@@ -2699,6 +3078,12 @@ export default {
                     }
                     return;
                 }
+                const group = parseGroupToken(id);
+                if (group) {
+                    out.push({ group: true, name: group.name, items: group.items });
+                    lastSep = false;
+                    return;
+                }
                 if (SEL_RESERVED.includes(id)) {
                     out.push({ id });
                     lastSep = false;
@@ -2706,7 +3091,7 @@ export default {
                 }
                 const tool = TOOLS[id];
                 if (tool) {
-                    out.push({ id, icon: tool.icon, label: tool.label, tool: true });
+                    out.push({ id, icon: tool.icon, svgKey: tool.svgKey || '', glyph: tool.glyph || '', label: tool.label, tool: true });
                     lastSep = false;
                 }
             });
@@ -2718,6 +3103,26 @@ export default {
             if (this.mode === 'source') return this.$t('memo.modeSource');
             if (this.mode === 'preview') return this.$t('memo.modePreview');
             return this.$t('memo.modeLive');
+        },
+        /**
+         * v1.3.4（需求）：是否有悬浮菜单开着。
+         *
+         * 工具栏 / 标题栏 / 反向链接需要在这些时候临时抬到浮层之上
+         * （否则 h 标题菜单、列表菜单、选中菜单会盖住它们）。
+         * 只在需要时抬，平时保持普通层级 —— 不影响 Element Plus 的弹窗层。
+         */
+        anyFloatOpen() {
+            return !!(
+                this.bubble.open ||
+                this.mediaBar.open ||
+                this.slash.open ||
+                this.ref.open ||
+                this.lineBar.open ||
+                this.inputBar.open ||
+                this.gutterMenu.open ||
+                this.tableBar.open ||
+                this.ctxMenu.open
+            );
         },
         /**
          * 当前生效的吸附配置（按终端取 pc / m 那一组）。
@@ -2938,7 +3343,7 @@ export default {
                 this.bubble.open = false;
                 this.tableBar.open = false;
                 this.gutterMenu = { open: false };
-                this.lineBar = { open: false, kind: '', style: {}, folded: false };
+                this.lineBar = { open: false, kind: '', style: {}, folded: false, level: 0 };
                 return;
             }
             if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 's') {
@@ -3006,6 +3411,31 @@ export default {
                 if (wrap) this.editIframe(wrap);
             };
             body.addEventListener('gohub:iframe-config', this.onIframeConfig);
+            /*
+             * v1.3.4：HTML 块标题行的「编辑」按钮。
+             * NodeView 在模块作用域拿不到组件实例，靠自定义事件冒泡上来，
+             * 再用 posAtDOM 反查节点位置（与 iframe 设置同一套做法）。
+             */
+            this.onHtmlEdit = (e) => {
+                const wrap = e.target && e.target.closest && e.target.closest('.gh-html-block-wrap');
+                if (!wrap || !this.editor) return;
+                let pos = -1;
+                try {
+                    pos = this.editor.view.posAtDOM(wrap, 0);
+                } catch (err) {
+                    pos = -1;
+                }
+                // posAtDOM 在不同结构下可能给到「节点前」或「节点内」，两种都试一下
+                if (pos >= 0) {
+                    const n = this.editor.state.doc.nodeAt(pos);
+                    if (!n || n.type.name !== 'htmlBlock') {
+                        const before = this.editor.state.doc.nodeAt(pos - 1);
+                        if (before && before.type.name === 'htmlBlock') pos -= 1;
+                    }
+                }
+                if (pos >= 0) this.openHtmlBlock(pos);
+            };
+            body.addEventListener('gohub:html-edit', this.onHtmlEdit);
             // v1.3.3.2：媒体节点被选中后的统一同步口（见 mediaSelectOnClick 注释）
             this.onMediaSelectPing = () => this.$nextTick(() => this.onSelectionChange());
             body.addEventListener('gohub:media-select', this.onMediaSelectPing);
@@ -3064,6 +3494,19 @@ export default {
         window.removeEventListener('scroll', this.onViewportChange, true);
         if (this._gutterRaf) cancelAnimationFrame(this._gutterRaf);
         this._gutterRaf = null;
+        /*
+         * v1.3.4：折叠用的样式表挂在 document.head，是全局的。
+         * 离开编辑器（切笔记 / 离开页面）必须清空，否则下一条笔记会被上一轮的
+         * nth-child 规则误伤（表现为「打开另一篇，某几段直接不见了」）。
+         */
+        if (this._foldStyleEl) {
+            this._foldStyleEl.textContent = '';
+            this._foldStyleEl = null;
+        }
+        if (this._listFoldStyleEl) {
+            this._listFoldStyleEl.textContent = '';
+            this._listFoldStyleEl = null;
+        }
         if (this._gutterRO) {
             this._gutterRO.disconnect();
             this._gutterRO = null;
@@ -3145,6 +3588,8 @@ export default {
         createEditor() {
             // 折叠位置集合：普通 Set（不给 Vue 代理，插件每帧读它）
             this._folds = new Set();
+            // v1.3.4：列表项折叠（key = :nth-child 路径），与标题折叠分开两套
+            this._listFolds = new Set();
             // markRaw：Tiptap 实例内部大量依赖「同一对象引用」，被 reactive 包一层会出怪问题
             this.editor = markRaw(new Editor({
                 extensions: [
@@ -3225,6 +3670,19 @@ export default {
 
         applyNote(note) {
             const id = note?.id || '';
+            /*
+             * v1.3.4：换篇时清空折叠状态。
+             * 折叠是按「文档位置 / nth-child 路径」记的，换一篇后这些位置全是别人的，
+             * 不清就会出现「打开新笔记，某些段落凭空消失」。
+             */
+            if (id !== this._noteId) {
+                this._noteId = id;
+                if (this._folds) this._folds.clear();
+                if (this._listFolds) this._listFolds.clear();
+                if (this._foldStyleEl) this._foldStyleEl.textContent = '';
+                this.applyListFoldCss();
+                this.foldsRev = (this.foldsRev || 0) + 1;
+            }
             if (!id) {
                 this.title = '';
                 this.version = 0;
@@ -3235,7 +3693,7 @@ export default {
             this.title = String(note.title || '');
             this.version = Number(note.version) || 1;
             const md = String(note.content || '');
-            this.charCount = plainTextOf(md).length;
+            this.charCount = this.countChars(md);
             this.updatedAt = Number(note.updatedAt) || 0;
             this.updateWordCount(md);
             // 换篇时重置历史节流「上次快照」，否则新篇第一分钟不会记历史
@@ -3263,7 +3721,7 @@ export default {
         },
 
         setMode(next) {
-            this.lineBar = { open: false, kind: '', style: {}, folded: false };
+            this.lineBar = { open: false, kind: '', style: {}, folded: false, level: 0 };
             if (next === this.mode) return;
             this.mode = next;
             // v1.3.3.2：行号栏只在实时模式存在；切换后要重算（切回来时 DOM 刚重建）
@@ -3327,7 +3785,7 @@ export default {
         onSourceChange() {
             const md = this.currentMd();
             this.lastMd = md;
-            this.charCount = plainTextOf(md).length;
+            this.charCount = this.countChars(md);
             this.markDirty();
         },
 
@@ -3379,7 +3837,7 @@ export default {
         onEditorUpdate() {
             const md = this.currentMd();
             this.lastMd = md;
-            this.charCount = plainTextOf(md).length;
+            this.charCount = this.countChars(md);
             this.updateWordCount(md);
             // v1.3.1.2：内容变了就记一笔，历史定时器据此决定要不要压快照
             this.historyDirty = true;
@@ -3642,9 +4100,23 @@ export default {
                 /* 历史写失败不影响正文 */
             }
         },
-        /** 字数：只数中文汉字 + 英文字母（需求原文：不含数字、标点、表情、符号） */
+        /**
+         * v1.3.4：正文总字符数 —— 与后端 countMemoChars / 列表里的「N 字」同一口径：
+         * 先转纯文本（剥掉 md 语法、块 ID、图片地址），再去掉所有空白。
+         * 这样「字数」在编辑器顶部与列表里永远显示同一个数。
+         */
+        countChars(md) {
+            return plainTextOf(md).replace(/\s+/g, '').length;
+        },
+        /**
+         * v1.3.4：字符数 = 汉字 + 字母。
+         *
+         * 原来直接在**原始 md** 上匹配字母，链接地址（https/example/com）、
+         * 代码块里的英文、html 标签全被算进来，于是出现过「字符比字数还多」的怪现象。
+         * 现在统一在纯文本上数，数字 / 标点 / 空白都不计。
+         */
         updateWordCount(md) {
-            const s = String(md || '');
+            const s = plainTextOf(md);
             const cn = (s.match(/[\u4e00-\u9fa5]/g) || []).length;
             const en = (s.match(/[a-zA-Z]/g) || []).length;
             this.wordCount = cn + en;
@@ -3931,31 +4403,54 @@ export default {
             // v1.3.3.2：宽度写到「当前选中的那个媒体节点」上（图片 / 视频 / 音频 / 附件）
             const nodeName = this.imgBox.kind || 'image';
             const sign = dir.includes('e') ? 1 : dir.includes('w') ? -1 : 0;
-            const apply = (w) => {
-                const ed = this.editor;
-                if (!ed) return;
-                // addToHistory:false —— 拖一次不该在撤销栈里留几十步
-                ed.chain()
-                    .setNodeSelection(pos)
-                    .updateAttributes(nodeName, { width: w })
-                    .setMeta('addToHistory', false)
-                    .run();
+            const ed = this.editor;
+            let dom = null;
+            try {
+                dom = ed && ed.view.nodeDOM(pos);
+            } catch (e) {
+                dom = null;
+            }
+            /*
+             * v1.3.4（修移动端视频拖缩放手柄时画面抖动闪烁）：
+             * 拖的过程中**不写文档**，只改元素的 style.width —— 写文档会让视频节点
+             * 重新渲染、重新加载 src，每帧一次就是闪烁；而且比例也会被重置。
+             * 松手时才真正 updateAttributes 落库（md 里 `{width=N}`）。
+             */
+            const paint = (w) => {
+                if (dom && dom.style) dom.style.width = `${w}px`;
                 this.imgBox = { ...this.imgBox, width: w, nodeW: w };
-                this.syncImgBox();
             };
             const onMove = (e) => {
                 const p = e.touches?.[0] || e.changedTouches?.[0] || e;
                 const dx = (Number(p.clientX) || 0) - startX;
                 const dy = (Number(p.clientY) || 0) - startY;
                 const raw = sign ? startW + sign * dx : startW + dy;
-                apply(Math.max(80, Math.min(2400, Math.round(raw))));
+                const w = Math.max(80, Math.min(2400, Math.round(raw)));
+                if (this._imgRaf) return;
+                this._imgRaf = requestAnimationFrame(() => {
+                    this._imgRaf = 0;
+                    paint(w);
+                    this.syncImgBox();
+                });
             };
             const onUp = () => {
                 window.removeEventListener('mousemove', onMove);
                 window.removeEventListener('mouseup', onUp);
                 window.removeEventListener('touchmove', onMove);
                 window.removeEventListener('touchend', onUp);
+                if (this._imgRaf) {
+                    cancelAnimationFrame(this._imgRaf);
+                    this._imgRaf = 0;
+                }
+                if (!ed) return;
+                const w = Math.max(80, Math.min(2400, Number(this.imgBox.width) || startW));
+                ed.chain()
+                    .setNodeSelection(pos)
+                    .updateAttributes(nodeName, { width: w })
+                    .setMeta('addToHistory', false)
+                    .run();
                 this.markDirty();
+                this.syncImgBox();
             };
             window.addEventListener('mousemove', onMove);
             window.addEventListener('mouseup', onUp);
@@ -3967,7 +4462,7 @@ export default {
         applyContent(md) {
             const text = String(md || '');
             this.lastMd = text;
-            this.charCount = plainTextOf(text).length;
+            this.charCount = this.countChars(text);
             this.updateWordCount(text);
             if (this.editor) this.editor.commands.setContent(this.docOf(text), { emitUpdate: false });
             if (this.sourceView) {
@@ -4058,6 +4553,25 @@ export default {
             return TOOLS[token] || null;
         },
 
+        /** v1.3.4：某个工具是不是下拉型（字号 / 颜色 / 列表转换） */
+        toolDropdown(token) {
+            return TOOL_DROPDOWNS[token] || null;
+        },
+        /** 光标当前所在列表的类型（给「转换」下拉打勾） */
+        currentListType() {
+            const ed = this.editor;
+            if (!ed) return '';
+            if (ed.isActive('taskList')) return 'taskList';
+            if (ed.isActive('orderedList')) return 'orderedList';
+            if (ed.isActive('bulletList')) return 'bulletList';
+            return '';
+        },
+        runDropdownTool(token, cmd) {
+            if (token === 'fontSize') return this.setFontSize(cmd);
+            if (token === 'textColor') return this.setTextColor(cmd);
+            if (token === 'listConvert') return this.convertListAtCursor(cmd);
+        },
+
         async runTool(token, evt) {
             const tool = TOOLS[token];
             if (!tool) return;
@@ -4088,6 +4602,29 @@ export default {
             if (token === 'htmlBlock') return this.openHtmlBlock();
             if (token === 'annotate') return this.annotateSelection();
             if (token === 'subDoc') return this.openSubDoc();
+            if (token === 'publish') return this.publishSelectionToMoment();
+            /*
+             * v1.3.4：这三个工具在工具栏里是下拉（选了具体值）；
+             * 配到 / 菜单、右键菜单这类「点一下就执行」的位置时按顺序轮换，
+             * 至少保证点得动，而不是静默什么都不发生。
+             */
+            if (token === 'fontSize') {
+                const cur = String(this.editor?.getAttributes('fontSize')?.size || '');
+                const next = cur === 's' ? 'm' : cur === 'm' ? 'l' : cur === 'l' ? 'clear' : 's';
+                return this.setFontSize(next);
+            }
+            if (token === 'textColor') {
+                const cur = String(this.editor?.getAttributes('textColor')?.color || '');
+                const i = TEXT_COLORS.indexOf(cur);
+                const next = i < 0 ? TEXT_COLORS[0] : i + 1 < TEXT_COLORS.length ? TEXT_COLORS[i + 1] : 'clear';
+                return this.setTextColor(next);
+            }
+            if (token === 'listConvert') {
+                const order = ['taskList', 'bulletList', 'orderedList'];
+                const cur = this.currentListType();
+                const next = order[(order.indexOf(cur) + 1) % order.length];
+                return this.convertListAtCursor(next);
+            }
             if (token === 'mediaPreview') return this.openMediaPreview();
             if (token === 'mediaDetail') return this.openMediaDetail();
             if (token === 'outline') return this.openOutline();
@@ -4125,6 +4662,7 @@ export default {
             const host = this.$refs.bodyEl;
             if (!ed || this.mode !== 'wysiwyg' || !host) {
                 if (this.gutterRows.length) this.gutterRows = [];
+                if (this.listFoldRows.length) this.listFoldRows = [];
                 return;
             }
             const dom = ed.view.dom;
@@ -4195,6 +4733,52 @@ export default {
                 });
             });
             this.gutterRows = rows;
+            /*
+             * v1.3.4：列表项折叠按钮。
+             * 直接扫 DOM（li 有直接子 ul/ol 才算「有下级」），比再走一遍文档更省，
+             * 也天然覆盖任务列表（它的子列表在 li > div 里，不影响判断 li 本身）。
+             */
+            const foldsSet = this._folds || new Set();
+            void foldsSet;
+            const listSet = this._listFolds || new Set();
+            const listRows = [];
+            try {
+                const lis = dom.querySelectorAll('li');
+                lis.forEach((li) => {
+                    const sub = Array.from(li.children).find((c) => c.tagName === 'UL' || c.tagName === 'OL')
+                        || Array.from(li.querySelectorAll(':scope > div > ul, :scope > div > ol'))[0];
+                    if (!sub) return;
+                    const key = this.domSelectorPath(li, dom);
+                    if (!key) return;
+                    const r = li.getBoundingClientRect();
+                    if (!r.height) return;
+                    const isTask = li.hasAttribute('data-checked') || li.getAttribute('data-type') === 'taskItem' || li.parentElement?.getAttribute('data-type') === 'taskList';
+                    let em = 15;
+                    try {
+                        em = parseFloat(window.getComputedStyle(li).fontSize) || 15;
+                    } catch (e) {
+                        /* 默认 15 */
+                    }
+                    // 符号中心：普通列表在 li 左缘外侧 ~0.75em，任务列表的勾选框在 li 内部 ~0.45em
+                    const cx = isTask ? r.left + em * 0.45 : r.left - em * 0.75;
+                    const isOrdered = !isTask && li.parentElement && li.parentElement.tagName === 'OL';
+                    const firstLine = Math.min(r.height, lh);
+                    listRows.push({
+                        key,
+                        folded: listSet.has(key),
+                        /*
+                         * 无序列表：折叠按钮直接盖住圆点（圆点没有信息量）；
+                         * 有序列表 / 任务列表：按钮放到序号 / 勾选框左侧 ——
+                         * 序号和勾选状态都是内容，不能被盖掉。
+                         */
+                        left: Math.round((isTask || isOrdered ? cx - 18 : cx - 8) - hostRect.left),
+                        top: Math.round(r.top - hostRect.top + host.scrollTop + firstLine / 2 - 8),
+                    });
+                });
+            } catch (e) {
+                /* 结构异常时不影响行号 */
+            }
+            this.listFoldRows = listRows;
             this.applyFoldCss(hiddenIdx, foldedListIdx);
         },
 
@@ -4227,6 +4811,54 @@ export default {
                 parts.push(`${root} ul ul,${root} ul ol,${root} ol ul,${root} ol ol{display:none !important}`);
             });
             this._foldStyleEl.textContent = parts.join('\n');
+        },
+
+        /**
+         * v1.3.4：某个 DOM 元素在正文里的 :nth-child 路径。
+         *
+         * 用它当折叠状态的 key 和 CSS 选择器 —— ProseMirror 不允许我们往 li 上挂
+         * 自定义 class（下一次重渲染就抹掉），只能靠结构路径定位。
+         */
+        domSelectorPath(el, root) {
+            const parts = [];
+            let cur = el;
+            let guard = 0;
+            while (cur && cur !== root && cur.parentElement && guard < 80) {
+                guard += 1;
+                const idx = Array.from(cur.parentElement.children).indexOf(cur) + 1;
+                if (idx <= 0) return '';
+                parts.unshift(`${cur.tagName.toLowerCase()}:nth-child(${idx})`);
+                cur = cur.parentElement;
+            }
+            if (cur !== root || !parts.length) return '';
+            return `.gh-editor-content > ${parts.join(' > ')}`;
+        },
+        /** v1.3.4：折叠 / 展开某个列表项的**所有下级** */
+        toggleListFold(key) {
+            if (!this._listFolds) this._listFolds = new Set();
+            if (this._listFolds.has(key)) this._listFolds.delete(key);
+            else this._listFolds.add(key);
+            this.applyListFoldCss();
+            this.syncGutter();
+        },
+        applyListFoldCss() {
+            if (!this._listFoldStyleEl) {
+                const el = document.createElement('style');
+                el.id = 'gohub-memo-listfold-css';
+                document.head.appendChild(el);
+                this._listFoldStyleEl = el;
+            }
+            const rules = [];
+            (this._listFolds || new Set()).forEach((key) => {
+                /*
+                 * 两种结构都要覆盖：
+                 *   · 普通列表：子列表是 li 的直接子元素；
+                 *   · 任务列表：子列表在 li > div 里。
+                 * 用后代选择器会把更深层的列表一起收掉 —— 正是「收起所有下级」要的效果。
+                 */
+                rules.push(`${key} > ul,${key} > ol,${key} > div > ul,${key} > div > ol{display:none !important}`);
+            });
+            this._listFoldStyleEl.textContent = rules.join('\n');
         },
         /** rAF 合并：滚动与输入都会频繁触发，没必要每次同步重排 */
         scheduleGutter() {
@@ -4269,16 +4901,52 @@ export default {
              * 记一次滚动基准，菜单随页面滚动等距平移（repositionFloats）。
              */
             this._floatScrollTop = (this.$refs.bodyEl && this.$refs.bodyEl.scrollTop) || 0;
+            /*
+             * v1.3.4（需求）：菜单显示在「上下空间更大」的那一侧。
+             * 先按估算高度摆一次（避免首帧闪到屏幕外），nextTick 量到真实高度再校正。
+             */
+            const estimateH = 5 * 31 + 30;
+            const below = window.innerHeight - rect.bottom;
+            const above = rect.top;
+            // 需求：哪边空间大就显示在哪边（不是「放不下才翻」）
+            const openUp = above > below;
+            const x = Math.round(rect.right + 6);
+            const y = Math.round(openUp ? Math.max(8, rect.bottom - estimateH) : Math.min(rect.top, window.innerHeight - estimateH - 8));
             this.gutterMenu = {
                 open: true,
-                x: Math.round(rect.right + 6),
-                y: Math.round(rect.top),
+                x,
+                y,
                 pos,
                 type,
+                up: openUp,
+                aTop: rect.top,
+                aBottom: rect.bottom,
+                aLeft: rect.left,
+                aRight: rect.right,
             };
+            this.$nextTick(() => this.placeGutterMenu());
             if (this.inputBar.open) this.inputBar = { open: false, style: {} };
             // 顺手把光标放进这个块，后续操作（删除 / 批注）以它为目标
             this.editor?.chain().focus().setTextSelection(pos + 1).run();
+        },
+        /** v1.3.4：按真实 DOM 尺寸校正行号菜单的位置，保证整块都在视口内 */
+        placeGutterMenu() {
+            if (!this.gutterMenu.open) return;
+            const el = document.querySelector('.me-gutter-menu');
+            if (!el) return;
+            const r = el.getBoundingClientRect();
+            const m = this.gutterMenu;
+            const vh = window.innerHeight;
+            const vw = window.innerWidth;
+            let y = m.aTop;
+            // 上方空间更大 → 贴着按钮底边往上展开（真实高度量到后再校正一次）
+            if (m.aTop > vh - m.aBottom) y = m.aBottom - r.height;
+            y = Math.max(8, Math.min(y, vh - r.height - 8));
+            let x = m.aRight + 6;
+            if (x + r.width > vw - 8) x = Math.max(8, m.aLeft - r.width - 6);
+            if (Math.abs(y - this.gutterMenu.y) > 1 || Math.abs(x - this.gutterMenu.x) > 1) {
+                this.gutterMenu = { ...this.gutterMenu, x: Math.round(x), y: Math.round(y) };
+            }
         },
         closeGutter() {
             if (this.gutterMenu.open) this.gutterMenu = { ...this.gutterMenu, open: false };
@@ -4584,17 +5252,36 @@ export default {
             this.editor.chain().focus().insertContent({ type: 'iframe', attrs: { src: url, height: 420 } }).run();
             this.onEditorUpdate();
         },
-        openHtmlBlock() {
-            const { $from } = this.editor?.state?.selection || {};
-            const cur = $from ? $from.parent.type.name : '';
-            this.htmlBlockDlg = { visible: true, html: cur === 'htmlBlock' ? String($from.parent.attrs.html || '') : '' };
+        openHtmlBlock(pos) {
+            const ed = this.editor;
+            if (!ed) return;
+            // v1.3.4：从标题行的「编辑」进来时直接带节点位置，不依赖光标
+            if (typeof pos === 'number' && pos >= 0) {
+                const n = ed.state.doc.nodeAt(pos);
+                if (n && n.type.name === 'htmlBlock') {
+                    this.htmlBlockDlg = { visible: true, html: String(n.attrs.html || ''), pos };
+                    return;
+                }
+            }
+            const { $from } = ed.state.selection;
+            const cur = $from.parent.type.name;
+            this.htmlBlockDlg = {
+                visible: true,
+                html: cur === 'htmlBlock' ? String($from.parent.attrs.html || '') : '',
+                pos: cur === 'htmlBlock' ? $from.before($from.depth) : -1,
+            };
         },
         saveHtmlBlock() {
             if (!this.editor) return;
             const html = String(this.htmlBlockDlg.html || '');
             if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
-            const { $from } = this.editor.state.selection;
-            if ($from.parent.type.name === 'htmlBlock') {
+            const pos = Number(this.htmlBlockDlg.pos);
+            if (pos >= 0 && this.editor.state.doc.nodeAt(pos)?.type.name === 'htmlBlock') {
+                this.editor.chain().focus().command(({ tr }) => {
+                    tr.setNodeMarkup(pos, undefined, { html });
+                    return true;
+                }).run();
+            } else if (this.editor.isActive('htmlBlock')) {
                 // 光标就在 HTML 块里：直接改这一块
                 this.editor.chain().focus().updateAttributes('htmlBlock', { html }).run();
             } else {
@@ -4689,12 +5376,18 @@ export default {
             ElMessage.success(this.$t('memo.replaceDone', { n: list.length }));
         },
 
-        /** v1.3.3.3（需求）：打开「新建子文档」弹窗，并记住当前光标 */
+        /** v1.3.3.3（需求）：打开「新建子页面」弹窗，并记住当前光标 */
         openSubDoc() {
             const ed = this.editor;
             if (!ed) return;
-            const { from } = ed.state.selection;
-            this.subDoc = { visible: true, title: '', content: '', busy: false, pos: from };
+            /*
+             * v1.3.4（修「创建成功却没引用到光标处」）：
+             * 点工具栏 / 菜单时编辑器可能已经失焦，selection 被重置成文档开头（pos=1），
+             * 直接读它就会把引用插到文首。这里优先用失焦前记下的最后一个光标位置。
+             */
+            const from = ed.state.selection.from;
+            const pos = from <= 1 && this._lastSelFrom > 1 ? this._lastSelFrom : from;
+            this.subDoc = { visible: true, title: '', content: '', busy: false, pos };
         },
         /** 创建子文档 → 在当前笔记同目录下建一篇 → 把引用插到刚才的光标处 */
         async createSubDoc() {
@@ -4710,11 +5403,15 @@ export default {
                 const r = await apiCreateNote({ title, content: String(this.subDoc.content || ''), folderId });
                 if (!r?.id) throw new Error('create failed');
                 const ed = this.editor;
-                const pos = Math.min(Math.max(1, Number(this.subDoc.pos) || 1), ed.state.doc.content.size);
-                ed.chain()
-                    .focus()
-                    .insertContentAt(pos, { type: 'noteRef', attrs: { noteId: r.id, blockId: null, label: title } })
-                    .run();
+                const max = ed.state.doc.content.size;
+                const pos = Math.min(Math.max(1, Number(this.subDoc.pos) || this._lastSelFrom || 1), max);
+                const atom = { type: 'noteRef', attrs: { noteId: r.id, blockId: null, label: title } };
+                let ok = ed.chain().focus().insertContentAt(pos, atom).run();
+                if (!ok) {
+                    // 极少数位置（比如刚好在文档边界）插不进去，退回到最后一个可编辑位置
+                    ok = ed.chain().focus().insertContentAt(Math.max(1, max - 1), atom).run();
+                }
+                if (!ok) throw new Error(this.$t('memo.saveFail'));
                 this.onEditorUpdate();
                 this.subDoc = { visible: false, title: '', content: '', busy: false, pos: 0 };
                 ElMessage.success(this.$t('memo.subDocDone'));
@@ -5118,10 +5815,31 @@ export default {
             const x = Math.min(event.clientX || 0, Math.max(8, window.innerWidth - 190));
             let y = (event.clientY || 0) - menuH - 10;
             if (y < 8) y = Math.min((event.clientY || 0) + 18, Math.max(8, window.innerHeight - menuH));
+            // v1.3.4（需求）：右键菜单弹出时，其它浮层一律收起，避免叠成一堆
+            this.closeAllFloats('ctx');
             // v1.3.3.2：菜单是 fixed 定位的，滚动时要按差值跟着走
             this._floatScrollTop = (this.$refs.bodyEl && this.$refs.bodyEl.scrollTop) || 0;
             this.ctxMenu = { open: true, x, y, kind };
             return false;
+        },
+        /**
+         * v1.3.4：统一收起浮层。
+         *
+         * 以前每个浮层各自判断「点别处要关」，右键时只关了 ctx 自己，
+         * 于是右键菜单会和标题菜单 / 选中菜单 / 光标工具栏叠在一起。
+         * 这里给一个唯一出口，`except` 用来保留刚打开的那一个。
+         */
+        closeAllFloats(except = '') {
+            if (except !== 'bubble' && this.bubble.open) this.bubble = { ...this.bubble, open: false };
+            if (except !== 'media' && this.mediaBar.open) this.mediaBar = { ...this.mediaBar, open: false };
+            if (except !== 'slash' && this.slash.open) this.closeSlash();
+            if (except !== 'ref' && this.ref.open) this.closeRef();
+            if (except !== 'line' && this.lineBar.open) this.lineBar = { ...this.lineBar, open: false };
+            if (except !== 'input' && this.inputBar.open) this.inputBar = { ...this.inputBar, open: false };
+            if (except !== 'gutter' && this.gutterMenu.open) this.closeGutter();
+            if (except !== 'table' && this.tableBar.open) this.tableBar = { ...this.tableBar, open: false };
+            if (except !== 'picker' && this.tablePicker.open) this.tablePicker = { ...this.tablePicker, open: false };
+            if (except !== 'hover' && this.hoverCard.open) this.hoverCard = { ...this.hoverCard, open: false };
         },
         closeCtxMenu() {
             if (this.ctxMenu.open) this.ctxMenu = { ...this.ctxMenu, open: false };
@@ -5619,6 +6337,42 @@ export default {
                     return true;
                 }
             }
+            /*
+             * v1.3.4（需求：列表回车后按删除键，去掉列表图标但保留在列表内部）
+             *
+             * 原生行为是把这一项整个「抬出」列表（变成列表外面的段落），
+             * 用户要的是「变成上一项的下级内容块」—— 也就是 listItem 里
+             * 再插一个 paragraph。做法：删掉这个空项，在上一个 li 的末尾插段落。
+             */
+            if (event.key === 'Backspace' && this.mode === 'wysiwyg' && !event.shiftKey) {
+                const ed = this.editor;
+                if (!ed) return false;
+                const { $from, empty } = ed.state.selection;
+                if (!empty) return false;
+                const inList = ed.isActive('listItem') || ed.isActive('taskItem');
+                if (!inList) return false;
+                if ($from.parent.content.size !== 0) return false;
+                const item = this.currentListItem();
+                if (!item) return false;
+                // 只处理「光标在列表项的第一个段落里」
+                if ($from.depth - 1 !== item.depth) return false;
+                const $item = ed.state.doc.resolve(item.pos);
+                if ($item.index() === 0) return false;
+                const tr = ed.state.tr;
+                const size = item.node.nodeSize;
+                try {
+                    tr.delete(item.pos, item.pos + size);
+                    const para = ed.schema.nodes.paragraph.createAndFill();
+                    tr.insert(item.pos - 1, para);
+                    tr.setSelection(TextSelection.near(tr.doc.resolve(item.pos)));
+                    ed.view.dispatch(tr);
+                    ed.view.focus();
+                    this.onEditorUpdate();
+                } catch (e) {
+                    return false;
+                }
+                return true;
+            }
             if (event.key === 'Tab' && this.mode === 'wysiwyg') {
                 const ed = this.editor;
                 if (!ed) return false;
@@ -5696,8 +6450,9 @@ export default {
          * 具体高度交给 CSS 的 translateY(-100%)，不用先渲染再测。
          */
         syncLineMenu() {
+            const wasOpen = this.lineBar.open;
             const close = () => {
-                if (this.lineBar.open) this.lineBar = { open: false, kind: '', style: {}, folded: false };
+                if (this.lineBar.open) this.lineBar = { open: false, kind: '', style: {}, folded: false, level: 0 };
             };
             const ed = this.editor;
             if (!ed || this.mode !== 'wysiwyg') return close();
@@ -5711,23 +6466,38 @@ export default {
             if (!isHeading && !inList) return close();
             const coords = ed.view.coordsAtPos($from.pos);
             const bodyW = (this.$refs.bodyEl && this.$refs.bodyEl.clientWidth) || window.innerWidth;
-            const barW = isHeading ? 268 : 240;
+            const barW = isHeading ? 268 : 320;
             const left = Math.max(8, Math.min(coords.left, window.innerWidth - barW - 8));
             let folded = false;
+            let level = 0;
             if (isHeading) {
                 const pos = this.headingPosOf($from);
                 folded = pos >= 0 && !!this._folds && this._folds.has(pos);
+                level = Number($from.parent.attrs.level) || 0;
             }
             this.lineBar = {
                 open: true,
                 kind: isHeading ? 'heading' : 'list',
                 folded,
+                level,
+                /*
+                 * v1.3.4：刚出现的前 320ms 不吃鼠标。
+                 * 这条菜单就浮在光标上方，指针往往正好落在「转换」按钮上，
+                 * hover 触发会立刻把下拉展开并抢走焦点 —— 接着敲键盘就全打在按钮上。
+                 * 先让指针穿过去，用户真的移进来时再触发。
+                 */
+                fresh: !wasOpen,
                 style: {
                     left: `${Math.round(left)}px`,
                     top: `${Math.round(Math.max(8, coords.top - 6))}px`,
                     maxWidth: `${Math.round(Math.max(180, bodyW * 0.7))}px`,
                 },
             };
+            if (!wasOpen) {
+                setTimeout(() => {
+                    if (this.lineBar.open && this.lineBar.fresh) this.lineBar = { ...this.lineBar, fresh: false };
+                }, 320);
+            }
         },
         /** 光标所在标题块在文档里的位置（找不到返回 -1） */
         headingPosOf($from) {
@@ -5769,6 +6539,7 @@ export default {
                 this.onEditorUpdate();
                 return;
             }
+            if (action.startsWith('convert:')) return this.convertListAtCursor(action.slice(8));
             if (action === 'indent') return this.runTool('indent');
             if (action === 'outdent') return this.runTool('outdent');
             if (action === 'clearFormat') return this.runTool('clear');
@@ -5799,6 +6570,58 @@ export default {
                 ElMessage.success(this.$t('memo.listCopyDone'));
                 return;
             }
+        },
+
+        /**
+         * v1.3.4（需求）：任务 / 无序 / 有序列表互相转换。
+         *
+         * 转换的是光标所在的**整个同级列表**（一个 bulletList / orderedList / taskList 节点
+         * 里本来就装着一整段同级项）。做法是原地换掉 list 节点本身：
+         *   · 每个 item 的子内容原样搬过去（段落 / 图片 / 子列表都不丢）；
+         *   · 转成任务列表时保留 checked（bullet/ordered 没有这个属性，默认 false）；
+         *   · 换完把光标放回第一项的文字里，用户能继续敲字。
+         */
+        convertListAtCursor(target) {
+            const ed = this.editor;
+            if (!ed || !['bulletList', 'orderedList', 'taskList'].includes(target)) return;
+            const { $from } = ed.state.selection;
+            let depth = -1;
+            for (let d = $from.depth; d > 0; d -= 1) {
+                if (['bulletList', 'orderedList', 'taskList'].includes($from.node(d).type.name)) {
+                    depth = d;
+                    break;
+                }
+            }
+            if (depth < 0) return;
+            const list = $from.node(depth);
+            if (list.type.name === target) return;
+            const pos = $from.before(depth);
+            const itemType = target === 'taskList' ? 'taskItem' : 'listItem';
+            const items = [];
+            list.forEach((item) => {
+                items.push({
+                    type: itemType,
+                    attrs: target === 'taskList' ? { checked: !!item.attrs.checked } : {},
+                    content: item.content ? item.content.toJSON() : [{ type: 'paragraph' }],
+                });
+            });
+            let next;
+            try {
+                next = ed.schema.nodeFromJSON({ type: target, content: items });
+            } catch (e) {
+                ElMessage.error(this.$t('memo.saveFail'));
+                return;
+            }
+            const tr = ed.state.tr.replaceWith(pos, pos + list.nodeSize, next);
+            try {
+                tr.setSelection(TextSelection.near(tr.doc.resolve(pos + 2)));
+            } catch (e) {
+                /* 选不中就算了，至少结构已经换掉 */
+            }
+            ed.view.dispatch(tr);
+            ed.view.focus();
+            this.onEditorUpdate();
+            this.syncLineMenu();
         },
 
         updateInputBar() {
@@ -6263,6 +7086,13 @@ export default {
 
         /** 选中非空时在选区上方显示浮层；位置手算，不用 Tiptap 内置 BubbleMenu */
         onSelectionChange() {
+            /*
+             * v1.3.4：记住最后一个有效光标位置。
+             * 弹窗 / 工具栏按钮抢走焦点后，编辑器 selection 会被重置到文首，
+             * 「创建子页并引用」就会把引用插到第一段前面 —— 这里留一份兜底。
+             */
+            const live = this.editor && this.mode === 'wysiwyg' ? this.editor.state.selection : null;
+            if (live && live.from > 1) this._lastSelFrom = live.from;
             // 图片被选中时浮出缩放手柄；其它情况一律收起
             this.syncImgBox();
             this.syncMediaBar();
@@ -6394,13 +7224,9 @@ export default {
     align-items: center;
     flex-wrap: wrap;
     gap: 6px;
-    min-height: 26px;
-    /*
-     * v1.3.2（需求）：标签行下方补一条分隔线，与上方元信息行的线形成上下呼应。
-     * v1.3.3.2（需求）：上下的间距要一样大 —— 原来上 0 下 10px，
-     * 标签行明显"贴"在元信息行上、离正文更远。现在上下各 6px。
-     */
-    padding: 6px 16px;
+    /* v1.3.4（需求）：标签行高度在上一版基础上 -4px，标签仍靠 align-items 垂直居中 */
+    min-height: 0;
+    padding: 4px 16px;
     border-bottom: 1px solid var(--el-border-color-lighter);
 }
 .me-tag {
@@ -6781,11 +7607,46 @@ export default {
 }
 
 /* ── HTML 块 / 网页嵌入在编辑区里的样子 ───────────────────── */
-.me-wysiwyg :deep(.gh-html-block) {
-    padding: 10px 12px;
-    border: 1px dashed var(--el-border-color);
+/* v1.3.4：HTML 块外面加一层「标题行 + 内容」的壳，与代码块同一套观感 */
+.me-wysiwyg :deep(.gh-html-block-wrap) {
+    margin: 0.7em 0;
+    border: 1px solid var(--el-border-color-lighter);
     border-radius: 8px;
     background: var(--el-fill-color-lighter);
+    overflow: hidden;
+}
+.me-wysiwyg :deep(.gh-html-bar) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 6px;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    background: var(--el-fill-color-light);
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+    user-select: none;
+}
+.me-wysiwyg :deep(.gh-html-label) {
+    font-size: 11px;
+    letter-spacing: 0.2px;
+    opacity: 0.85;
+}
+.me-wysiwyg :deep(.gh-html-edit) {
+    width: auto;
+    padding: 0 4px;
+}
+.me-wysiwyg :deep(.gh-html-block) {
+    padding: 10px 12px;
+}
+.me-wysiwyg :deep(.gh-html-block-wrap.is-collapsed .gh-html-block) {
+    display: none;
+}
+.me-wysiwyg :deep(.gh-html-block-wrap.is-collapsed .gh-html-fold svg) {
+    transform: rotate(-90deg);
+}
+.me-wysiwyg :deep(.gh-html-fold svg) {
+    transition: transform 0.15s ease;
 }
 /*
  * v1.3.3（需求）：HTML / MD 互转页改成视口 98%，移动端上下布局。
@@ -7059,23 +7920,46 @@ export default {
 .me-meta.is-sticky {
     z-index: 7;
 }
+/*
+ * v1.3.4（需求：工具栏 / 标题栏 / 反向链接的层级要高于所有悬浮菜单）
+ *
+ * 悬浮菜单（标题菜单、列表菜单、选中菜单、光标工具栏…）都是 Teleport 到 body、
+ * z-index 2500~3200；工具栏只在本地 z-index 9，必然被盖。
+ * 这里只在「有菜单开着」时把它们抬到 3300，平时不动 —— 否则 Element Plus 的
+ * 模态弹窗（z-index 2000 级）会被压到工具栏下面。
+ * 工具栏自己的下拉浮层用 .me-tb-popper 抬到 3400。
+ */
+.me-root.is-float-open .me-toolbar-wrap,
+.me-root.is-float-open .me-title-row,
+.me-root.is-float-open .me-backlinks {
+    position: relative;
+    z-index: 3300;
+}
+.me-root.is-float-open .me-title-row {
+    z-index: 3295;
+}
+/* 下拉浮层是 Teleport 到 body 的，scoped 选择器够不着，必须 :global */
+:global(.el-popper.me-tb-popper) {
+    z-index: 3400 !important;
+}
+.me-tooltip {
+    z-index: 3400;
+}
 .me-title-row {
     display: flex;
     align-items: center;
     /*
-     * v1.3.3.3（需求：标题行高度调小 10px、文字垂直居中）：
-     * 原来 padding 是 12px 上 / 0 下，行高 26.6 + 12 ≈ 38.6 —— 上方比下方多出 12px，
-     * 看起来标题「贴下沿」。现在改成上下等距的 2px，并把行高锁到 26px：
-     * 总高 30px，比原来少 8.6px（约等于需求里的 10px），文字正好在行内垂直居中。
+     * v1.3.4（需求）：标题行高度在上一版 30px 基础上 +4px。
+     * 高度变了但文字仍然是 flex 居中 + 26px 行高，所以「标题垂直居中」不受影响。
      */
-    height: 30px;
+    height: 34px;
     padding: 0 16px;
 }
 .me-title-row.is-sticky {
     /* 标题吸住时补一条极淡的分隔，否则正文会「贴着」标题滑过去 */
     box-shadow: inset 0 -1px 0 var(--el-border-color-lighter);
-    height: 30px;
-    min-height: 30px;
+    height: 34px;
+    min-height: 34px;
 }
 /* 返回顶部按钮：钉在标题行最右侧 */
 .me-title-top {
@@ -7116,6 +8000,51 @@ export default {
 }
 .me-toolbar::-webkit-scrollbar {
     display: none;
+}
+/*
+ * v1.3.4（需求）：移动端工具栏每行左右各 2px；标题行左右各 3px。
+ * 桌面端仍保留 8/16px —— 手机屏幕窄，边距每多 1px 都是正文可用宽度。
+ */
+@media (max-width: 900px) {
+    .me-toolbar-wrap {
+        padding: 0 2px;
+    }
+    .me-title-row,
+    .me-tags {
+        padding-left: 3px;
+        padding-right: 3px;
+    }
+}
+/*
+ * v1.3.4（需求）：移动端把「编辑/源码/预览」固定在工具栏可视区最右侧。
+ * .me-toolbar 是横向滚动容器，sticky right 让它随滚动钉在行尾；
+ * 底色用来遮住从它下面滑过去的工具。
+ */
+.me-mode-tail {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+}
+@media (max-width: 900px) {
+    .me-mode-tail {
+        position: sticky;
+        right: 0;
+        margin-left: auto;
+        padding-left: 4px;
+        background: var(--el-bg-color);
+        z-index: 2;
+    }
+}
+/* v1.3.4：下拉型工具按钮（字号 / 颜色 / 转换）右侧的小三角 */
+.me-btn.me-btn-dd {
+    width: auto;
+    min-width: 30px;
+    padding: 0 4px;
+    gap: 1px;
+}
+.me-dd-caret {
+    font-size: 8px;
+    opacity: 0.6;
 }
 /* v1.3.2：桌面端溢出折叠 —— 被折叠的工具从行里移除，改从行末下拉里点 */
 .me-toolbar .is-tb-hidden {
@@ -7328,6 +8257,14 @@ export default {
     font-size: 8px;
     opacity: 0.6;
 }
+/* v1.3.4：选中浮层里的工具组（组名 + 倒三角） */
+.me-bub-group {
+    max-width: 72px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+}
 .me-bub-t {
     font-size: 13px;
     font-weight: 600;
@@ -7462,6 +8399,10 @@ export default {
     /* 贴光标上方：用自身高度整体上移，省掉一次「先渲染再测量」 */
     transform: translateY(-100%);
 }
+/* v1.3.4：刚出现时让指针穿过去，避免「菜单浮在指针下 → hover 展开下拉 → 抢焦点」 */
+.me-linebar.is-fresh {
+    pointer-events: none;
+}
 .me-linebar-scroll {
     display: flex;
     align-items: center;
@@ -7479,6 +8420,17 @@ export default {
 }
 .me-linebar .me-hbtn {
     width: 26px;
+}
+/* v1.3.4：「转换」是文字按钮，宽度按内容自适应 */
+.me-linebar .me-btn.me-lb-convert {
+    width: auto;
+    padding: 0 6px;
+    gap: 3px;
+    font-size: 12px;
+}
+.me-lb-caret {
+    font-size: 8px;
+    opacity: 0.6;
 }
 /* 指向光标的小三角 */
 .me-linebar-arrow {
@@ -7512,11 +8464,12 @@ export default {
     left: 0;
     display: flex;
     align-items: center;
-    justify-content: flex-end;
+    /* v1.3.4（需求）：折叠按钮贴住编辑区左边缘，间隔 0 */
+    justify-content: flex-start;
     gap: 2px;
     width: 46px;
     height: 20px;
-    padding-right: 4px;
+    padding: 0;
 }
 .me-gutter-fold {
     flex: 0 0 auto;
@@ -7592,6 +8545,47 @@ export default {
 }
 .me-gutter-menu {
     min-width: 140px;
+}
+/*
+ * v1.3.4：列表项自己的折叠按钮。
+ * 位置由 syncGutter 按每个 li 的符号中心算好（绝对定位在行号覆盖层里）。
+ * 平时完全透明，鼠标移到符号上才出现 —— 不抢正文的注意力，也不挡点选。
+ */
+.me-listfold-row {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    pointer-events: auto;
+}
+.me-listfold-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: var(--el-bg-color);
+    color: var(--el-text-color-secondary);
+    font-size: 9px;
+    line-height: 1;
+    cursor: pointer;
+    /* v1.3.4：默认半透明常显 —— 「有下级」一眼可见；悬停提亮 */
+    opacity: 0.55;
+    transition: opacity 0.12s ease, color 0.12s ease;
+}
+.me-listfold-row:hover .me-listfold-btn {
+    opacity: 1;
+}
+.me-listfold-row.is-folded .me-listfold-btn {
+    opacity: 1;
+    color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+}
+.me-listfold-btn:hover {
+    color: var(--el-color-primary);
+    background: var(--el-fill-color-dark);
 }
 
 /* 右键 / 长按菜单 */
@@ -7682,6 +8676,32 @@ export default {
     height: 1px;
     margin: 4px 6px;
     background: var(--el-border-color-lighter);
+}
+/*
+ * v1.3.4（需求：移动端行号菜单改竖版）
+ * 右键菜单在移动端仍是一条横带（长按弹出的复制/粘贴用横排更顺），
+ * 但行号菜单是「对某一行做操作」，竖排才能一眼扫完五项。
+ * 用 .me-ctx.me-gutter-menu 提高特异性，压过 .me-ctx 的横排规则。
+ */
+.me-ctx.me-gutter-menu {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1px;
+    min-width: 150px;
+    max-width: min(240px, 76vw);
+    max-height: 60vh;
+    overflow-x: visible;
+    overflow-y: auto;
+    padding: 4px;
+}
+.me-ctx.me-gutter-menu > .me-ctx-item {
+    width: 100%;
+    justify-content: flex-start;
+}
+.me-ctx.me-gutter-menu > .me-ctx-sep {
+    width: auto;
+    height: 1px;
+    margin: 3px 6px;
 }
 
 /* 插入表格数量选择 */
@@ -7856,40 +8876,56 @@ export default {
     margin: 0.5em 0;
 }
 /*
- * v1.3.3.3（需求：任务 / 有序 / 无序列表的下级列表要有一条上下级关系线）
+ * v1.3.4（需求：列表层级线只保留竖线，且对齐上级图标正下方）
  * ---------------------------------------------------------------------------
- * 竖线画在下级列表本身（border-left），横枝用 li::before 指向每一行的符号，
- * 与目录树的关系线是同一套观感。竖线只加在「二级及以下」，
- * 一级列表保持干净，不会整页都是线。
+ * 上一版是「border-left + li::before 横枝」，横枝在视觉上把每一行都连到竖线，
+ * 层级一多就像表格。现在：
+ *   · 竖线画在**有下级的 li** 上（::after），从父项符号中心垂直往下；
+ *   · 横枝全部去掉；
+ *   · 位置按父项符号算：普通列表 -0.75em，任务列表 0.42em（勾选框中心）。
  */
 .me-wysiwyg :deep(.gh-editor-content ul ul),
 .me-wysiwyg :deep(.gh-editor-content ul ol),
 .me-wysiwyg :deep(.gh-editor-content ol ul),
 .me-wysiwyg :deep(.gh-editor-content ol ol) {
     position: relative;
-    margin-left: 0.2em;
-    padding-left: 1.1em;
-    border-left: 1px solid var(--el-border-color);
+    margin-left: 0;
+    padding-left: 1.25em;
+    border-left: none;
 }
-.me-wysiwyg :deep(.gh-editor-content ul ul > li),
-.me-wysiwyg :deep(.gh-editor-content ul ol > li),
-.me-wysiwyg :deep(.gh-editor-content ol ul > li),
-.me-wysiwyg :deep(.gh-editor-content ol ol > li) {
+.me-wysiwyg :deep(.gh-editor-content li:has(> ul)),
+.me-wysiwyg :deep(.gh-editor-content li:has(> ol)),
+.me-wysiwyg :deep(.gh-editor-content li:has(> div > ul)),
+.me-wysiwyg :deep(.gh-editor-content li:has(> div > ol)) {
     position: relative;
 }
-/* 横枝：从竖线指到这一行的符号（绝对定位，不影响 flex 任务行的排版） */
-.me-wysiwyg :deep(.gh-editor-content ul ul > li::before),
-.me-wysiwyg :deep(.gh-editor-content ul ol > li::before),
-.me-wysiwyg :deep(.gh-editor-content ol ul > li::before),
-.me-wysiwyg :deep(.gh-editor-content ol ol > li::before) {
+.me-wysiwyg :deep(.gh-editor-content li:has(> ul))::after,
+.me-wysiwyg :deep(.gh-editor-content li:has(> ol))::after,
+.me-wysiwyg :deep(.gh-editor-content li:has(> div > ul))::after,
+.me-wysiwyg :deep(.gh-editor-content li:has(> div > ol))::after {
     content: '';
     position: absolute;
-    left: -1.1em;
-    top: 0.82em;
-    width: 0.78em;
-    height: 1px;
+    left: -0.75em;
+    top: 1.15em;
+    bottom: 0.65em;
+    width: 1px;
     background: var(--el-border-color);
     pointer-events: none;
+}
+/* 任务列表的符号是勾选框，中心在 li 内部 ~0.42em，不是外部圆点 */
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li:has(> div > ul))::after,
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li:has(> div > ol))::after {
+    left: 0.42em;
+}
+/* 有序列表的数字比圆点宽，竖线再往左一点才对得上数字中心 */
+.me-wysiwyg :deep(.gh-editor-content ol > li:has(> ul))::after,
+.me-wysiwyg :deep(.gh-editor-content ol > li:has(> ol))::after {
+    left: -0.75em;
+}
+/* 任务项里的子列表向右让出勾选框 + 间距，再整体左移，让子弹对齐竖线 */
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > div > ul),
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > div > ol) {
+    margin-left: -1.5em;
 }
 .me-wysiwyg :deep(.gh-editor-content li),
 .me-preview :deep(li) {
@@ -7922,7 +8958,12 @@ export default {
     flex: 0 0 auto;
     display: flex;
     align-items: center;
-    height: calc(1em * 1.7);
+    /*
+     * v1.3.4（需求：勾选框比文字高一点点）
+     * 原来写死 1.7em，而正文行高是 1.78em —— 差 0.08em，勾选框的中心比第一行文字
+     * 的中心高约 1px。现在直接跟着正文行高变量走，字号 / 行高怎么改都同一条中线。
+     */
+    height: calc(1em * var(--gh-line-height, 1.78));
     margin: 0;
 }
 .me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > label input) {
@@ -7935,6 +8976,20 @@ export default {
 }
 .me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > div > p:first-child) {
     margin-top: 0;
+}
+/*
+ * v1.3.4（需求）：已完成任务加删除线，取消勾选自动消失。
+ * 挂在 li[data-checked] 的**内容容器**上：text-decoration 会作用到所有行内后代，
+ * 所以下级列表 / 图片说明里的文字也一起划掉，不用逐层写选择器。
+ */
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li[data-checked='true'] > div) {
+    text-decoration: line-through;
+    color: var(--el-text-color-secondary);
+}
+/* 子任务自己的勾选框不要跟着变灰（它是控件，不是正文） */
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li[data-checked='true'] li > label),
+.me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li[data-checked='true'] li > div > p) {
+    text-decoration: line-through;
 }
 .me-preview :deep(ul:has(input[type='checkbox']) li) {
     align-items: center;
@@ -7996,6 +9051,21 @@ export default {
 .me-wysiwyg :deep(.gh-cb-grow) {
     flex: 1 1 auto;
 }
+/* v1.3.4（需求）：换行 / 复制改成文字按钮，宽度按文字自适应 */
+.me-wysiwyg :deep(.gh-cb-btn.gh-cb-wrapbtn),
+.me-wysiwyg :deep(.gh-cb-btn.gh-cb-copy) {
+    width: auto;
+    min-width: 20px;
+    padding: 0 4px;
+    font-size: 11px;
+}
+/* 需求：两个按钮之间的间距各加 3px */
+.me-wysiwyg :deep(.gh-cb-wrapbtn) {
+    margin-right: 3px;
+}
+.me-wysiwyg :deep(.gh-cb-copy) {
+    margin-left: 3px;
+}
 .me-wysiwyg :deep(.gh-cb-btn) {
     display: inline-flex;
     align-items: center;
@@ -8033,8 +9103,10 @@ export default {
     background: var(--el-bg-color);
 }
 .me-wysiwyg :deep(.gh-editor-content .gh-cb-pre) {
+    position: relative;
     margin: 0;
-    padding: 10px 12px;
+    /* v1.3.4：左右内边距各 +4px；左侧再让出 38px 给行号列 */
+    padding: 10px 16px 10px 42px;
     overflow-x: auto;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 13px;
@@ -8044,12 +9116,38 @@ export default {
     white-space: pre;
     tab-size: 4;
 }
-.me-wysiwyg :deep(.gh-editor-content .gh-codeblock.is-wrap .gh-cb-pre) {
+/* v1.3.4：代码块行号列（纯展示，不参与选中） */
+.me-wysiwyg :deep(.gh-cb-lines) {
+    position: absolute;
+    left: 0;
+    top: 10px;
+    width: 34px;
+    padding-right: 6px;
+    text-align: right;
+    color: var(--el-text-color-placeholder);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    opacity: 0.7;
+    user-select: none;
+    pointer-events: none;
+}
+.me-wysiwyg :deep(.gh-cb-lines > span) {
+    display: block;
+}
+/* 换行模式下逻辑行会折行，行号不再对齐 —— 由 JS 清空，占位也收掉 */
+.me-wysiwyg :deep(.gh-codeblock.is-wrap .gh-cb-pre) {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    padding-left: 16px;
+}
+.me-wysiwyg :deep(.gh-codeblock.is-wrap .gh-cb-lines) {
+    display: none;
 }
 /* 收起：只留操作栏 */
 .me-wysiwyg :deep(.gh-editor-content .gh-codeblock.is-collapsed .gh-cb-pre) {
+    display: none;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-codeblock.is-collapsed .gh-cb-lines) {
     display: none;
 }
 .me-wysiwyg :deep(.gh-codeblock.is-collapsed .gh-cb-fold svg) {
@@ -8058,10 +9156,11 @@ export default {
 .me-wysiwyg :deep(.gh-cb-fold svg) {
     transition: transform 0.15s ease;
 }
-/* 原有 codeBlock 的样式还留在 .gh-code-block 上，这里把内边距让给新外壳 */
+/* 原有 codeBlock 的样式还留在 .gh-code-block 上，这里把外边距与底色让给新外壳。
+   v1.3.4：不再重置 padding —— 32px 行号列与 16px 内边距都在 .gh-cb-pre 上，
+   这条规则写在后面、特异性又相同，会把它们一起压成 0（实测代码贴左边框）。 */
 .me-wysiwyg :deep(.gh-editor-content pre.gh-code-block) {
     margin: 0;
-    padding: 0;
     background: transparent;
 }
 
@@ -8070,10 +9169,11 @@ export default {
 .me-preview :deep(blockquote) {
     margin: 0.7em 0;
     padding: 0.35em 0 0.35em 0.95em;
-    border-left: 3px solid var(--el-color-primary-light-5);
+    /* v1.3.4（需求）：去掉底色，左侧竖条加宽一点点 */
+    border-left: 4px solid var(--el-color-primary-light-5);
     color: var(--el-text-color-regular);
-    background: var(--el-fill-color-lighter);
-    border-radius: 0 4px 4px 0;
+    background: transparent;
+    border-radius: 0;
 }
 
 /* 行内代码 / 代码块 */
@@ -8457,6 +9557,8 @@ export default {
     border-radius: 2px;
     pointer-events: auto;
     box-sizing: border-box;
+    /* v1.3.4：触屏拖手柄时不要让浏览器把手势当成滚动 —— 会一顿一顿地抖 */
+    touch-action: none;
 }
 .me-imghandle.is-nw { left: -5px; top: -5px; cursor: nwse-resize; }
 .me-imghandle.is-n  { left: 50%; top: -5px; margin-left: -5px; cursor: ns-resize; }
@@ -8666,6 +9768,46 @@ export default {
     }
     .me-htmlmd-dialog .el-dialog__header {
         padding: 10px 12px;
+    }
+}
+
+/* v1.3.4（需求）：创建子页弹窗 —— 桌面 80vw × 98vh，移动端 98vw × 98vh */
+.me-subdoc-dialog {
+    --el-dialog-width: 80vw;
+    width: 80vw !important;
+    max-width: 80vw;
+    height: 98vh !important;
+    max-height: 98vh !important;
+    margin: 1vh auto !important;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+}
+.me-subdoc-dialog .el-dialog__body {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+.me-subdoc-dialog .me-subdoc-text {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 120px;
+    margin-top: 10px;
+    resize: none;
+}
+.me-subdoc-dialog .el-dialog__footer {
+    flex: 0 0 auto;
+}
+@media (max-width: 900px) {
+    .me-subdoc-dialog {
+        --el-dialog-width: 98vw;
+        width: 98vw !important;
+        max-width: 98vw;
+        height: 98vh !important;
+        max-height: 98vh !important;
     }
 }
 </style>

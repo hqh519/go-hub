@@ -1070,6 +1070,25 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-134',
+      title: '五十八、v1.3.4 更新要点',
+      intro: '这一版主要修编辑器的「手感」与层级：字数 / 字符的统计口径纠正、保存按钮上移到顶部栏、标题行与标签行高度微调、菜单不再盖住工具栏；列表的折叠与转换、代码块行号、HTML 块标题行、子页面引用等也一并收口。',
+      items: [
+        { t: '字数与字符不再像写反了', d: '「字数」现在是正文总字符数（剥掉 markdown 语法与空白，与列表里的「N 字」完全同一口径），「字符」是汉字 + 字母数。此前「字符」直接在原始 markdown 上数字母，链接地址、代码块里的英文都会被算进去，才会出现「字符比字数还多」的怪现象。' },
+        { t: '保存按钮上移', d: '工具栏最后一行末尾的保存按钮移到顶部栏：桌面端在「编辑器设置」左侧，移动端在「返回笔记列表」左侧。工具栏末行只保留「实时 / 源码 / 预览」，移动端横滑时这个下拉固定在可视区最右侧，不会跟着工具滑走。' },
+        { t: '标题与标签行微调', d: '标题行高度 +4px、文字仍垂直居中；标签行高度 -4px，标签上下居中。移动端标题行左右边距改为 3px、工具栏每行左右 2px，窄屏多让出一点正文宽度。' },
+        { t: '菜单不再压住工具栏', d: '标题菜单、列表菜单、选中文本菜单、选中文件菜单、光标工具栏、反向链接之间统一了层级：只要有悬浮菜单打开，工具栏 / 标题栏 / 反向链接就抬到最上层；右键菜单弹出时，其它菜单一律先收起，不会叠成一堆。' },
+        { t: '行号菜单', d: '移动端也改为竖排；根据按钮上方 / 下方的空间大小决定向上还是向下展开，整块菜单始终留在视口内；第一列的折叠箭头贴住编辑区左边框（间隔 0）。' },
+        { t: '列表', d: '行末菜单新增「转换」，可把当前同级列表整体转为任务 / 无序 / 有序；任意层级、只要还有下级就显示折叠按钮，收起时同时收掉它的所有下级；层级线只保留竖线并对齐到上级标记正下方；任务勾选框与文字同一中线；已完成任务的文字与下级内容加删除线。列表项回车后再按退格，会变成上一项的正文块（仍留在列表内），而不是被抬到列表外。' },
+        { t: '代码块', d: '「自动换行 / 复制」改成文字「换行 / 复制」；代码类型下拉框移到标题行左侧（去掉重复的名称）；标题行按钮间距各加 3px、代码左右内边距各加 4px；左侧新增行号列，行号与代码行一一对齐（开启自动换行时自动隐藏，避免折行后错位）。' },
+        { t: 'HTML 块', d: '补上标题行：左侧折叠 / 展开按钮与「HTML 块」提示，右侧编辑按钮，点开即可改源码；内容仍然按白名单净化，脚本不会执行。' },
+        { t: '子页面', d: '「创建子页并引用」修复了「创建成功却没有插到光标处」：打开弹窗前会记住最后一次有效光标位置，弹窗宽度改为桌面 80vw、移动端 98vw，高度统一 98vh；弹窗里的占位提示已移除。' },
+        { t: '工具与图标', d: '字号、字体颜色、发布到瞬间、创建子页并引用、尺寸、预览、文件详情、删除都提取为独立工具，可在「可用工具」里配置到任意工具栏；选中文本的工具组（`[组名 a b]`）恢复加载，桌面端悬停即展开；选中文本里的行内代码 / 代码块补上图标；光标在标题末尾时，行末菜单会高亮当前 H 级别。' },
+        { t: '其它', d: '移动端拖视频缩放手柄不再抖动闪烁，宽度按比例变化；引述块去掉底色、左侧竖条加宽；「从图床插入」改名「选择文件」、「上传图片」改名「图片」；笔记页底部的多余空白与「滚不回顶部、顶栏不出现」一并修掉。' },
+        { t: '升级兼容', d: '本版没有数据库结构变更，编辑器设置里的旧配置原样可读；媒体选中条改为固定使用内置默认工具，设置页里对应的四个配置项已移除。' }
+      ]
+    },
+    {
       id: 'whatsnew-1333',
       title: '五十七、v1.3.3.3 更新要点',
       intro: '这一版把笔记编辑器往「顺手」方向推了一大步：行号栏常显、列表与标题末尾各自有专属操作条、代码块带操作栏、输入几个符号就能出块；同时修掉了笔记管理页配色不跟随全局主题、顶栏收起后残留一条细线、回滚时吸附行狂闪这类观感问题。',
@@ -2214,6 +2233,25 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-134',
+      title: '58. What is new in v1.3.4',
+      intro: 'This release focuses on editor feel and layering: corrected word / character counts, the save button moved to the top bar, small height adjustments to the title and tag rows, and floating menus no longer covering the toolbar. List folding and conversion, code block line numbers, the HTML block header and subpage references are also tightened up.',
+      items: [
+        { t: 'Word and character counts no longer look swapped', d: '"Words" is now the total character count of the body (markdown syntax and whitespace stripped, exactly the same measure as the "N chars" shown in the note list), while "chars" is the number of Chinese characters plus Latin letters. Previously the letter count ran on the raw markdown, so URLs and English words inside code blocks were included and it could exceed the character count.' },
+        { t: 'Save moved to the top bar', d: 'The save button at the end of the last toolbar row now lives in the top bar: to the left of editor settings on desktop, to the left of "back to note list" on mobile. The last toolbar row keeps only live / source / preview, and that dropdown stays pinned to the right edge while the toolbar scrolls horizontally on phones.' },
+        { t: 'Title and tag row heights', d: 'The title row gains 4px and stays vertically centred; the tag row loses 4px with tags still centred. On mobile the title row uses 3px side padding and each toolbar row 2px, giving a little more width back to the text.' },
+        { t: 'Menus no longer cover the toolbar', d: 'Heading, list, text-selection, media-selection, cursor and backlink layers now share one hierarchy: whenever a floating menu is open, the toolbar, title row and backlinks are raised above it. Opening the context menu closes every other menu first, so they no longer stack up.' },
+        { t: 'Gutter menu', d: 'The block menu is vertical on mobile too; it opens upward or downward depending on which side has more room and always stays inside the viewport. The fold arrow in the first column now sits flush against the editor’s left border.' },
+        { t: 'Lists', d: 'The end-of-line menu gains "Convert", turning the whole sibling list into a task, bullet or ordered list. Every list item with children now shows its own fold button, collapsing all descendants at once. Level guides are vertical only and align under the parent marker. Task checkboxes sit on the same centre line as the text, and completed tasks strike through their text and children. After pressing Enter in a list and then Backspace, the item becomes a body block inside the previous item instead of leaving the list.' },
+        { t: 'Code blocks', d: 'Wrap and copy are now text buttons; the language dropdown moves to the left of the header (the duplicate label is gone); header button spacing grows by 3px and the code area gains 4px of horizontal padding. A line-number column is added and stays aligned with the code; it hides automatically when wrapping is on, where logical lines no longer match visual lines.' },
+        { t: 'HTML blocks', d: 'A header row is added: a fold toggle and an "HTML block" label on the left, an edit button on the right that opens the source dialog. Content is still sanitised against the allow-list, so scripts never run.' },
+        { t: 'Subpages', d: '"Create subpage and reference" now really inserts at the cursor: the last valid cursor position is remembered before the dialog opens. The dialog is 80vw on desktop and 98vw on mobile, 98vh tall in both, and the placeholder hint has been removed.' },
+        { t: 'Tools and icons', d: 'Font size, text colour, publish to moment, create subpage, size, preview, file details and delete are now standalone tools you can put in any toolbar from "available tools". Selection tool groups (`[name a b]`) load again and expand on hover on desktop. Inline and block code regain their icons in the selection bar, and the heading menu highlights the current level.' },
+        { t: 'Other fixes', d: 'Dragging the video resize handle on mobile no longer flickers and keeps the aspect ratio. Blockquotes lose their background and get a slightly thicker left bar. "Insert from storage" is renamed "Choose file" and "Upload image" becomes "Image". The extra blank area at the bottom of the notes page and the "cannot scroll back to top / top bar stays hidden" issue are fixed.' },
+        { t: 'Upgrade compatibility', d: 'No database changes. Existing editor settings load unchanged; the media selection bar now always uses built-in defaults, so its four configuration fields were removed from the settings page.' }
       ]
     },
     {

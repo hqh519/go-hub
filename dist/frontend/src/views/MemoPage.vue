@@ -35,6 +35,20 @@
             </DashboardTabs>
             <div class="memo-topbar-right">
                 <!--
+                    v1.3.4（需求）：保存按钮从工具栏最后一行移到顶部栏。
+                    桌面端排在「编辑器设置」左侧，移动端排在「返回笔记列表」左侧 ——
+                    都靠「放在这一组的最前面」实现，不用为两个终端写两套顺序。
+                -->
+                <button
+                    v-if="currentNote"
+                    type="button"
+                    class="memo-icon-btn memo-save-btn"
+                    :title="$t('memo.save')"
+                    @click="saveCurrent"
+                >
+                    <font-awesome-icon icon="save" />
+                </button>
+                <!--
                     v1.3.1.1：移动端编辑态原来靠顶栏下面那一条「返回 + 标题」回去，
                     那条已被需求移除，所以把「返回列表」收进顶栏右侧 —— 不然手机上
                     进到编辑器就再也回不到列表了。
@@ -218,22 +232,10 @@
                 <p class="ms-tip">{{ $t('memo.selToolsTip') }}</p>
                 <textarea v-model="settingsDraft.selectionTools" class="ms-textarea" rows="3" spellcheck="false"></textarea>
             </div>
-            <div class="ms-field">
-                <label class="ms-label">{{ $t('memo.selImageToolsConfig') }}</label>
-                <textarea v-model="settingsDraft.selectImageTools" class="ms-textarea" rows="2" spellcheck="false"></textarea>
-            </div>
-            <div class="ms-field">
-                <label class="ms-label">{{ $t('memo.selVideoToolsConfig') }}</label>
-                <textarea v-model="settingsDraft.selectVideoTools" class="ms-textarea" rows="2" spellcheck="false"></textarea>
-            </div>
-            <div class="ms-field">
-                <label class="ms-label">{{ $t('memo.selAudioToolsConfig') }}</label>
-                <textarea v-model="settingsDraft.selectAudioTools" class="ms-textarea" rows="2" spellcheck="false"></textarea>
-            </div>
-            <div class="ms-field">
-                <label class="ms-label">{{ $t('memo.selFileToolsConfig') }}</label>
-                <textarea v-model="settingsDraft.selectFileTools" class="ms-textarea" rows="2" spellcheck="false"></textarea>
-            </div>
+            <!--
+                v1.3.4（需求）：选中图片 / 视频 / 音频 / 文件四个工具配置项移除，
+                媒体选中条统一使用内置默认工具。
+            -->
             <!--
                 v1.3.2（需求）：原来的 H1-H6 数字输入框太小，改成多行 CSS。
                 选择器会自动限定在编辑器正文区（.me-wysiwyg）内，不会污染全站样式。
@@ -358,10 +360,6 @@ export default {
                 slashTools: '',
                 rightClickTools: '',
                 selectionTools: '',
-                selectImageTools: '',
-                selectVideoTools: '',
-                selectAudioTools: '',
-                selectFileTools: '',
                 historyInterval: 3,
                 /* v1.3.1.2：标题与正文样式 */
                 styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '' },
@@ -488,6 +486,18 @@ export default {
             const el = this.$refs.pageEl;
             if (el) el.addEventListener('scroll', this.onPageScroll, true);
         });
+        /*
+         * v1.3.4（修「底部多滚出一块空白、滚不回顶部」）：
+         * 笔记页本身是 100dvh + 内部滚动，但浏览器仍可能把 body 撑出一段可滚动区域
+         * （移动端地址栏收起 / 内容高度变化时尤其明显）。一旦外层被滚下去，
+         * 内层滚到顶也不会触发「显示顶栏」—— 因为滚的根本不是内层。
+         * 这里锁住外层滚动，并额外监听一次 window 兜底。
+         */
+        this._bodyOverflow = document.body.style.overflow;
+        this._htmlOverflow = document.documentElement.style.overflow;
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+        window.addEventListener('scroll', this.onWindowScroll, { passive: true });
         this.fetchInstances();
         await this.loadSettings();
         // v1.3.3.3：量一次顶栏真实高度（收起时按它精确上移，不留间隔行）
@@ -498,6 +508,12 @@ export default {
     },
     beforeUnmount() {
         window.removeEventListener('resize', this.syncViewport);
+        window.removeEventListener('scroll', this.onWindowScroll);
+        // 还原被本页锁住的外层滚动
+        if (this._bodyOverflow !== undefined) document.body.style.overflow = this._bodyOverflow;
+        if (this._htmlOverflow !== undefined) document.documentElement.style.overflow = this._htmlOverflow;
+        this._bodyOverflow = undefined;
+        this._htmlOverflow = undefined;
         if (this._tbRO) {
             this._tbRO.disconnect();
             this._tbRO = null;
@@ -579,6 +595,11 @@ export default {
             if (!id) return;
             const note = await fetchNote(id).catch(() => null);
             if (note) this.currentNote = note;
+        },
+        /** v1.3.4：顶部栏保存按钮 → 转给编辑器（保存逻辑仍只有一份） */
+        saveCurrent() {
+            const ed = this.$refs.editor;
+            if (ed && typeof ed.saveNow === 'function') ed.saveNow();
         },
         backToList() {
             this.currentNote = null;
@@ -668,8 +689,18 @@ export default {
          * 滚动事件来自子容器（列表 / 编辑器正文），用捕获阶段统一收口；
          * `scroll` 不冒泡，但捕获阶段可以看到 —— 这是不往每个子组件塞回调的最小代价。
          */
+        /** v1.3.4：外层（window）如果还能滚，滚回顶部时无条件把顶栏放出来 */
+        onWindowScroll() {
+            const top = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+            if (top <= 2 && this.topbarHidden) this.topbarHidden = false;
+        },
         onPageScroll(e) {
             const el = e.target;
+            // document 级滚动没有 scrollTop 属性，单独兜一下
+            if (el === document || el === window || el === document.documentElement || el === document.body) {
+                this.onWindowScroll();
+                return;
+            }
             if (!el || typeof el.scrollTop !== 'number') return;
             // 容器不可滚（内容比视口短）时直接不参与，顶栏常显
             if (el.scrollHeight - el.clientHeight < 80) {
@@ -897,10 +928,6 @@ export default {
                 slashTools: (this.editorSettings.slashLines || []).join('\n'),
                 rightClickTools: (this.editorSettings.rightClickLines || []).join('\n'),
                 selectionTools: (this.editorSettings.selectionLines || []).join('\n'),
-                selectImageTools: (this.editorSettings.selectImageLines || []).join('\n'),
-                selectVideoTools: (this.editorSettings.selectVideoLines || []).join('\n'),
-                selectAudioTools: (this.editorSettings.selectAudioLines || []).join('\n'),
-                selectFileTools: (this.editorSettings.selectFileLines || []).join('\n'),
                 historyInterval: this.editorSettings.historyInterval || 3,
                 customCss: String(this.editorSettings.styles?.customCss || ''),
                 styles: JSON.parse(JSON.stringify(this.editorSettings.styles || {
@@ -938,6 +965,16 @@ export default {
                 tableDelete: 'memo.tblDelete',
                 tableAddRowBefore: 'memo.tblAddRowBefore',
                 tableAddColBefore: 'memo.tblAddColBefore',
+                // v1.3.4：新提取出来的独立工具
+                fontSize: 'memo.bubFontSize',
+                textColor: 'memo.bubColor',
+                publish: 'memo.publishToMoment',
+                subDoc: 'memo.subDoc',
+                listConvert: 'memo.toolListConvert',
+                imgSizeCycle: 'memo.toolImgSize',
+                mediaPreview: 'memo.toolMediaPreview',
+                mediaDetail: 'memo.toolFileDetail',
+                deleteNode: 'memo.ctxDelete',
             };
             return alias[tk] && this.$te(alias[tk]) ? this.$t(alias[tk]) : tk;
         },
@@ -981,10 +1018,6 @@ export default {
                 slashLines: splitLines(this.settingsDraft.slashTools).slice(0, 12),
                 rightClickLines: splitLines(this.settingsDraft.rightClickTools).slice(0, 12),
                 selectionLines: splitLines(this.settingsDraft.selectionTools).slice(0, 12),
-                selectImageLines: splitLines(this.settingsDraft.selectImageTools).slice(0, 8),
-                selectVideoLines: splitLines(this.settingsDraft.selectVideoTools).slice(0, 8),
-                selectAudioLines: splitLines(this.settingsDraft.selectAudioTools).slice(0, 8),
-                selectFileLines: splitLines(this.settingsDraft.selectFileTools).slice(0, 8),
                 historyInterval: Math.min(120, Math.max(1, Number(this.settingsDraft.historyInterval) || 3)),
                 styles: {
                     ...JSON.parse(JSON.stringify(this.settingsDraft.styles || {

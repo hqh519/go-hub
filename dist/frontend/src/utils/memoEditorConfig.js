@@ -45,6 +45,9 @@ export const TOOLBAR_TOKENS = [
     'emoji', 'symbol', 'iframe', 'findReplace', 'htmlMd', 'htmlBlock', 'annotate',
     // v1.3.2 新增
     'insertLineBelow', 'paste', 'pasteKeep', 'pastePlain', 'pasteEscaped',
+    // v1.3.4 新增：从选中浮层 / 媒体条提取出来的独立工具
+    'fontSize', 'textColor', 'publish', 'subDoc', 'listConvert',
+    'imgSizeCycle', 'mediaPreview', 'mediaDetail', 'deleteNode',
 ];
 
 export default DEFAULT_TOOLBAR_LINES;
