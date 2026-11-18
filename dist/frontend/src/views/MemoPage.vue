@@ -692,7 +692,8 @@ export default {
         /** v1.3.4：外层（window）如果还能滚，滚回顶部时无条件把顶栏放出来 */
         onWindowScroll() {
             const top = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
-            if (top <= 2 && this.topbarHidden) this.topbarHidden = false;
+            // v1.3.4.1（需求）：只有滚到距顶部 50px 以内才放出顶栏
+            if (top < 50 && this.topbarHidden) this.topbarHidden = false;
         },
         onPageScroll(e) {
             const el = e.target;
@@ -711,8 +712,8 @@ export default {
             const last = el.__memoLastTop ?? 0;
             el.__memoLastTop = top;
             const down = top > last;
-            // v1.3.3.3（需求）：距顶部 100px 以内才显示顶栏，其它位置的向上滚动保持隐藏
-            if (top < 100) {
+            // v1.3.4.1（需求）：距顶部 50px 以内才显示顶栏，其它位置的向上滚动保持隐藏
+            if (top < 50) {
                 if (this.topbarHidden) this.topbarHidden = false;
                 return;
             }

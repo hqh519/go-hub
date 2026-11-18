@@ -1070,6 +1070,23 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1341',
+      title: '五十九、v1.3.4.1 更新要点',
+      intro: '这一版继续收口编辑器的悬浮菜单与列表结构：菜单打开时顶部吸附不再失效、行号永远对齐第二列、列表任意层级的折叠按钮统一到第一列；同时补齐文件默认尺寸与宽高快捷设置、块引用两级菜单与内容框、网页嵌入块标题栏，以及编辑器内的媒体灯箱。',
+      items: [
+        { t: '悬浮菜单与吸附', d: '修复「任意悬浮菜单打开后，顶部工具栏与标题栏失去吸附」：上一版为了抬高层级，把这两个元素的定位统一改成了 relative，覆盖掉了 sticky。现在只给当前没在吸附的元素补 relative，吸住的那两个保留 sticky、仅抬高层级。斜杠命令菜单与引用面板的层级提高到工具栏、标题栏之上，弹出时不再被压住。' },
+        { t: '光标工具栏', d: '桌面端光标工具栏距光标再拉开 15px，移动端拉开 5px。显示条件收紧：只有「完全没有内容的空行」才出现；当前行有任何内容（空格、源码标识、文本）或处在列表项、标题、引述、代码块、表格等块里，都不显示。列表与标题只有标识没有内容时，也不再弹出对应的行末菜单。' },
+        { t: '行级栏与折叠', d: '行号固定显示在行级栏第二列：没有折叠按钮的行保留第一列占位，整列数字不再左右错落。任务 / 有序 / 无序列表的任意层级折叠按钮统一移到第一列（行号左侧），不再压住列表图标或勾选框；列表块原有的第一列折叠箭头已移除，只保留标题的折叠箭头。' },
+        { t: '列表结构', d: '修正任务列表的层级缩进（去掉子列表的负外边距），上下级不再叠在同一位置。列表项下方插入的引述、代码块、段落等内容，保存时会按层级缩进写入源码，重新打开仍保持为列表的下级，与思源等大纲式编辑器的写法一致。' },
+        { t: '文件尺寸', d: '编辑区插入的图片 / 视频默认尺寸：高度超过编辑区 50% 时按 50% 显示；否则宽度超过编辑区 80% 时按 80%；都没超过则保持原尺寸。手动设置过宽度的文件不受这条规则影响。选中文件的工具条在「尺寸」按钮后新增「宽度」「高度」两个下拉，可快捷设为 10% / 20% / 40% / 60% / 80% / 90% / 100%，随笔记保存。' },
+        { t: '插入引用', d: '输入 [[ 或 【【 触发笔记引用，预览页默认加载全部笔记并可滚动选择；输入 (( 或 （（ 触发块引用，采用两级菜单：一级为所有笔记标题（第一条固定是「当前笔记」），二级为该笔记下的所有内容块。鼠标悬停在引用名称上会显示带箭头的预览卡片，箭头指向名称块。块引用插入后显示为带标题栏的内容框：左侧折叠按钮、中间「块内容引用」提示、右侧「编辑」按钮可跳回源笔记并定位。' },
+        { t: '网页嵌入', d: '网页嵌入块补上标题栏：折叠 / 展开按钮、「网页嵌入块」提示与编辑按钮；点标题栏可选中该块，拖动右下角手柄即可改变显示大小，尺寸随笔记保存。' },
+        { t: '媒体灯箱', d: '编辑器里的图片 / 视频 / 音频工具改为打开对应灯箱，收集并浏览当前笔记里的所有同类文件；在正文中打开某个文件预览时，灯箱同样包含整篇里的所有同类文件。' },
+        { t: '其它', d: '顶部栏只在滚动到距顶部 50px 以内时显示；移动端代码块按回车可以正常换行；引述块行高调整为正文行高的 2 倍，左侧竖线与行号起算位置对齐；标题行高度改为 40px；版本 / 时间 / 字数一行与标签行左右对齐；字数 = 汉字 + 字母，字符 = 总字符数；代码块开启自动换行后仍显示行号，并在行号左侧增加换行标识。' },
+        { t: '升级兼容', d: '本版没有数据库结构变更；新增的宽度 / 高度只写入笔记正文的属性块或 HTML 属性，旧笔记不受影响。' }
+      ]
+    },
+    {
       id: 'whatsnew-134',
       title: '五十八、v1.3.4 更新要点',
       intro: '这一版主要修编辑器的「手感」与层级：字数 / 字符的统计口径纠正、保存按钮上移到顶部栏、标题行与标签行高度微调、菜单不再盖住工具栏；列表的折叠与转换、代码块行号、HTML 块标题行、子页面引用等也一并收口。',
@@ -2233,6 +2250,23 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1341',
+      title: '59. What is new in v1.3.4.1',
+      intro: 'This release keeps tightening the editor’s floating menus and list structure: the top bars stay sticky while menus are open, line numbers always sit in the second gutter column, and list fold buttons move to the first column at every level. It also adds default media sizing with width/height shortcuts, a two-level block reference menu with a content card, a header for web embeds, and in-editor media lightboxes.',
+      items: [
+        { t: 'Floating menus and sticky bars', d: 'Fixed the top toolbar and title row losing their sticky behaviour whenever a floating menu opened: the previous release raised their layer by forcing position: relative, which overrode sticky. Only non-sticky elements get relative now; sticky ones keep sticky and just get a higher layer. The slash menu and reference panel are raised above the top bars so they have enough room.' },
+        { t: 'Cursor toolbar', d: 'The cursor toolbar now sits 15px further from the cursor on desktop and 5px further on mobile. It only appears on a completely empty line; any content (spaces, syntax markers, text) or any block such as a list item, heading, quote, code block or table suppresses it. List and heading end-of-line menus no longer appear when the block holds only its marker.' },
+        { t: 'Gutter and folding', d: 'Line numbers always occupy the second gutter column; rows without a fold button keep an invisible placeholder in the first column, so the numbers no longer stagger. Fold buttons for task, ordered and bullet lists at every level move to the first column, left of the line number, instead of covering the list marker or checkbox. The old list fold arrow in the first column is removed; only headings keep a fold arrow.' },
+        { t: 'List structure', d: 'Fixed task list indentation (the negative margin on nested lists is gone), so levels no longer stack on top of each other. Quotes, code blocks and paragraphs inserted under a list item are written with indentation and stay nested after saving and reopening, matching outline-style editors such as SiYuan.' },
+        { t: 'Media sizing', d: 'Inserted images and videos default to: 50% when their height exceeds half the editor height; otherwise 80% when their width exceeds 80% of the editor width; otherwise their natural size. Media with a manually set width is left alone. The selection bar gains Width and Height dropdowns after the size button, with 10% / 20% / 40% / 60% / 80% / 90% / 100% presets that persist with the note.' },
+        { t: 'References', d: 'Typing [[ or 【【 opens note references with every note loaded and scrollable; typing (( or （（ opens block references as a two-level menu: notes first (the current note is always first), then that note’s blocks. Hovering a reference shows a preview card with an arrow pointing at the name. Inserted block references render as a content card with a header, a fold toggle and an Edit button that jumps back to the source block.' },
+        { t: 'Web embeds', d: 'Web embeds gain a header with a fold toggle, a label and an edit button. Clicking the header selects the block and shows a resize handle in the bottom-right corner; the size is saved with the note.' },
+        { t: 'Media lightbox', d: 'The image, video and audio tools now open the matching lightbox and collect every file of that type in the current note. Opening a preview from the body also includes all files of the same type from the whole note.' },
+        { t: 'Other', d: 'The top bar only appears within 50px of the top; Enter now starts a new line in mobile code blocks; blockquotes use twice the paragraph line height and their left bar aligns with the gutter; the title row is 40px tall; the version / time / count row aligns with the tag row; words = Chinese characters + Latin letters and chars = total characters; wrapped code blocks keep line numbers with a line-break marker.' },
+        { t: 'Upgrade compatibility', d: 'No database changes. The new width and height are stored only in the note’s attribute block or HTML attributes, so existing notes are unaffected.' }
       ]
     },
     {

@@ -230,12 +230,11 @@
                         {{ updatedText }}
                     </span>
                     <!--
-                        v1.3.4（需求）：字数 / 字符的统计口径互换。
-                        「字数」= 正文总字符数（与列表里的「N 字」同一口径，含标点、不含空白）；
-                        「字符」= 汉字 + 字母数。原来两边的值正好相反，看着就像标签写反了。
+                        v1.3.4.1（需求）：字数 / 字符按新口径统计。
+                        「字数」= 汉字 + 字母；「字符」= 总字符数（所有字符都统计）。
                     -->
-                    <span class="me-meta-item">{{ $t('memo.wordCount', { n: charCount }) }}</span>
-                    <span class="me-meta-item">{{ $t('memo.charCountAll', { n: wordCount }) }}</span>
+                    <span class="me-meta-item">{{ $t('memo.wordCount', { n: wordCount }) }}</span>
+                    <span class="me-meta-item">{{ $t('memo.charCountAll', { n: charCount }) }}</span>
                     <span class="me-status">
                         <span v-if="saving" class="me-status-text">{{ $t('memo.saving') }}</span>
                         <span v-else-if="dirty" class="me-status-text is-dirty">{{ $t('memo.unsaved') }}</span>
@@ -293,14 +292,18 @@
                     :data-no="row.no"
                     :style="{ top: `${row.top}px` }"
                 >
+                    <!--
+                        v1.3.4.1（需求：行号始终在行级栏第二列）
+                        没有折叠按钮的行也要保留第一列的占位（视觉上隐藏），
+                        否则行号会滑到第一列，整列数字左右错落。
+                    -->
                     <button
-                        v-if="row.foldable"
                         type="button"
                         class="me-gutter-fold"
-                        :class="{ 'is-folded': row.folded }"
+                        :class="{ 'is-folded': row.folded, 'is-hidden': !row.foldable }"
                         :title="row.folded ? $t('memo.unfoldTitle') : $t('memo.foldTitle')"
                         @mousedown.prevent
-                        @click.stop="toggleFoldAt(row.pos)"
+                        @click.stop="row.foldable && toggleFoldAt(row.pos)"
                     >
                         <font-awesome-icon :icon="row.folded ? 'caret-right' : 'caret-down'" />
                     </button>
@@ -474,22 +477,40 @@
             </div>
         </Teleport>
 
-        <!-- 引用搜索：`[[` 搜文档，`((` 搜块 -->
+        <!-- 引用搜索：`[[` 搜文档，`((` 搜块（块引用为两级菜单） -->
         <Teleport to="body">
             <div v-if="ref.open" class="me-slash me-ref" :style="ref.style" @mousedown.prevent>
-                <div class="me-ref-head">{{ ref.mode === 'note' ? $t('memo.refNote') : $t('memo.refBlock') }}</div>
-                <div
-                    v-for="(it, i) in ref.items"
-                    :key="it.id"
-                    class="me-slash-item"
-                    :class="{ 'is-active': i === ref.index }"
-                    @mouseenter="ref.index = i"
-                    @click="applyRef(it)"
-                >
-                    <span class="me-ref-label">{{ it.label }}</span>
-                    <span class="me-slash-hint">{{ it.hint }}</span>
+                <div class="me-ref-head">
+                    <!-- v1.3.4.1：块引用二级页可以返回一级 -->
+                    <button
+                        v-if="ref.mode === 'block' && ref.level === 'blocks'"
+                        type="button"
+                        class="me-ref-back"
+                        :title="$t('memo.refBack')"
+                        @click.stop="refBackToNotes"
+                    >‹</button>
+                    <span class="me-ref-head-text">{{ refHeadText }}</span>
                 </div>
-                <div v-if="!ref.items.length" class="me-slash-empty">{{ $t('memo.refEmpty') }}</div>
+                <div class="me-ref-list">
+                    <div
+                        v-for="(it, i) in ref.items"
+                        :key="`rf-${it.id}-${i}`"
+                        class="me-slash-item"
+                        :class="{ 'is-active': i === ref.index }"
+                        @mouseenter="ref.index = i"
+                        @click="applyRef(it)"
+                    >
+                        <span class="me-ref-label">{{ it.label }}</span>
+                        <span class="me-slash-hint">{{ it.hint }}</span>
+                        <font-awesome-icon
+                            v-if="ref.mode === 'block' && ref.level === 'notes'"
+                            icon="caret-right"
+                            class="me-ref-caret"
+                        />
+                    </div>
+                    <div v-if="ref.loading" class="me-slash-empty">{{ $t('memo.hoverLoading') }}</div>
+                    <div v-else-if="!ref.items.length" class="me-slash-empty">{{ $t('memo.refEmpty') }}</div>
+                </div>
             </div>
         </Teleport>
 
@@ -626,6 +647,25 @@
             <div v-if="mediaBar.open" class="me-bubble me-mediabar" :style="mediaBar.style" @mousedown.prevent>
                 <template v-for="(it, i) in mediaTools" :key="`mb-${i}`">
                     <span v-if="it.sep" class="me-bub-sep"></span>
+                    <!-- v1.3.4.1：宽度 / 高度快捷设置下拉 -->
+                    <el-dropdown
+                        v-else-if="it.dropdown"
+                        :trigger="isTouchUi ? 'click' : 'hover'"
+                        :show-timeout="60"
+                        :hide-timeout="140"
+                        placement="top-start"
+                        @command="(p) => setMediaSizePercent(it.id === 'sizeHeight' ? 'h' : 'w', p)"
+                    >
+                        <button type="button" class="me-bub-btn" :title="it.label ? $t(it.label) : it.id">
+                            <font-awesome-icon :icon="it.icon" />
+                            <font-awesome-icon icon="caret-down" class="me-bub-caret" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item v-for="p in it.dropdown" :key="`sz-${p}`" :command="p">{{ p }}%</el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
                     <button
                         v-else
                         type="button"
@@ -639,7 +679,9 @@
             </div>
 
             <!-- 引用悬停预览（v1.3.1.2） -->
-            <div v-if="hoverCard.open" class="me-hovercard" :style="{ left: `${hoverCard.x}px`, top: `${hoverCard.y}px` }">
+            <div v-if="hoverCard.open" class="me-hovercard" :class="{ 'is-above': hoverCard.above, 'is-below': !hoverCard.above }" :style="{ left: `${hoverCard.x}px`, top: `${hoverCard.y}px` }">
+                <!-- v1.3.4.1（需求）：卡片带箭头，指回被悬停的引用名称块 -->
+                <span class="me-hovercard-arrow" aria-hidden="true"></span>
                 <div class="me-hovercard-title">{{ hoverCard.title }}</div>
                 <div class="me-hovercard-text">{{ hoverCard.loading ? $t('memo.hoverLoading') : (hoverCard.text || $t('memo.hoverEmpty')) }}</div>
             </div>
@@ -1338,6 +1380,12 @@ const ImageWithWidth = Image.extend({
                 parseHTML: (el) => Number(el.getAttribute('width')) || null,
                 renderHTML: (attrs) => (attrs.width ? { width: Math.round(Number(attrs.width)) } : {}),
             },
+            /* v1.3.4.1：高度属性，供选中菜单的「高度」下拉使用 */
+            height: {
+                default: null,
+                parseHTML: (el) => Number(el.getAttribute('height')) || null,
+                renderHTML: (attrs) => (attrs.height ? { height: Math.round(Number(attrs.height)) } : {}),
+            },
             /*
              * v1.3.1.2（需求：对齐工具要对文件生效）：
              * 图片也带一个 align —— 值域与段落对齐一致（left / center / right）。
@@ -1376,6 +1424,12 @@ const mediaWidthAttr = {
         default: null,
         parseHTML: (el) => Number(el.getAttribute('width')) || null,
         renderHTML: (attrs) => (attrs.width ? { width: Math.round(Number(attrs.width)) } : {}),
+    },
+    /* v1.3.4.1：高度也进属性，宽高下拉才可持久化 */
+    height: {
+        default: null,
+        parseHTML: (el) => Number(el.getAttribute('height')) || null,
+        renderHTML: (attrs) => (attrs.height ? { height: Math.round(Number(attrs.height)) } : {}),
     },
     /** 与图片同一套对齐值（left / center / right），落成 HTML 的 align 属性 */
     align: {
@@ -1488,6 +1542,9 @@ const Video = Node.create({
                 if (video.getAttribute('src') !== src) video.src = src;
                 if (n.attrs.width) video.setAttribute('width', String(Math.round(Number(n.attrs.width))));
                 else video.removeAttribute('width');
+                /* v1.3.4.1：高度下拉也要落到 DOM（height 在 DOMPurify 白名单里，可随 md 往返） */
+                if (n.attrs.height) video.setAttribute('height', String(Math.round(Number(n.attrs.height))));
+                else video.removeAttribute('height');
                 if (n.attrs.align) video.setAttribute('align', String(n.attrs.align));
                 else video.removeAttribute('align');
             };
@@ -1544,6 +1601,9 @@ const Audio = Node.create({
                 } else {
                     audio.style.width = '';
                 }
+                /* v1.3.4.1：音频没有 height 属性，走行内 style；md 侧仍写 height="N" */
+                if (n.attrs.height) audio.style.height = `${Math.round(Number(n.attrs.height))}px`;
+                else audio.style.height = '';
                 if (n.attrs.align) audio.setAttribute('align', String(n.attrs.align));
                 else audio.removeAttribute('align');
             };
@@ -1673,54 +1733,147 @@ const IframeBlock = Node.create({
     atom: true,
     draggable: true,
     addAttributes() {
-        return { src: { default: '' }, height: { default: 420 } };
+        /* v1.3.4.1：新增 width，配合标题栏拖动缩放持久化 */
+        return { src: { default: '' }, height: { default: 420 }, width: { default: null } };
     },
     parseHTML() {
         return [{ tag: 'div[data-embed-iframe]' }];
     },
+    /*
+     * v1.3.4.1（需求）：网页嵌入改成「带标题栏的内容块」——
+     * 折叠按钮 + 「网页嵌入块」提示 + 编辑按钮；点标题栏选中块并显示缩放手柄。
+     */
     addNodeView() {
-        return ({ node }) => {
+        return ({ node, getPos, view }) => {
             const wrap = document.createElement('div');
             wrap.className = 'gh-iframe-wrap';
             wrap.setAttribute('data-embed-iframe', 'true');
             wrap.contentEditable = 'false';
-            const src = String(node.attrs.src || '');
-            if (!/^https?:\/\//i.test(src)) {
-                wrap.innerHTML = '<span class="gh-html-empty">嵌入地址无效（只支持 http/https）</span>';
-                return { dom: wrap };
-            }
-            const frame = document.createElement('iframe');
-            frame.src = src;
-            frame.loading = 'lazy';
-            frame.referrerPolicy = 'no-referrer';
-            frame.style.height = `${Math.max(120, Number(node.attrs.height) || 420)}px`;
-            wrap.appendChild(frame);
-            /*
-             * v1.3.3（需求）：嵌入区里加一个设置按钮，可以改地址与高度。
-             * NodeView 在模块作用域拿不到组件实例，这里靠自定义事件冒泡给编辑器，
-             * 由组件弹表单并用 posAtDOM 反查节点位置。
-             */
-            const gear = document.createElement('button');
-            gear.type = 'button';
-            gear.className = 'gh-iframe-config';
-            gear.title = '嵌入设置';
-            gear.textContent = '⚙';
-            gear.addEventListener('click', (ev) => {
+            let cur = node;
+
+            const bar = document.createElement('div');
+            bar.className = 'gh-iframe-bar';
+            const fold = document.createElement('button');
+            fold.type = 'button';
+            fold.className = 'gh-cb-btn gh-iframe-fold';
+            fold.title = '折叠 / 展开';
+            fold.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+            const label = document.createElement('span');
+            label.className = 'gh-iframe-label';
+            label.textContent = '网页嵌入块';
+            const grow = document.createElement('span');
+            grow.className = 'gh-cb-grow';
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'gh-cb-btn gh-iframe-edit';
+            edit.title = '编辑';
+            edit.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+            bar.appendChild(fold);
+            bar.appendChild(label);
+            bar.appendChild(grow);
+            bar.appendChild(edit);
+
+            const body = document.createElement('div');
+            body.className = 'gh-iframe-body';
+            const handle = document.createElement('span');
+            handle.className = 'gh-iframe-resize';
+            handle.title = '拖动改变大小';
+
+            let frame = null;
+            const build = (attrs) => {
+                const s = String(attrs.src || '');
+                if (!/^https?:\/\//i.test(s)) {
+                    body.innerHTML = '<span class="gh-html-empty">嵌入地址无效（只支持 http/https）</span>';
+                    return;
+                }
+                if (!frame) {
+                    frame = document.createElement('iframe');
+                    frame.loading = 'lazy';
+                    frame.referrerPolicy = 'no-referrer';
+                    body.innerHTML = '';
+                    body.appendChild(frame);
+                    body.appendChild(handle);
+                }
+                frame.src = s;
+                frame.style.height = `${Math.max(120, Number(attrs.height) || 420)}px`;
+                if (Number(attrs.width) > 0) frame.style.width = `${Math.max(200, Number(attrs.width))}px`;
+                else frame.style.width = '';
+            };
+            build(node);
+
+            const commit = (w, h) => {
+                const pos = typeof getPos === 'function' ? getPos() : null;
+                if (typeof pos !== 'number' || !view) return;
+                try {
+                    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+                        ...cur.attrs,
+                        width: Math.round(w),
+                        height: Math.round(h),
+                    }));
+                } catch (e) { /* 忽略 */ }
+            };
+            let drag = null;
+            const onMove = (ev) => {
+                if (!drag || !frame) return;
+                const w = Math.max(240, drag.w + (ev.clientX - drag.x));
+                const h = Math.max(120, drag.h + (ev.clientY - drag.y));
+                frame.style.width = `${w}px`;
+                frame.style.height = `${h}px`;
+            };
+            const onUp = () => {
+                document.removeEventListener('pointermove', onMove);
+                if (!drag || !frame) return;
+                const rect = frame.getBoundingClientRect();
+                const w = parseFloat(frame.style.width) || rect.width;
+                const h = parseFloat(frame.style.height) || rect.height;
+                drag = null;
+                commit(w, h);
+            };
+            handle.addEventListener('pointerdown', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                if (!frame) return;
+                const r = frame.getBoundingClientRect();
+                drag = { x: ev.clientX, y: ev.clientY, w: r.width, h: r.height };
+                document.addEventListener('pointermove', onMove);
+                document.addEventListener('pointerup', onUp, { once: true });
+            });
+
+            const stop = (ev) => { ev.preventDefault(); ev.stopPropagation(); };
+            fold.addEventListener('mousedown', stop);
+            edit.addEventListener('mousedown', stop);
+            fold.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                wrap.classList.toggle('is-collapsed');
+            });
+            edit.addEventListener('click', (ev) => {
                 ev.preventDefault();
                 ev.stopPropagation();
                 wrap.dispatchEvent(new CustomEvent('gohub:iframe-config', { bubbles: true }));
             });
-            wrap.appendChild(gear);
+            /* 点标题栏：选中块并显示缩放手柄 */
+            bar.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                wrap.classList.add('is-selected');
+                const pos = typeof getPos === 'function' ? getPos() : null;
+                if (typeof pos === 'number' && view) {
+                    try {
+                        view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)));
+                    } catch (e) { /* 忽略 */ }
+                }
+            });
+
+            wrap.appendChild(bar);
+            wrap.appendChild(body);
+
             return {
                 dom: wrap,
                 update(updated) {
                     if (updated.type.name !== 'iframe') return false;
-                    const next = String(updated.attrs.src || '');
-                    if (!/^https?:\/\//i.test(next)) return false;
-                    frame.src = next;
-                    frame.style.height = `${Math.max(120, Number(updated.attrs.height) || 420)}px`;
+                    cur = updated;
+                    build(updated);
                     return true;
-                }
+                },
             };
         };
     },
@@ -1942,6 +2095,85 @@ const BlockRef = Node.create({
     renderHTML({ node }) {
         return ['span', { class: 'gh-blockref', 'data-block-id': node.attrs.blockId || '' }, '◆ 块引用'];
     },
+    /*
+     * v1.3.4.1（需求）：块引用插入后改成「带标题栏的内容框」——
+     * 左侧折叠按钮 + 「块内容引用」提示，右侧「编辑」跳回源笔记并定位。
+     * NodeView 在模块作用域拿不到组件实例，跳转靠自定义事件冒泡上去。
+     */
+    addNodeView() {
+        return ({ node }) => {
+            const wrap = document.createElement('span');
+            wrap.className = 'gh-blockref-card';
+            wrap.setAttribute('data-block-ref', 'true');
+            wrap.setAttribute('data-block-id', node.attrs.blockId || '');
+            wrap.contentEditable = 'false';
+
+            const bar = document.createElement('span');
+            bar.className = 'gh-br-bar';
+            const fold = document.createElement('button');
+            fold.type = 'button';
+            fold.className = 'gh-cb-btn gh-br-fold';
+            fold.title = '折叠 / 展开';
+            fold.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+            const label = document.createElement('span');
+            label.className = 'gh-br-label';
+            label.textContent = '块内容引用';
+            const grow = document.createElement('span');
+            grow.className = 'gh-cb-grow';
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'gh-cb-btn gh-br-edit';
+            edit.title = '编辑';
+            edit.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+            bar.appendChild(fold);
+            bar.appendChild(label);
+            bar.appendChild(grow);
+            bar.appendChild(edit);
+
+            const body = document.createElement('span');
+            body.className = 'gh-br-body';
+            body.textContent = '加载中…';
+
+            wrap.appendChild(bar);
+            wrap.appendChild(body);
+
+            const stop = (ev) => { ev.preventDefault(); ev.stopPropagation(); };
+            fold.addEventListener('mousedown', stop);
+            edit.addEventListener('mousedown', stop);
+            fold.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                wrap.classList.toggle('is-collapsed');
+            });
+            edit.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                wrap.dispatchEvent(new CustomEvent('gohub:blockref-edit', { bubbles: true }));
+            });
+
+            const load = async () => {
+                try {
+                    const r = await resolveBlock(node.attrs.blockId);
+                    body.textContent = String(r?.plainText || '（源块为空）');
+                } catch (e) {
+                    body.textContent = '（源内容已删除或无权访问）';
+                }
+            };
+            load();
+
+            return {
+                dom: wrap,
+                update(next) {
+                    if (next.type.name !== 'blockRef') return false;
+                    if (next.attrs.blockId !== node.attrs.blockId) {
+                        node = next;
+                        wrap.setAttribute('data-block-id', next.attrs.blockId || '');
+                        load();
+                    }
+                    return true;
+                },
+            };
+        };
+    },
 });
 
 /**
@@ -2075,10 +2307,11 @@ const CTX_ACTIONS = {
 
 /** v1.3.3：媒体选中条的默认工具（可被设置里对应配置覆盖） */
 const MEDIA_DEFAULT = {
-    image: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode'],
-    video: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode'],
-    audio: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode'],
-    file: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', '|', 'deleteNode']
+    /* v1.3.4.1（需求）：尺寸按钮后面新增「宽度」「高度」两个百分比下拉 */
+    image: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', 'sizeWidth', 'sizeHeight', '|', 'deleteNode'],
+    video: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', 'sizeWidth', 'sizeHeight', '|', 'deleteNode'],
+    audio: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', 'sizeWidth', 'sizeHeight', '|', 'deleteNode'],
+    file: ['mediaPreview', 'mediaDetail', '|', 'alignLeft', 'alignCenter', 'alignRight', '|', 'imgSizeCycle', 'sizeWidth', 'sizeHeight', '|', 'deleteNode']
 };
 
 /** v1.3.3：选中浮层的保留名（复合控件 / 非 TOOLS 动作） */
@@ -2262,11 +2495,11 @@ const CodeBlockView = CodeBlock.extend({
             let cur = node;
             let linesRaf = 0;
             const renderLines = () => {
-                // 自动换行时逻辑行会折成多行，纯按行高排的序号必然错位 —— 这种情况下不显示
-                if (wrap.classList.contains('is-wrap')) {
-                    lines.innerHTML = '';
-                    return;
-                }
+                /*
+                 * v1.3.4.1（需求）：换行模式也要显示行号。
+                 * 折行后逻辑行与视觉行对不上是事实，但用户需要「看得出这一行是逻辑行」，
+                 * 所以在行号左侧再补一列换行标识（↵），标出每个逻辑行换行符的位置。
+                 */
                 let cs;
                 try {
                     // 行高取 pre 的：code 上还有一条全局「行内代码」样式（font-size 0.92em），
@@ -2283,7 +2516,15 @@ const CodeBlockView = CodeBlock.extend({
                     const frag = document.createDocumentFragment();
                     for (let i = 1; i <= n; i += 1) {
                         const sp = document.createElement('span');
-                        sp.textContent = String(i);
+                        /* v1.3.4.1：第一列换行标识（仅换行模式可见），第二列行号 */
+                        const lf = document.createElement('i');
+                        lf.className = 'gh-cb-lf';
+                        lf.textContent = '↵';
+                        const num = document.createElement('b');
+                        num.className = 'gh-cb-ln';
+                        num.textContent = String(i);
+                        sp.appendChild(lf);
+                        sp.appendChild(num);
                         frag.appendChild(sp);
                     }
                     lines.appendChild(frag);
@@ -2603,6 +2844,9 @@ const TOOLS = {
     /* v1.3.3.2（需求）：选中任意文件都能「灯箱预览」与「打开文件详情」 */
     mediaPreview: { icon: 'eye', label: 'memo.toolMediaPreview', run: null },
     mediaDetail: { icon: 'circle-info', label: 'memo.toolFileDetail', run: null },
+    /* v1.3.4.1（需求）：选中文件的宽度 / 高度快捷设置（下拉百分比） */
+    sizeWidth: { icon: 'arrows-left-right', label: 'memo.toolMediaWidth', run: null },
+    sizeHeight: { icon: 'arrows-up-down', label: 'memo.toolMediaHeight', run: null },
     deleteNode: {
         icon: 'trash',
         label: 'memo.ctxDelete',
@@ -2861,7 +3105,7 @@ export default {
              * 引用搜索（v1.3.1 · v1.5.0 计划）：
              * `[[` 搜文档、`((` 搜块。两者共用一个面板，靠 mode 区分。
              */
-            ref: { open: false, mode: '', query: '', items: [], index: 0, style: {} },
+            ref: { open: false, mode: '', level: 'list', noteId: '', noteTitle: '', query: '', items: [], index: 0, style: {}, loading: false },
             // 上传中的图片占位：避免连点多次上传把同一张图插两遍
             uploading: false,
             /** 反向链接面板（v1.5.0）：默认收起，避免把正文顶下去 */
@@ -3045,17 +3289,31 @@ export default {
                     return;
                 }
                 const tool = TOOLS[id];
-                if (tool) {
+                if (!tool) return;
+                /*
+                 * v1.3.4.1（需求）：宽度 / 高度下拉，选项 10% / 20% / 40% / 60% / 80% / 90% / 100%，
+                 * 百分比相对编辑区宽 / 高换算成像素。
+                 */
+                if (id === 'sizeWidth' || id === 'sizeHeight') {
                     out.push({
                         id,
                         icon: tool.icon,
-                        svgKey: tool.svgKey || '',
-                        glyph: tool.glyph || '',
                         label: tool.label,
+                        dropdown: [10, 20, 40, 60, 80, 90, 100],
                         tool: true,
                     });
                     lastSep = false;
+                    return;
                 }
+                out.push({
+                    id,
+                    icon: tool.icon,
+                    svgKey: tool.svgKey || '',
+                    glyph: tool.glyph || '',
+                    label: tool.label,
+                    tool: true,
+                });
+                lastSep = false;
             });
             while (out.length && out[out.length - 1].sep) out.pop();
             return out;
@@ -3097,6 +3355,12 @@ export default {
             });
             while (out.length && out[out.length - 1].sep) out.pop();
             return out;
+        },
+        /** v1.3.4.1：引用面板标题（块引用两级各显示不同文案） */
+        refHeadText() {
+            if (this.ref.mode === 'note') return this.$t('memo.refNote');
+            if (this.ref.level === 'blocks') return this.ref.noteTitle || this.$t('memo.currentNote');
+            return `${this.$t('memo.refBlock')} · ${this.$t('memo.pickNote')}`;
         },
         /** v1.3.2：模式下拉框上显示的文字 */
         modeLabel() {
@@ -3436,9 +3700,32 @@ export default {
                 if (pos >= 0) this.openHtmlBlock(pos);
             };
             body.addEventListener('gohub:html-edit', this.onHtmlEdit);
+            /* v1.3.4.1：块引用内容框的「编辑」→ 跳回源笔记并定位块 */
+            this.onBlockRefEdit = (e) => {
+                const card = e.target && e.target.closest && e.target.closest('.gh-blockref-card');
+                if (!card) return;
+                const blockId = String(card.getAttribute('data-block-id') || '').trim();
+                if (blockId) this.openBlockRef(blockId);
+            };
+            body.addEventListener('gohub:blockref-edit', this.onBlockRefEdit);
             // v1.3.3.2：媒体节点被选中后的统一同步口（见 mediaSelectOnClick 注释）
             this.onMediaSelectPing = () => this.$nextTick(() => this.onSelectionChange());
             body.addEventListener('gohub:media-select', this.onMediaSelectPing);
+            /*
+             * v1.3.4.1（需求：移动端块代码按回车不换行）
+             * 软键盘的 Enter 往往只派发 beforeinput（insertLineBreak / insertParagraph），
+             * 不派发 keydown，Tiptap 的代码块因此收不到这次换行。
+             * 触摸设备上在 codeBlock 内补一刀，手动插入 \n。
+             */
+            this.onCodeBeforeInput = (e) => {
+                if (!this.isTouchUi) return;
+                if (!e || (e.inputType !== 'insertLineBreak' && e.inputType !== 'insertParagraph')) return;
+                if (!this.editor || !this.editor.isActive('codeBlock')) return;
+                e.preventDefault();
+                this.editor.chain().focus().insertContent('\n').run();
+                this.onEditorUpdate();
+            };
+            body.addEventListener('beforeinput', this.onCodeBeforeInput, true);
         }
         /*
          * 手柄与光标工具栏都用绝对/固定坐标，滚动或改窗口大小都得重算位置。
@@ -3489,6 +3776,8 @@ export default {
             body.removeEventListener('mouseover', this.onHoverStart);
             body.removeEventListener('mouseout', this.onHoverEnd);
             if (this.onMediaSelectPing) body.removeEventListener('gohub:media-select', this.onMediaSelectPing);
+            if (this.onCodeBeforeInput) body.removeEventListener('beforeinput', this.onCodeBeforeInput, true);
+            if (this.onBlockRefEdit) body.removeEventListener('gohub:blockref-edit', this.onBlockRefEdit);
         }
         window.removeEventListener('resize', this.onViewportChange);
         window.removeEventListener('scroll', this.onViewportChange, true);
@@ -4106,7 +4395,12 @@ export default {
          * 这样「字数」在编辑器顶部与列表里永远显示同一个数。
          */
         countChars(md) {
-            return plainTextOf(md).replace(/\s+/g, '').length;
+            /*
+             * v1.3.4.1：「字符」= 总字符数，所有字符都统计。
+             * 与「字数」（同一份纯文本里只数汉字 + 字母）共用 plainTextOf 的结果，
+             * 不再剔除空白 / 标点 / 数字，保证字符数 >= 字数。
+             */
+            return plainTextOf(md).length;
         },
         /**
          * v1.3.4：字符数 = 汉字 + 字母。
@@ -4578,12 +4872,17 @@ export default {
             // 需求：点击顶部按钮时在按钮上方显示名称，2 秒后消失
             if (evt) this.showToolName(token, evt);
             if (token === 'link') return this.insertLink();
-            // v1.3.2（需求）：图片工具也要先调出「上传到图床」选择页，不再直接弹文件选择
-            if (token === 'image') return this.openUploadPicker();
+            /*
+             * v1.3.4.1（需求）：image / video / audio 工具改为「打开对应灯箱，
+             * 浏览当前编辑区里的所有同类文件」；上传 / 插入仍走 upload / file 入口。
+             */
+            if (token === 'image') return this.openEditorLightbox('image');
+            if (token === 'video') return this.openEditorLightbox('video');
+            if (token === 'audio') return this.openEditorLightbox('audio');
             if (token === 'upload') return this.openUploadPicker();
             if (token === 'linkExtract') return this.extractLink();
-            if (token === 'file' || token === 'video' || token === 'audio') {
-                // 三个入口共用一个选文件弹窗，落地类型由文件自身的 mime 决定
+            if (token === 'file') {
+                // 选文件弹窗：落地类型由文件自身的 mime 决定
                 this.pickerVisible = true;
                 return;
             }
@@ -4726,9 +5025,12 @@ export default {
                     no: rows.length + 1,
                     type: node.type.name,
                     level,
-                    /* 只有标题 / 列表才有折叠箭头 */
-                    foldable: level > 0 || isList,
-                    folded: (level > 0 || isList) && folds.has(offset),
+                    /*
+                     * v1.3.4.1（需求）：行级栏第一列只保留标题的折叠箭头；
+                     * 列表的任意层级折叠按钮统一由下方的 listFoldRows 画在第一列。
+                     */
+                    foldable: level > 0,
+                    folded: level > 0 && folds.has(offset),
                     top: Math.round(y),
                 });
             });
@@ -4752,26 +5054,15 @@ export default {
                     if (!key) return;
                     const r = li.getBoundingClientRect();
                     if (!r.height) return;
-                    const isTask = li.hasAttribute('data-checked') || li.getAttribute('data-type') === 'taskItem' || li.parentElement?.getAttribute('data-type') === 'taskList';
-                    let em = 15;
-                    try {
-                        em = parseFloat(window.getComputedStyle(li).fontSize) || 15;
-                    } catch (e) {
-                        /* 默认 15 */
-                    }
-                    // 符号中心：普通列表在 li 左缘外侧 ~0.75em，任务列表的勾选框在 li 内部 ~0.45em
-                    const cx = isTask ? r.left + em * 0.45 : r.left - em * 0.75;
-                    const isOrdered = !isTask && li.parentElement && li.parentElement.tagName === 'OL';
                     const firstLine = Math.min(r.height, lh);
                     listRows.push({
                         key,
                         folded: listSet.has(key),
                         /*
-                         * 无序列表：折叠按钮直接盖住圆点（圆点没有信息量）；
-                         * 有序列表 / 任务列表：按钮放到序号 / 勾选框左侧 ——
-                         * 序号和勾选状态都是内容，不能被盖掉。
+                         * v1.3.4.1（需求）：所有列表的任意层级折叠按钮统一放到
+                         * 行级栏第一列（行号的左侧），不再压住列表符号 / 勾选框。
                          */
-                        left: Math.round((isTask || isOrdered ? cx - 18 : cx - 8) - hostRect.left),
+                        left: 0,
                         top: Math.round(r.top - hostRect.top + host.scrollTop + firstLine / 2 - 8),
                     });
                 });
@@ -4866,6 +5157,8 @@ export default {
             this._gutterRaf = requestAnimationFrame(() => {
                 this._gutterRaf = null;
                 this.syncGutter();
+                // v1.3.4.1：媒体加载完成 / 内容变化后，按默认尺寸规则补算显示宽度
+                this.applyDefaultMediaSize();
             });
         },
 
@@ -5135,7 +5428,7 @@ export default {
             const y = above
                 ? Math.max(8, Math.min(rect.top - CARD_H - 8, vh - CARD_H - 8))
                 : Math.min(rect.bottom + 8, vh - CARD_H - 8);
-            this.hoverCard = { open: true, x, y, title: '', text: '', loading: true };
+            this.hoverCard = { open: true, x, y, above, title: '', text: '', loading: true };
             try {
                 if (blockId) {
                     const r = await resolveBlock(blockId);
@@ -5143,6 +5436,7 @@ export default {
                         open: true,
                         x,
                         y,
+                        above,
                         title: r?.noteTitle || this.$t('memo.blockRefTitle'),
                         text: String(r?.plainText || '').slice(0, 260),
                         loading: false,
@@ -5154,6 +5448,7 @@ export default {
                         open: true,
                         x,
                         y,
+                        above,
                         title: note.title || this.$t('memo.untitled'),
                         text: String(note.excerpt || plainTextOf(note.content || '')).slice(0, 260),
                         loading: false,
@@ -6184,7 +6479,8 @@ export default {
              * 两种都认，插入的仍然是标准的 [[note:…]]。
              */
             const mNote = /\[\[([^\]\n]*)$/.exec(before) || /【【([^】\n]*)$/.exec(before);
-            const mBlock = /\(\(([^)\n]*)$/.exec(before);
+            /* v1.3.4.1（需求）：输入「（（」也要触发块引用 */
+            const mBlock = /\(\(([^)\n]*)$/.exec(before) || /（（([^）\n]*)$/.exec(before);
             const mode = mNote ? 'note' : mBlock ? 'block' : '';
             if (!mode) return this.closeRef();
             this.closeSlash();
@@ -6195,19 +6491,40 @@ export default {
              * （repositionFloats 用 ref.pos 重新拿坐标）。
              */
             const style = { left: `${Math.round(coords.left)}px`, top: `${Math.round(coords.bottom + 6)}px` };
-            this.ref = { ...this.ref, open: true, mode, query, pos: $from.pos, style };
+            /*
+             * v1.3.4.1：块引用先进入「笔记一级」（level=notes），
+             * 点某个笔记标题后再进「块二级」（level=blocks）。
+             */
+            this.ref = {
+                ...this.ref,
+                open: true,
+                mode,
+                level: mode === 'block' ? 'notes' : 'list',
+                noteId: '',
+                noteTitle: '',
+                items: [],
+                index: 0,
+                loading: true,
+                query,
+                pos: $from.pos,
+                style,
+            };
             // 输入即搜：300ms 防抖，避免每个字符打一次接口
             if (this._refTimer) clearTimeout(this._refTimer);
             this._refTimer = setTimeout(() => this.searchRef(), 220);
         },
 
         async searchRef() {
-            const { mode, query } = this.ref;
+            const { mode, level, noteId, query } = this.ref;
             if (!mode) return;
             const kw = String(query || '').trim().toLowerCase();
             try {
+                /*
+                 * v1.3.4.1（需求）：笔记引用默认加载**全部**笔记（面板可上下滚动），
+                 * 不再只取前 8 条。
+                 */
                 if (mode === 'note') {
-                    const r = await fetchNotes({ search: String(query || '').trim(), pageSize: 8 });
+                    const r = await fetchNotes({ search: String(query || '').trim(), pageSize: 200 });
                     const items = (r?.items || r?.list || [])
                         .filter((n) => n.id !== this.note?.id)
                         .map((n) => ({
@@ -6216,32 +6533,74 @@ export default {
                             hint: n.excerpt || '',
                             insert: `[[note:${n.id}|${n.title || this.$t('memo.untitled')}]]`,
                         }));
-                    this.ref = { ...this.ref, items, index: 0 };
-                } else {
-                    // 块搜索：只搜本篇（跨篇块搜索需要全库扫描，等反链面板做完再说）
-                    const id = this.note?.id;
-                    if (!id) return this.closeRef();
-                    const r = await fetchNoteBlocks(id);
-                    const items = (r?.blocks || [])
-                        .filter((b) => (kw ? String(b.plainText || '').toLowerCase().includes(kw) : true))
-                        .slice(0, 8)
-                        .map((b) => ({
-                            id: b.blockId,
-                            label: b.plainText || b.blockType,
-                            hint: b.blockType,
-                            insert: `((${b.blockId}))`,
-                        }));
-                    this.ref = { ...this.ref, items, index: 0 };
+                    this.ref = { ...this.ref, items, index: 0, loading: false };
+                    return;
                 }
+                /* 块引用一级：所有笔记标题，第一条固定为「当前笔记」 */
+                if (level === 'notes') {
+                    const r = await fetchNotes({ search: String(query || '').trim(), pageSize: 200 });
+                    const list = r?.items || r?.list || [];
+                    const current = this.note
+                        ? [{ id: this.note.id, label: this.$t('memo.currentNote'), hint: '', current: true }]
+                        : [];
+                    const others = list
+                        .filter((n) => n.id !== this.note?.id)
+                        .map((n) => ({ id: n.id, label: n.title || this.$t('memo.untitled'), hint: '', current: false }));
+                    this.ref = { ...this.ref, items: current.concat(others), index: 0, loading: false };
+                    return;
+                }
+                /* 块引用二级：该笔记下的所有内容块 */
+                const id = noteId || this.note?.id;
+                if (!id) return this.closeRef();
+                const r = await fetchNoteBlocks(id);
+                const items = (r?.blocks || [])
+                    .filter((b) => (kw ? String(b.plainText || '').toLowerCase().includes(kw) : true))
+                    .map((b) => ({
+                        id: b.blockId,
+                        label: String(b.plainText || b.blockType || '').slice(0, 80),
+                        hint: b.blockType,
+                        insert: `((${b.blockId}))`,
+                    }));
+                this.ref = { ...this.ref, items, index: 0, loading: false };
             } catch (e) {
-                this.ref = { ...this.ref, items: [], index: 0 };
+                this.ref = { ...this.ref, items: [], index: 0, loading: false };
             }
+        },
+
+        /** v1.3.4.1：块引用二级 → 返回一级（笔记列表） */
+        refBackToNotes() {
+            this.ref = { ...this.ref, level: 'notes', noteId: '', noteTitle: '', items: [], index: 0, loading: true };
+            this.searchRef();
+        },
+
+        /** v1.3.4.1：进入某篇笔记的块列表（块引用二级） */
+        async loadBlockRefItems(noteId, noteTitle) {
+            const id = noteId || this.note?.id;
+            if (!id) return;
+            this.ref = {
+                ...this.ref,
+                level: 'blocks',
+                noteId: id,
+                noteTitle: String(noteTitle || this.$t('memo.currentNote')),
+                items: [],
+                index: 0,
+                loading: true,
+            };
+            await this.searchRef();
         },
 
         applyRef(item) {
             const ed = this.editor;
             if (!ed || !item) return;
             const mode = this.ref.mode;
+            /*
+             * v1.3.4.1（需求）：块引用是两级菜单 ——
+             * 一级点笔记标题只是「进二级看块」，不插入；二级点块才真正插入。
+             */
+            if (mode === 'block' && this.ref.level === 'notes') {
+                this.loadBlockRefItems(item.id, item.label);
+                return;
+            }
             const query = String(this.ref.query || '');
             this.closeRef();
             /*
@@ -6306,8 +6665,12 @@ export default {
                         return true;
                     }
                 }
-                if (event.key === 'Escape') {
-                    this.closeRef();
+                if (event.key === 'Escape' || event.key === 'ArrowLeft') {
+                    if (this.ref.mode === 'block' && this.ref.level === 'blocks') {
+                        this.refBackToNotes();
+                    } else {
+                        this.closeRef();
+                    }
                     return true;
                 }
             }
@@ -6461,6 +6824,12 @@ export default {
             const { $from, empty } = state.selection;
             if (!empty) return close();
             if ($from.pos < $from.end()) return close();
+            /*
+             * v1.3.4.1（需求）：只有标识没有内容时不显示行末菜单。
+             * 刚敲完 `- [ ]` / `- ` / `##` 时块里是空的，必须输入了实际内容、
+             * 且光标停在内容行末，才显示列表 / 标题菜单。
+             */
+            if (!String($from.parent.textContent || '').trim()) return close();
             const isHeading = $from.parent.type.name === 'heading';
             const inList = ed.isActive('listItem') || ed.isActive('taskItem');
             if (!isHeading && !inList) return close();
@@ -6653,7 +7022,25 @@ export default {
                 if (this.inputBar.open) this.inputBar = { open: false, style: {} };
                 return;
             }
-            const isEmptyLine = empty && $from.parent.type.name === 'paragraph' && $from.parent.content.size === 0;
+            /*
+             * v1.3.4.1（需求）：光标工具菜单栏只出现在「完全没有内容的空行」。
+             * 只要当前行有任意内容（空格、源码标识 `- [ ]` / `- ` / `##`、文本…），
+             * 或光标处在内容块里（列表项 / 任务项 / 标题 / 引述 / 代码块 / 表格 / 提示块），
+             * 都不显示。原先只判断「paragraph 且 content.size===0」，
+             * 在空列表项、空标题里也会弹出来。
+             */
+            const parent = $from.parent;
+            const hasAnyText = String(parent.textContent || '').length > 0;
+            let inContentBlock = false;
+            for (let d = $from.depth; d > 0; d -= 1) {
+                const nm = $from.node(d).type.name;
+                if (['listItem', 'taskItem', 'heading', 'blockquote', 'codeBlock', 'table', 'tableRow', 'tableCell', 'tableHeader', 'callout'].includes(nm)) {
+                    inContentBlock = true;
+                    break;
+                }
+            }
+            const isEmptyLine = empty && parent.type.name === 'paragraph'
+                && parent.content.size === 0 && !hasAnyText && !inContentBlock;
             if (!isEmptyLine) {
                 if (this.inputBar.open) this.inputBar = { open: false, style: {} };
                 return;
@@ -6674,7 +7061,12 @@ export default {
             const edW = (this.$refs.bodyEl && this.$refs.bodyEl.clientWidth) || window.innerWidth;
             const maxW = Math.max(160, Math.round(edW * 0.6));
             const barW = Math.min(maxW, 560, Math.max(200, this.inputTools.length * 30 + 16));
-            const left = Math.max(8, Math.min(coords.left + 29, window.innerWidth - barW - 8));
+            /*
+             * v1.3.4.1（需求）：桌面端菜单栏距光标再拉开 15px（29 → 44），
+             * 移动端拉开 5px（29 → 34）。只改水平间距，垂直仍与光标同一行居中。
+             */
+            const cursorGap = this.isMobileViewport ? 34 : 44;
+            const left = Math.max(8, Math.min(coords.left + cursorGap, window.innerWidth - barW - 8));
             const lineCenter = (coords.top + coords.bottom) / 2;
             this.inputBar = {
                 open: true,
@@ -6927,10 +7319,90 @@ export default {
             return m ? decodeURIComponent(m[1]) : '';
         },
 
+        /**
+         * v1.3.4.1（需求）：编辑区媒体默认尺寸。
+         * 高度超过编辑区 50% → 按 50% 显示；否则宽度超过编辑区 80% → 按 80%；
+         * 都没超就按原尺寸。手动设置过 width 的节点不干预（用户设的优先）。
+         */
+        applyDefaultMediaSize() {
+            const host = this.$refs.bodyEl;
+            const dom = this.editor && this.editor.view && this.editor.view.dom;
+            if (!host || !dom) return;
+            const maxW = host.clientWidth * 0.8;
+            const maxH = host.clientHeight * 0.5;
+            if (maxW <= 0 || maxH <= 0) return;
+            dom.querySelectorAll('img, video').forEach((el) => {
+                /* 手动设过宽或高的节点都交给属性本身，默认尺寸规则不插手 */
+                if (el.hasAttribute('width') || el.hasAttribute('height')) {
+                    el.style.removeProperty('width');
+                    el.style.removeProperty('height');
+                    return;
+                }
+                const nw = Number(el.naturalWidth || el.videoWidth || 0);
+                const nh = Number(el.naturalHeight || el.videoHeight || 0);
+                if (!nw || !nh) return;
+                let w = nw;
+                if (nh > maxH) w = nw * (maxH / nh);
+                else if (nw > maxW) w = maxW;
+                el.style.width = `${Math.round(w)}px`;
+                el.style.height = 'auto';
+            });
+        },
+
+        /**
+         * v1.3.4.1（需求）：打开编辑区某一类文件的灯箱，收集当前文档里所有同类。
+         * 从工具栏进入从第一个开始；点某个文件进入定位到那一个。
+         */
+        openEditorLightbox(kind, focusPos = null) {
+            const ed = this.editor;
+            if (!ed) return;
+            const found = [];
+            ed.state.doc.descendants((node, pos) => {
+                if (node.type.name === kind) found.push({ node, pos });
+            });
+            if (!found.length) return;
+            const items = found.map(({ node }) => {
+                const src = String(node.attrs.src || '');
+                const ext = (/\.([a-z0-9]+)(?:$|[?#])/i.exec(src) || [])[1]?.toLowerCase() || '';
+                const fileName = String(node.attrs.alt || '')
+                    || decodeURIComponent(String(src).split('/').pop() || '') || '文件';
+                return { key: src, name: fileName, url: src, kind, ext, recordId: this.fileIdOfSrc(src) };
+            });
+            let index = 0;
+            if (typeof focusPos === 'number') {
+                const i = found.findIndex((f) => f.pos === focusPos);
+                if (i >= 0) index = i;
+            }
+            this.lightbox = { open: true, items, index };
+        },
+
+        /** v1.3.4.1：按编辑区尺寸的百分比设置当前选中媒体的宽 / 高 */
+        setMediaSizePercent(axis, pct) {
+            const ed = this.editor;
+            if (!ed) return;
+            const name = mediaSelectionName(ed);
+            if (!name) return;
+            const host = this.$refs.bodyEl;
+            const base = axis === 'h'
+                ? ((host && host.clientHeight) || window.innerHeight)
+                : ((host && host.clientWidth) || window.innerWidth);
+            const val = Math.max(20, Math.round(base * (Number(pct) || 0) / 100));
+            ed.chain().focus().updateAttributes(name, { [axis === 'h' ? 'height' : 'width']: val }).run();
+            this.onEditorUpdate();
+        },
+
         /** v1.3.3.2（需求）：选中文件 → 灯箱预览（复用全站媒体预览浮层） */
         openMediaPreview() {
             const m = this.selectedMedia();
             if (!m) return;
+            /*
+             * v1.3.4.1（需求）：图片 / 视频 / 音频的灯箱收集**编辑区所有同类**，
+             * 不再只显示当前这一个；普通文件仍按单条打开。
+             */
+            if (m.name === 'image' || m.name === 'video' || m.name === 'audio') {
+                const pos = this.editor ? this.editor.state.selection.from : null;
+                return this.openEditorLightbox(m.name, pos);
+            }
             const ext = (/\.([a-z0-9]+)(?:$|[?#])/i.exec(m.src) || [])[1]?.toLowerCase() || '';
             const VIDEO = ['mp4', 'webm', 'mov', 'm4v', 'ogv'];
             const AUDIO = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac'];
@@ -7185,7 +7657,8 @@ export default {
      * display: contents 之后内边距要自己补；上下都取 6px，视觉上正好居中。
      * v1.3.3.2：标签行改成上下等距（原来只有下边 10px，看着像"吊"在上面）。
      */
-    padding: 6px 16px;
+    /* v1.3.4.1（需求）：这一行左右内边距与标签行完全一致（4px 16px），内容区更宽 */
+    padding: 4px 16px;
     border-top: 1px solid var(--el-border-color-lighter);
     border-bottom: 0;
 }
@@ -7415,7 +7888,8 @@ export default {
 /* v1.3.3.2：工具组二级菜单改成独立浮层（fixed），不再被父级 overflow 裁掉 */
 .me-slash-sub {
     position: fixed;
-    z-index: 3002;
+    /* v1.3.4.1：二级菜单跟着主菜单一起抬层 */
+    z-index: 3502;
     min-width: 200px;
     max-height: 320px;
     overflow-y: auto;
@@ -7929,10 +8403,20 @@ export default {
  * 模态弹窗（z-index 2000 级）会被压到工具栏下面。
  * 工具栏自己的下拉浮层用 .me-tb-popper 抬到 3400。
  */
+/*
+ * v1.3.4.1（需求：悬浮菜单一打开，工具栏 / 标题栏就失去吸附）
+ * 上一版为了抬层级给这三个元素统一写了 `position: relative`，
+ * 结果把 `.is-sticky` 的 `position: sticky` 覆盖掉了 —— 菜单一开吸附立刻失效。
+ * 现在只对「当前没在吸附」的元素补 relative，吸住的那两个保留 sticky，
+ * 只抬 z-index，吸附与层级两不误。
+ */
+.me-root.is-float-open .me-toolbar-wrap:not(.is-sticky),
+.me-root.is-float-open .me-title-row:not(.is-sticky) {
+    position: relative;
+}
 .me-root.is-float-open .me-toolbar-wrap,
 .me-root.is-float-open .me-title-row,
 .me-root.is-float-open .me-backlinks {
-    position: relative;
     z-index: 3300;
 }
 .me-root.is-float-open .me-title-row {
@@ -7952,14 +8436,15 @@ export default {
      * v1.3.4（需求）：标题行高度在上一版 30px 基础上 +4px。
      * 高度变了但文字仍然是 flex 居中 + 26px 行高，所以「标题垂直居中」不受影响。
      */
-    height: 34px;
+    /* v1.3.4.1（需求）：标题行行高改为 40px，flex 垂直居中不变 */
+    height: 40px;
     padding: 0 16px;
 }
 .me-title-row.is-sticky {
     /* 标题吸住时补一条极淡的分隔，否则正文会「贴着」标题滑过去 */
     box-shadow: inset 0 -1px 0 var(--el-border-color-lighter);
-    height: 34px;
-    min-height: 34px;
+    height: 40px;
+    min-height: 40px;
 }
 /* 返回顶部按钮：钉在标题行最右侧 */
 .me-title-top {
@@ -8146,7 +8631,8 @@ export default {
 /* 浮层 */
 .me-slash {
     position: fixed;
-    z-index: 3000;
+    /* v1.3.4.1：斜杠 / 引用面板层级抬到工具栏、标题栏之上，弹出时才有足够显示空间 */
+    z-index: 3500;
     width: 220px;
     max-height: 280px;
     overflow: auto;
@@ -8187,6 +8673,10 @@ export default {
     text-align: center;
     font-size: 12px;
     color: var(--el-text-color-secondary);
+}
+/* v1.3.4.1：引用面板层级同样抬到工具栏 / 标题栏之上 */
+.me-slash.me-ref {
+    z-index: 3501;
 }
 .me-mediabar {
     z-index: 3001;
@@ -8495,6 +8985,11 @@ export default {
     opacity: 1;
     color: var(--el-color-primary);
 }
+/* v1.3.4.1：没有折叠功能的行保留第一列占位（隐藏但占位），行号永远是第二列 */
+.me-gutter-fold.is-hidden {
+    visibility: hidden;
+    pointer-events: none;
+}
 .me-gutter-no {
     flex: 0 0 auto;
     width: 22px;
@@ -8553,7 +9048,8 @@ export default {
  */
 .me-listfold-row {
     position: absolute;
-    width: 16px;
+    /* v1.3.4.1：贴合行级栏第一列宽度 */
+    width: 14px;
     height: 16px;
     pointer-events: auto;
 }
@@ -8922,10 +9418,19 @@ export default {
 .me-wysiwyg :deep(.gh-editor-content ol > li:has(> ol))::after {
     left: -0.75em;
 }
-/* 任务项里的子列表向右让出勾选框 + 间距，再整体左移，让子弹对齐竖线 */
+/*
+ * v1.3.4.1（需求：任务列表上下级层叠在同一位置）
+ * ---------------------------------------------------------------------------
+ * 上一版把任务项里的子列表整体左移 1.5em，为的是让子弹点对齐层级竖线；
+ * 但任务列表的 li 是 flex 布局，子列表在内容 div 里再往左移就会压到父项
+ * 的文字上，多级任务看起来像叠在同一列。这里去掉负外边距，子列表沿用上面
+ * 「嵌套列表」的通用规则（margin-left: 0 / padding-left: 1.25em），每一级
+ * 都实打实向右让出一格，层级不再重叠。层级竖线仍由 li::after 按勾选框中心
+ * （left: 0.42em）绘制，不受这条改动影响。
+ */
 .me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > div > ul),
 .me-wysiwyg :deep(.gh-editor-content ul[data-type='taskList'] li > div > ol) {
-    margin-left: -1.5em;
+    margin-left: 0;
 }
 .me-wysiwyg :deep(.gh-editor-content li),
 .me-preview :deep(li) {
@@ -9132,16 +9637,41 @@ export default {
     pointer-events: none;
 }
 .me-wysiwyg :deep(.gh-cb-lines > span) {
-    display: block;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 2px;
 }
-/* 换行模式下逻辑行会折行，行号不再对齐 —— 由 JS 清空，占位也收掉 */
+/* v1.3.4.1：行号列第一列的换行标识（只在换行模式出现） */
+.me-wysiwyg :deep(.gh-cb-lf) {
+    display: none;
+    width: 12px;
+    text-align: center;
+    font-style: normal;
+    font-size: 10px;
+    opacity: 0.55;
+}
+.me-wysiwyg :deep(.gh-codeblock.is-wrap .gh-cb-lf) {
+    display: inline-block;
+}
+.me-wysiwyg :deep(.gh-cb-ln) {
+    font-weight: 400;
+    min-width: 16px;
+    text-align: right;
+}
+/*
+ * v1.3.4.1（需求）：换行模式仍保留行号列，并额外让出 12px 给换行标识。
+ * 非换行：padding-left 42px / 行号列 34px；
+ * 换行：  padding-left 54px / 行号列 46px。
+ */
 .me-wysiwyg :deep(.gh-codeblock.is-wrap .gh-cb-pre) {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    padding-left: 16px;
+    padding-left: 54px;
 }
 .me-wysiwyg :deep(.gh-codeblock.is-wrap .gh-cb-lines) {
-    display: none;
+    display: block;
+    width: 46px;
 }
 /* 收起：只留操作栏 */
 .me-wysiwyg :deep(.gh-editor-content .gh-codeblock.is-collapsed .gh-cb-pre) {
@@ -9167,8 +9697,13 @@ export default {
 /* 引述 */
 .me-wysiwyg :deep(.gh-editor-content blockquote),
 .me-preview :deep(blockquote) {
-    margin: 0.7em 0;
-    padding: 0.35em 0 0.35em 0.95em;
+    /*
+     * v1.3.4.1（需求）：行高降为 p 行高的 2 倍；去掉上下内边距，
+     * 让左侧竖线从行号处起算、不再高出行号。
+     */
+    margin: 0.2em 0;
+    padding: 0 0 0 0.95em;
+    line-height: calc(var(--gh-line-height, 1.75) * 2);
     /* v1.3.4（需求）：去掉底色，左侧竖条加宽一点点 */
     border-left: 4px solid var(--el-color-primary-light-5);
     color: var(--el-text-color-regular);
@@ -9484,12 +10019,109 @@ export default {
     max-height: 320px;
 }
 .me-ref-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     padding: 6px 8px 4px;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.4px;
     color: var(--el-text-color-secondary);
 }
+/* v1.3.4.1：引用面板两级导航 */
+.me-ref-back {
+    flex: 0 0 auto;
+    padding: 0 3px;
+    border: none;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+}
+.me-ref-back:hover { color: var(--el-color-primary); }
+.me-ref-head-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-ref-list { max-height: 300px; overflow-y: auto; }
+.me-ref-caret { flex: 0 0 auto; margin-left: auto; font-size: 9px; opacity: 0.5; }
+/* v1.3.4.1：引用悬浮卡箭头 */
+.me-hovercard-arrow {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: var(--el-bg-color-overlay);
+    border: 1px solid var(--el-border-color-light);
+    transform: rotate(45deg);
+}
+.me-hovercard.is-below .me-hovercard-arrow {
+    top: -6px;
+    left: 18px;
+    border-right: none;
+    border-bottom: none;
+}
+.me-hovercard.is-above .me-hovercard-arrow {
+    bottom: -6px;
+    left: 18px;
+    border-left: none;
+    border-top: none;
+}
+/* v1.3.4.1：块引用内容框 */
+.me-wysiwyg :deep(.gh-blockref-card) {
+    display: block;
+    margin: 0.4em 0;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+    overflow: hidden;
+}
+.me-wysiwyg :deep(.gh-br-bar) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    background: var(--el-fill-color);
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+.me-wysiwyg :deep(.gh-br-label) { flex: 0 0 auto; }
+.me-wysiwyg :deep(.gh-br-body) {
+    display: block;
+    padding: 8px 10px;
+    font-size: 0.95em;
+    color: var(--el-text-color-regular);
+    white-space: pre-wrap;
+}
+.me-wysiwyg :deep(.gh-blockref-card.is-collapsed .gh-br-body) { display: none; }
+.me-wysiwyg :deep(.gh-blockref-card.is-collapsed .gh-br-fold svg) { transform: rotate(-90deg); }
+/* v1.3.4.1：网页嵌入块标题栏与缩放手柄 */
+.me-wysiwyg :deep(.gh-iframe-bar) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    background: var(--el-fill-color);
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+.me-wysiwyg :deep(.gh-iframe-label) { flex: 0 0 auto; }
+.me-wysiwyg :deep(.gh-iframe-body) { position: relative; }
+.me-wysiwyg :deep(.gh-iframe-wrap.is-collapsed .gh-iframe-body) { display: none; }
+.me-wysiwyg :deep(.gh-iframe-wrap.is-collapsed .gh-iframe-fold svg) { transform: rotate(-90deg); }
+.me-wysiwyg :deep(.gh-iframe-resize) {
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 14px;
+    height: 14px;
+    border-right: 2px solid var(--el-color-primary);
+    border-bottom: 2px solid var(--el-color-primary);
+    cursor: nwse-resize;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+.me-wysiwyg :deep(.gh-iframe-wrap.is-selected) { outline: 1px dashed var(--el-color-primary); }
+.me-wysiwyg :deep(.gh-iframe-wrap.is-selected .gh-iframe-resize) { opacity: 1; }
 .me-ref-label {
     flex: 1 1 auto;
     min-width: 0;

@@ -79,11 +79,13 @@ function parseInline(src, marks = []) {
      * 前面多一个 `!` 就是「嵌入」。
      * 必须先于普通链接 `/^\[([^\]]*)\]/` 匹配 —— 否则 `[[` 会被当成一个空文字的链接吃掉。
      */
-    if ((m = /^!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\](\{width=\d+\})?/.exec(rest))) {
+    if ((m = /^!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\](\{[^}]*\})?/.exec(rest))) {
       flush();
       const attrs = { href: m[1], name: m[2] || '附件' };
       const w = /width\s*=\s*(\d+)/.exec(m[3] || '');
+      const h = /height\s*=\s*(\d+)/.exec(m[3] || '');
       if (w) attrs.width = Number(w[1]);
+      if (h) attrs.height = Number(h[1]);
       out.push({ type: 'fileAttachment', attrs });
       i += m[0].length;
       continue;
@@ -439,7 +441,24 @@ function collectList(lines, start, kind) {
     }
     // 续行：缩进 2 空格以上的普通文本接在上一条后面（md 里长段落会折行）
     if (items.length && /^\s{2,}\S/.test(line)) {
-      items[items.length - 1].text += ` ${line.trim()}`;
+      const last = items[items.length - 1];
+      const trimmed = line.trim();
+      /*
+       * v1.3.4.1（需求：列表下嵌套的引述 / 代码块 / 段落要保持下级）
+       * 缩进行如果是「块级起始语法」，就不能并进上一条的文本 ——
+       * 收进 sub，交给 buildList 用 mdToDoc 解析成真正的子块挂到 listItem 里。
+       */
+      const isBlockStart = /^(>|```|~~~|:::)/.test(trimmed)
+        || /^#{1,6}\s/.test(trimmed)
+        || /^<[a-z!/]/i.test(trimmed)
+        || /^\|/.test(trimmed);
+      if (isBlockStart) {
+        const [sub, next] = grabIndented(lines, i, last.level);
+        last.sub = (last.sub || []).concat(sub);
+        i = next;
+        continue;
+      }
+      last.text += ` ${trimmed}`;
       i += 1;
       continue;
     }
@@ -543,6 +562,9 @@ export function mdToDoc(md) {
       // 尾部 `{width=600}` → 图片节点宽度（v1.3.1 拖拽改尺寸写的就是它）
       const w = /width\s*=\s*(\d+)/.exec(m[3] || '');
       if (w) attrs.width = Number(w[1]);
+      // v1.3.4.1：高度与宽度同一套尾部属性块写法
+      const h = /height\s*=\s*(\d+)/.exec(m[3] || '');
+      if (h) attrs.height = Number(h[1]);
       // v1.3.1.2：图片也能左 / 中 / 右 —— 与段落对齐同一套值
       const al = /align\s*=\s*(left|center|right)/i.exec(m[3] || '');
       if (al) attrs.align = al[1].toLowerCase();
@@ -583,9 +605,10 @@ export function mdToDoc(md) {
       const m = IFRAME_OPEN_RE.exec(line);
       const src = attrOf(m?.[1] || '', 'src');
       const height = Number((/height\s*=\s*"?(\d+)/i.exec(m?.[1] || '') || [])[1]) || 420;
+      const width = Number((/width\s*=\s*"?(\d+)/i.exec(m?.[1] || '') || [])[1]) || 0;
       while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) i += 1;
       i += 1;
-      if (src) content.push({ type: 'iframe', attrs: { src, height } });
+      if (src) content.push({ type: 'iframe', attrs: { src, height, width: width || null } });
       continue;
     }
     // ── v1.3.1：提示块 `:::callout{type=info}` … `:::` ──
@@ -620,9 +643,11 @@ export function mdToDoc(md) {
          * 老笔记没有这两个属性 → 保持自动宽度（null），不改变原样。
          */
         const w = Number(attrOf(m[2], 'width')) || 0;
+        const h = Number(attrOf(m[2], 'height')) || 0;
         const al = /align\s*=\s*"?(left|center|right)"?/i.exec(m[2] || '');
         const attrs = { src, poster: attrOf(m[2], 'poster') || '' };
         if (w > 0) attrs.width = w;
+        if (h > 0) attrs.height = h;
         if (al) attrs.align = al[1].toLowerCase();
         content.push({ type: kind, attrs });
       } else {
@@ -659,7 +684,9 @@ export function mdToDoc(md) {
         flushPara();
         const attrs = { href: fm[1], name: String(fm[2] || '附件').trim() || '附件' };
         const w = /width\s*=\s*(\d+)/.exec(fm[3] || '');
+        const h = /height\s*=\s*(\d+)/.exec(fm[3] || '');
         if (w) attrs.width = Number(w[1]);
+        if (h) attrs.height = Number(h[1]);
         content.push({ type: 'paragraph', content: [{ type: 'fileAttachment', attrs }] });
         i += 1;
         continue;
@@ -758,7 +785,11 @@ function inlineToMd(nodes = []) {
       const href = String(n.attrs?.href || '');
       const name = String(n.attrs?.name || '附件').replace(/[|\]]/g, ' ');
       const w = Number(n.attrs?.width) || 0;
-      out.push(`![[file:${href}|${name}]]${w > 0 ? `{width=${Math.round(w)}}` : ''}`);
+      const h = Number(n.attrs?.height) || 0;
+      const bits = [];
+      if (w > 0) bits.push(`width=${Math.round(w)}`);
+      if (h > 0) bits.push(`height=${Math.round(h)}`);
+      out.push(`![[file:${href}|${name}]]${bits.length ? `{${bits.join(' ')}}` : ''}`);
       continue;
     }
     if (n.type === 'noteRef' || n.type === 'noteEmbed') {
@@ -808,9 +839,24 @@ function listItemToMd(item, kind, depth, index) {
   const bullet =
     kind === 'ordered' ? `${index + 1}. ` : kind === 'task' ? `- [${item.attrs?.checked ? 'x' : ' '}] ` : '- ';
   const lines = [`${pad}${bullet}${escapeLineStart(text)}`];
+  /*
+   * v1.3.4.1（需求：列表下嵌套的其他内容保存后变成平级）
+   *
+   * 上一版对子块直接 `lines.push(sub)`，子块没有任何缩进 —— 存成 md 以后
+   * 「列表项下的引述 / 代码块 / 段落」全都跑到顶层，重新打开就散架了。
+   * 现在按思源的写法给每个子块整体加一层缩进（depth + 1 级，每级 2 空格）；
+   * 子列表本身在 blockToMd 里已经按 depth+1 排好，不再重复加。
+   */
   for (const child of parts.slice(1)) {
     const sub = blockToMd(child, depth + 1);
-    if (sub) lines.push(sub);
+    if (!sub) continue;
+    const isSubList = child.type === 'bulletList' || child.type === 'orderedList' || child.type === 'taskList';
+    if (isSubList) {
+      lines.push(sub);
+    } else {
+      const subPad = '  '.repeat(depth + 1);
+      lines.push(sub.split('\n').map((l) => (l.trim() ? subPad + l : l)).join('\n'));
+    }
   }
   return lines.join('\n');
 }
@@ -862,9 +908,11 @@ function blockToMd(node, depth = 0) {
        * v1.3.1.2：对齐也要能持久化 —— 用户把图居中，重新打开不能又回到左边。
        */
       const w = Number(node.attrs?.width) || 0;
+      const h = Number(node.attrs?.height) || 0;
       const al = String(node.attrs?.align || '');
       const parts = [];
       if (w > 0) parts.push(`width=${Math.round(w)}`);
+      if (h > 0) parts.push(`height=${Math.round(h)}`);
       if (al) parts.push(`align=${al}`);
       const tail = parts.length ? `{${parts.join(' ')}}` : '';
       return `![${node.attrs?.alt || ''}](${node.attrs?.src || ''})${tail}`;
@@ -878,8 +926,9 @@ function blockToMd(node, depth = 0) {
     case 'video':
     case 'audio': {
       const w = Number(node.attrs?.width) || 0;
+      const h = Number(node.attrs?.height) || 0;
       const al = String(node.attrs?.align || '');
-      const extra = `${w > 0 ? ` width="${Math.round(w)}"` : ''}${al ? ` align="${al}"` : ''}`;
+      const extra = `${w > 0 ? ` width="${Math.round(w)}"` : ''}${h > 0 ? ` height="${Math.round(h)}"` : ''}${al ? ` align="${al}"` : ''}`;
       return `<${node.type} src="${node.attrs?.src || ''}"${extra} controls></${node.type}>`;
     }
     case 'fileAttachment': {
@@ -892,7 +941,11 @@ function blockToMd(node, depth = 0) {
        */
       const name = String(node.attrs?.name || '附件').replace(/[|\]]/g, ' ');
       const w = Number(node.attrs?.width) || 0;
-      const tail = w > 0 ? `{width=${Math.round(w)}}` : '';
+      const h = Number(node.attrs?.height) || 0;
+      const bits = [];
+      if (w > 0) bits.push(`width=${Math.round(w)}`);
+      if (h > 0) bits.push(`height=${Math.round(h)}`);
+      const tail = bits.length ? `{${bits.join(' ')}}` : '';
       return `![[file:${node.attrs?.href || ''}|${name}]]${tail}`;
     }
     case 'htmlBlock': {
@@ -902,7 +955,8 @@ function blockToMd(node, depth = 0) {
     case 'iframe': {
       const src = String(node.attrs?.src || '');
       const h = Math.max(120, Number(node.attrs?.height) || 420);
-      return `:::iframe{src="${src}" height="${h}"}\n:::`;
+      const w = Number(node.attrs?.width) || 0;
+      return `:::iframe{src="${src}" height="${h}"${w > 0 ? ` width="${Math.round(w)}"` : ''}}\n:::`;
     }
     case 'callout': {
       const type = String(node.attrs?.type || 'info');
