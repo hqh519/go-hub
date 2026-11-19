@@ -5,7 +5,13 @@
         同样的尺寸策略（最长边 300）、同样的贴边方位选择、同样的头部文件名与动画。
     -->
     <teleport to="body">
-        <div v-if="visible" class="np-preview" :style="boxStyle" aria-hidden="true">
+        <div
+            v-if="visible"
+            class="np-preview"
+            :class="{ 'is-positioned': positioned }"
+            :style="boxStyle"
+            aria-hidden="true"
+        >
             <div class="np-preview-head" :title="name">
                 <span class="np-preview-name">{{ name }}</span>
             </div>
@@ -61,7 +67,19 @@ export default {
         anchor: { type: Object, default: null }
     },
     data() {
-        return { w: PREVIEW_MAX, h: PREVIEW_MAX, left: 0, top: 0 };
+        return {
+            w: PREVIEW_MAX,
+            h: PREVIEW_MAX,
+            left: 0,
+            top: 0,
+            /*
+             * v1.3.5（需求：桌面端长按预览会先闪一下再跳到正确位置）
+             * 几何算完之前元素虽然存在，但不许显形（CSS 里 opacity/visibility 兜着）。
+             * 之前是 v-if 一挂载就按 data 里的 760×760 @ (0,0) 上屏，
+             * 再等 probeRatio() 异步量完才跳过去，所以会看到一次「大框在左上角闪一下」。
+             */
+            positioned: false
+        };
     },
     computed: {
         type() {
@@ -80,18 +98,36 @@ export default {
     },
     watch: {
         visible(v) {
-            if (v) this.layout();
-            // v1.3.4.2：浮层一关就停掉音视频，绝不能留到后台继续播
-            else this.pauseMedia();
+            if (v) {
+                // 每次重新打开都重新等一次定位：沿用上一次的坐标会先闪一下旧位置
+                this.positioned = false;
+                this.scheduleLayout();
+            } else {
+                this.positioned = false;
+                // v1.3.4.2：浮层一关就停掉音视频，绝不能留到后台继续播
+                this.pauseMedia();
+            }
         },
         src() {
-            if (this.visible) this.layout();
+            if (this.visible) this.scheduleLayout();
         }
     },
     mounted() {
-        if (this.visible) this.layout();
+        if (this.visible) this.scheduleLayout();
     },
     methods: {
+        /**
+         * v1.3.5：visible / src / anchor 常常在同一批更新里一起变化，
+         * 逐个 watch 各跑一次 layout 会算两遍并让浮层跳两次；合到一次 nextTick。
+         */
+        scheduleLayout() {
+            if (this._layoutQueued) return;
+            this._layoutQueued = true;
+            this.$nextTick(() => {
+                this._layoutQueued = false;
+                if (this.visible) this.layout();
+            });
+        },
         /** 探测宽高比；失败返回 0（按正方形兜底，不能一直等） */
         probeRatio() {
             const src = this.src;
@@ -135,9 +171,16 @@ export default {
             });
         },
         async layout() {
+            /*
+             * v1.3.5：probeRatio() 是异步的（要等图片/视频元数据），
+             * 期间可能又有一次 layout 进来。用序号只认最后一次，
+             * 否则先算完的旧结果会把新结果覆盖回去，表现成「定好位又跳一下」。
+             */
+            const seq = (this._layoutSeq || 0) + 1;
+            this._layoutSeq = seq;
             const anchor = this.anchor;
             const ratio = await this.probeRatio();
-            if (!this.visible) return;
+            if (seq !== this._layoutSeq || !this.visible) return;
 
             const vw = window.innerWidth;
             const vh = window.innerHeight;
@@ -235,6 +278,12 @@ export default {
             this.h = Math.round(h);
             this.left = Math.round(left);
             this.top = Math.round(top);
+            /*
+             * v1.3.5：几何全部写进去之后才允许显形。
+             * 这一行与 CSS 的 .is-positioned 配合，是「不闪烁」的关键：
+             * 元素在定位期间 opacity:0 / visibility:hidden，用户永远看不到中间态。
+             */
+            this.positioned = true;
             this.$nextTick(() => this.startPlayback());
         },
         /**
@@ -287,6 +336,19 @@ export default {
     background: rgba(20, 20, 20, 0.86);
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
     pointer-events: none;
+    /*
+     * v1.3.5（需求：桌面端长按预览会闪烁）
+     * 定位完成前保持不可见：此时元素尺寸/坐标还是初始的 760×760 @ (0,0)，
+     * 一旦上屏就是「左上角闪一个大框」。is-positioned 由 layout() 算完后置位。
+     */
+    opacity: 0;
+    visibility: hidden;
+}
+
+/* 定位完成才显形，并只在这一次播放淡入动画 */
+.np-preview.is-positioned {
+    opacity: 1;
+    visibility: visible;
     animation: np-preview-in 0.12s ease-out;
 }
 

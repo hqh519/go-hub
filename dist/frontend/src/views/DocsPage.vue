@@ -1070,6 +1070,27 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-135',
+      title: '六十一、v1.3.5 更新要点',
+      intro: '这一版把「发布瞬间」的长按预览、笔记回收站和编辑器大纲彻底修顺：预览不再先闪一下再跳到正确位置，移动端也能正常长按弹出；删除笔记会稳定进入回收站，从回收站彻底删除会连带清掉历史；大纲补上关系线与上下级折叠，点击标题会停在吸附栏下方。此外还有代码块换行行号对齐、内容统计页、以及一批图标与排版的一致性收口。',
+      items: [
+        { t: '发布瞬间：长按预览不再闪烁', d: '桌面端长按小眼睛时，预览框会先算好尺寸和位置再显形，不再出现「左上角先闪一个大框、随后跳过去」的过渡。同时把同一批的重复布局合并成一次，避免浮层定好位又被旧结果覆盖而二次跳动。' },
+        { t: '发布瞬间：移动端也能长按预览', d: '修复移动端长按小眼睛弹不出预览的问题：18px 的小按钮上，手指轻微抖动就会移出元素而取消长按，现已去掉这个误判，并在页面级兜底「任何位置松手都会关闭预览」；长按判定的位移容差从 10px 放宽到 14px。预览框与桌面端一致，最多占 90% 视口，按真实比例显示。' },
+        { t: '图床管理页：移动端顶栏按钮靠右', d: '移动端 /dashboard 顶栏的搜索、筛选、标签管理、刷新、回收站按钮，现在与「更多菜单」一起作为一条按钮带整体靠右对齐，不再散落在顶栏中间；窄屏放不下时仍可在按钮带内横向滑动。' },
+        { t: '引述块与移动端标题', d: '引述块文字颜色比正文淡一档，行高改为普通文本行高的 1.6 倍（原来是 2 倍，过于松散）。移动端笔记编辑区的大标题字号从 19px 调小到 18px，行高与高度同步收紧，保持垂直居中。' },
+        { t: '任务列表与行级栏', d: '点击任务列表的勾选框后，光标会落在勾选框后面（任务文字开头），可以立即继续输入。点击行级栏的折叠按钮时，光标会定位到所点击那行的开头；标题折叠后按钮会显示与列表折叠一致的背景色。' },
+        { t: '代码块行号', d: '换行模式下，一个逻辑行折成多行时，行号会按视觉行自动往后推并保持与代码逐行对齐，不再从折行处开始整体错位；行号列与左边框之间的留白也一并收窄。' },
+        { t: '保存时间与滚动按钮', d: '笔记保存时间按「离现在多远」逐级省略：同一年不显示年、同一月不显示月、同一日只显示时分。标题行右侧的滚动按钮跟随顶部栏状态切换：顶栏显示时朝下、点击滚到底部，顶栏隐藏时朝上、点击回到顶部。' },
+        { t: '笔记回收站', d: '修复删除笔记后在回收站里看不到的问题：回收站的虚拟节点曾被当成真实目录去过滤，导致列表永远为空。现在删除会稳定进入回收站；从回收站彻底删除时，会一并清理该笔记的历史快照、块索引与引用关系，不留孤儿数据。同时彻底删除只允许从回收站发起，不能绕过回收站直接抹掉笔记。' },
+        { t: '大纲工具', d: '大纲新增层级关系线，上下级之间用竖线与横向短枝连起来；有下级的标题可以单独折叠 / 展开；点击标题会滚动并精确停在吸附的工具栏与标题栏下方（吸附开关、工具栏折行都会实时计入偏移）；鼠标移到某一项上会高亮。' },
+        { t: '图标一致性', d: '斜杠命令菜单里的撤销 / 重做改用与工具栏相同的内联图标；选中文本浮层的文字颜色按钮由字母 A 改为与斜杠菜单一致的画笔图标，色条保留。' },
+        { t: '引用面板与引用块', d: '引用面板改为「标题一行、摘要最多四行」的纵向排版，面板适当加宽，摘要里的 HTML / markdown 标记会被清洗，不再露出标签或挤成一团。插入块引用时，会排除光标当前正在输入的那一块，不再出现「引用自己」。' },
+        { t: '内容统计页', d: '点击标题栏下方的字数或字符数会弹出内容统计页，列出字符、字、链接、图片、引用、块六项。统计页同时提取为独立工具「内容统计」，可在编辑器设置的可用工具里加到工具栏或 / 命令菜单。' },
+        { t: '编辑器设置与重新加载', d: '编辑器设置页的可用工具按功能重新归组排序：标题段落、文字格式、列表、对齐与行操作、插入内容、表格操作、内容工具、粘贴、媒体、撤销重做，同类工具相邻。编辑页顶部栏「编辑页设置」左侧新增重新加载按钮，与 /post 的刷新一致；有未保存修改时会先确认，避免误丢内容。' },
+        { t: '升级兼容', d: '本版没有数据库结构变更，也没有新增必填字段。回收站、历史记录沿用原有表结构；旧笔记、旧瞬间照常打开，字数与统计均在读取时计算。' }
+      ]
+    },
+    {
       id: 'whatsnew-1342',
       title: '六十、v1.3.4.2 更新要点',
       intro: '这一版把「发布瞬间」与笔记编辑器里几处长期别扭的地方收口：发布页正文框改由键盘状态驱动高度、附件小眼睛改为长按预览；列表下级终于能稳定承载文字 / 图片 / 文件 / 引述 / 代码块，任务列表勾选上级会联动下级；网页嵌入能正常加载与编辑，块引用框补上来源标题并可更换引用块。',
@@ -2270,6 +2291,27 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-135',
+      title: '61. What is new in v1.3.5',
+      intro: 'This release finishes off press-and-hold previews in the moment composer, the note recycle bin, and the editor outline. Previews are measured before they appear, so they no longer flash in the top-left corner first; on mobile the hold gesture works again. Deleting a note reliably moves it to the recycle bin, and purging from the bin also removes its history. The outline gains guide lines, collapsible levels, and scrolls headings just below the sticky bars. It also fixes wrapped code line numbers, adds a content statistics panel, and unifies a batch of icons and spacing.',
+      items: [
+        { t: 'Moment composer: no preview flash', d: 'The attachment preview now computes its size and position before it becomes visible, so it no longer flashes as a large box in the top-left corner and then jumps into place. Duplicate layout passes triggered by the same update are merged, and a sequence guard prevents an older async result from overwriting a newer position.' },
+        { t: 'Moment composer: press-and-hold on mobile', d: 'Fixed the mobile preview never appearing: the eye button is only 18px wide, so the slightest finger drift left the element and cancelled the hold. That cancel-on-leave is removed, a document-level fallback closes the preview wherever the finger is released, and the movement tolerance grows from 10px to 14px. The preview matches desktop: up to 90% of the viewport at the real aspect ratio.' },
+        { t: 'Dashboard: mobile header aligned right', d: 'On mobile /dashboard, the search, filter, tag management, refresh and recycle-bin buttons now form one right-aligned strip together with the more menu, instead of scattering across the header. On narrow screens the strip still scrolls horizontally.' },
+        { t: 'Quotes and mobile title', d: 'Quote text is one step lighter than body text, and its line height is now 1.6× the normal line height (it was 2×, which read too loosely). The note title in the mobile editor drops from 19px to 18px, with line height and box height tightened together to stay vertically centred.' },
+        { t: 'Task lists and the gutter', d: 'After clicking a task checkbox the caret lands right after the checkbox (at the start of the task text) so you can keep typing. Clicking a gutter fold button puts the caret at the start of that row. A folded heading now shows the same background on its fold button as a folded list item.' },
+        { t: 'Code block line numbers', d: 'With wrapping on, a logical line that wraps onto several visual lines now pushes the following line numbers down and stays aligned with the code; previously everything below the first wrap drifted upward. The gap between the number column and the left border is also reduced.' },
+        { t: 'Save time and scroll button', d: 'The save time now omits parts by distance: same year hides the year, same month hides the month, and same day shows only the time. The button at the end of the title row follows the top bar: an up arrow back to the top when the bar is hidden, a down arrow to the bottom when it is shown.' },
+        { t: 'Note recycle bin', d: 'Fixed notes not appearing in the recycle bin: the virtual trash node was being passed as a real folder id, so the list was always empty. Deletion now reliably moves a note to the bin, and purging from the bin also removes its history snapshots, block index and link records. Purging is only allowed from the bin, so nothing can bypass it and erase a note directly.' },
+        { t: 'Outline tool', d: 'The outline now draws guide lines between levels, lets any heading with children collapse or expand on its own, scrolls a clicked heading precisely below the sticky toolbar and title row (recomputed from the actual sticky heights), and highlights the row under the pointer.' },
+        { t: 'Icon consistency', d: 'Undo and redo in the slash menu now use the same inline icons as the toolbar. The text colour button in the selection bubble uses the same paintbrush icon as the slash menu instead of a letter A, keeping the colour bar.' },
+        { t: 'Reference panel and block references', d: 'The reference panel now stacks each entry vertically: the title on one line, the summary capped at four lines. The panel is a little wider and HTML / markdown markers are stripped from summaries so raw tags no longer show. When inserting a block reference, the block the caret is currently in is excluded, so you can no longer reference yourself.' },
+        { t: 'Content statistics', d: 'Clicking the word or character count below the title opens a statistics panel listing characters, words, links, images, references and blocks. The panel is also exposed as a standalone "Content statistics" tool that can be added to the toolbar or slash menu in editor settings.' },
+        { t: 'Editor settings and reload', d: 'The available tools in editor settings are regrouped by function: headings and blocks, text formatting, lists, alignment and line actions, insert content, table actions, content tools, paste, media, undo/redo. A reload button now sits left of "Editor settings" in the editor top bar, matching the refresh button on /post; it asks for confirmation when there are unsaved changes.' },
+        { t: 'Upgrade compatibility', d: 'No database schema changes and no new required fields. The recycle bin and history reuse the existing tables. Old notes and moments open as before; word and content statistics are computed on read.' }
       ]
     },
     {

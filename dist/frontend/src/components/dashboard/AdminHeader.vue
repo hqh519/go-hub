@@ -326,8 +326,8 @@ export default {
     .admin-header-content :deep(.search-area .mobile-search-trigger) {
         order: 1;
         flex: 0 0 auto;
-        /* v3.0.0：五个按钮（搜索/筛选/刷新/回收站/更多）间距统一交给 .search-area 的 gap */
-        margin-left: auto;
+        /* v1.3.5：靠右交给整条 .search-actions 的 margin-left:auto，条内不再自己推 */
+        margin-left: 0;
         margin-right: 0;
     }
 
@@ -339,20 +339,33 @@ export default {
     }
 
     /*
-     * v3.0.0：按钮条的容器（搜索/筛选/标签管理/刷新/回收站/声音/链接格式）——
-     * v3.0.0（R5）：在移动端它是 .admin-header-content 的直接 flex 子项
-     * （.admin-header-tools / .admin-header-search 都是 display:contents），
-     * 必须允许收缩（flex:1 1 auto + min-width:0）并在自身宽度内横向滑动，
-     * 这样「页面切换」固定在左、「更多菜单」固定在右，中间条永不把更多菜单挤出屏幕。
+     * v1.3.5（需求：移动端 /dashboard 顶栏的搜索 / 筛选 / 标签管理 / 刷新 / 回收站
+     * 要和「更多菜单」一样整组靠右对齐）
+     *
+     * 桌面端 .search-actions 是 display:contents（按钮直接参与 .search-area 的布局），
+     * 移动端必须先把它变回真正的 flex 盒子，否则 flex/order/overflow 全部不生效，
+     * 按钮会按各自的 order 散落在顶栏里。
+     * 变成盒子后：整条按内容宽度（flex:0 1 auto）、由 margin-left:auto 推到右侧，
+     * 内部的搜索 / 筛选 / 标签 / 刷新 / 回收站 / 链接格式按 DOM 顺序紧排。
      */
     .admin-header-content :deep(.search-actions) {
-        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        order: 1;
+        flex: 0 1 auto;
+        margin-left: auto;
         min-width: 0;
         overflow-x: auto;
         overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
         overscroll-behavior-x: contain;
         scrollbar-width: none;
+    }
+    /* 条内所有按钮统一 order，按 DOM 顺序排列（否则 .link-format-btn 的默认 0 会跑到最前） */
+    .admin-header-content :deep(.search-actions > *) {
+        order: 1;
+        flex: 0 0 auto;
     }
     .admin-header-content :deep(.search-actions)::-webkit-scrollbar {
         display: none;

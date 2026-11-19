@@ -587,6 +587,8 @@ let NotesService = class NotesService {
         const row = await prisma_1.prisma.note.findUnique({ where: { id: String(id || '') } });
         if (!row)
             return { error: '瞬间不存在' };
+        if (String(row.kind || '') !== 'moment')
+            return { error: '瞬间不存在' };
         if (row.author !== viewer)
             return { error: '无权操作他人的瞬间' };
         return { row };
@@ -617,8 +619,16 @@ let NotesService = class NotesService {
         const hit = await this.findOwned(id, viewer, isAdmin);
         if ('error' in hit)
             return { error: hit.error };
+        if (String(hit.row.status || '') !== 'deleted') {
+            return { error: '只能从回收站彻底删除' };
+        }
         await prisma_1.prisma.note.delete({ where: { id: hit.row.id } });
         app_log_1.appLog.info('note', `彻底删除瞬间：${hit.row.id}`, `作者=${hit.row.author}`, ip);
+        await prisma_1.prisma.noteBlock.deleteMany({ where: { noteId: hit.row.id } }).catch(() => undefined);
+        await prisma_1.prisma.noteLink
+            .deleteMany({ where: { OR: [{ sourceNoteId: hit.row.id }, { targetNoteId: hit.row.id }] } })
+            .catch(() => undefined);
+        await prisma_1.prisma.noteHistory.deleteMany({ where: { noteId: hit.row.id } }).catch(() => undefined);
         return { ok: true };
     }
     async tagCandidates(instanceId, viewer, kind = 'moment') {

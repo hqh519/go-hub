@@ -187,8 +187,11 @@
                     <!--
                         v1.3.4.2（需求）：小眼睛改为「按住才预览，松手就关闭」。
                         pointer 事件同时覆盖鼠标与触屏；按下 320ms 才弹出，
-                        期间移动超过 10px 视为滚动/拖动，取消预览。
+                        期间移动超过阈值视为滚动/拖动，取消预览。
                         长按会触发原生右键菜单与 click，这里一并拦掉。
+                        v1.3.5（需求：移动端长按显示不出来）—— 去掉 pointerleave：
+                        按钮只有 18px，手指按住时的轻微抖动就会移出元素触发 leave，
+                        预览还没弹就被取消；松手关闭改由 document 上的 pointerup 兜底。
                     -->
                     <button
                         type="button"
@@ -200,7 +203,6 @@
                         @pointermove.stop="eyePressMove"
                         @pointerup.stop.prevent="eyePressEnd"
                         @pointercancel.stop.prevent="eyePressEnd"
-                        @pointerleave="eyePressEnd"
                     >
                         <font-awesome-icon icon="eye" />
                     </button>
@@ -648,8 +650,19 @@ export default {
         this._floatEsc = (e) => {
             if (String(e.key) === 'Escape' && this.assetFloat) this.closeAssetFloat();
         };
+        /*
+         * v1.3.5（需求：移动端长按预览显示不出来）
+         * 手指可能在按钮外松开（抖动、滚动容器吃掉 pointerup），
+         * 只在按钮上监听 pointerup 会漏掉「松手」这一拍，预览便一直挂着或提前消失。
+         * 这里在 document 捕获阶段统一兜底，保证任何位置松手都会结束预览。
+         */
+        this._eyeUp = () => {
+            if (this._eyeTimer || this._eyeShowing) this.eyePressEnd();
+        };
         document.addEventListener('pointerdown', this._floatDown, true);
         document.addEventListener('keydown', this._floatEsc, true);
+        document.addEventListener('pointerup', this._eyeUp, true);
+        document.addEventListener('pointercancel', this._eyeUp, true);
     },
     beforeUnmount() {
         /*
@@ -682,6 +695,10 @@ export default {
         }
         if (this._floatDown) document.removeEventListener('pointerdown', this._floatDown, true);
         if (this._floatEsc) document.removeEventListener('keydown', this._floatEsc, true);
+        if (this._eyeUp) {
+            document.removeEventListener('pointerup', this._eyeUp, true);
+            document.removeEventListener('pointercancel', this._eyeUp, true);
+        }
         if (this._layerUnbind) {
             this._layerUnbind();
             this._layerUnbind = null;
@@ -745,8 +762,10 @@ export default {
         },
         /**
          * v1.3.4.2（需求）：小眼睛由「点一下开关」改为「按住预览、松手关闭」。
-         * 320ms 才弹出，避免手指滑过附件时闪一下；按下后位移超过 10px 视为
+         * 320ms 才弹出，避免手指滑过附件时闪一下；按下后位移超过阈值视为
          * 滚动或拖动，直接取消长按，不会误弹。
+         * v1.3.5（需求：移动端长按显示不出来）—— 阈值从 10px 放宽到 14px：
+         * 触屏手指按住时的自然抖动经常超过 10px，预览还没弹就被判成滚动了。
          */
         eyePressStart(index, e) {
             const a = this.assets[index];
@@ -768,7 +787,8 @@ export default {
             if (!this._eyeTimer && !this._eyeShowing) return;
             const dx = (Number(e && e.clientX) || 0) - this._eyeStartX;
             const dy = (Number(e && e.clientY) || 0) - this._eyeStartY;
-            if (dx * dx + dy * dy > 100) this.eyePressEnd();
+            // v1.3.5：阈值放宽到 14px（196 = 14²），触屏手指按住时的自然抖动常超过 10px
+            if (dx * dx + dy * dy > 196) this.eyePressEnd();
         },
         eyePressEnd() {
             if (this._eyeTimer) {

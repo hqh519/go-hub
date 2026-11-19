@@ -24,30 +24,42 @@ export const DEFAULT_TOOLBAR_LINES = [
     'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
 ];
 
-/** 可在工具栏里使用的工具名（设置页展示用） */
+/**
+ * 可在工具栏里使用的工具名（设置页展示用）
+ *
+ * v1.3.5（需求：按相近类型重新排序）
+ * 之前是「按版本追加」的顺序，同一类工具散落在数组各处，设置页读起来很乱。
+ * 现在按功能归成十组，组内保持常用度排序；新增工具直接加到对应组末尾。
+ */
 export const TOOLBAR_TOKENS = [
+    // 一、标题与段落结构
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'bold', 'italic', 'strike', 'underline', 'code', 'highlight',
-    'bulletList', 'orderedList', 'taskList',
-    'blockquote', 'codeBlock', 'hr',
-    'table', 'callout',
-    'link', 'image', 'file', 'video', 'audio',
-    'outline', 'foldAll',
-    // v1.3.1.1 新增
-    'alignLeft', 'alignCenter', 'alignRight', 'indent', 'outdent',
-    'hardBreak', 'paragraph', 'upload', 'linkExtract',
-    'tableAddRow', 'tableAddCol', 'tableDelRow', 'tableDelCol', 'tableMerge', 'tableSplit', 'tableDelete',
-    'clear', 'undo', 'redo',
-    // v1.3.1.2 新增但上一版漏登记的 16 个
-    'tableAddRowBefore', 'tableAddColBefore',
-    'selectLine', 'selectAll',
+    'paragraph', 'blockquote', 'callout', 'codeBlock', 'hr',
+    // 二、文字格式
+    'bold', 'italic', 'underline', 'strike', 'highlight', 'code',
+    'fontSize', 'textColor', 'clear',
+    // 三、列表
+    'bulletList', 'orderedList', 'taskList', 'indent', 'outdent', 'listConvert',
+    // 四、对齐与行级操作
+    'alignLeft', 'alignCenter', 'alignRight',
+    'hardBreak', 'insertLineBelow', 'selectLine', 'selectAll', 'deleteNode',
+    // 五、插入内容
+    'link', 'image', 'upload', 'file', 'video', 'audio', 'linkExtract', 'iframe',
+    'table', 'emoji', 'symbol',
     'dateYmd', 'dateSlash', 'dateDash', 'dateCn', 'timeHms',
-    'emoji', 'symbol', 'iframe', 'findReplace', 'htmlMd', 'htmlBlock', 'annotate',
-    // v1.3.2 新增
-    'insertLineBelow', 'paste', 'pasteKeep', 'pastePlain', 'pasteEscaped',
-    // v1.3.4 新增：从选中浮层 / 媒体条提取出来的独立工具
-    'fontSize', 'textColor', 'publish', 'subDoc', 'listConvert',
-    'imgSizeCycle', 'mediaPreview', 'mediaDetail', 'deleteNode',
+    'subDoc', 'publish',
+    // 六、表格操作
+    'tableAddRow', 'tableAddRowBefore', 'tableAddCol', 'tableAddColBefore',
+    'tableDelRow', 'tableDelCol', 'tableMerge', 'tableSplit', 'tableDelete',
+    // 七、内容工具（大纲 / 折叠 / 统计 / 查找 / HTML / 批注）
+    'outline', 'foldAll', 'stats', 'findReplace',
+    'htmlMd', 'htmlBlock', 'annotate',
+    // 八、粘贴
+    'paste', 'pasteKeep', 'pastePlain', 'pasteEscaped',
+    // 九、媒体
+    'imgSizeCycle', 'mediaPreview', 'mediaDetail',
+    // 十、撤销 / 重做
+    'undo', 'redo',
 ];
 
 export default DEFAULT_TOOLBAR_LINES;

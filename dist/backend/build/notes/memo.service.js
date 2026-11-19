@@ -193,7 +193,9 @@ let MemoService = class MemoService {
         const pageSize = Math.min(200, Math.max(1, asInt(input.pageSize, 50)));
         const where = { author: viewer, instanceId, kind: 'memo' };
         const folderId = String(input.folderId ?? '');
-        if (folderId === '__root')
+        if (folderId === '__trash') {
+        }
+        else if (folderId === '__root')
             where.folderId = '';
         else if (folderId)
             where.folderId = folderId;
@@ -366,9 +368,11 @@ let MemoService = class MemoService {
         return { ok: true, folderId: target };
     }
     async trash(viewer, instanceId, id) {
-        const row = await prisma_1.prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true } });
+        const row = await prisma_1.prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true, status: true } });
         if (!row)
             return { error: '笔记不存在' };
+        if (String(row.status || '') === 'deleted')
+            return { ok: true };
         await prisma_1.prisma.note.update({ where: { id }, data: { status: 'deleted', deletedAt: new Date() } });
         return { ok: true };
     }
@@ -380,9 +384,11 @@ let MemoService = class MemoService {
         return { ok: true };
     }
     async purge(viewer, instanceId, id) {
-        const row = await prisma_1.prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true } });
+        const row = await prisma_1.prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true, status: true } });
         if (!row)
             return { error: '笔记不存在' };
+        if (String(row.status || '') !== 'deleted')
+            return { error: '只能从回收站彻底删除' };
         await prisma_1.prisma.note.delete({ where: { id } });
         app_log_1.appLog.info('memo', `彻底删除笔记 ${id}`);
         await prisma_1.prisma.noteBlock.deleteMany({ where: { noteId: id } }).catch(() => undefined);

@@ -918,6 +918,12 @@ export class NotesService {
   private async findOwned(id: string, viewer: string, _isAdmin: boolean) {
     const row = await prisma.note.findUnique({ where: { id: String(id || '') } });
     if (!row) return { error: '瞬间不存在' as string };
+    /*
+     * v1.3.5：/api/notes 这一套是「瞬间」专用。
+     * 之前只按 id + 作者校验，用瞬间接口的 purge 能把一条 memo 笔记硬删掉，
+     * 而 memo 的历史快照（NoteHistory 无外键）就变成孤儿了。
+     */
+    if (String(row.kind || '') !== 'moment') return { error: '瞬间不存在' as string };
     // v1.1.4：笔记私有 —— 恢复 / 彻底删除同样只允许作者本人
     if (row.author !== viewer) return { error: '无权操作他人的瞬间' as string };
     return { row };
@@ -953,8 +959,26 @@ export class NotesService {
   async purge(id: string, viewer: string, isAdmin: boolean, ip: string) {
     const hit = await this.findOwned(id, viewer, isAdmin);
     if ('error' in hit) return { error: hit.error };
+    /*
+     * v1.3.5（需求：从回收站删除时历史记录也要删）
+     * 彻底删除只能从回收站发起：先软删进回收站，再 purge。
+     * 这样「删除」永远不会绕过回收站把内容直接抹掉。
+     */
+    if (String(hit.row!.status || '') !== 'deleted') {
+      return { error: '只能从回收站彻底删除' };
+    }
     await prisma.note.delete({ where: { id: hit.row!.id } });
     appLog.info('note', `彻底删除瞬间：${hit.row!.id}`, `作者=${hit.row!.author}`, ip);
+    /*
+     * v1.3.5：派生物一起清掉。
+     * NoteHistory / NoteBlock / NoteLink 都没有指向 notes 的外键（不会级联），
+     * 不显式删就会留下孤儿正文与索引。
+     */
+    await prisma.noteBlock.deleteMany({ where: { noteId: hit.row!.id } }).catch(() => undefined);
+    await prisma.noteLink
+      .deleteMany({ where: { OR: [{ sourceNoteId: hit.row!.id }, { targetNoteId: hit.row!.id }] } })
+      .catch(() => undefined);
+    await prisma.noteHistory.deleteMany({ where: { noteId: hit.row!.id } }).catch(() => undefined);
     return { ok: true };
   }
 

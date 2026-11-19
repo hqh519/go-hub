@@ -280,7 +280,16 @@ export class MemoService {
     const pageSize = Math.min(200, Math.max(1, asInt(input.pageSize, 50)));
     const where: Record<string, unknown> = { author: viewer, instanceId, kind: 'memo' };
     const folderId = String(input.folderId ?? '');
-    if (folderId === '__root') where.folderId = '';
+    /*
+     * v1.3.5（需求：删除笔记没有进入回收站 / 回收站看不到）
+     * '__trash' 是前端目录树里的虚拟节点，不是真实目录 id。
+     * 以前这里直接把它当 folderId 过滤，等于要求「folderId === '__trash'」，
+     * 而删除后的笔记仍保留原 folderId，所以回收站永远查不到任何笔记。
+     * 回收站必须忽略目录维度，看全部 status='deleted' 的笔记。
+     */
+    if (folderId === '__trash') {
+      // 不收窄 folderId
+    } else if (folderId === '__root') where.folderId = '';
     else if (folderId) where.folderId = folderId;
     const status = String(input.status ?? '');
     where.status = status === 'deleted' ? 'deleted' : { not: 'deleted' };
@@ -504,8 +513,10 @@ export class MemoService {
 
   /** 进回收站（软删，可恢复；不动图床文件） */
   async trash(viewer: string, instanceId: string, id: string) {
-    const row = await prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true } });
+    const row = await prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true, status: true } });
     if (!row) return { error: '笔记不存在' };
+    // v1.3.5：重复删除保持幂等，不刷新 deletedAt（排序/清理都依赖它）
+    if (String(row.status || '') === 'deleted') return { ok: true };
     await prisma.note.update({ where: { id }, data: { status: 'deleted', deletedAt: new Date() } });
     return { ok: true };
   }
@@ -519,8 +530,13 @@ export class MemoService {
 
   /** 彻底删除：只删笔记行，图床文件保持不动（可能是别的笔记也在引用的图） */
   async purge(viewer: string, instanceId: string, id: string) {
-    const row = await prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true } });
+    const row = await prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true, status: true } });
     if (!row) return { error: '笔记不存在' };
+    /*
+     * v1.3.5（需求：删除先进回收站、从回收站再彻底删除）
+     * 必须先软删（status='deleted'）才允许 purge，防止调用方绕过回收站把笔记直接抹掉。
+     */
+    if (String(row.status || '') !== 'deleted') return { error: '只能从回收站彻底删除' };
     await prisma.note.delete({ where: { id } });
     // 物理删除，不可恢复 —— 必须留一条可追溯的记录
     appLog.info('memo', `彻底删除笔记 ${id}`);

@@ -65,6 +65,13 @@
                 <button v-if="isMobile" type="button" class="memo-icon-btn" :title="$t('memo.folders')" @click="treeDrawer = true">
                     <font-awesome-icon icon="folder-tree" />
                 </button>
+                <!--
+                    v1.3.5（需求）：编辑器设置左侧增加「重新加载」，
+                    与 /post 页右上角的刷新按钮同一套图标与交互口径。
+                -->
+                <button type="button" class="memo-icon-btn" :title="$t('memo.reload')" @click="reloadCurrent">
+                    <font-awesome-icon icon="sync" />
+                </button>
                 <button type="button" class="memo-icon-btn" :title="$t('memo.editorSettings')" @click="openSettings">
                     <!-- v1.3.3.2（需求）：两个齿轮（cogs）太容易和「系统设置」混，换成滑杆 -->
                     <font-awesome-icon icon="sliders-h" />
@@ -130,6 +137,7 @@
                     :instance-id="instanceId"
                     :toolbar-config="editorSettings.toolbarLines"
                     :editor-config="editorSettings"
+                    :topbar-hidden="topbarHidden"
                     @saved="onSaved"
                     @publish-moment="onPublishMoment"
                     @reload="reloadNote"
@@ -595,6 +603,26 @@ export default {
             if (!id) return;
             const note = await fetchNote(id).catch(() => null);
             if (note) this.currentNote = note;
+        },
+        /**
+         * v1.3.5（需求：编辑页顶部栏「编辑页设置」左侧的重新加载按钮）
+         * 与 /post 的刷新一样是「重新拉一次数据」；但编辑页有未保存正文，
+         * 直接重拉会把本地改动冲掉，所以脏数据时先确认一次。
+         */
+        async reloadCurrent() {
+            const ed = this.$refs.editor;
+            if (ed && ed.dirty) {
+                try {
+                    await this.$confirm(this.$t('memo.reloadTip'), this.$t('memo.reload'), {
+                        type: 'warning',
+                        confirmButtonText: this.$t('common.confirm'),
+                        cancelButtonText: this.$t('common.cancel'),
+                    });
+                } catch (e) {
+                    return;
+                }
+            }
+            await this.reloadNote(this.selectedId);
         },
         /** v1.3.4：顶部栏保存按钮 → 转给编辑器（保存逻辑仍只有一份） */
         saveCurrent() {
