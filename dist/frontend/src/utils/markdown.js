@@ -637,7 +637,8 @@ export function mdToDoc(md) {
       const inner = mdToDoc(body.join('\n'));
       content.push({
         type: 'callout',
-        attrs: { type },
+        // v1.3.5.2：rawType 一起存下来，`[!xxx]` 里的 xxx 允许用户改成任意文字
+        attrs: { type, tag: rawType },
         content: inner.content.length ? inner.content : [{ type: 'paragraph' }],
       });
       continue;
@@ -738,7 +739,19 @@ export function mdToDoc(md) {
           content: t.lines.join('\n').trim(),
         }))
         .filter((t) => t.title);
-      content.push({ type: 'tabsBlock', attrs: { tabs: JSON.stringify(clean) } });
+      /*
+       * v1.3.5.2：页签块从「JSON attrs 的 atom 节点」改成 content 结构
+       * （tabsBlock > tabItem+），这样每个页签的正文都是真正的块，光标能直接编辑。
+       */
+      const items = (clean.length ? clean : [{ title: '页签 1', active: true, content: '' }]).map((t) => {
+        const inner = mdToDoc(t.content);
+        return {
+          type: 'tabItem',
+          attrs: { title: t.title, active: !!t.active },
+          content: inner.content.length ? inner.content : [{ type: 'paragraph' }],
+        };
+      });
+      content.push({ type: 'tabsBlock', content: items });
       continue;
     }
     // ── v1.3.5.1：数学公式块 `$$` … `$$` ──
@@ -1114,16 +1127,19 @@ function blockToMd(node, depth = 0) {
       return `$$\n${String(node.attrs?.formula || '').trim()}\n$$`;
     }
     case 'tabsBlock': {
-      let tabs = [];
-      try { tabs = JSON.parse(String(node.attrs?.tabs || '[]')); } catch (e) { tabs = []; }
-      if (!Array.isArray(tabs)) tabs = [];
-      const parts = tabs.map((t) => {
-        const tag = t && t.active ? '@tab:active' : '@tab';
-        const title = String((t && t.title) || '').trim() || '页签';
-        const body = String((t && t.content) || '').trim();
+      // v1.3.5.2：content 结构（tabItem+），逐个子节点写回 `@tab 标题` + 正文
+      const items = (node.content || []).filter((c) => c && c.type === 'tabItem');
+      const parts = items.map((t) => {
+        const tag = t.attrs && t.attrs.active ? '@tab:active' : '@tab';
+        const title = String((t.attrs && t.attrs.title) || '').trim() || '页签';
+        const body = (t.content || []).map((c) => blockToMd(c, depth)).join('\n\n').trim();
         return `${tag} ${title}\n\n${body}`;
       });
       return `::: tabs\n\n${parts.join('\n\n')}\n\n:::`;
+    }
+    /* tabItem 只在 tabsBlock 内部出现；单独序列化时按普通块拼回去（防御性分支） */
+    case 'tabItem': {
+      return (node.content || []).map((c) => blockToMd(c, depth)).join('\n\n');
     }
     case 'callout': {
       /*
@@ -1132,7 +1148,8 @@ function blockToMd(node, depth = 0) {
        * 保存一次后平滑换成新格式，不会丢内容、也不会往返抖动。
        */
       const type = String(node.attrs?.type || 'info');
-      const tag = GITHUB_ALERT_TAG[type] || 'NOTE';
+      // v1.3.5.2：优先用用户自定义的标签文字，没改过才回落到类型的默认映射
+      const tag = String(node.attrs?.tag || '').trim() || GITHUB_ALERT_TAG[type] || 'NOTE';
       const inner = (node.content || []).map((c) => blockToMd(c, depth)).join('\n\n');
       const body = String(inner || '')
         .split('\n')

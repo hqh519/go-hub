@@ -1070,6 +1070,23 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1352',
+      title: '六十三、v1.3.5.2 更新要点',
+      intro: '这一版修好上一版遗留的相册连选、红点、小眼睛预览与附件尺寸跳动，补齐发布瞬间的「指定用户」名单（允许 / 屏蔽），并让数学公式、提示块、页签块真正可编辑；另外新增白板工具与表格缩放。',
+      items: [
+        { t: '相册 Shift 连选', d: '相册每张图左上角新增勾选框：点一下选中并记下起点，按住 Shift 再点另一张即可把中间的文件整段选中。' },
+        { t: '红点与附件预览', d: '非根目录红点调大一档；移动端按住附件小眼睛时，预览框立即显示完整大图，不再因为等待图片尺寸而只看到小缩略图。' },
+        { t: '附件尺寸不再跳动', d: '浏览器滚动收起顶部 / 底部栏时，编辑区附件保持进入页面时的尺寸基准，桌面端同样生效；只有宽度明显变化（旋屏 / 拉窗口）才重新计算。' },
+        { t: '发布瞬间：可见性名单', d: '标签与标记各占一行，可见性下拉移到标记之后。选择「指定」可多选账户：允许 = 仅作者与被指定人可见；屏蔽 = 被指定人不可见、其余人可见。' },
+        { t: '白板工具', d: '可选用本地图片或空白格子画布作背景，用画笔、文字、箭头、形状、马赛克标注，保存后自动上传图床并插入编辑区。' },
+        { t: '公式与提示块可编辑', d: '数学公式块点一下即可改公式；提示块左上角的类型标签（NOTE / IMPORTANT 等）可以直接点击编辑文字。' },
+        { t: '页签块可编辑', d: '双击标题改名、长按可选改名或删除、末尾「+」新增页签，每个页签的正文都能直接输入，与普通正文一致。' },
+        { t: '列表关系线', d: '关系线上端与列表标识之间留出空隙，任务列表的关系线结尾与最后一行内容齐平。' },
+        { t: '表格缩放与尺寸', d: '光标在表格内时右下角出现缩放手柄，可拖动调整表格宽度；表格工具条新增「表格尺寸」「行列尺寸」，并可拖动列分隔线调整列宽。受 markdown 表格格式限制，宽高在本次编辑内生效。' },
+        { t: '升级兼容', d: '新增两个带默认值的可见性字段，旧瞬间数据不受影响；提示块与页签块的新旧写法互相兼容。' }
+      ]
+    },
+    {
       id: 'whatsnew-1351',
       title: '六十二、v1.3.5.1 更新要点',
       intro: '这一版修顺了跨实例文件共享、发布瞬间的「标记」、标签管理与复制提示层级，并给笔记编辑器补上数学公式块、页签块和 GitHub 风格提示块。本次开发任务按分批推进，本版为第一批成果：编辑器白板、列表深层嵌套输入、表格增强与「登记」功能仍在开发中。',
@@ -2310,6 +2327,23 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1352',
+      title: '63. What is new in v1.3.5.2',
+      intro: 'This release fixes the leftover album range selection, the directory dot, the attachment preview and the size jump while browser bars collapse. It adds a specified-user list (allow / block) to the moment composer and makes math, alert and tabs blocks truly editable, plus a whiteboard tool and table resizing.',
+      items: [
+        { t: 'Album Shift selection', d: 'Each album tile now has a checkbox in its top-left corner. Click it to select and set the anchor, then Shift-click another tile to select everything in between.' },
+        { t: 'Dot and attachment preview', d: 'The non-root directory dot is slightly larger. On mobile, press-and-hold on the attachment eye button now shows the full image immediately instead of waiting for its dimensions and only showing the small thumbnail.' },
+        { t: 'No more attachment resizing', d: 'When mobile or desktop browsers hide their top or bottom bars while scrolling, attachments keep the size baseline captured on page entry. The baseline is only recomputed when the width changes noticeably (rotation or window resize).' },
+        { t: 'Moment composer: visibility list', d: 'Tags and markers each take a full row, and the visibility select moves below the marker field. Choosing Specified lets you pick accounts: Allow means only the author and those users can see it; Block means those users cannot see it while everyone else can.' },
+        { t: 'Whiteboard tool', d: 'Start from a local image or a blank grid canvas, annotate with brush, text, arrows, shapes and mosaic, then save; the result uploads to the image host and is inserted into the editor.' },
+        { t: 'Editable math and alerts', d: 'Click a math block to edit its formula. The type label of an alert (NOTE, IMPORTANT and so on) is directly editable.' },
+        { t: 'Editable tabs', d: 'Double-click a tab title to rename it, press and hold for rename or delete, use the trailing + to add a tab, and type directly into each tab body like normal content.' },
+        { t: 'List guide lines', d: 'The guide line now leaves a small gap below the list marker, and task-list lines end level with the last line of content.' },
+        { t: 'Table resizing', d: 'With the caret inside a table, a handle appears at the bottom-right corner for dragging the table width. The table toolbar gains table size and row / column size entries, and column dividers can be dragged. Because markdown tables do not carry sizes, these apply to the current editing session.' },
+        { t: 'Upgrade compatibility', d: 'Two new visibility fields have defaults, so existing moments are unaffected; old and new alert / tabs syntaxes remain mutually compatible.' }
       ]
     },
     {

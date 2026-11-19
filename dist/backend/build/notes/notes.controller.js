@@ -55,6 +55,9 @@ let NotesController = class NotesController {
         const { viewer } = this.ctx(req);
         return this.notes.tagCandidates(instanceId || '', viewer, kind || 'moment');
     }
+    async userOptions() {
+        return this.notes.userOptions();
+    }
     async markers(req, instanceId, kind, keyword) {
         const { viewer } = this.ctx(req);
         return (0, markers_1.markerCandidates)(instanceId || '', viewer, (0, markers_1.markerTypeOfKind)(kind || 'moment'), keyword || '');
@@ -150,6 +153,8 @@ let NotesController = class NotesController {
             assetIds: body.assetIds,
             tagNames: body.tagNames,
             markerName: body.markerName,
+            visibilityMode: body.visibilityMode,
+            visibilityUsers: body.visibilityUsers,
             instanceId: body.instanceId,
         }, viewer, String(req.ip || ''));
         if ('error' in r && r.error)
@@ -170,6 +175,8 @@ let NotesController = class NotesController {
             assetIds: body.assetIds,
             tagNames: body.tagNames,
             markerName: body.markerName,
+            visibilityMode: body.visibilityMode,
+            visibilityUsers: body.visibilityUsers,
             instanceId: body.instanceId,
             publishedAt: body.publishedAt,
         }, viewer, isAdmin, String(req.ip || ''));
@@ -230,6 +237,12 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, String]),
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "tags", null);
+__decorate([
+    (0, common_1.Get)('user-options'),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", []),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "userOptions", null);
 __decorate([
     (0, common_1.Get)('markers'),
     __param(0, (0, common_1.Req)()),

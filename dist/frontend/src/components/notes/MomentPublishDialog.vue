@@ -274,17 +274,6 @@
                         <span class="mp-tag-count">{{ t.count }}</span>
                     </el-option>
                 </el-select>
-                <!--
-                    v1.1.9.4（需求）：「仅自己可见」改名「私密」，并在它下方新增「指定」。
-                    私密 = 只有作者自己能看到（仍出现在「发布中心 → 瞬间」里）；
-                    公开 = 同时出现在「瞬间」和「广场」，所有登录账户可看可留言；
-                    指定 = 只给被指定的账户看（名单管理随后续版本提供，本版等同于更严格的私密）。
-                -->
-                <el-select v-model="form.visibility" class="mp-visibility" size="small">
-                    <el-option :label="$t('notes.visibilityPrivate')" value="private" />
-                    <el-option :label="$t('notes.visibilitySpecified')" value="specified" />
-                    <el-option :label="$t('notes.visibilityPublic')" value="public" />
-                </el-select>
             </div>
 
             <!--
@@ -309,9 +298,78 @@
                 </template>
             </el-autocomplete>
 
+            <!--
+                v1.3.5.2（需求）：可见性从标签行里挪出来，独占一行放在「标记」之后。
+                选「指定」时右侧出现「选择用户」按钮，可多选名单并设置允许 / 屏蔽：
+                  · 允许 = 广场里只有作者与被指定的人可见；
+                  · 屏蔽 = 被指定的人在广场里看不到，其余人照常可见。
+            -->
+            <div class="mp-visibility-row">
+                <el-select v-model="form.visibility" class="mp-visibility" size="small">
+                    <el-option :label="$t('notes.visibilityPrivate')" value="private" />
+                    <el-option :label="$t('notes.visibilitySpecified')" value="specified" />
+                    <el-option :label="$t('notes.visibilityPublic')" value="public" />
+                </el-select>
+                <el-button
+                    v-if="form.visibility === 'specified'"
+                    size="small"
+                    class="mp-users-btn"
+                    @click="openVisibilityUsers"
+                >
+                    <font-awesome-icon icon="users" class="mp-btn-icon" />{{ $t('notes.chooseUsers') }}
+                </el-button>
+                <span v-if="form.visibility === 'specified' && form.visibilityUsers.length" class="mp-users-count">
+                    {{ $t('notes.usersSelected', { n: form.visibilityUsers.length }) }}
+                </span>
+            </div>
             <p v-if="form.visibility === 'specified'" class="mp-visibility-hint">
-                {{ $t('notes.visibilitySpecifiedTip') }}
+                {{ form.visibilityMode === 'deny' ? $t('notes.visibilityDenyTip') : $t('notes.visibilityAllowTip') }}
             </p>
+
+            <!-- 指定可见：选择用户 + 允许 / 屏蔽 -->
+            <el-dialog
+                v-model="userPickerVisible"
+                :title="$t('notes.chooseUsers')"
+                width="420px"
+                append-to-body
+                class="mp-users-dialog"
+            >
+                <div class="mp-users-body">
+                    <el-radio-group v-model="form.visibilityMode" size="small" class="mp-users-mode">
+                        <el-radio-button label="allow">{{ $t('notes.visibilityAllow') }}</el-radio-button>
+                        <el-radio-button label="deny">{{ $t('notes.visibilityDeny') }}</el-radio-button>
+                    </el-radio-group>
+                    <el-input
+                        v-model="userKeyword"
+                        size="small"
+                        clearable
+                        :placeholder="$t('notes.searchUsers')"
+                        class="mp-users-search"
+                    />
+                    <div v-loading="userOptionsLoading" class="mp-users-list">
+                        <label
+                            v-for="u in filteredUserOptions"
+                            :key="u.username"
+                            class="mp-users-item"
+                            :class="{ 'is-on': form.visibilityUsers.includes(u.username) }"
+                        >
+                            <el-checkbox
+                                :model-value="form.visibilityUsers.includes(u.username)"
+                                @change="(v) => toggleVisibilityUser(u.username, v)"
+                            />
+                            <span class="mp-users-name">{{ u.nickname || u.username }}</span>
+                            <span class="mp-users-account">@{{ u.username }}</span>
+                        </label>
+                        <p v-if="!userOptionsLoading && !filteredUserOptions.length" class="mp-users-empty">
+                            {{ $t('notes.noUsers') }}
+                        </p>
+                    </div>
+                </div>
+                <template #footer>
+                    <el-button size="small" @click="userPickerVisible = false">{{ $t('common.close') }}</el-button>
+                    <el-button size="small" type="primary" @click="userPickerVisible = false">{{ $t('common.confirm') }}</el-button>
+                </template>
+            </el-dialog>
         </div>
 
         <template #footer>
@@ -475,9 +533,18 @@ export default {
                 weather: '',
                 location: '',
                 visibility: 'private',
+                /** v1.3.5.2：指定可见 —— allow（仅名单内）/ deny（名单内不可见） */
+                visibilityMode: 'allow',
+                /** v1.3.5.2：指定可见的用户名列表 */
+                visibilityUsers: [],
                 tagNames: [],
                 markerName: ''
             },
+            /** v1.3.5.2：指定用户弹窗 */
+            userPickerVisible: false,
+            userOptions: [],
+            userOptionsLoading: false,
+            userKeyword: '',
             // 已选附件（顺序即九宫格顺序）
             assets: [],
             /** v1.3.2：视频附件首帧（fileId → dataURL），抽不出来时为空 */
@@ -539,6 +606,15 @@ export default {
         };
     },
     computed: {
+        /** v1.3.5.2：指定用户弹窗的本地搜索（用户名或昵称） */
+        filteredUserOptions() {
+            const q = String(this.userKeyword || '').trim().toLowerCase();
+            if (!q) return this.userOptions;
+            return this.userOptions.filter((u) => (
+                String(u.username || '').toLowerCase().includes(q)
+                || String(u.nickname || '').toLowerCase().includes(q)
+            ));
+        },
         visible: {
             get() {
                 return this.modelValue;
@@ -640,6 +716,11 @@ export default {
         'form.location': 'scheduleSave',
         'form.markerName': 'scheduleSave',
         'form.visibility': 'scheduleSave',
+        'form.visibilityMode': 'scheduleSave',
+        'form.visibilityUsers': {
+            deep: true,
+            handler: 'scheduleSave'
+        },
         'form.tagNames': {
             deep: true,
             handler: 'scheduleSave'
@@ -864,7 +945,7 @@ export default {
             if (typeof window === 'undefined') return 0;
             const cur = this.keyboardOpen ? this.currentViewportPx() : this.restingViewportPx();
             if (!cur) return 0;
-            return Math.round(cur * (isTouchDevice() ? (this.keyboardOpen ? 0.24 : 0.32) : 0.45));
+            return Math.round(cur * (isTouchDevice() ? (this.keyboardOpen ? 0.35 : 0.4) : 0.45));  // 输入框在键盘弹出时的最小高度
         },
         /**
          * 静止基准 —— 键盘收起时的可见视口高度。
@@ -878,7 +959,7 @@ export default {
         restingMinPx() {
             const h = this.restingViewportPx();
             if (!h) return 0;
-            return Math.round(h * (isTouchDevice() ? 0.32 : 0.45));
+            return Math.round(h * (isTouchDevice() ? 0.35 : 0.45));
         },
         /**
          * 判定软键盘是否弹起（与笔记页「反向链接栏随键盘收起」同一套口径）。
@@ -1022,7 +1103,7 @@ export default {
             if (typeof window === 'undefined') return 400;
             const cur = this.keyboardOpen ? this.currentViewportPx() : this.restingViewportPx();
             if (!cur) return 400;
-            return Math.round(cur * (this.keyboardOpen ? 0.42 : 0.8));
+            return Math.round(cur * (this.keyboardOpen ? 0.45 : 0.8));
         },
         /**
          * 聚焦 / 失焦只用来「催一次重算」，不再作为判断键盘的依据。
@@ -1094,6 +1175,8 @@ export default {
                 weather: '',
                 location: '',
                 visibility: 'private',
+                visibilityMode: 'allow',
+                visibilityUsers: [],
                 tagNames: [],
                 markerName: ''
             };
@@ -1109,6 +1192,8 @@ export default {
                 weather: m.weather || '',
                 location: m.location || '',
                 visibility: note.visibility || 'private',
+                visibilityMode: note.visibilityMode === 'deny' ? 'deny' : 'allow',
+                visibilityUsers: Array.isArray(note.visibilityUsers) ? note.visibilityUsers.slice() : [],
                 tagNames: (note.tags || []).map((t) => t.name),
                 // v1.3.5.1：编辑已有瞬间时把标记回填，否则保存会把它清空
                 markerName: m.markerName || ''
@@ -1149,6 +1234,8 @@ export default {
                     weather: this.form.weather,
                     location: this.form.location,
                     visibility: this.form.visibility,
+                    visibilityMode: this.form.visibilityMode,
+                    visibilityUsers: this.form.visibilityUsers,
                     tagNames: this.form.tagNames,
                     markerName: this.form.markerName,
                     assets: this.assets,
@@ -1187,6 +1274,8 @@ export default {
                 weather: d.weather || '',
                 location: d.location || '',
                 visibility: d.visibility || 'private',
+                visibilityMode: d.visibilityMode === 'deny' ? 'deny' : 'allow',
+                visibilityUsers: Array.isArray(d.visibilityUsers) ? d.visibilityUsers : [],
                 tagNames: Array.isArray(d.tagNames) ? d.tagNames : [],
                 markerName: d.markerName || ''
             };
@@ -1271,6 +1360,32 @@ export default {
             } catch (e) {
                 cb([]);
             }
+        },
+
+        /* ── v1.3.5.2：指定可见的用户选择 ───────────────────────── */
+        async openVisibilityUsers() {
+            this.userPickerVisible = true;
+            if (this.userOptions.length) return;
+            this.userOptionsLoading = true;
+            try {
+                const res = await fetchWithAuth('/api/notes/user-options');
+                const data = await res.json().catch(() => []);
+                this.userOptions = Array.isArray(data) ? data : [];
+            } catch (e) {
+                this.userOptions = [];
+                this.$message.error(this.$t('common.failed'));
+            } finally {
+                this.userOptionsLoading = false;
+            }
+        },
+        toggleVisibilityUser(username, on) {
+            const name = String(username || '').trim();
+            if (!name) return;
+            const list = this.form.visibilityUsers.slice();
+            const i = list.indexOf(name);
+            if (on && i < 0) list.push(name);
+            else if (!on && i >= 0) list.splice(i, 1);
+            this.form.visibilityUsers = list;
         },
 
         /**
@@ -1610,6 +1725,8 @@ export default {
                     // v1.3.5.1：标记名随表单提交，后端写入 markers 表并关联到本条瞬间
                     markerName: this.form.markerName,
                     visibility: this.form.visibility,
+                    visibilityMode: this.form.visibilityMode,
+                    visibilityUsers: this.form.visibilityUsers,
                     assetIds: this.assets.map((a) => a.fileId),
                     tagNames: this.form.tagNames,
                     instanceId: this.instanceId || '',
@@ -2102,21 +2219,96 @@ export default {
 }
 
 /* ── 标签 / 可见性 ────────────────────────────────────────── */
+/* v1.3.5.2（需求）：标签与标记各占一整行 */
 .mp-tags-row {
     display: flex;
+    flex-direction: column;
     gap: 8px;
-    align-items: center;
-    flex-wrap: wrap;
     flex: 0 0 auto;
 }
 
 .mp-tags {
-    flex: 1 1 220px;
-    min-width: 180px;
+    width: 100%;
+    min-width: 0;
+}
+
+/* 可见性：独占一行，选「指定」时右侧追加「选择用户」 */
+.mp-visibility-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 0 0 auto;
 }
 
 .mp-visibility {
     width: 110px;
+    flex: 0 0 auto;
+}
+
+.mp-users-btn {
+    flex: 0 0 auto;
+}
+
+.mp-users-count {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+
+/* 指定用户弹窗 */
+.mp-users-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    text-align: left;
+}
+
+.mp-users-mode {
+    align-self: flex-start;
+}
+
+.mp-users-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 46vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+.mp-users-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.mp-users-item:hover {
+    background: var(--el-fill-color-light);
+}
+
+.mp-users-item.is-on {
+    background: var(--el-color-primary-light-9);
+}
+
+.mp-users-name {
+    font-size: 13px;
+    color: var(--el-text-color-primary);
+}
+
+.mp-users-account {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+
+.mp-users-empty {
+    padding: 20px 0;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--el-text-color-secondary);
 }
 
 /* v1.1.9.4：选了「指定」时给一行说明，避免用户以为它会自动挑人 */

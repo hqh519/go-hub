@@ -579,8 +579,12 @@ model Note {
   title         String    @default("")
   /// 封面 → files.id（空 = 无封面）
   coverFileId   String    @default("")
-  /// private | public | specified（本版只落 private / public，公开页后续版本再做）
+  /// private | public | specified
   visibility    String    @default("private")
+  /// v1.3.5.2：指定可见的名单模式 —— ""（未设置）| allow（仅名单内可见）| deny（名单内不可见）
+  visibilityMode String   @default("")
+  /// v1.3.5.2：指定可见的用户名 JSON 数组（查询用 contains '"用户名"' 精确匹配）
+  visibilityUsers String  @default("[]")
   /// draft | published | deleted（deleted = 在回收站，可恢复）
   status        String    @default("published")
   /// 作者（用户名；空 = 系统）

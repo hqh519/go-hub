@@ -45,7 +45,7 @@ export const TOOLBAR_TOKENS = [
     'hardBreak', 'insertLineBelow', 'selectLine', 'selectAll', 'deleteNode',
     // 五、插入内容
     'link', 'image', 'upload', 'file', 'video', 'audio', 'linkExtract', 'iframe',
-    'table', 'emoji', 'symbol',
+    'table', 'whiteboard', 'emoji', 'symbol',
     'dateYmd', 'dateSlash', 'dateDash', 'dateCn', 'timeHms',
     'subDoc', 'publish',
     // 六、表格操作

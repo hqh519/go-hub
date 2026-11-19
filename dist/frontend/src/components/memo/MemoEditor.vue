@@ -720,6 +720,10 @@
                 <button type="button" class="me-bub-btn" :title="$t('memo.tblMerge')" @click="runTool('tableMerge')"><font-awesome-icon icon="compress" /></button>
                 <button type="button" class="me-bub-btn" :title="$t('memo.tblSplit')" @click="runTool('tableSplit')"><font-awesome-icon icon="expand" /></button>
                 <button type="button" class="me-bub-btn" :title="$t('memo.tblDelete')" @click="runTool('tableDelete')"><font-awesome-icon icon="trash" /></button>
+                <!-- v1.3.5.2：表格 / 行列尺寸（编辑态生效） -->
+                <span class="me-bub-sep"></span>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblSize')" @click="promptTableSize"><font-awesome-icon icon="expand" /></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblCellSize')" @click="promptCellSize"><font-awesome-icon icon="columns" /></button>
             </div>
 
             <!-- 右键 / 长按菜单（v1.3.1.2） -->
@@ -1228,6 +1232,27 @@
         </el-dialog>
 
         <!-- 图床选文件 -->
+        <!--
+            v1.3.5.2（需求）：白板工具。
+            背景图（空白格子画布或本地图片）交给系统现有的图片处理组件，
+            自动获得画笔 / 文字 / 箭头 / 形状 / 马赛克与撤销恢复；
+            done 后上传到图床并插入编辑区。
+        -->
+        <ImageCropDialog
+            v-model="whiteboardVisible"
+            :file="whiteboardFile"
+            :allow-annotate="true"
+            title-key="memo.whiteboardTitle"
+            confirm-key="memo.whiteboardSave"
+            @done="onWhiteboardDone"
+        />
+        <input
+            ref="whiteboardInput"
+            type="file"
+            accept="image/*"
+            class="me-hidden-input"
+            @change="onWhiteboardBgChosen"
+        />
         <FilePickerDialog
             v-model="pickerVisible"
             :instance-id="instanceId"
@@ -1305,6 +1330,8 @@ import {
     pushNoteHistory,
 } from '@/utils/memoApi';
 import { uploadOne, defaultUploadFolder, importUrlToBed } from '@/utils/uploadTarget';
+/* v1.3.5.2：白板工具复用现有的图片处理组件（涂鸦 / 文字 / 形状 / 马赛克） */
+import ImageCropDialog from '@/components/upload/ImageCropDialog.vue';
 import { mediaKindOfMime } from '@/utils/notes';
 import { DEFAULT_TOOLBAR_LINES } from '@/utils/memoEditorConfig';
 import DOMPurify from 'dompurify';
@@ -2277,27 +2304,109 @@ const BlockRef = Node.create({
  * 提示块（callout）—— 容器块，里面可以放任意块。
  * 用 `data-callout` 而不是 class 做识别，class 留给样式、可能被用户改。
  */
+/** v1.3.5.2：没自定义标签时，各类型的默认文字（与 markdown.js 的映射保持一致） */
+const CALLOUT_DEFAULT_TAG = {
+    info: 'NOTE', tip: 'TIP', important: 'IMPORTANT', warning: 'WARNING', danger: 'CAUTION',
+};
+
 const Callout = Node.create({
     name: 'callout',
     group: 'block',
     content: 'block+',
     defining: true,
     addAttributes() {
-        return { type: { default: 'info' } };
+        return {
+            type: { default: 'info' },
+            /** v1.3.5.2：`[!xxx]` 里的文字，空 = 用 type 的默认映射 */
+            tag: { default: '' },
+        };
     },
     parseHTML() {
-        return [{ tag: 'div[data-callout]' }];
+        return [{
+            tag: 'div[data-callout]',
+            contentElement: (el) => el.querySelector('.gh-callout-content') || el,
+            getAttrs: (el) => ({
+                type: el.getAttribute('data-callout') || 'info',
+                tag: el.getAttribute('data-callout-tag') || '',
+            }),
+        }];
     },
     renderHTML({ node, HTMLAttributes }) {
         const type = String(node.attrs.type || 'info');
+        const tag = String(node.attrs.tag || '');
         return [
             'div',
             mergeAttributes(HTMLAttributes, {
                 'data-callout': type,
+                'data-callout-tag': tag,
                 class: `gh-callout gh-callout-${type}`,
             }),
             0,
         ];
+    },
+    /**
+     * v1.3.5.2（需求：提示块的 NOTE 要能直接编辑）
+     * 标签做成 contenteditable 的 span，失焦 / 回车时写回 attrs.tag；
+     * 正文仍由 contentDOM 交给 ProseMirror，两边互不干扰（ignoreMutation 只放行正文）。
+     */
+    addNodeView() {
+        return ({ node, editor, getPos }) => {
+            const dom = document.createElement('div');
+            const label = document.createElement('span');
+            const contentDOM = document.createElement('div');
+            contentDOM.className = 'gh-callout-content';
+            label.className = 'gh-callout-label';
+            label.contentEditable = 'true';
+            label.spellcheck = false;
+            label.setAttribute('title', '点击编辑标签');
+            dom.appendChild(label);
+            dom.appendChild(contentDOM);
+
+            const paint = (attrs) => {
+                const type = String(attrs.type || 'info');
+                dom.className = `gh-callout gh-callout-${type}`;
+                dom.setAttribute('data-callout', type);
+                const text = String(attrs.tag || '').trim() || CALLOUT_DEFAULT_TAG[type] || 'NOTE';
+                dom.setAttribute('data-callout-tag', text);
+                if (document.activeElement !== label) label.textContent = text;
+            };
+            paint(node.attrs);
+
+            const commit = () => {
+                const pos = typeof getPos === 'function' ? getPos() : -1;
+                if (pos < 0) return;
+                const next = String(label.textContent || '').trim().slice(0, 24) || 'NOTE';
+                label.textContent = next;
+                const cur = editor.state.doc.nodeAt(pos);
+                if (!cur || cur.type.name !== 'callout') return;
+                if (String(cur.attrs.tag || '') === next) return;
+                editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, tag: next }));
+            };
+            label.addEventListener('blur', commit);
+            label.addEventListener('keydown', (ev) => {
+                ev.stopPropagation();
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    label.blur();
+                }
+                if (ev.key === 'Escape') {
+                    ev.preventDefault();
+                    label.textContent = String(node.attrs.tag || '');
+                    label.blur();
+                }
+            });
+
+            return {
+                dom,
+                contentDOM,
+                update(updated) {
+                    if (updated.type.name !== 'callout') return false;
+                    paint(updated.attrs);
+                    return true;
+                },
+                ignoreMutation: (m) => !contentDOM.contains(m.target),
+            };
+        };
     },
 });
 
@@ -2323,10 +2432,23 @@ const MathBlock = Node.create({
         return ['div', mergeAttributes(HTMLAttributes, { 'data-gh-math': '1', class: 'gh-math' })];
     },
     addNodeView() {
-        return ({ node }) => {
+        return ({ node, getPos }) => {
             const dom = document.createElement('div');
             dom.className = 'gh-math gh-math-node';
             dom.contentEditable = 'false';
+            dom.setAttribute('title', '点击编辑公式');
+            /*
+             * v1.3.5.2（需求：公式块要能点击编辑）
+             * NodeView 里拿不到 $t / ElMessageBox 的上下文，这里只派发位置，
+             * 由 MemoEditor 统一弹窗并写回 attrs.formula（与插入时同一套交互）。
+             */
+            dom.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const pos = typeof getPos === 'function' ? getPos() : -1;
+                if (pos < 0) return;
+                window.dispatchEvent(new CustomEvent('gh-math-edit', { detail: { pos } }));
+            });
             const paint = (formula) => {
                 dom.innerHTML = '';
                 const f = String(formula || '').trim();
@@ -2355,74 +2477,178 @@ const MathBlock = Node.create({
 });
 
 /**
- * v1.3.5.1：页签块（`::: tabs` … `:::`）。
- * atom 块，页签数组以 JSON 存在 attrs.tabs；NodeView 内部自己管「当前第几页」，
- * 点击只切 DOM 显示、不写回文档 —— 内容修改统一走源码模式。
- * 正文 HTML 走 renderMarkdownSafe（已过 DOMPurify），不会引入 XSS。
+ * v1.3.5.2：页签项（tabsBlock 的子节点）。
+ * content: 'block+' —— 正文就是真正的块，光标可以直接在里面编辑（与块代码同感）。
+ * 标题存 attrs.title；标题栏由父级 TabsBlock 的 NodeView 渲染并提供改名 / 删除。
+ */
+const TabItem = Node.create({
+    name: 'tabItem',
+    content: 'block+',
+    defining: true,
+    addAttributes() {
+        return {
+            title: { default: '页签' },
+            /** 打开文档时的初始选中项（只作初始状态，切换不写回文档） */
+            active: { default: false },
+        };
+    },
+    parseHTML() {
+        return [{
+            tag: 'div[data-gh-tab]',
+            contentElement: '.gh-tab-body',
+            getAttrs: (el) => ({
+                title: el.getAttribute('data-title') || '页签',
+                active: el.hasAttribute('data-active'),
+            }),
+        }];
+    },
+    renderHTML({ node, HTMLAttributes }) {
+        return [
+            'div',
+            mergeAttributes(HTMLAttributes, {
+                'data-gh-tab': '1',
+                'data-title': String(node.attrs.title || ''),
+                ...(node.attrs.active ? { 'data-active': '1' } : {}),
+                class: 'gh-tab-item',
+            }),
+            ['div', { class: 'gh-tab-body' }, 0],
+        ];
+    },
+});
+
+/**
+ * v1.3.5.2：页签块（`::: tabs` … `:::`）。
+ *
+ * v1.3.5.1 是 atom + JSON attrs，页签内容不能编辑；现在改成 content 结构：
+ *   tabsBlock > tabItem+，每个 tabItem 的正文由 ProseMirror 原生渲染，光标可直达。
+ * 头部（标题 + 添加按钮）由本 NodeView 生成，点击切换只改 DOM 显示、不写回文档；
+ * 改名 / 删除 / 添加通过 CustomEvent 交给 MemoEditor（那里有 ElMessageBox 与 $t）。
  */
 const TabsBlock = Node.create({
     name: 'tabsBlock',
     group: 'block',
-    atom: true,
-    draggable: true,
-    selectable: true,
-    addAttributes() {
-        return { tabs: { default: '[]' } };
-    },
+    content: 'tabItem+',
+    defining: true,
     parseHTML() {
-        return [{ tag: 'div[data-gh-tabs]' }];
+        return [{ tag: 'div[data-gh-tabs]', contentElement: '.gh-tabs-items' }];
     },
     renderHTML({ HTMLAttributes }) {
-        return ['div', mergeAttributes(HTMLAttributes, { 'data-gh-tabs': '1', class: 'gh-tabs-block' })];
+        return [
+            'div',
+            mergeAttributes(HTMLAttributes, { 'data-gh-tabs': '1', class: 'gh-tabs gh-tabs-block' }),
+            ['div', { class: 'gh-tabs-items' }, 0],
+        ];
     },
     addNodeView() {
-        return ({ node }) => {
+        return ({ node, editor, getPos }) => {
             const dom = document.createElement('div');
             dom.className = 'gh-tabs gh-tabs-node';
-            dom.contentEditable = 'false';
-            const paint = (raw) => {
-                let tabs = [];
-                try { tabs = JSON.parse(String(raw || '[]')); } catch (e) { tabs = []; }
-                if (!Array.isArray(tabs)) tabs = [];
-                const active = Math.max(0, tabs.findIndex((t) => t && t.active));
-                dom.innerHTML = '';
-                const head = document.createElement('div');
-                head.className = 'gh-tabs-head';
-                const panels = document.createElement('div');
-                panels.className = 'gh-tabs-panels';
-                tabs.forEach((t, idx) => {
+            const head = document.createElement('div');
+            head.className = 'gh-tabs-head';
+            const items = document.createElement('div');
+            items.className = 'gh-tabs-items';
+            dom.appendChild(head);
+            dom.appendChild(items);
+
+            let activeIdx = 0;
+            const basePos = () => (typeof getPos === 'function' ? getPos() : -1);
+            /** 第 idx 个 tabItem 的绝对位置（改名 / 删除都靠它） */
+            const childPos = (idx) => {
+                const base = basePos();
+                if (base < 0) return -1;
+                const cur = editor.state.doc.nodeAt(base);
+                if (!cur || cur.type.name !== 'tabsBlock') return -1;
+                let pos = base + 1;
+                for (let i = 0; i < idx && i < cur.childCount; i += 1) pos += cur.child(i).nodeSize;
+                return pos;
+            };
+            const syncPanels = () => {
+                items.querySelectorAll('.gh-tab-item').forEach((el, i) => {
+                    el.style.display = i === activeIdx ? 'block' : 'none';
+                });
+                head.querySelectorAll('.gh-tabs-label').forEach((el, i) => {
+                    el.classList.toggle('is-active', i === activeIdx);
+                });
+            };
+            const emit = (name, detail) => {
+                window.dispatchEvent(new CustomEvent(name, { detail }));
+            };
+            const bindLongPress = (btn, idx, title) => {
+                let timer = 0;
+                const clear = () => {
+                    if (timer) {
+                        window.clearTimeout(timer);
+                        timer = 0;
+                    }
+                };
+                btn.addEventListener('pointerdown', (ev) => {
+                    if (ev.button !== undefined && ev.button !== 0) return;
+                    clear();
+                    timer = window.setTimeout(() => {
+                        timer = 0;
+                        const pos = childPos(idx);
+                        if (pos >= 0) emit('gh-tab-longpress', { pos, title });
+                    }, 550);
+                });
+                ['pointerup', 'pointercancel', 'pointerleave'].forEach((n) => btn.addEventListener(n, clear));
+            };
+
+            const paint = (n) => {
+                head.innerHTML = '';
+                if (activeIdx >= n.childCount) activeIdx = 0;
+                const titles = [];
+                n.forEach((child, _offset, i) => {
+                    titles.push({ title: String(child.attrs.title || '页签'), i });
+                });
+                titles.forEach(({ title, i }) => {
                     const btn = document.createElement('button');
                     btn.type = 'button';
-                    btn.className = 'gh-tabs-label' + (idx === active ? ' is-active' : '');
-                    btn.textContent = String((t && t.title) || `页签 ${idx + 1}`);
+                    btn.className = 'gh-tabs-label' + (i === activeIdx ? ' is-active' : '');
+                    btn.textContent = title;
+                    btn.title = '双击改名，长按可选改名 / 删除';
                     btn.addEventListener('mousedown', (ev) => ev.preventDefault());
                     btn.addEventListener('click', (ev) => {
                         ev.preventDefault();
                         ev.stopPropagation();
-                        head.querySelectorAll('.gh-tabs-label').forEach((el, i) => el.classList.toggle('is-active', i === idx));
-                        panels.querySelectorAll('.gh-tabs-panel').forEach((el, i) => {
-                            el.style.display = i === idx ? '' : 'none';
-                        });
+                        activeIdx = i;
+                        syncPanels();
                     });
+                    btn.addEventListener('dblclick', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        const pos = childPos(i);
+                        if (pos >= 0) emit('gh-tab-rename', { pos, title });
+                    });
+                    bindLongPress(btn, i, title);
                     head.appendChild(btn);
-                    const panel = document.createElement('div');
-                    panel.className = 'gh-tabs-panel';
-                    panel.style.display = idx === active ? '' : 'none';
-                    panel.innerHTML = renderMarkdownSafe(String((t && t.content) || ''));
-                    panels.appendChild(panel);
                 });
-                dom.appendChild(head);
-                dom.appendChild(panels);
+                const add = document.createElement('button');
+                add.type = 'button';
+                add.className = 'gh-tabs-add';
+                add.textContent = '+';
+                add.title = '添加页签';
+                add.addEventListener('mousedown', (ev) => ev.preventDefault());
+                add.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    const base = basePos();
+                    if (base >= 0) emit('gh-tab-add', { pos: base });
+                });
+                head.appendChild(add);
+                window.setTimeout(syncPanels, 0);
+                requestAnimationFrame(syncPanels);
             };
-            paint(node.attrs.tabs);
+            paint(node);
+
             return {
                 dom,
+                contentDOM: items,
                 update(updated) {
                     if (updated.type.name !== 'tabsBlock') return false;
-                    paint(updated.attrs.tabs);
+                    paint(updated);
                     return true;
                 },
-                ignoreMutation: () => true,
+                ignoreMutation: (m) => m.type !== 'selection' && !items.contains(m.target),
             };
         };
     },
@@ -3069,6 +3295,7 @@ const TOOLS = {
     callout: { icon: 'circle-info', label: 'memo.toolCallout', run: null },
     /* v1.3.5.1：数学公式块 / 页签块 —— 都要先问参数，run 留 null 走特判 */
     mathBlock: { icon: 'code', label: 'memo.toolMathBlock', run: null },
+    whiteboard: { icon: 'paintbrush', label: 'memo.toolWhiteboard', run: null },
     tabsBlock: { icon: 'folder-open', label: 'memo.toolTabsBlock', run: null },
     video: { icon: 'file-video', label: 'memo.toolVideo', run: null },
     audio: { icon: 'file-audio', label: 'memo.toolAudio', run: null },
@@ -3327,7 +3554,7 @@ const SLASH_DEFAULT_GROUPS = [
     ['bold', 'italic', 'underline', 'strike', 'highlight', 'code', 'link'],
     ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'blockquote', 'callout', 'mathBlock', 'tabsBlock', 'hr'],
     ['bulletList', 'orderedList', 'taskList', 'indent', 'outdent'],
-    ['image', 'upload', 'file', 'video', 'audio', 'linkExtract', 'iframe', 'table', 'codeBlock'],
+    ['image', 'upload', 'file', 'video', 'audio', 'linkExtract', 'iframe', 'table', 'whiteboard', 'codeBlock'],
     ['alignLeft', 'alignCenter', 'alignRight', 'hardBreak', 'insertLineBelow'],
     ['subDoc', 'outline', 'foldAll', 'findReplace'],
 ];
@@ -3407,7 +3634,7 @@ function parseToolTokens(text) {
 /** 斜杠菜单命令表 */
 export default {
     name: 'MemoEditor',
-    components: { EditorContent, FilePickerDialog, UploadTargetDialog, MediaPreviewOverlay, FileDetailUnified },
+    components: { EditorContent, FilePickerDialog, UploadTargetDialog, MediaPreviewOverlay, FileDetailUnified, ImageCropDialog },
     props: {
         /** 笔记详情（含 id / content / version）；null = 还没选中 */
         note: { type: Object, default: null },
@@ -3553,6 +3780,10 @@ export default {
             /** v1.3.2：上传目标弹窗的默认值（目录固定 /notes/memo/年/月） */
             uploadPrefill: { channelId: '', instanceId: '', uploadFolder: '' },
             uploadBusy: false,
+            /** v1.3.5.2：白板 —— 背景文件交给 ImageCropDialog，done 后上传并插入 */
+            whiteboardVisible: false,
+            whiteboardFile: null,
+            whiteboardUploading: false,
             pendingUploadFiles: [],
             /** 'files' = 本地上传 | 'url' = 链接提取（共用同一个目标面板） */
             uploadMode: 'files',
@@ -3960,6 +4191,16 @@ export default {
     },
     mounted() {
         this.createEditor();
+        /* v1.3.5.2：公式块点击编辑 —— NodeView 只派发位置，这里统一弹窗写回 */
+        this.onMathEditEvent = (e) => this.editMathBlock(e && e.detail ? e.detail.pos : -1);
+        window.addEventListener('gh-math-edit', this.onMathEditEvent);
+        /* v1.3.5.2：页签块的改名 / 长按菜单 / 添加页签（NodeView 派发，这里弹窗） */
+        this.onTabRenameEvent = (e) => this.renameTabItem(e && e.detail);
+        this.onTabLongPressEvent = (e) => this.tabItemMenu(e && e.detail);
+        this.onTabAddEvent = (e) => this.addTabItem(e && e.detail);
+        window.addEventListener('gh-tab-rename', this.onTabRenameEvent);
+        window.addEventListener('gh-tab-longpress', this.onTabLongPressEvent);
+        window.addEventListener('gh-tab-add', this.onTabAddEvent);
         this.applyCustomCss();
         this.$nextTick(() => {
             this.measureToolbar();
@@ -4232,6 +4473,10 @@ export default {
     },
     beforeUnmount() {
         window.removeEventListener('keydown', this.onKeydownGlobal);
+        if (this.onMathEditEvent) window.removeEventListener('gh-math-edit', this.onMathEditEvent);
+        if (this.onTabRenameEvent) window.removeEventListener('gh-tab-rename', this.onTabRenameEvent);
+        if (this.onTabLongPressEvent) window.removeEventListener('gh-tab-longpress', this.onTabLongPressEvent);
+        if (this.onTabAddEvent) window.removeEventListener('gh-tab-add', this.onTabAddEvent);
         if (this.onGlobalPointer) window.removeEventListener('pointerdown', this.onGlobalPointer, true);
         clearTimeout(this._hoverTimer);
         const body = this.$refs.bodyEl;
@@ -4365,7 +4610,7 @@ export default {
                     Underline,
                     Highlight.configure({ multicolor: false }),
                     // 表格：单元格/表头各扩一个 align 属性，md 的 `:---:` 才能往返
-                    Table.configure({ resizable: false, HTMLAttributes: { class: 'gh-table' } }),
+                    Table.configure({ resizable: true, allowTableNodeSelection: true, HTMLAttributes: { class: 'gh-table' } }),
                     TableRow,
                     CellWithAlign,
                     HeaderWithAlign,
@@ -4376,6 +4621,7 @@ export default {
                     Callout,
                     // v1.3.5.1：数学公式块 / 页签块
                     MathBlock,
+                    TabItem,
                     TabsBlock,
                     // v1.3.1.2：HTML 块 / 网页嵌入 / 字号 / 颜色
                     HtmlBlock,
@@ -5372,6 +5618,7 @@ export default {
             }
             if (token === 'callout') return this.insertCallout();
             if (token === 'mathBlock') return this.insertMathBlock();
+            if (token === 'whiteboard') return this.openWhiteboard();
             if (token === 'tabsBlock') return this.insertTabsBlock();
             // v1.3.1.2：插入表格先问行列数（需求给了参考图），不再固定 3×3
             if (token === 'table') {
@@ -6892,9 +7139,97 @@ export default {
                         },
                     };
                 }
+                /* v1.3.5.2（需求：表格显示缩放框，可拖动缩放）—— 右下角挂一个拖拽手柄 */
+                if (table) this.attachTableResizer(table);
             } catch (e) {
                 this.tableBar = { open: false, style: {} };
             }
+        },
+        /** v1.3.5.2：给当前表格挂右下角缩放手柄（同一个表格只挂一次） */
+        attachTableResizer(table) {
+            const host = table.parentElement;
+            if (!host) return;
+            if (host.querySelector(':scope > .gh-table-resizer')) return;
+            const handle = document.createElement('span');
+            handle.className = 'gh-table-resizer';
+            handle.title = '拖动调整表格宽度';
+            handle.addEventListener('pointerdown', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const startX = ev.clientX;
+                const startW = table.getBoundingClientRect().width;
+                const move = (e) => {
+                    const w = Math.max(160, Math.round(startW + (e.clientX - startX)));
+                    table.style.width = `${w}px`;
+                };
+                const up = () => {
+                    window.removeEventListener('pointermove', move);
+                    window.removeEventListener('pointerup', up);
+                    this.onEditorUpdate();
+                };
+                window.addEventListener('pointermove', move);
+                window.addEventListener('pointerup', up);
+            });
+            if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+            host.appendChild(handle);
+        },
+        /** v1.3.5.2：表格整体宽高（编辑态生效；md 的管道表格本身不携带尺寸） */
+        async promptTableSize() {
+            const ed = this.editor;
+            if (!ed) return;
+            const table = ed.view.dom.querySelector('table');
+            if (!table) return;
+            const rect = table.getBoundingClientRect();
+            let value = null;
+            try {
+                const r = await ElMessageBox.prompt('宽度,高度（px）。留空表示自动，例如 680,320', '表格尺寸', {
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                    inputValue: `${Math.round(rect.width)},`,
+                });
+                value = r.value;
+            } catch (e) {
+                return;
+            }
+            const [w, h] = String(value || '').split(/[,，]/).map((v) => String(v || '').trim());
+            if (w) table.style.width = /^\d+$/.test(w) ? `${w}px` : w;
+            if (h) table.style.height = /^\d+$/.test(h) ? `${h}px` : h;
+            this.onEditorUpdate();
+        },
+        /** v1.3.5.2：当前列宽 / 当前行高 */
+        async promptCellSize() {
+            const ed = this.editor;
+            if (!ed) return;
+            const { from } = ed.state.selection;
+            const at = ed.view.domAtPos(from);
+            let el = at && at.node;
+            if (el && el.nodeType === 3) el = el.parentElement;
+            const cell = el && el.closest ? el.closest('td,th') : null;
+            if (!cell) return;
+            let value = null;
+            try {
+                const r = await ElMessageBox.prompt('列宽,行高（px）。留空表示不改', '行列尺寸', {
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                    inputValue: `${Math.round(cell.getBoundingClientRect().width)},`,
+                });
+                value = r.value;
+            } catch (e) {
+                return;
+            }
+            const [w, h] = String(value || '').split(/[,，]/).map((v) => String(v || '').trim());
+            const row = cell.parentElement;
+            if (w && /^\d+$/.test(w)) {
+                const table = cell.closest('table');
+                if (table) {
+                    Array.prototype.forEach.call(table.rows, (tr) => {
+                        const c = tr.children[Array.prototype.indexOf.call(row.children, cell)];
+                        if (c) c.style.width = `${w}px`;
+                    });
+                }
+            }
+            if (h && /^\d+$/.test(h) && row) row.style.height = `${h}px`;
+            this.onEditorUpdate();
         },
         insertTableAt(pos) {
             const rows = Math.max(1, Math.min(10, Number(pos?.r) || 3));
@@ -6986,17 +7321,232 @@ export default {
             this.onEditorUpdate();
         },
 
-        /** v1.3.5.1：插入页签块 —— 给两个示例页签，细节到源码模式里改 */
+        /** v1.3.5.2：点击公式块 → 弹窗改公式（与插入同一套交互） */
+        async editMathBlock(pos) {
+            const ed = this.editor;
+            if (!ed || typeof pos !== 'number' || pos < 0) return;
+            const node = ed.state.doc.nodeAt(pos);
+            if (!node || node.type.name !== 'mathBlock') return;
+            let value = null;
+            try {
+                const r = await ElMessageBox.prompt(
+                    this.$t('memo.mathPromptTip'),
+                    this.$t('memo.toolMathBlock'),
+                    {
+                        confirmButtonText: this.$t('common.confirm'),
+                        cancelButtonText: this.$t('common.cancel'),
+                        inputType: 'textarea',
+                        inputValue: String(node.attrs.formula || ''),
+                        inputPlaceholder: 'a^2 + b^2 = c^2',
+                    }
+                );
+                value = r.value;
+            } catch (e) {
+                return;
+            }
+            const next = String(value || '').trim();
+            const cur = ed.state.doc.nodeAt(pos);
+            if (!cur || cur.type.name !== 'mathBlock') return;
+            if (String(cur.attrs.formula || '') === next) return;
+            ed.view.dispatch(ed.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, formula: next }));
+            this.onEditorUpdate();
+        },
+
+        /* ── v1.3.5.2：白板工具（复用图片处理组件的涂鸦 / 文字 / 形状） ── */
+        async openWhiteboard() {
+            let useLocal = false;
+            try {
+                await ElMessageBox.confirm(
+                    '用本地图片做背景，或直接用空白格子画布？',
+                    this.$t('memo.toolWhiteboard'),
+                    {
+                        confirmButtonText: '选择本地图片',
+                        cancelButtonText: '空白画布',
+                        distinguishCancelAndClose: true,
+                        type: 'info',
+                    }
+                );
+                useLocal = true;
+            } catch (e) {
+                if (e !== 'cancel') return; // 右上角关闭 = 取消
+            }
+            if (useLocal) {
+                const input = this.$refs.whiteboardInput;
+                if (input) {
+                    input.value = '';
+                    input.click();
+                }
+                return;
+            }
+            const file = await this.makeWhiteboardFile();
+            if (!file) return;
+            this.whiteboardFile = file;
+            this.whiteboardVisible = true;
+        },
+        /** 空白格子画布（1600×1000 PNG），交给图片处理组件当背景 */
+        async makeWhiteboardFile() {
+            const w = 1600;
+            const h = 1000;
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, w, h);
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
+            ctx.lineWidth = 1;
+            for (let x = 0; x <= w; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, h);
+                ctx.stroke();
+            }
+            for (let y = 0; y <= h; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(w, y);
+                ctx.stroke();
+            }
+            const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+            if (!blob) return null;
+            return new File([blob], `whiteboard-${Date.now()}.png`, { type: 'image/png' });
+        },
+        onWhiteboardBgChosen(e) {
+            const f = e && e.target && e.target.files ? e.target.files[0] : null;
+            if (!f) return;
+            if (!/^image\//i.test(String(f.type || ''))) {
+                this.$message.warning('请选择图片文件');
+                return;
+            }
+            this.whiteboardFile = f;
+            this.whiteboardVisible = true;
+        },
+        /** 白板保存：图片处理组件交回 File → 上传图床 → 插入编辑区 */
+        async onWhiteboardDone(file) {
+            if (!file || this.whiteboardUploading) return;
+            this.whiteboardUploading = true;
+            try {
+                const hit = await uploadOne(
+                    file,
+                    { uploadFolder: defaultUploadFolder('memo'), instanceId: this.instanceId },
+                    { source: 'Attachment' }
+                );
+                const url = String((hit && (hit.src || hit.url)) || '');
+                if (!url) throw new Error('上传失败');
+                const ed = this.editor;
+                if (ed) {
+                    if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
+                    ed.chain().focus().insertContent({
+                        type: 'image',
+                        attrs: { src: url, alt: String((hit && hit.name) || '白板') },
+                    }).run();
+                    this.onEditorUpdate();
+                }
+                this.$message.success('白板已插入');
+            } catch (e) {
+                this.$message.error(e.message || '上传失败');
+            } finally {
+                this.whiteboardUploading = false;
+                this.whiteboardFile = null;
+            }
+        },
+
+        /** v1.3.5.2：页签名改名（双击标题或长按菜单选「改名」） */
+        async renameTabItem(detail) {
+            const pos = detail && detail.pos;
+            const ed = this.editor;
+            if (!ed || typeof pos !== 'number' || pos < 0) return;
+            const node = ed.state.doc.nodeAt(pos);
+            if (!node || node.type.name !== 'tabItem') return;
+            let value = null;
+            try {
+                const r = await ElMessageBox.prompt('页签名称', '改名', {
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                    inputValue: String(node.attrs.title || ''),
+                    inputValidator: (v) => (String(v || '').trim() ? true : '页签名称不能为空'),
+                });
+                value = r.value;
+            } catch (e) {
+                return;
+            }
+            const next = String(value || '').trim().slice(0, 60);
+            if (!next) return;
+            const cur = ed.state.doc.nodeAt(pos);
+            if (!cur || cur.type.name !== 'tabItem') return;
+            if (String(cur.attrs.title || '') === next) return;
+            ed.view.dispatch(ed.state.tr.setNodeMarkup(pos, undefined, { ...cur.attrs, title: next }));
+            this.onEditorUpdate();
+        },
+
+        /** v1.3.5.2：长按页签标题 —— 改名 / 删除（至少保留一个） */
+        async tabItemMenu(detail) {
+            const pos = detail && detail.pos;
+            const ed = this.editor;
+            if (!ed || typeof pos !== 'number' || pos < 0) return;
+            const node = ed.state.doc.nodeAt(pos);
+            if (!node || node.type.name !== 'tabItem') return;
+            let action = '';
+            try {
+                await ElMessageBox.confirm(
+                    `页签「${String(node.attrs.title || '')}」`,
+                    '页签操作',
+                    {
+                        distinguishCancelAndClose: true,
+                        confirmButtonText: '改名',
+                        cancelButtonText: '删除',
+                        type: 'info',
+                    }
+                );
+                action = 'rename';
+            } catch (e) {
+                action = e === 'cancel' ? 'delete' : '';
+            }
+            if (action === 'rename') {
+                this.renameTabItem({ pos });
+                return;
+            }
+            if (action !== 'delete') return;
+            const parent = ed.state.doc.resolve(pos).parent;
+            if (parent && parent.childCount <= 1) {
+                this.$message.warning('至少保留一个页签');
+                return;
+            }
+            ed.view.dispatch(ed.state.tr.delete(pos, pos + node.nodeSize));
+            this.onEditorUpdate();
+        },
+
+        /** v1.3.5.2：在页签块末尾追加一个页签 */
+        addTabItem(detail) {
+            const pos = detail && detail.pos;
+            const ed = this.editor;
+            if (!ed || typeof pos !== 'number' || pos < 0) return;
+            const node = ed.state.doc.nodeAt(pos);
+            if (!node || node.type.name !== 'tabsBlock') return;
+            const insertPos = pos + node.nodeSize - 1;
+            ed.chain().focus().insertContentAt(insertPos, {
+                type: 'tabItem',
+                attrs: { title: `页签 ${node.childCount + 1}`, active: false },
+                content: [{ type: 'paragraph' }],
+            }).run();
+            this.onEditorUpdate();
+        },
+
+        /** v1.3.5.1：插入页签块（v1.3.5.2 起 content 结构，正文可原地编辑） */
         insertTabsBlock() {
             const ed = this.editor;
             if (!ed) return;
             if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
-            const tabs = [
-                { title: this.$t('memo.tabsDefaultFirst'), active: true, content: this.$t('memo.tabsDefaultBody') },
-                { title: this.$t('memo.tabsDefaultSecond'), active: false, content: this.$t('memo.tabsDefaultBody') },
-            ];
+            /* v1.3.5.2：content 结构 —— 每个页签是一个 tabItem，正文可原地编辑 */
+            const body = () => ({ type: 'paragraph', content: [{ type: 'text', text: this.$t('memo.tabsDefaultBody') }] });
             ed.chain().focus()
-                .insertContent({ type: 'tabsBlock', attrs: { tabs: JSON.stringify(tabs) } })
+                .insertContent({
+                    type: 'tabsBlock',
+                    content: [
+                        { type: 'tabItem', attrs: { title: this.$t('memo.tabsDefaultFirst'), active: true }, content: [body()] },
+                        { type: 'tabItem', attrs: { title: this.$t('memo.tabsDefaultSecond'), active: false }, content: [body()] },
+                    ],
+                })
                 .run();
             this.onEditorUpdate();
         },
@@ -8199,16 +8749,17 @@ export default {
              * 触屏设备上只在【宽度明显变化（旋屏 / 桌面拉窗口）】时更新基准高度，
              * 同宽的高度变化一律视为浏览器栏收放，沿用进入页面时的基准。
              */
-            const coarse = typeof window !== 'undefined' && (
-                (window.matchMedia && (
-                    window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(hover: none)').matches
-                )) || (navigator.maxTouchPoints || 0) > 0
-            );
+            /*
+             * v1.3.5.2（需求）：桌面端也要修 —— 去掉只对触屏设备生效的限制。
+             * 浏览器顶栏 / 底栏收放、或页面滚动导致的可视区变化，只要宽度没变
+             * （不是旋屏、也不是拉窗口宽度），就一律沿用进入页面时的编辑区高度基准；
+             * 宽度变化 ≥80px 才认为布局真的变了，重新取一次基准。
+             */
             if (!this._mediaBaseW || Math.abs(width - this._mediaBaseW) >= 80) {
                 this._mediaBaseW = width;
                 this._mediaBaseH = host.clientHeight;
             }
-            const baseH = coarse ? (this._mediaBaseH || host.clientHeight) : host.clientHeight;
+            const baseH = this._mediaBaseH || host.clientHeight;
             const maxW = width * 0.8;
             const maxH = baseH * 0.5;
             if (maxW <= 0 || maxH <= 0) return;
@@ -10319,8 +10870,9 @@ export default {
 .me-wysiwyg :deep(.gh-editor-content li:has(> div > ol))::after {
     content: '';
     position: absolute;
+    /* v1.3.5.2（需求）：上部离列表标识留一点空隙，不要顶到图标 */
     left: -0.75em;
-    top: 1.15em;
+    top: 1.45em;
     bottom: 0.65em;
     width: 1px;
     background: var(--el-border-color);
@@ -10335,7 +10887,8 @@ export default {
      * li 的高度还包着子列表的 margin-bottom(0.5em) 与末项 margin(0.18em)，
      * 原来的 0.65em 会让线尾多出一小截。把这段空隙补掉，线就停在最后一行内容下沿。
      */
-    bottom: 1.05em;
+    /* v1.3.5.2（需求）：任务列表线尾与最后一行内容齐平，与有序/无序列表同口径 */
+    bottom: 0.68em;
 }
 /* 有序列表的数字比圆点宽，竖线再往左一点才对得上数字中心 */
 .me-wysiwyg :deep(.gh-editor-content ol > li:has(> ul))::after,
@@ -10825,7 +11378,7 @@ export default {
     border-left: 3px solid var(--el-color-primary);
     background: var(--el-color-primary-light-9);
 }
-.me-wysiwyg :deep(.gh-editor-content .gh-callout > * + *),
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-content > * + *),
 .me-preview :deep(.gh-callout > * + *) {
     margin-top: 0.45em;
 }
@@ -10854,21 +11407,25 @@ export default {
  * v1.3.5.1：编辑态用 CSS 伪元素显示类型标签（不往 DOM 里塞静态子节点，
  * 否则 parseHTML 会把它当成正文内容，保存往返就会被污染）。
  */
-.me-wysiwyg :deep(.gh-editor-content .gh-callout)::before {
-    display: block;
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-label) {
+    display: inline-block;
     margin-bottom: 6px;
+    padding: 1px 4px;
+    border-radius: 4px;
     font-size: 0.78em;
     font-weight: 700;
     letter-spacing: 0.05em;
     color: var(--el-color-primary);
-    pointer-events: none;
-    user-select: none;
+    cursor: text;
+    outline: none;
+    transition: background-color 0.16s ease;
 }
-.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="info"])::before { content: "NOTE"; }
-.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="tip"])::before { content: "TIP"; }
-.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="important"])::before { content: "IMPORTANT"; color: #8957e5; }
-.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="warning"])::before { content: "WARNING"; color: var(--el-color-warning); }
-.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="danger"])::before { content: "CAUTION"; color: var(--el-color-danger); }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-label:hover),
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-label:focus) { background: rgba(127, 127, 127, 0.14); }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-tip .gh-callout-label) { color: var(--el-color-success); }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-important .gh-callout-label) { color: #8957e5; }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-warning .gh-callout-label) { color: var(--el-color-warning); }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-danger .gh-callout-label) { color: var(--el-color-danger); }
 /* 预览态：extractFences 抽出来的 .gh-callout-title / .gh-callout-body 外壳 */
 .me-preview :deep(.gh-callout-title) {
     font-size: 0.78em;
@@ -10964,6 +11521,71 @@ export default {
 .me-preview :deep(.gh-tabs > input:nth-of-type(6):checked ~ .gh-tabs-head > label:nth-child(6)) {
     color: var(--el-color-primary);
     border-bottom-color: var(--el-color-primary);
+}
+/* v1.3.5.2：页签块改成 content 结构后的编辑态样式 */
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-items) {
+    padding: 10px 14px;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tab-item) {
+    display: none;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-add) {
+    flex: 0 0 auto;
+    width: 24px;
+    height: 24px;
+    margin: 4px 6px 0;
+    padding: 0;
+    border: 1px dashed var(--el-border-color);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-size: 15px;
+    line-height: 1;
+    cursor: pointer;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-add:hover) {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+}
+
+/* v1.3.5.2：白板的隐藏文件输入 */
+.me-hidden-input {
+    display: none;
+}
+
+/* v1.3.5.2（需求：表格可拖动缩放）—— Tiptap 的列宽手柄 + 自建的整表缩放手柄 */
+.me-wysiwyg :deep(.gh-editor-content table) {
+    table-layout: fixed;
+    width: 100%;
+}
+.me-wysiwyg :deep(.gh-editor-content .tableWrapper) {
+    overflow-x: auto;
+    position: relative;
+}
+.me-wysiwyg :deep(.gh-editor-content .column-resize-handle) {
+    position: absolute;
+    right: -2px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--el-color-primary);
+    pointer-events: none;
+    z-index: 2;
+}
+.me-wysiwyg :deep(.gh-editor-content .resize-cursor) {
+    cursor: col-resize;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-table-resizer) {
+    position: absolute;
+    right: -5px;
+    bottom: -5px;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--el-color-primary);
+    border-radius: 3px;
+    background: var(--el-bg-color, #fff);
+    cursor: nwse-resize;
+    z-index: 3;
 }
 
 /* 占位提示 */

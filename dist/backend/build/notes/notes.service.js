@@ -7,6 +7,8 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.NotesService = exports.LIST_COMMENT_MAX = void 0;
+exports.normalizeVisibilityUsers = normalizeVisibilityUsers;
+exports.normalizeVisibilityMode = normalizeVisibilityMode;
 exports.parseNoteSearch = parseNoteSearch;
 const common_1 = require("@nestjs/common");
 const prisma_1 = require("../common/prisma");
@@ -18,6 +20,32 @@ const file_view_1 = require("../common/file-view");
 const file_filter_1 = require("../common/file-filter");
 const notes_util_1 = require("./notes.util");
 exports.LIST_COMMENT_MAX = 100;
+function normalizeVisibilityUsers(raw) {
+    const arr = Array.isArray(raw) ? raw : [];
+    const out = [];
+    for (const v of arr) {
+        const name = String(v || '').trim().slice(0, 64);
+        if (name && !out.includes(name))
+            out.push(name);
+        if (out.length >= 200)
+            break;
+    }
+    return out;
+}
+function normalizeVisibilityMode(raw, visibility) {
+    if (String(visibility || '') !== 'specified')
+        return '';
+    return String(raw || '').trim().toLowerCase() === 'deny' ? 'deny' : 'allow';
+}
+function readVisibilityUsers(raw) {
+    try {
+        const v = JSON.parse(String(raw || '[]'));
+        return Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
+    }
+    catch (e) {
+        return [];
+    }
+}
 function parseNoteSearch(raw) {
     const includeTags = [];
     const excludeTags = [];
@@ -142,8 +170,13 @@ let NotesService = class NotesService {
         if (input.kind)
             where.kind = String(input.kind);
         if (square) {
-            where.visibility = 'public';
             where.status = 'published';
+            const viewer = String(input.viewer || '');
+            where.OR = [
+                { visibility: 'public' },
+                { visibility: 'specified', visibilityMode: 'allow', visibilityUsers: { contains: `"${viewer}"` } },
+                { visibility: 'specified', visibilityMode: 'deny', NOT: { visibilityUsers: { contains: `"${viewer}"` } } },
+            ];
         }
         else {
             where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
@@ -231,6 +264,8 @@ let NotesService = class NotesService {
                     kind: true,
                     coverFileId: true,
                     visibility: true,
+                    visibilityMode: true,
+                    visibilityUsers: true,
                     status: true,
                     author: true,
                     instanceId: true,
@@ -324,6 +359,8 @@ let NotesService = class NotesService {
             content,
             coverFileId: row.coverFileId || '',
             visibility: row.visibility || 'private',
+            visibilityMode: String(row.visibilityMode || ''),
+            visibilityUsers: readVisibilityUsers(row.visibilityUsers),
             status: row.status,
             author: row.author || '',
             authorNickname: prof ? String(prof.nickname || '') : '',
@@ -421,6 +458,8 @@ let NotesService = class NotesService {
         const visibility = notes_util_1.NOTE_VISIBILITIES.includes(String(input.visibility || ''))
             ? String(input.visibility)
             : 'private';
+        const visibilityUsers = normalizeVisibilityUsers(input.visibilityUsers);
+        const visibilityMode = normalizeVisibilityMode(input.visibilityMode, visibility);
         const now = new Date();
         try {
             const created = await prisma_1.prisma.note.create({
@@ -429,6 +468,8 @@ let NotesService = class NotesService {
                     content,
                     coverFileId: ordered.find((f) => (0, notes_util_1.mediaKindOfMime)(f.mime) === 'image')?.id || '',
                     visibility,
+                    visibilityMode,
+                    visibilityUsers: JSON.stringify(visibilityUsers),
                     status: 'published',
                     author: viewer,
                     instanceId,
@@ -522,6 +563,10 @@ let NotesService = class NotesService {
         const visibility = input.visibility !== undefined && notes_util_1.NOTE_VISIBILITIES.includes(String(input.visibility))
             ? String(input.visibility)
             : existing.visibility;
+        const visibilityUsers = input.visibilityUsers !== undefined ? normalizeVisibilityUsers(input.visibilityUsers) : null;
+        const visibilityMode = input.visibilityMode !== undefined || input.visibility !== undefined
+            ? normalizeVisibilityMode(input.visibilityMode !== undefined ? input.visibilityMode : existing.visibilityMode, visibility)
+            : null;
         let publishedAt = null;
         if (input.publishedAt !== undefined) {
             const raw = input.publishedAt;
@@ -541,6 +586,8 @@ let NotesService = class NotesService {
                 data: {
                     content,
                     visibility,
+                    ...(visibilityUsers ? { visibilityUsers: JSON.stringify(visibilityUsers) } : {}),
+                    ...(visibilityMode !== null ? { visibilityMode } : {}),
                     ...(publishedAt ? { publishedAt } : {}),
                     coverFileId: finalFiles.find((f) => (0, notes_util_1.mediaKindOfMime)(f.mime) === 'image')?.id || '',
                     version: { increment: 1 },
@@ -793,6 +840,14 @@ let NotesService = class NotesService {
         await prisma_1.prisma.noteComment.delete({ where: { id: row.id } });
         app_log_1.appLog.info('note', `删除瞬间留言：${row.noteId}`, `留言人=${row.author}`, ip);
         return { ok: true };
+    }
+    async userOptions() {
+        const rows = await prisma_1.prisma.user.findMany({
+            where: { enabled: true },
+            orderBy: { createdAt: 'asc' },
+            select: { username: true, nickname: true },
+        });
+        return rows.map((u) => ({ username: u.username, nickname: u.nickname || u.username }));
     }
     async pickLocations(viewer, instanceId, q) {
         const me = String(viewer || '');

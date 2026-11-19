@@ -113,6 +113,15 @@ export class NotesController {
    * 只取当前账户 + 当前实例 + 当前内容类型下的标记，支持按输入关键字查询，
    * 供「标记」输入框做 el-autocomplete 联想；路由必须排在 @Get(':id') 之前。
    */
+  /**
+   * v1.3.5.2：「指定可见」的用户候选（登录即可读，只下发用户名与昵称）。
+   * 必须放在 `@Get(':id')` 之前，否则会被当成笔记 id。
+   */
+  @Get('user-options')
+  async userOptions() {
+    return this.notes.userOptions();
+  }
+
   @Get('markers')
   async markers(
     @Req() req: Request,
@@ -298,6 +307,9 @@ export class NotesController {
         assetIds: body.assetIds as string[],
         tagNames: body.tagNames as string[],
         markerName: body.markerName as string,
+        // v1.3.5.2：指定可见 —— 模式 + 用户名列表
+        visibilityMode: body.visibilityMode as string,
+        visibilityUsers: body.visibilityUsers as string[],
         instanceId: body.instanceId as string,
       },
       viewer,
@@ -325,6 +337,9 @@ export class NotesController {
         assetIds: body.assetIds as string[],
         tagNames: body.tagNames as string[],
         markerName: body.markerName as string,
+        // v1.3.5.2：指定可见 —— 模式 + 用户名列表
+        visibilityMode: body.visibilityMode as string,
+        visibilityUsers: body.visibilityUsers as string[],
         instanceId: body.instanceId as string,
         // v1.1.6：实际发布时间（毫秒时间戳 / ISO 字符串）
         publishedAt: body.publishedAt as number | string | undefined,

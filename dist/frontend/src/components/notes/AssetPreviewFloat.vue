@@ -179,7 +179,15 @@ export default {
             const seq = (this._layoutSeq || 0) + 1;
             this._layoutSeq = seq;
             const anchor = this.anchor;
-            const ratio = await this.probeRatio();
+            /*
+             * v1.3.5.2（需求：移动端按住小眼睛只看到旧的小缩略图）
+             *
+             * 原实现 `await probeRatio()` 才写几何并显形，而 probe 要等图片 / 视频
+             * 元数据（大图常常拖到 1.5s 超时）；长按判定只有 320ms，用户松手前
+             * 浮层根本没上屏，看到的就只剩九宫格里那张小缩略图。
+             * 现在先用「已知比例 / 正方形兜底」立即算一次并显形，元数据回来后再静默校正。
+             */
+            const ratio = this._ratio || 0;
             if (seq !== this._layoutSeq || !this.visible) return;
 
             const vw = window.innerWidth;
@@ -285,6 +293,18 @@ export default {
              */
             this.positioned = true;
             this.$nextTick(() => this.startPlayback());
+            /*
+             * v1.3.5.2：比例未知时，等元数据回来再静默校正一次尺寸。
+             * 这次校正不再阻塞首帧显形，用户按住 320ms 就能看到大框。
+             */
+            if (!ratio) {
+                const real = await this.probeRatio();
+                if (!this.visible || seq !== this._layoutSeq) return;
+                if (real && Math.abs(real - ratio) > 0.01) {
+                    this._ratio = real;
+                    this.layout();
+                }
+            }
         },
         /**
          * v1.3.4.2：停掉预览里的媒体。

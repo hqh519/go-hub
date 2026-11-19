@@ -70,6 +70,10 @@ export interface NoteListItem {
   content: string;
   coverFileId: string;
   visibility: string;
+  /** v1.3.5.2：指定可见模式 —— '' | allow | deny */
+  visibilityMode: string;
+  /** v1.3.5.2：指定可见的用户名列表 */
+  visibilityUsers: string[];
   status: string;
   author: string;
   /**
@@ -125,6 +129,34 @@ export interface NoteCommentView {
 
 /** 一条瞬间最多随列表带多少条留言（超出部分按需补拉，避免一页几百 KB） */
 export const LIST_COMMENT_MAX = 100;
+
+/** v1.3.5.2：指定可见名单的规范化 —— 只留非空字符串、去重、最多 200 个 */
+export function normalizeVisibilityUsers(raw: unknown): string[] {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out: string[] = [];
+  for (const v of arr) {
+    const name = String(v || '').trim().slice(0, 64);
+    if (name && !out.includes(name)) out.push(name);
+    if (out.length >= 200) break;
+  }
+  return out;
+}
+
+/** v1.3.5.2：只有「指定」才有名单模式；未选指定时一律清空，避免残留旧名单 */
+export function normalizeVisibilityMode(raw: unknown, visibility: string): string {
+  if (String(visibility || '') !== 'specified') return '';
+  return String(raw || '').trim().toLowerCase() === 'deny' ? 'deny' : 'allow';
+}
+
+/** v1.3.5.2：DB 里的 JSON 字符串 → 用户名数组 */
+function readVisibilityUsers(raw: unknown): string[] {
+  try {
+    const v = JSON.parse(String(raw || '[]'));
+    return Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : [];
+  } catch (e) {
+    return [];
+  }
+}
 
 export interface ListInput {
   kind?: string;
@@ -189,6 +221,10 @@ export interface MomentInput {
   weatherName?: string;
   location?: string;
   visibility?: string;
+  /** v1.3.5.2：指定可见 —— allow（仅名单内可见）/ deny（名单内不可见） */
+  visibilityMode?: string;
+  /** v1.3.5.2：指定可见的用户名列表 */
+  visibilityUsers?: string[];
   assetIds?: string[];
   tagNames?: string[];
   /** v1.3.5.1：标记（单选，独立于标签体系，提交到 markers 表 + note_markers 关联） */
@@ -344,8 +380,19 @@ export class NotesService {
     // 「全部」= 不传 kind（不要写成 kind='moment'，否则以后加类型要改所有调用点）
     if (input.kind) where.kind = String(input.kind);
     if (square) {
-      where.visibility = 'public';
+      /*
+       * v1.3.5.2：「指定可见」也要进广场，分两种模式 ——
+       *   · allow：只有作者与被指定的用户能看到（名单外的人不出现）；
+       *   · deny ：被指定的用户看不到，其余人照常可见。
+       * 名单是 JSON 字符串，用 contains '"用户名"' 精确匹配（带引号避免前缀误命中）。
+       */
       where.status = 'published';
+      const viewer = String(input.viewer || '');
+      where.OR = [
+        { visibility: 'public' },
+        { visibility: 'specified', visibilityMode: 'allow', visibilityUsers: { contains: `"${viewer}"` } },
+        { visibility: 'specified', visibilityMode: 'deny', NOT: { visibilityUsers: { contains: `"${viewer}"` } } },
+      ];
     } else {
       // 回收站：status=deleted 才看回收站，否则只看正常内容
       where.status = input.status === 'deleted' ? 'deleted' : input.status === 'all' ? { not: 'deleted' } : 'published';
@@ -464,6 +511,8 @@ export class NotesService {
           kind: true,
           coverFileId: true,
           visibility: true,
+          visibilityMode: true,
+          visibilityUsers: true,
           status: true,
           author: true,
           instanceId: true,
@@ -602,6 +651,9 @@ export class NotesService {
       content,
       coverFileId: row.coverFileId || '',
       visibility: row.visibility || 'private',
+      // v1.3.5.2：指定可见的名单与模式（编辑页回填 + 卡片上的可见范围提示）
+      visibilityMode: String((row as any).visibilityMode || ''),
+      visibilityUsers: readVisibilityUsers((row as any).visibilityUsers),
       status: row.status,
       author: row.author || '',
       // v1.2.0：作者昵称 / 头像（无昵称由前端回落用户名；无头像由前端画首字占位）
@@ -720,6 +772,9 @@ export class NotesService {
     const visibility = NOTE_VISIBILITIES.includes(String(input.visibility || '') as any)
       ? String(input.visibility)
       : 'private';
+    // v1.3.5.2：指定可见的名单与模式；非「指定」时模式强制清空，不残留旧值
+    const visibilityUsers = normalizeVisibilityUsers(input.visibilityUsers);
+    const visibilityMode = normalizeVisibilityMode(input.visibilityMode, visibility);
     const now = new Date();
 
     try {
@@ -733,6 +788,8 @@ export class NotesService {
           content,
           coverFileId: ordered.find((f) => mediaKindOfMime(f.mime) === 'image')?.id || '',
           visibility,
+          visibilityMode,
+          visibilityUsers: JSON.stringify(visibilityUsers),
           status: 'published',
           author: viewer,
           instanceId,
@@ -842,6 +899,20 @@ export class NotesService {
       input.visibility !== undefined && NOTE_VISIBILITIES.includes(String(input.visibility) as any)
         ? String(input.visibility)
         : existing.visibility;
+    /*
+     * v1.3.5.2：指定可见 —— 传了才更新，没传保持原值（与 markerName 的「三段式」一致）。
+     * 模式要跟着 visibility 一起算：从 specified 改回 public/private 时强制清空，
+     * 否则旧名单会留在库里，将来再切回指定会「复活」一批不该看到的人。
+     */
+    const visibilityUsers =
+      input.visibilityUsers !== undefined ? normalizeVisibilityUsers(input.visibilityUsers) : null;
+    const visibilityMode =
+      input.visibilityMode !== undefined || input.visibility !== undefined
+        ? normalizeVisibilityMode(
+            input.visibilityMode !== undefined ? input.visibilityMode : (existing as any).visibilityMode,
+            visibility,
+          )
+        : null;
 
     /*
      * v1.1.6：发布时间校正 —— 只接受合法时间，且限制在「1970 ~ 现在 + 1 天」之间。
@@ -865,6 +936,9 @@ export class NotesService {
         data: {
           content,
           visibility,
+          // v1.3.5.2：指定可见（名单传了才写；模式跟 visibility 联动）
+          ...(visibilityUsers ? { visibilityUsers: JSON.stringify(visibilityUsers) } : {}),
+          ...(visibilityMode !== null ? { visibilityMode } : {}),
           // v1.1.6：发布时间的校正（未传则保持原值）
           ...(publishedAt ? { publishedAt } : {}),
           // 封面：保持/更新为第一张图
@@ -1218,6 +1292,20 @@ export class NotesService {
    * @param instanceId 当前实例（空串 = 默认实例）
    * @param q          关键字（空 = 返回最近的若干条）
    */
+  /**
+   * v1.3.5.2：「指定可见」的用户候选。
+   * 只给用户名 + 昵称（不含邮箱 / 角色 / 权限等敏感字段），登录即可读 ——
+   * 否则普通账户无法指定其他用户，这个功能等于不可用。
+   */
+  async userOptions(): Promise<{ username: string; nickname: string }[]> {
+    const rows = await prisma.user.findMany({
+      where: { enabled: true },
+      orderBy: { createdAt: 'asc' },
+      select: { username: true, nickname: true },
+    });
+    return rows.map((u) => ({ username: u.username, nickname: u.nickname || u.username }));
+  }
+
   async pickLocations(viewer: string, instanceId: string, q: string) {
     const me = String(viewer || '');
     if (!me) return [];
