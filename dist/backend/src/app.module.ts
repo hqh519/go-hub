@@ -28,6 +28,9 @@ import { SharesModule } from './shares/shares.module';
 import { LocalFilesController } from './localfiles/localfiles.controller';
 // v1.2.0 笔记板块（首发热身：瞬间）—— /api/notes
 import { NotesController } from './notes/notes.controller';
+// v1.3.5.3 登记功能 —— /api/reg
+import { RegController } from './reg/reg.controller';
+import { RegService } from './reg/reg.service';
 import { NotesService } from './notes/notes.service';
 // v1.3.0 笔记管理（memo）—— 目录树 + 文档型笔记，与瞬间共用 notes 主表
 import { MemoController } from './notes/memo.controller';
@@ -58,6 +61,7 @@ import { MemoService } from './notes/memo.service';
     MailController,
     LocalFilesController,
     NotesController,
+    RegController,
     // v1.3.0：笔记管理（/api/memo）
     MemoController,
   ],
@@ -71,6 +75,7 @@ import { MemoService } from './notes/memo.service';
     AccessService,
     MailService,
     NotesService,
+    RegService,
     MemoService,
   ],
 })

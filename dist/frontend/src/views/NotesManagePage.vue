@@ -341,6 +341,13 @@
             @touchend.passive="onMainTouchEnd"
             @touchcancel.passive="onMainTouchEnd"
         >
+            <!-- v1.3.5.3：登记类目 —— 独立流水账面板（与标签管理互斥） -->
+            <RegPanel
+                v-if="isRegisterKind && !tagMode"
+                :instance-id="instanceId"
+                @changed="reload"
+            />
+
             <!-- 标签管理模式：内容区整体换成标签管理（分类栏照旧可用） -->
             <NoteTagPanel
                 v-if="tagMode"
@@ -351,7 +358,7 @@
                 @close="toggleTagMode"
             />
 
-            <template v-else>
+            <template v-else-if="!isRegisterKind">
                 <!--
                     v1.2.1（需求）：回收站提示条。
                     与图床管理页的 `.trash-banner` 同一套观感（危险色、圆角 10px、
@@ -413,6 +420,13 @@
                 </div>
             </template>
         </main>
+
+        <!-- v1.3.5.3：登记提交表单（顶栏「添加登记」用，RegPanel 内部另有一份） -->
+        <RegEntryDialog
+            v-model="regDialogVisible"
+            :instance-id="instanceId"
+            @saved="reload"
+        />
 
         <!-- 发布 / 编辑 -->
         <MomentPublishDialog
@@ -602,6 +616,9 @@ import FileDetailDialog from '@/components/dashboard/FileDetailDialog.vue';
 import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
 import MomentCard from '@/components/notes/MomentCard.vue';
 import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue';
+/* v1.3.5.3 登记功能：流水账面板 + 提交表单 */
+import RegPanel from '@/components/reg/RegPanel.vue';
+import RegEntryDialog from '@/components/reg/RegEntryDialog.vue';
 import NoteTagPanel from '@/components/notes/NoteTagPanel.vue';
 import NoteSettingsDialog from '@/components/notes/NoteSettingsDialog.vue';
 import { extOf, formatSize } from '@/utils/notes';
@@ -646,6 +663,8 @@ export default {
         TagManagementDialog,
         MomentCard,
         MomentPublishDialog,
+        RegPanel,
+        RegEntryDialog,
         NoteTagPanel,
         NoteSettingsDialog
     },
@@ -693,6 +712,8 @@ export default {
             page: 1,
             loading: false,
             publishVisible: false,
+            /** v1.3.5.3：登记提交表单 */
+            regDialogVisible: false,
             // v1.1.2.1：笔记设置弹窗（更多菜单 → 笔记设置）
             settingsVisible: false,
             editing: null,
@@ -757,6 +778,8 @@ export default {
                  */
                 { value: 'square', label: 'notes.typeSquare' },
                 { value: 'moment', label: 'notes.typeMoment' },
+                /* v1.3.5.3：登记类目（独立面板，不走瞬间列表） */
+                { value: 'register', label: 'reg.typeRegister' },
                 { value: 'todo', label: 'notes.typeTodo' },
                 { value: 'nav', label: 'notes.typeNav' },
                 { value: 'article', label: 'notes.typeArticle' },
@@ -839,7 +862,8 @@ export default {
                 nav: 'notes.addNav',
                 article: 'notes.publishArticle',
                 collection: 'notes.addCollection',
-                memo: 'notes.publishNote'
+                memo: 'notes.publishNote',
+                register: 'reg.addEntry'
             };
             return this.$t(map[this.kind] || 'notes.publishMoment');
         },
@@ -848,7 +872,11 @@ export default {
          * v1.1.9.4：广场也保留发布入口（点了先选类型），所以一并算「可发布」。
          */
         canPublishCurrent() {
-            return this.kind === '' || this.kind === 'square' || this.kind === 'moment';
+            return this.kind === '' || this.kind === 'square' || this.kind === 'moment' || this.kind === 'register';
+        },
+        /** v1.3.5.3：当前是否是「登记」类目（内容区换成 RegPanel） */
+        isRegisterKind() {
+            return this.kind === 'register' && !this.trashMode;
         },
         emptyIcon() {
             if (this.trashMode) return 'trash-alt';
@@ -1473,6 +1501,11 @@ export default {
          * 选了还没开放的类型就照实提示，而不是假装能发。
          */
         openPublish() {
+            /* v1.3.5.3：登记类目走独立的提交表单，不打开瞬间编辑页 */
+            if (this.isRegisterKind) {
+                this.regDialogVisible = true;
+                return;
+            }
             // v1.1.9.4：广场与旧「全部」同口径 —— 先让用户选类型，再进编辑页
             if (this.kind === '' || this.kind === 'square') {
                 this.publishTypeVisible = true;

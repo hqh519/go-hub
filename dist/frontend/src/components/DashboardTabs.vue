@@ -152,6 +152,8 @@ export default {
                 { name: 'post', icon: 'note-sticky', label: 'dashboardTabs.notesManagement' },
                 // v1.3.0：笔记（memo）工作台 —— 三栏目录 / 列表 / 编辑器，与发布中心是两套东西
                 { name: 'memo', icon: 'file-lines', label: 'dashboardTabs.memoManagement' },
+                // v1.3.5.3：登记管理（统计 / 单位设置）
+                { name: 'reg', icon: 'clipboard-list', label: 'dashboardTabs.regManagement' },
             ];
             // 「本地文件」页：管理员恒显示（页面内会提示「还没有本地文件渠道」）；
             // 普通用户仅在存在被授权的本地文件渠道时显示

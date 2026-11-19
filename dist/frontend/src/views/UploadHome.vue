@@ -315,6 +315,12 @@
             </template>
         </UploadForm>
         </div>
+        <!-- v1.3.5.3：登记提交表单 -->
+        <RegEntryDialog
+            v-model="regDialogVisible"
+            :instance-id="currentInstanceId || ''"
+            @saved="() => {}"
+        />
         <!-- v1.1.2：「记录」页点「瞬间」直接开编辑页，发布完成后把这一条追加到上方列表 -->
         <MomentPublishDialog
             v-model="recordDialogVisible"
@@ -467,6 +473,7 @@ import RecordFileDialog from '@/components/upload/RecordFileDialog.vue'
 import DirectoryTreePicker from '@/components/DirectoryTreePicker.vue'
 import DirectorySuggestionInput from '@/components/DirectorySuggestionInput.vue'
 import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue'
+import RegEntryDialog from '@/components/reg/RegEntryDialog.vue'
 import fetchWithAuth from '@/utils/fetchWithAuth'
 import { formatMomentTime } from '@/utils/notes'
 import backgroundManager from '@/mixins/backgroundManager'
@@ -515,6 +522,8 @@ export default {
              */
             recordTab: false,
             recordDialogVisible: false,
+            /** v1.3.5.3：登记提交表单 */
+            regDialogVisible: false,
             /** 本次会话里刚发布的内容（只放内存，刷新即清零，与「文件 / 链接」页的上传结果一致） */
             recordResults: [],
             uploadFolder: '', // 上传文件夹
@@ -620,6 +629,8 @@ export default {
         recordApps() {
             return [
                 { kind: 'moment', icon: 'note-sticky', color: '#409eff', ready: true, label: this.$t('notes.typeMoment') },
+                /* v1.3.5.3：登记（P0）—— 直接打开统一提交表单 */
+                { kind: 'register', icon: 'clipboard-list', color: '#f56c6c', ready: true, label: this.$t('reg.typeRegister') },
                 { kind: 'todo', icon: 'check-square', color: '#67c23a', ready: false, label: this.$t('notes.typeTodo') },
                 { kind: 'nav', icon: 'globe', color: '#e6a23c', ready: false, label: this.$t('notes.typeNav') },
                 { kind: 'article', icon: 'book', color: '#909399', ready: false, label: this.$t('notes.typeArticle') },
@@ -848,7 +859,8 @@ export default {
         RecordFileDialog,
         DirectoryTreePicker,
         DirectorySuggestionInput,
-        MomentPublishDialog
+        MomentPublishDialog,
+        RegEntryDialog
     },
     methods: {
         /**
@@ -1023,6 +1035,11 @@ export default {
         },
         /** 点 app 图标：瞬间直接开编辑页，其余类型还没实装 */
         openRecordApp(app) {
+            /* v1.3.5.3：登记走独立表单，不打开瞬间编辑页 */
+            if (app && app.kind === 'register') {
+                this.regDialogVisible = true
+                return
+            }
             if (!app.ready) {
                 this.$message.warning(this.$t('notes.typeNotReadyTip'))
                 return

@@ -711,24 +711,6 @@
                         @touchmove="handleTouchEnd"
                         @touchcancel="handleTouchEnd"
                     >
-                        <!--
-                            v1.3.5.2（需求：相册 Shift 连选仍然没成功）
-                            相册没有可见的选择入口 —— 单击格子是打开灯箱，lastSelectedIndex
-                            永远拿不到锚点，Shift 连选自然只能选中点中的那一个。
-                            这里补一个左上角勾选框：点它切换选中并记锚点，
-                            Shift + 点格子（handleAlbumOpen）或 Shift + 点勾选框都能连选。
-                        -->
-                        <span
-                            v-if="!isSharedReadonly(item)"
-                            class="album-cell-check"
-                            :class="{ 'is-on': !!item.selected }"
-                            role="checkbox"
-                            :aria-checked="!!item.selected ? 'true' : 'false'"
-                            :title="$t('dashboard.selectFile')"
-                            @click.stop="onAlbumCheckClick(item, index, $event)"
-                        >
-                            <font-awesome-icon v-if="item.selected" icon="check" />
-                        </span>
                         <template v-if="isFolder(item)">
                             <font-awesome-icon icon="folder" class="album-folder-icon" />
                             <span class="album-folder-name">{{ albumFolderLabel(item) }}</span>
@@ -779,6 +761,7 @@
                             v-model="item.selected"
                             class="album-select"
                             :class="{ 'is-force-select': selectedFiles.length > 0 }"
+                            @click.capture="onAlbumSelectClick(item, index, $event)"
                             @click.stop
                         ></el-checkbox>
                     </div>
@@ -2194,18 +2177,20 @@ methods: {
         this.openMediaPreview(item);
     },
     /**
-     * v1.3.5.2：相册格子的勾选框 —— 单击切换选中并记录锚点，
-     * Shift + 单击按区间连选（与卡片 / 列表视图同一套 lastSelectedIndex 口径）。
+     * v1.3.5.3（需求）：相册右键圆圈的选择逻辑 —— 不再另做左上角按钮。
+     * 普通点击沿用 el-checkbox 自己的切换，只补一个锚点；
+     * Shift + 点击则在捕获阶段拦下这次点击（preventDefault + stopPropagation），
+     * 改为按锚点区间批量选中，避免它又变成「只切这一个」。
      */
-    onAlbumCheckClick(item, index, event) {
+    onAlbumSelectClick(item, index, event) {
         if (!item || this.isSharedReadonly(item)) return;
-        if (event && event.shiftKey) {
-            event.preventDefault();
-            this.shiftSelectAlbumRange(index);
+        if (!event || !event.shiftKey) {
+            this.lastSelectedIndex = index;
             return;
         }
-        item.selected = !item.selected;
-        this.lastSelectedIndex = index;
+        event.preventDefault();
+        event.stopPropagation();
+        this.shiftSelectAlbumRange(index);
     },
     /** v1.3.5.1：相册视图 Shift 区间连选，口径与 handleShiftClickCapture 保持一致 */
     shiftSelectAlbumRange(index) {
@@ -7111,36 +7096,6 @@ html.dark .trash-btn.is-active,
     align-content: start;
     align-items: start;
 }
-/* v1.3.5.2：相册格子的勾选框（Shift 连选的可见入口） */
-.album-cell-check {
-    position: absolute;
-    top: 6px;
-    left: 6px;
-    z-index: 2;
-    display: grid;
-    place-items: center;
-    box-sizing: border-box;
-    width: 20px;
-    height: 20px;
-    border: 1.5px solid rgba(255, 255, 255, 0.9);
-    border-radius: 5px;
-    background: rgba(0, 0, 0, 0.38);
-    color: #fff;
-    font-size: 11px;
-    line-height: 1;
-    cursor: pointer;
-    transition: background-color 0.16s ease, border-color 0.16s ease;
-}
-
-.album-cell-check:hover {
-    background: rgba(0, 0, 0, 0.55);
-}
-
-.album-cell-check.is-on {
-    border-color: var(--el-color-primary);
-    background: var(--el-color-primary);
-}
-
 .album-cell {
     position: relative;
     aspect-ratio: 1 / 1;

@@ -2593,7 +2593,32 @@ const TabsBlock = Node.create({
                 ['pointerup', 'pointercancel', 'pointerleave'].forEach((n) => btn.addEventListener(n, clear));
             };
 
+            /**
+             * v1.3.5.3（需求：一插入页签块整页就卡死）
+             *
+             * 根因：NodeView 的 update() 在【每次 transaction】都会被调用（每次输入、每次移动光标），
+             * 而它无条件 paint() —— 整个标题栏 innerHTML 清空重建、重新绑定事件，
+             * 还额外排了 setTimeout + requestAnimationFrame 两次 syncPanels，输入越快堆积越多。
+             * 现在：
+             *   · 用 keyOf() 只比较「页签数量 + 标题 + active」，没变就完全不动 DOM；
+             *   · syncPanels 用单次 rAF 合帧，且已排队时不重复排。
+             */
+            let lastKey = '';
+            let syncRaf = 0;
+            const keyOf = (n) => {
+                const arr = [];
+                n.forEach((c) => arr.push(`${String(c.attrs.title || '')}|${c.attrs.active ? 1 : 0}`));
+                return arr.join('\u0000');
+            };
+            const scheduleSync = () => {
+                if (syncRaf) return;
+                syncRaf = requestAnimationFrame(() => {
+                    syncRaf = 0;
+                    syncPanels();
+                });
+            };
             const paint = (n) => {
+                lastKey = keyOf(n);
                 head.innerHTML = '';
                 if (activeIdx >= n.childCount) activeIdx = 0;
                 const titles = [];
@@ -2635,8 +2660,7 @@ const TabsBlock = Node.create({
                     if (base >= 0) emit('gh-tab-add', { pos: base });
                 });
                 head.appendChild(add);
-                window.setTimeout(syncPanels, 0);
-                requestAnimationFrame(syncPanels);
+                scheduleSync();
             };
             paint(node);
 
@@ -2645,9 +2669,11 @@ const TabsBlock = Node.create({
                 contentDOM: items,
                 update(updated) {
                     if (updated.type.name !== 'tabsBlock') return false;
-                    paint(updated);
+                    /* 标题 / 数量没变就什么都不做 —— 正文变化由 ProseMirror 自己更新 contentDOM */
+                    if (keyOf(updated) !== lastKey) paint(updated);
                     return true;
                 },
+                /* 只放行 contentDOM 内部的变更；标题栏是 NodeView 自绘的，忽略掉才不会触发重排 */
                 ignoreMutation: (m) => m.type !== 'selection' && !items.contains(m.target),
             };
         };

@@ -449,6 +449,17 @@ const routes = [
     beforeEnter: manageAuthGuard
   },
   {
+    /*
+     * v1.3.5.3 登记管理（P1）—— /reg
+     * 以多种形态统计登记数据：概览卡片 / 趋势柱状 / 按账户分布 / 单位设置。
+     * 守卫同后台页：必须登录；数据范围由后端按账户与实例收窄。
+     */
+    path: '/reg',
+    name: 'reg',
+    component: () => import('../views/RegManagePage.vue'),
+    beforeEnter: manageAuthGuard
+  },
+  {
     // v1.1.2：文件引用明细页（文件详情 →「文件引用」→ 查看，新标签页打开）。
     // 只读页，登录即可访问；具体文件能不能看由后端按上传者 / 管理员判定。
     path: '/file-refs',

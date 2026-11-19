@@ -859,3 +859,123 @@ model NoteComment {
   @@index([noteId, createdAt])
   @@map("note_comments")
 }
+
+// ============================================================
+//  v1.3.5.3 登记功能（P0 + P1）
+//  ------------------------------------------------------------
+//  · 一套统一的原子数据（RegEntry）+ 按「类型 / 单位」聚合的统计；
+//  · 「标记」= RegTracker.name，选中已有标记即锁定类型与单位（统一口径）；
+//  · 与 markers 表解耦：markers 只存名称身份，这里存登记口径与数据。
+// ============================================================
+
+/// 登记项：同一「标记」下的容器，锁定类型 / 单位 / 精度
+model RegTracker {
+  id         String   @id @default(cuid())
+  owner      String   @default("")
+  instanceId String   @default("")
+  name       String
+  /// 场景分组（仅展示用）：finance|health|vehicle|study|home|pet|work|other
+  scene      String   @default("")
+  /// 形态：stock|flow|count|duration|ratio|price
+  valueType  String   @default("flow")
+  unit       String   @default("")
+  unitKind   String   @default("")
+  precision  Int      @default(2)
+  /// 0 无方向 / 1 收入增加 / -1 支出减少
+  direction  Int      @default(0)
+  note       String   @default("")
+  archived   Boolean  @default(false)
+  /// v1.3.5.4（P3）：预算额度（0 = 不设）；统计页按当前周期用量给出超支提醒
+  budget     Float    @default(0)
+  /// v1.3.5.4（P3）：是否共享给同实例的其他成员（只读）
+  shared     Boolean  @default(false)
+  metas      String   @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  entries RegEntry[]
+
+  @@unique([owner, instanceId, name])
+  @@index([owner, instanceId, archived])
+  @@map("reg_trackers")
+}
+
+/// 一次登记（原子数据，统计都从这张表算）
+model RegEntry {
+  id          String    @id @default(cuid())
+  trackerId   String
+  owner       String    @default("")
+  instanceId  String    @default("")
+  title       String    @default("")
+  /// 标记名快照（便于跨用户联合统计按名称匹配）
+  markerName  String    @default("")
+  /// 登记事件正文（上限 1000 字，按纯文本计）
+  event       String    @default("")
+  occurredAt  DateTime
+  startAt     DateTime?
+  dueAt       DateTime?
+  /// 发生人 / 关联人（字符串，免建人物表；候选来自历史值）
+  subjectName String    @default("")
+  relatedName String    @default("")
+  placeName   String    @default("")
+  /// 主要观测数值（可正负）
+  amount      Float     @default(0)
+  /// 数量（留空默认 1）
+  quantity    Float     @default(1)
+  unit        String    @default("")
+  /// 份量（如 元/升、人/年），原样保存
+  portion     String    @default("")
+  /// CNY | USD
+  currency    String    @default("CNY")
+  direction   Int       @default(0)
+  note        String    @default("")
+  /// JSON 数组：标签名
+  tags        String    @default("[]")
+  /// JSON 数组：files.id
+  attachments String    @default("[]")
+  /// 挂载的笔记 id
+  docNoteId   String    @default("")
+  status      String    @default("normal")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tracker RegTracker @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+
+  @@index([trackerId, occurredAt])
+  @@index([owner, instanceId, occurredAt])
+  @@index([owner, instanceId, dueAt])
+  @@map("reg_entries")
+}
+
+/// 自定义单位（登记管理页的「登记设置」里维护）
+model RegUnit {
+  id         String   @id @default(cuid())
+  owner      String   @default("")
+  instanceId String   @default("")
+  name       String
+  /// currency|count|weight|length|volume|time|ratio|compound
+  kind       String   @default("count")
+  factor     Float    @default(1)
+  baseUnit   String   @default("")
+  sort       Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  @@unique([owner, instanceId, name])
+  @@map("reg_units")
+}
+
+/// v1.3.5.4（P2）：保存的统计报表（查询条件 + 名称）
+model RegReport {
+  id         String   @id @default(cuid())
+  owner      String   @default("")
+  instanceId String   @default("")
+  name       String
+  /// 查询条件 JSON：{ trackerName, scope, bucket, range, from, to, compare }
+  query      String   @default("{}")
+  sort       Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([owner, instanceId])
+  @@map("reg_reports")
+}

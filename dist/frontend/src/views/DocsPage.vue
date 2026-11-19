@@ -1070,6 +1070,31 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1354',
+      title: '六十五、v1.3.5.4 更新要点',
+      intro: '这一版补全「登记」的统计能力：派生指标（单价 / 结存 / 间隔 / 速度）、同比对比与报表保存。P3 阶段（自然语言录入、家庭共享、预算提醒、直接读 Excel）按计划暂缓。',
+      items: [
+        { t: '派生指标', d: '新增单价（数值 ÷ 数量）、结存（按时间桶累计）、平均间隔（相邻记录相差天数）、日均速度四张指标卡。' },
+        { t: '同比对比', d: '筛选栏可勾选「同比」，显示去年同期的合计、记录数与涨跌幅（涨红跌绿）。' },
+        { t: '报表保存', d: '把当前筛选条件（标记 / 时间范围 / 粒度 / 统计范围 / 同比）存成报表，从下拉里一键回放。' },
+        { t: '升级兼容', d: '新增一张报表表，旧登记与其它数据都不受影响；CSV 导入继续可用。' }
+      ]
+    },
+    {
+      id: 'whatsnew-1353',
+      title: '六十四、v1.3.5.3 更新要点',
+      intro: '这一版修好相册 Shift 连选（改用右上角圆圈）和页签块导致的编辑区卡顿，并上线「登记」功能：一套统一表单提交各类跟进数据，再按规则统计与对比。',
+      items: [
+        { t: '相册 Shift 连选', d: '改用每张图右上角已有的圆圈：点圆圈选中并记起点，Shift 点另一张整段选中；左上角多余按钮已移除。' },
+        { t: '页签块卡顿', d: '根因是每次输入都重建整条标题栏并重复排帧；现在只有标题或数量变化才重绘，正文输入不再触发重建。' },
+        { t: '登记：统一表单', d: '标题 / 标记 / 类型 / 发生人 / 关联人 / 三个时间 / 地点 / 事件 / 数值 / 数量 / 单位 / 份量 / 币种 / 备注 / 标签 / 附件 / 文档。选择已有标记会锁定类型与单位，保证统计口径一致。' },
+        { t: '登记：入口与流水账', d: '首页「发布 → 记录」点「登记」，或「我的发布 → 登记」点「添加登记」。登记数据按时间倒序显示，可按标记 / 时间 / 关键词筛选并编辑删除。' },
+        { t: '登记：批量导入', d: '支持导入 CSV（Excel 可另存为 CSV），必填列为「标记 / 发生时间 / 登记数值」，失败行给出原因。' },
+        { t: '登记管理', d: '后台页面切换新增「登记管理」：合计 / 条数 / 平均 / 极值概览，按日周月年分桶的趋势柱状与环比，可选联合统计查看按账户分布；并可在「登记设置」维护自定义单位。' },
+        { t: '升级兼容', d: '新增三张登记表，均带默认值；旧瞬间、笔记、文件、标签数据不受影响。' }
+      ]
+    },
+    {
       id: 'whatsnew-1352',
       title: '六十三、v1.3.5.2 更新要点',
       intro: '这一版修好上一版遗留的相册连选、红点、小眼睛预览与附件尺寸跳动，补齐发布瞬间的「指定用户」名单（允许 / 屏蔽），并让数学公式、提示块、页签块真正可编辑；另外新增白板工具与表格缩放。',
@@ -2327,6 +2352,31 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1354',
+      title: '65. What is new in v1.3.5.4',
+      intro: 'This release completes the statistics side of Register: derived metrics (unit price, balance, interval, speed), year over year comparison, and saved reports. P3 (natural language entry, family sharing, budget alerts, direct Excel reading) is deferred.',
+      items: [
+        { t: 'Derived metrics', d: 'Unit price (value / quantity), cumulative balance, average interval between entries, and daily speed.' },
+        { t: 'Year over year', d: 'Tick YoY in the filters to see last year totals, entry count and the percentage change (red for up, green for down).' },
+        { t: 'Saved reports', d: 'Save the current filter set as a report and replay it from the dropdown.' },
+        { t: 'Upgrade compatibility', d: 'One report table is added; existing register and other data are untouched, and CSV import keeps working.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1353',
+      title: '64. What is new in v1.3.5.3',
+      intro: 'This release fixes album Shift selection (now on the existing top-right circle) and the tabs block freezing the editor, and ships the Register feature: one unified form for tracking data, with rule based statistics.',
+      items: [
+        { t: 'Album Shift selection', d: 'Use the existing circle at each tile top-right: click it to select and set the anchor, then Shift-click another tile to select the range. The extra top-left button is removed.' },
+        { t: 'Tabs block freeze', d: 'Every keystroke rebuilt the whole tab header and queued extra frames. It now only repaints when titles or count change, so typing in the body no longer triggers a rebuild.' },
+        { t: 'Register: unified form', d: 'Title, marker, type, subject, related person, three timestamps, place, details, value, quantity, unit, portion, currency, note, tags, attachments and a linked note. Picking an existing marker locks the type and unit so statistics stay consistent.' },
+        { t: 'Register: entries list', d: 'Open it from Home - Publish - Record or from Post - Registers - Add entry. Entries are listed newest first with marker / date range / keyword filters, plus edit and delete.' },
+        { t: 'Register: import', d: 'Import CSV (Excel can save as CSV). Marker, occurred at and value are required; failing rows report their row number.' },
+        { t: 'Register manager', d: 'A new page in the page switcher: totals, count, average and extremes, per day / week / month / year trend bars with period over period change, optional joint statistics by account, and custom units under Register settings.' },
+        { t: 'Upgrade compatibility', d: 'Three new register tables, all defaulted; existing moments, notes, files and tags are untouched.' }
       ]
     },
     {
