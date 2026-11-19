@@ -431,7 +431,7 @@
                         @command="navigateToFolder"
                         @visible-change="handleDirDropdownVisible"
                     >
-                        <button type="button" class="breadcrumb-dir-button" :title="currentDirFullPath">
+                        <button type="button" class="breadcrumb-dir-button" :class="{ 'is-subdir': !!normalizedCurrentPath }" :title="currentDirFullPath">
                             <font-awesome-icon icon="folder-open" class="breadcrumb-dir-icon"/>
                             <span class="breadcrumb-dir-text">{{ currentDirFullPath }}</span>
                             <font-awesome-icon icon="chevron-down" class="breadcrumb-dir-arrow"/>
@@ -705,7 +705,7 @@
                         class="album-cell"
                         :class="{ 'is-folder': isFolder(item), 'is-selected': !!item.selected }"
                         :title="albumTitle(item)"
-                        @click="handleAlbumOpen(item, index)"
+                        @click="handleAlbumOpen(item, index, $event)"
                         @touchstart="isFolder(item) ? handleFolderTouchStart(item, index) : handleTouchStart(item, index)"
                         @touchend="handleTouchEnd"
                         @touchmove="handleTouchEnd"
@@ -2151,8 +2151,19 @@ methods: {
      * 回收站里的文件外链虽然对外 404，但灯箱用的是 `?from=admin` 管理员预览通道
      * （后端 serve() 对 from=admin 不筛 status），缩略图与原图都能正常加载。
      */
-    handleAlbumOpen(item, index) {
+    handleAlbumOpen(item, index, event) {
         if (!item) return;
+        /*
+         * v1.3.5.1：相册视图也要像卡片视图一样支持按住 Shift 对文件连选。
+         * 相册没有可见的勾选框，所以直接拦 Shift+点击：不打开灯箱 / 不进目录，
+         * 改为按锚点区间批量勾选（锚点取 lastSelectedIndex，没有则回退到最近已选行）。
+         */
+        if (event && event.shiftKey) {
+            event.preventDefault();
+            event.stopPropagation();
+            this.shiftSelectAlbumRange(index);
+            return;
+        }
         /*
          * v1.1.9.4：长按弹菜单之后，部分内核仍会补发一次 click，
          * 会把灯箱/目录一起打开，盖在操作菜单后面。这里 700ms 内直接忽略。
@@ -2163,6 +2174,30 @@ methods: {
             return;
         }
         this.openMediaPreview(item);
+    },
+    /** v1.3.5.1：相册视图 Shift 区间连选，口径与 handleShiftClickCapture 保持一致 */
+    shiftSelectAlbumRange(index) {
+        let anchor = this.lastSelectedIndex;
+        if (anchor < 0) {
+            // 没有点击锚点时，退回到「最近一条已选中」的行，方便跨视图继续连选
+            for (let i = this.paginatedTableData.length - 1; i >= 0; i -= 1) {
+                if (this.paginatedTableData[i].selected) { anchor = i; break; }
+            }
+        }
+        if (anchor < 0) {
+            const cur = this.paginatedTableData[index];
+            if (cur && !this.isSharedReadonly(cur)) cur.selected = true;
+            this.lastSelectedIndex = index;
+            return;
+        }
+        const a = Math.min(anchor, index);
+        const b = Math.max(anchor, index);
+        let count = 0;
+        this.paginatedTableData.forEach((it, i) => {
+            if (i >= a && i <= b && !this.isSharedReadonly(it)) { it.selected = true; count += 1; }
+        });
+        if (count) this.$message && this.$message.success(this.$t('dashboard.shiftRangeSelected', { count }));
+        // 与卡片视图一致：不更新锚点，方便以同一个起点连续扩展区间
     },
     // 列表视图全选当前页
     handleSelectAllPage(val) {
@@ -5579,8 +5614,11 @@ mounted() {
     });
     /*
      * v1.1.9.4（需求）：把底部「批量操作栏」也纳入 closePageOrder / hasOpenLayer 的层叠监测。
-     * 它本身就是「有选中项才出现」的浮层（z-index 1200，低于 Element Plus 弹窗的 2000+），
-     * 所以层级顺序天然正确：先把上面压着的弹窗一层层关完，最后才轮到它。
+     * v1.3.5.1：关闭顺序修正 —— 选中文件后再打开灯箱（或其它弹出页）时，
+     * 边缘横滑必须先关灯箱 / 弹出页，最后才轮到批量栏（取消选中）。
+     * 层栈按 z 降序、同 z 按注册序号降序：这里刻意【不上报 z】（默认 0），
+     * 批量栏在选中时最早注册，后开的灯箱 / 弹窗 seq 更大，自然排在栈顶先被关闭。
+     * 以前显式写 z:1200 反而让它压过默认 z=0 的灯箱，导致第一次滑动就先取消了选中。
      * 关掉它 = 取消选中（栏体随选中数归零而消失），与 v1.1.9.2 的「空栈返回取消选中」同义。
      */
     this._unwatchBatchBarLayer = this.$watch(
@@ -5588,7 +5626,6 @@ mounted() {
         (count) => {
             if (count > 0) {
                 registerLayer('dashboard-batch-bar', () => this.clearSelection(), {
-                    z: 1200,
                     alive: () => this.selectedFiles.length > 0
                 });
             } else {
@@ -5664,6 +5701,12 @@ mounted() {
     const savedViewMode = localStorage.getItem('viewMode');
     if (savedViewMode === 'card' || savedViewMode === 'list' || savedViewMode === 'album') {
         this.viewMode = savedViewMode;
+        /*
+         * v1.3.5.1：相册视图刷新后继续保持「直接展示文件」模式。
+         * setViewMode('album') 会在点击时强制 expanded，但这里是直接赋值恢复，
+         * 不走那个方法；不补这一句的话刷新后会退回 folders（按目录分层）。
+         */
+        if (savedViewMode === 'album') this.searchResultDisplay = 'expanded';
     }
 
     this.loading = true;
@@ -7649,6 +7692,7 @@ html.dark .trash-btn.is-active,
     flex: 0 0 auto;
 }
 .breadcrumb-dir-button {
+    position: relative;
     height: 32px;
     max-width: 42vw;
     box-sizing: border-box;
@@ -7685,6 +7729,20 @@ html.dark .trash-btn.is-active,
 .breadcrumb-dir-arrow {
     flex: 0 0 auto;
     font-size: 8px;
+}
+/* v1.3.5.1：当前浏览的不是根目录时，在目录选择按钮右上角显示红点提示 */
+.breadcrumb-dir-button.is-subdir::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--el-color-danger, #f56c6c);
+    border: 1px solid var(--el-bg-color, #fff);
+    box-sizing: border-box;
+    pointer-events: none;
 }
 .dir-item {
     display: inline-flex;

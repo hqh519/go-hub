@@ -1275,6 +1275,7 @@ import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import CodeBlock from '@tiptap/extension-code-block';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import katex from 'katex';
 import FilePickerDialog from '@/components/notes/FilePickerDialog.vue';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 /*
@@ -2301,6 +2302,133 @@ const Callout = Node.create({
 });
 
 /**
+ * v1.3.5.1：数学公式块（`$$` 围栏）。
+ * atom 块 —— 公式原文只存在 attrs.formula，编辑态用 KaTeX 渲染；
+ * 改公式走「源码模式」（md 是真源），与其它自定义块同一口径，
+ * 不往 ProseMirror 文档里塞可编辑文本，避免往返时被重新解析污染。
+ */
+const MathBlock = Node.create({
+    name: 'mathBlock',
+    group: 'block',
+    atom: true,
+    draggable: true,
+    selectable: true,
+    addAttributes() {
+        return { formula: { default: '' } };
+    },
+    parseHTML() {
+        return [{ tag: 'div[data-gh-math]' }];
+    },
+    renderHTML({ HTMLAttributes }) {
+        return ['div', mergeAttributes(HTMLAttributes, { 'data-gh-math': '1', class: 'gh-math' })];
+    },
+    addNodeView() {
+        return ({ node }) => {
+            const dom = document.createElement('div');
+            dom.className = 'gh-math gh-math-node';
+            dom.contentEditable = 'false';
+            const paint = (formula) => {
+                dom.innerHTML = '';
+                const f = String(formula || '').trim();
+                if (!f) {
+                    dom.textContent = '（空公式，切到源码模式编辑）';
+                    return;
+                }
+                try {
+                    katex.render(f, dom, { displayMode: true, throwOnError: false, output: 'html' });
+                } catch (e) {
+                    dom.textContent = f;
+                }
+            };
+            paint(node.attrs.formula);
+            return {
+                dom,
+                update(updated) {
+                    if (updated.type.name !== 'mathBlock') return false;
+                    paint(updated.attrs.formula);
+                    return true;
+                },
+                ignoreMutation: () => true,
+            };
+        };
+    },
+});
+
+/**
+ * v1.3.5.1：页签块（`::: tabs` … `:::`）。
+ * atom 块，页签数组以 JSON 存在 attrs.tabs；NodeView 内部自己管「当前第几页」，
+ * 点击只切 DOM 显示、不写回文档 —— 内容修改统一走源码模式。
+ * 正文 HTML 走 renderMarkdownSafe（已过 DOMPurify），不会引入 XSS。
+ */
+const TabsBlock = Node.create({
+    name: 'tabsBlock',
+    group: 'block',
+    atom: true,
+    draggable: true,
+    selectable: true,
+    addAttributes() {
+        return { tabs: { default: '[]' } };
+    },
+    parseHTML() {
+        return [{ tag: 'div[data-gh-tabs]' }];
+    },
+    renderHTML({ HTMLAttributes }) {
+        return ['div', mergeAttributes(HTMLAttributes, { 'data-gh-tabs': '1', class: 'gh-tabs-block' })];
+    },
+    addNodeView() {
+        return ({ node }) => {
+            const dom = document.createElement('div');
+            dom.className = 'gh-tabs gh-tabs-node';
+            dom.contentEditable = 'false';
+            const paint = (raw) => {
+                let tabs = [];
+                try { tabs = JSON.parse(String(raw || '[]')); } catch (e) { tabs = []; }
+                if (!Array.isArray(tabs)) tabs = [];
+                const active = Math.max(0, tabs.findIndex((t) => t && t.active));
+                dom.innerHTML = '';
+                const head = document.createElement('div');
+                head.className = 'gh-tabs-head';
+                const panels = document.createElement('div');
+                panels.className = 'gh-tabs-panels';
+                tabs.forEach((t, idx) => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'gh-tabs-label' + (idx === active ? ' is-active' : '');
+                    btn.textContent = String((t && t.title) || `页签 ${idx + 1}`);
+                    btn.addEventListener('mousedown', (ev) => ev.preventDefault());
+                    btn.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        head.querySelectorAll('.gh-tabs-label').forEach((el, i) => el.classList.toggle('is-active', i === idx));
+                        panels.querySelectorAll('.gh-tabs-panel').forEach((el, i) => {
+                            el.style.display = i === idx ? '' : 'none';
+                        });
+                    });
+                    head.appendChild(btn);
+                    const panel = document.createElement('div');
+                    panel.className = 'gh-tabs-panel';
+                    panel.style.display = idx === active ? '' : 'none';
+                    panel.innerHTML = renderMarkdownSafe(String((t && t.content) || ''));
+                    panels.appendChild(panel);
+                });
+                dom.appendChild(head);
+                dom.appendChild(panels);
+            };
+            paint(node.attrs.tabs);
+            return {
+                dom,
+                update(updated) {
+                    if (updated.type.name !== 'tabsBlock') return false;
+                    paint(updated.attrs.tabs);
+                    return true;
+                },
+                ignoreMutation: () => true,
+            };
+        };
+    },
+});
+
+/**
  * 表格单元格 / 表头各扩一个 `align`。
  *
  * 官方扩展只认 colspan/rowspan/colwidth，没有对齐属性 —— 而 md 的 `:---:`
@@ -2939,6 +3067,9 @@ const TOOLS = {
     tableAddRowBefore: { icon: 'arrow-up', label: 'memo.tblAddRowBefore', run: (e) => e.chain().focus().addRowBefore().run() },
     tableAddColBefore: { icon: 'arrow-left', label: 'memo.tblAddColBefore', run: (e) => e.chain().focus().addColumnBefore().run() },
     callout: { icon: 'circle-info', label: 'memo.toolCallout', run: null },
+    /* v1.3.5.1：数学公式块 / 页签块 —— 都要先问参数，run 留 null 走特判 */
+    mathBlock: { icon: 'code', label: 'memo.toolMathBlock', run: null },
+    tabsBlock: { icon: 'folder-open', label: 'memo.toolTabsBlock', run: null },
     video: { icon: 'file-video', label: 'memo.toolVideo', run: null },
     audio: { icon: 'file-audio', label: 'memo.toolAudio', run: null },
     highlight: { icon: 'highlighter', label: 'memo.toolHighlight', run: (e) => e.chain().focus().toggleHighlight().run(), active: (e) => e && e.isActive('highlight') },
@@ -3055,7 +3186,9 @@ const TOOL_HINTS = {
     codeBlock: '```',
     hr: '---',
     table: '|',
-    callout: ':::',
+    callout: '> [!]',
+    mathBlock: '$$',
+    tabsBlock: '::: tabs',
     link: 'Ctrl+K',
     selectLine: 'Shift+Home',
     selectAll: 'Ctrl+A',
@@ -3192,7 +3325,7 @@ function slashCmdOf(id) {
  */
 const SLASH_DEFAULT_GROUPS = [
     ['bold', 'italic', 'underline', 'strike', 'highlight', 'code', 'link'],
-    ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'blockquote', 'callout', 'hr'],
+    ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'blockquote', 'callout', 'mathBlock', 'tabsBlock', 'hr'],
     ['bulletList', 'orderedList', 'taskList', 'indent', 'outdent'],
     ['image', 'upload', 'file', 'video', 'audio', 'linkExtract', 'iframe', 'table', 'codeBlock'],
     ['alignLeft', 'alignCenter', 'alignRight', 'hardBreak', 'insertLineBelow'],
@@ -4241,6 +4374,9 @@ export default {
                     Audio,
                     FileAttachment,
                     Callout,
+                    // v1.3.5.1：数学公式块 / 页签块
+                    MathBlock,
+                    TabsBlock,
                     // v1.3.1.2：HTML 块 / 网页嵌入 / 字号 / 颜色
                     HtmlBlock,
                     IframeBlock,
@@ -5235,6 +5371,8 @@ export default {
                 return;
             }
             if (token === 'callout') return this.insertCallout();
+            if (token === 'mathBlock') return this.insertMathBlock();
+            if (token === 'tabsBlock') return this.insertTabsBlock();
             // v1.3.1.2：插入表格先问行列数（需求给了参考图），不再固定 3×3
             if (token === 'table') {
                 this.tablePicker = { open: true, hover: { r: 3, c: 3 } };
@@ -6820,6 +6958,49 @@ export default {
             this.onEditorUpdate();
         },
 
+        /** v1.3.5.1：插入数学公式块 —— 先问一段 LaTeX，再落成 atom 节点 */
+        async insertMathBlock() {
+            let value = null;
+            try {
+                const r = await ElMessageBox.prompt(
+                    this.$t('memo.mathPromptTip'),
+                    this.$t('memo.toolMathBlock'),
+                    {
+                        confirmButtonText: this.$t('common.confirm'),
+                        cancelButtonText: this.$t('common.cancel'),
+                        inputType: 'textarea',
+                        inputValue: 'a^2 + b^2 = c^2',
+                        inputPlaceholder: 'a^2 + b^2 = c^2',
+                    }
+                );
+                value = r.value;
+            } catch (e) {
+                return;
+            }
+            const ed = this.editor;
+            if (!ed) return;
+            if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
+            ed.chain().focus()
+                .insertContent({ type: 'mathBlock', attrs: { formula: String(value || '').trim() } })
+                .run();
+            this.onEditorUpdate();
+        },
+
+        /** v1.3.5.1：插入页签块 —— 给两个示例页签，细节到源码模式里改 */
+        insertTabsBlock() {
+            const ed = this.editor;
+            if (!ed) return;
+            if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
+            const tabs = [
+                { title: this.$t('memo.tabsDefaultFirst'), active: true, content: this.$t('memo.tabsDefaultBody') },
+                { title: this.$t('memo.tabsDefaultSecond'), active: false, content: this.$t('memo.tabsDefaultBody') },
+            ];
+            ed.chain().focus()
+                .insertContent({ type: 'tabsBlock', attrs: { tabs: JSON.stringify(tabs) } })
+                .run();
+            this.onEditorUpdate();
+        },
+
         /** 点提示块的类型标签：轮换 info → tip → warning → danger */
         cycleCallout() {
             /*
@@ -8009,8 +8190,27 @@ export default {
             const host = this.$refs.bodyEl;
             const dom = this.editor && this.editor.view && this.editor.view.dom;
             if (!host || !dom) return;
-            const maxW = host.clientWidth * 0.8;
-            const maxH = host.clientHeight * 0.5;
+            const width = host.clientWidth;
+            /*
+             * v1.3.5.1（需求）：滚动时浏览器收起顶部/底部栏 → 编辑区变高，
+             * host.clientHeight 跟着变大；scheduleGutter 会重算媒体显示宽度，
+             * 于是附件突然放大 / 缩小，看起来就是「跳一下」。
+             * 参考 v1.3.2 对「我的发布页」的修复（noteSettings.viewportHeight）：
+             * 触屏设备上只在【宽度明显变化（旋屏 / 桌面拉窗口）】时更新基准高度，
+             * 同宽的高度变化一律视为浏览器栏收放，沿用进入页面时的基准。
+             */
+            const coarse = typeof window !== 'undefined' && (
+                (window.matchMedia && (
+                    window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(hover: none)').matches
+                )) || (navigator.maxTouchPoints || 0) > 0
+            );
+            if (!this._mediaBaseW || Math.abs(width - this._mediaBaseW) >= 80) {
+                this._mediaBaseW = width;
+                this._mediaBaseH = host.clientHeight;
+            }
+            const baseH = coarse ? (this._mediaBaseH || host.clientHeight) : host.clientHeight;
+            const maxW = width * 0.8;
+            const maxH = baseH * 0.5;
             if (maxW <= 0 || maxH <= 0) return;
             dom.querySelectorAll('img, video').forEach((el) => {
                 /* 手动设过宽或高的节点都交给属性本身，默认尺寸规则不插手 */
@@ -10643,6 +10843,127 @@ export default {
 .me-preview :deep(.gh-callout-danger) {
     border-left-color: var(--el-color-danger);
     background: var(--el-color-danger-light-9);
+}
+/* v1.3.5.1：GitHub 风格 `> [!IMPORTANT]` 映射出来的第五种类型 */
+.me-wysiwyg :deep(.gh-editor-content .gh-callout-important),
+.me-preview :deep(.gh-callout-important) {
+    border-left-color: #8957e5;
+    background: rgba(137, 87, 229, 0.09);
+}
+/*
+ * v1.3.5.1：编辑态用 CSS 伪元素显示类型标签（不往 DOM 里塞静态子节点，
+ * 否则 parseHTML 会把它当成正文内容，保存往返就会被污染）。
+ */
+.me-wysiwyg :deep(.gh-editor-content .gh-callout)::before {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.78em;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--el-color-primary);
+    pointer-events: none;
+    user-select: none;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="info"])::before { content: "NOTE"; }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="tip"])::before { content: "TIP"; }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="important"])::before { content: "IMPORTANT"; color: #8957e5; }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="warning"])::before { content: "WARNING"; color: var(--el-color-warning); }
+.me-wysiwyg :deep(.gh-editor-content .gh-callout[data-callout="danger"])::before { content: "CAUTION"; color: var(--el-color-danger); }
+/* 预览态：extractFences 抽出来的 .gh-callout-title / .gh-callout-body 外壳 */
+.me-preview :deep(.gh-callout-title) {
+    font-size: 0.78em;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--el-color-primary);
+}
+.me-preview :deep(.gh-callout-important .gh-callout-title) { color: #8957e5; }
+.me-preview :deep(.gh-callout-warning .gh-callout-title) { color: var(--el-color-warning); }
+.me-preview :deep(.gh-callout-danger .gh-callout-title) { color: var(--el-color-danger); }
+.me-preview :deep(.gh-callout-tip .gh-callout-title) { color: var(--el-color-success); }
+.me-preview :deep(.gh-callout-body > :first-child) { margin-top: 0.2em; }
+.me-preview :deep(.gh-callout-body > * + *) { margin-top: 0.45em; }
+
+/* ── v1.3.5.1：数学公式块 ───────────────────────────────────── */
+.me-wysiwyg :deep(.gh-editor-content .gh-math),
+.me-preview :deep(.gh-math) {
+    margin: 0.8em 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    text-align: center;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter);
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-math-node.ProseMirror-selectednode),
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node.ProseMirror-selectednode) {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: 2px;
+}
+
+/* ── v1.3.5.1：页签块 ───────────────────────────────────────── */
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs),
+.me-preview :deep(.gh-tabs) {
+    margin: 0.8em 0;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    overflow: hidden;
+    position: relative;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-head),
+.me-preview :deep(.gh-tabs-head) {
+    display: flex;
+    gap: 2px;
+    padding: 6px 8px 0;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    background: var(--el-fill-color-lighter);
+    overflow-x: auto;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-label),
+.me-preview :deep(.gh-tabs-label) {
+    flex: 0 0 auto;
+    padding: 7px 12px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font: inherit;
+    font-size: 13px;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-label.is-active) {
+    color: var(--el-color-primary);
+    border-bottom-color: var(--el-color-primary);
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-panels),
+.me-preview :deep(.gh-tabs-panels) {
+    padding: 10px 14px;
+}
+/* 编辑态由 NodeView 的行内 display 控制；预览态用 radio 做无 JS 切换 */
+.me-preview :deep(.gh-tabs > input[type="radio"]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+.me-preview :deep(.gh-tabs-panel) { display: none; }
+.me-preview :deep(.gh-tabs > input:nth-of-type(1):checked ~ .gh-tabs-panels > .gh-tabs-panel:nth-child(1)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(2):checked ~ .gh-tabs-panels > .gh-tabs-panel:nth-child(2)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(3):checked ~ .gh-tabs-panels > .gh-tabs-panel:nth-child(3)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(4):checked ~ .gh-tabs-panels > .gh-tabs-panel:nth-child(4)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(5):checked ~ .gh-tabs-panels > .gh-tabs-panel:nth-child(5)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(6):checked ~ .gh-tabs-panels > .gh-tabs-panel:nth-child(6)) {
+    display: block;
+}
+.me-preview :deep(.gh-tabs > input:nth-of-type(1):checked ~ .gh-tabs-head > label:nth-child(1)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(2):checked ~ .gh-tabs-head > label:nth-child(2)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(3):checked ~ .gh-tabs-head > label:nth-child(3)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(4):checked ~ .gh-tabs-head > label:nth-child(4)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(5):checked ~ .gh-tabs-head > label:nth-child(5)),
+.me-preview :deep(.gh-tabs > input:nth-of-type(6):checked ~ .gh-tabs-head > label:nth-child(6)) {
+    color: var(--el-color-primary);
+    border-bottom-color: var(--el-color-primary);
 }
 
 /* 占位提示 */

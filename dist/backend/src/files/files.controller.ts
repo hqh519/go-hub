@@ -1820,7 +1820,7 @@ export class ManageController {
     scope: 'mine' | 'tome',
     username: string,
     instanceId: string,
-  ): Promise<{ path: string; owner: string }[]> {
+  ): Promise<{ path: string; owner: string; instanceId: string }[]> {
     const user = String(username || '').trim();
     if (!user) return [];
     const rows = await prisma.folderMeta.findMany({
@@ -1829,24 +1829,29 @@ export class ManageController {
         ...(String(instanceId) === '*' ? {} : { instanceId: instanceId || '' }),
         sharedUsers: { not: '[]' },
       },
-      select: { path: true, owner: true, sharedUsers: true },
+      select: { path: true, owner: true, sharedUsers: true, instanceId: true },
     });
     const seen = new Set<string>();
-    const out: { path: string; owner: string }[] = [];
+    const out: { path: string; owner: string; instanceId: string }[] = [];
     for (const r of rows) {
       const path = String(r.path || '').replace(/^\/+|\/+$/g, '');
       if (!path) continue;
       const shared = parseSharedUsers(r.sharedUsers);
       if (!shared.length) continue;
       const owner = String(r.owner || '');
+      /*
+       * v1.3.5.1：共享给「自己」也算共享给我的。
+       * 原实现写死 owner !== user，导致本人共享给自己的目录在另一个实例里查不到。
+       */
       const hit =
         scope === 'tome'
-          ? !!owner && owner !== user && shared.includes(user)
+          ? !!owner && shared.includes(user)
           : owner === user;
-      const key = `${owner}\u0000${path}`;
+      // v1.3.5.1：跨实例下同一路径可能属于不同实例，去重键补上 instanceId
+      const key = `${String(r.instanceId || '')}\u0000${owner}\u0000${path}`;
       if (!hit || seen.has(key)) continue;
       seen.add(key);
-      out.push({ path, owner });
+      out.push({ path, owner, instanceId: String(r.instanceId || '') });
     }
     return out.sort((a, b) => a.path.localeCompare(b.path));
   }
@@ -2101,13 +2106,20 @@ export class ManageController {
      */
     const shareScope: '' | 'mine' | 'tome' =
       q.shareScope === 'mine' || q.shareScope === 'tome' ? q.shareScope : '';
-    const shareDirs: { path: string; owner: string }[] = shareScope
-      ? await this.sharedScopeDirs(shareScope, session?.user || '', allInstances ? '*' : instanceFilter)
+    /*
+     * v1.3.5.1：共享范围生效时一律跨实例取共享目录 ——
+     * a 在任意实例共享给 b，b 在任意实例勾「共享给我的」都要能查到；
+     * 本人共享给自己的目录也一样。这里固定传 '*'，不再受当前浏览实例限制。
+     * 每条共享目录带回自己的 instanceId，下面的 OR 条件据此精确圈定文件，
+     * 避免跨实例时同路径串到别的实例去。
+     */
+    const shareDirs: { path: string; owner: string; instanceId: string }[] = shareScope
+      ? await this.sharedScopeDirs(shareScope, session?.user || '', '*')
       : [];
     /** 共享目录 → folder 的 OR 条件（目录本身 + 以「目录/」开头的全部子目录） */
     const shareFolderOr = shareDirs.flatMap((d) => [
-      { folder: d.path },
-      { folder: { startsWith: `${d.path}/` } },
+      { instanceId: d.instanceId, folder: d.path },
+      { instanceId: d.instanceId, folder: { startsWith: `${d.path}/` } },
     ]);
 
     const rows = await prisma.fileRecord.findMany({
@@ -2120,7 +2132,9 @@ export class ManageController {
          */
         status: onlyDeleted ? 'deleted' : withDeleted ? { in: ['active', 'deleted'] } : 'active',
         // v3.0.0（R5）：全部实例（instanceId=*）时不加实例条件
-        ...(allInstances ? {} : { instanceId: instanceFilter }),
+        // v1.3.5.1：共享范围生效时也不能按当前实例收窄 —— 文件可能来自其它实例的共享目录，
+        // 实例条件已由 shareFolderOr 里的 instanceId 精确承担。
+        ...(allInstances || shareScope ? {} : { instanceId: instanceFilter }),
         /*
          * v1.1.7：浏览记录只对自己有意义 —— 「最近浏览」筛选一旦生效，
          * 一律按登录账户收窄，连共享范围（可能含他人文件）也不放开；
@@ -2196,7 +2210,8 @@ export class ManageController {
     const sharedMark: { path: string; owner: string; sharedPerm: 'edit' | 'readonly' }[] = [];
     if (session?.user) {
       // v3.0.0（R7）：'*' = 全部实例 —— 共享标识不能因为切了「全部实例」就消失
-      const markInstance = allInstances ? '*' : instanceFilter;
+      // v1.3.5.1：共享筛选跨实例取数时，标识也要跨实例下发，否则只读共享目录不会被打标
+      const markInstance = allInstances || shareScope ? '*' : instanceFilter;
       const [toMe, byMe] = await Promise.all([
         listSharedFoldersFor(session.user, markInstance),
         listFoldersSharedBy(session.user, markInstance),

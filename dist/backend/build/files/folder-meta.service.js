@@ -145,7 +145,7 @@ async function listSharedFoldersFor(username, instanceId) {
         },
     });
     return rows
-        .filter((r) => r.owner && r.owner !== u && parseSharedUsers(r.sharedUsers).includes(u))
+        .filter((r) => r.owner && parseSharedUsers(r.sharedUsers).includes(u))
         .map((r) => ({
         path: r.path,
         owner: r.owner,
@@ -190,8 +190,14 @@ async function folderSharedPermission(folderPath, instanceId, username) {
     const rows = await prisma_1.prisma.folderMeta.findMany({
         where: { instanceId: instanceId || '', type: exports.FOLDER_TYPE_FILE, path: { in: chain } },
     });
-    const hit = rows
-        .filter((r) => r.owner && r.owner !== u && parseSharedUsers(r.sharedUsers).includes(u))
+    const exactHit = rows.some((r) => parseSharedUsers(r.sharedUsers).includes(u));
+    const candidates = exactHit
+        ? rows
+        : await prisma_1.prisma.folderMeta.findMany({
+            where: { type: exports.FOLDER_TYPE_FILE, path: { in: chain } },
+        });
+    const hit = candidates
+        .filter((r) => r.owner && parseSharedUsers(r.sharedUsers).includes(u))
         .sort((a, b) => a.path.length - b.path.length)[0];
     return hit
         ? { shared: true, owner: hit.owner, perm: normalizeSharedPerm(hit.sharedPerm) }

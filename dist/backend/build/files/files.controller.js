@@ -1344,7 +1344,7 @@ let ManageController = ManageController_1 = class ManageController {
                 ...(String(instanceId) === '*' ? {} : { instanceId: instanceId || '' }),
                 sharedUsers: { not: '[]' },
             },
-            select: { path: true, owner: true, sharedUsers: true },
+            select: { path: true, owner: true, sharedUsers: true, instanceId: true },
         });
         const seen = new Set();
         const out = [];
@@ -1357,13 +1357,13 @@ let ManageController = ManageController_1 = class ManageController {
                 continue;
             const owner = String(r.owner || '');
             const hit = scope === 'tome'
-                ? !!owner && owner !== user && shared.includes(user)
+                ? !!owner && shared.includes(user)
                 : owner === user;
-            const key = `${owner}\u0000${path}`;
+            const key = `${String(r.instanceId || '')}\u0000${owner}\u0000${path}`;
             if (!hit || seen.has(key))
                 continue;
             seen.add(key);
-            out.push({ path, owner });
+            out.push({ path, owner, instanceId: String(r.instanceId || '') });
         }
         return out.sort((a, b) => a.path.localeCompare(b.path));
     }
@@ -1509,16 +1509,16 @@ let ManageController = ManageController_1 = class ManageController {
         const instanceFilter = allInstances ? '' : rawInstance;
         const shareScope = q.shareScope === 'mine' || q.shareScope === 'tome' ? q.shareScope : '';
         const shareDirs = shareScope
-            ? await this.sharedScopeDirs(shareScope, session?.user || '', allInstances ? '*' : instanceFilter)
+            ? await this.sharedScopeDirs(shareScope, session?.user || '', '*')
             : [];
         const shareFolderOr = shareDirs.flatMap((d) => [
-            { folder: d.path },
-            { folder: { startsWith: `${d.path}/` } },
+            { instanceId: d.instanceId, folder: d.path },
+            { instanceId: d.instanceId, folder: { startsWith: `${d.path}/` } },
         ]);
         const rows = await prisma_1.prisma.fileRecord.findMany({
             where: {
                 status: onlyDeleted ? 'deleted' : withDeleted ? { in: ['active', 'deleted'] } : 'active',
-                ...(allInstances ? {} : { instanceId: instanceFilter }),
+                ...(allInstances || shareScope ? {} : { instanceId: instanceFilter }),
                 ...(browseRange
                     ? { uploader: String(session?.user || '') }
                     :
@@ -1553,7 +1553,7 @@ let ManageController = ManageController_1 = class ManageController {
         }
         const sharedMark = [];
         if (session?.user) {
-            const markInstance = allInstances ? '*' : instanceFilter;
+            const markInstance = allInstances || shareScope ? '*' : instanceFilter;
             const [toMe, byMe] = await Promise.all([
                 (0, folder_meta_service_1.listSharedFoldersFor)(session.user, markInstance),
                 (0, folder_meta_service_1.listFoldersSharedBy)(session.user, markInstance),

@@ -2600,10 +2600,10 @@ export default {
             if (!url) return;
             const ok = await copyText(url);
             if (ok) {
-                ElMessage.success({ message: this.$t('fileDetail.sourceUrlCopied'), zIndex: 100000 });
+                ElMessage.success({ message: this.$t('fileDetail.sourceUrlCopied'), customClass: 'gohub-copy-message' });
                 this.showSourceDialog = false;
             } else {
-                ElMessage.warning({ message: this.$t('fileDetail.copyFailed'), zIndex: 100000 });
+                ElMessage.warning({ message: this.$t('fileDetail.copyFailed'), customClass: 'gohub-copy-message' });
             }
         },
         async handleUrlClick(e) {
@@ -2611,16 +2611,19 @@ export default {
             input.select();
             const ok = await copyText(input.value);
             /*
-             * v1.3.3.3（需求：详情页里点 URL 复制的「复制成功」提示看不到）
+             * v1.3.3.3 → v1.3.5.1（需求：详情页里点 URL 复制「复制成功」看不到）
              *
-             * Element Plus 的 message 用的是自己的 z-index 计数器，而详情弹窗本身
-             * 也参与同一套计数；弹窗层级被 layerStack 抬高后，提示就落到它下面去了。
-             * 这里给提示一个明确的、远高于任何弹层的 z-index，保证永远可见。
+             * 旧写法 ElMessage({ zIndex: 100000 }) 是【无效参数】：Element Plus 2.12
+             * 的 message 组件只读 useGlobalComponentSettings('message').currentZIndex，
+             * 根本不消费 options.zIndex；而全局初始层级是 main.js 的 { zIndex: 3210 }，
+             * 弹窗开得越多层级越高，消息反而落到详情弹窗下面 —— 这就是问题复现的原因。
+             * 现在改用 customClass 挂专用 class，由全局 CSS 把 .el-message 提到
+             * 所有弹层之上（见 styles/global.css），不再依赖那个无效参数。
              */
             ElMessage({
                 type: ok ? 'success' : 'warning',
                 message: this.$t(ok ? 'fileDetail.linkCopied' : 'dashboard.copyFailed'),
-                zIndex: 100000,
+                customClass: 'gohub-copy-message',
             });
         },
         /**
@@ -2636,10 +2639,10 @@ export default {
                     message: this.$t('fileDetail.sourceLinkWarning'),
                     duration: 6000,
                     showClose: true,
-                    zIndex: 100000,
+                    customClass: 'gohub-copy-message',
                 });
             } else {
-                ElMessage.warning({ message: this.$t('dashboard.copyFailed'), zIndex: 100000 });
+                ElMessage.warning({ message: this.$t('dashboard.copyFailed'), customClass: 'gohub-copy-message' });
             }
         },
         openImageLink() {
@@ -3783,5 +3786,14 @@ export default {
 
 .detail-ref-link:hover {
     opacity: 0.8;
+}
+
+/*
+ * v1.3.5.1：文件详情页里「复制签发外链 / 复制源地址 / 复制渠道直链」的提示，
+ * 必须盖在详情弹窗之上。全局规则在 styles/global.css 的 .el-message 上，
+ * 这里再按 customClass 收紧一层兜底，避免以后改全局样式时把这个场景漏掉。
+ */
+.el-message.gohub-copy-message {
+    z-index: 2147483000 !important;
 }
 </style>

@@ -237,8 +237,13 @@ export async function listSharedFoldersFor(
       ...(String(instanceId) === '*' ? {} : { instanceId: instanceId || '' }),
     },
   });
+  /*
+   * v1.3.5.1：允许「共享给自己」—— 以前 owner !== u 把本人共享给自己的目录排除了，
+   * 导致另一个实例里共享给自己的文件在「共享给我的」里查不到 / 打不上标识。
+   * 去重在调用方按 path+owner 做，自己共享给自己的会按 byMe（我共享出去的）优先显示。
+   */
   return rows
-    .filter((r) => r.owner && r.owner !== u && parseSharedUsers(r.sharedUsers).includes(u))
+    .filter((r) => r.owner && parseSharedUsers(r.sharedUsers).includes(u))
     .map((r) => ({
       path: r.path,
       owner: r.owner,
@@ -320,8 +325,19 @@ export async function folderSharedPermission(
   const rows = await prisma.folderMeta.findMany({
     where: { instanceId: instanceId || '', type: FOLDER_TYPE_FILE, path: { in: chain } },
   });
-  const hit = rows
-    .filter((r) => r.owner && r.owner !== u && parseSharedUsers(r.sharedUsers).includes(u))
+  /*
+   * v1.3.5.1：共享关系可能登记在别的实例上（a 在实例 2 共享，b 在默认实例打开）。
+   * 当前实例没命中时，按同一路径链再查一次全实例，命中条件仍是 sharedUsers 明确含本人，
+   * 因此不会把没有共享关系的目录放行。
+   */
+  const exactHit = rows.some((r) => parseSharedUsers(r.sharedUsers).includes(u));
+  const candidates = exactHit
+    ? rows
+    : await prisma.folderMeta.findMany({
+        where: { type: FOLDER_TYPE_FILE, path: { in: chain } },
+      });
+  const hit = candidates
+    .filter((r) => r.owner && parseSharedUsers(r.sharedUsers).includes(u))
     .sort((a, b) => a.path.length - b.path.length)[0];
   return hit
     ? { shared: true, owner: hit.owner, perm: normalizeSharedPerm(hit.sharedPerm) }

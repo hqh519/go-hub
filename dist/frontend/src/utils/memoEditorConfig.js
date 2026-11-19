@@ -21,7 +21,7 @@ export const DEFAULT_TOOLBAR_LINES = [
      * 新增：对齐三件套、缩进、换行、段落、上传、链接提取、表格操作组。
      * 表格操作做成工具组 `[...]`，平时只占一个下箭头的位置。
      */
-    'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
+    'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout mathBlock tabsBlock | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
 ];
 
 /**
@@ -34,7 +34,7 @@ export const DEFAULT_TOOLBAR_LINES = [
 export const TOOLBAR_TOKENS = [
     // 一、标题与段落结构
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'paragraph', 'blockquote', 'callout', 'codeBlock', 'hr',
+    'paragraph', 'blockquote', 'callout', 'mathBlock', 'tabsBlock', 'codeBlock', 'hr',
     // 二、文字格式
     'bold', 'italic', 'underline', 'strike', 'highlight', 'code',
     'fontSize', 'textColor', 'clear',

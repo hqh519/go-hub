@@ -348,6 +348,7 @@
                 :instance-id="instanceId"
                 :kind="tagPanelKind"
                 @changed="reload"
+                @close="toggleTagMode"
             />
 
             <template v-else>
@@ -735,12 +736,16 @@ export default {
             return this.kind === 'square' && !this.trashMode;
         },
         /**
-         * v1.1.9.4：标签管理模式要的是「真实 kind」。
-         * 「广场」不是数据库里的 kind（它只是 visibility 的一个视图），
-         * 传下去会让标签面板按 kind='square' 过滤 → 永远空。这里退回「全部」。
+         * v1.3.5.1：标签管理要按「真实类目」加载。
+         * 以前广场退回 ''，后端 tagTypeOfKind('') 回落 type='note'，
+         * 结果瞬间（type='moment'）的标签永远查不出来 —— 这正是「点击标签管理
+         * 没能加载出标签」的根因。现在原样传下去：
+         *   · square → 面板按需求「不加载标签」；
+         *   · moment  → 后端按 type='moment' 取瞬间标签；
+         *   · 其余类目 → 后端按 type='note' 取对应类目标签。
          */
         tagPanelKind() {
-            return this.kind === 'square' ? '' : this.kind;
+            return this.kind;
         },
         typeTabs() {
             return [

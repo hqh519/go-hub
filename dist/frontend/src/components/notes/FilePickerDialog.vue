@@ -289,8 +289,6 @@
                         :aria-label="$t('notes.pickPreviewHold')"
                         @click.stop.prevent
                         @mousedown.stop.prevent
-                        @mouseenter.stop="openPreview(f, $event)"
-                        @mouseleave.stop="closePreview"
                         @touchstart.stop.prevent="eyeTouchStart(f, $event)"
                         @touchmove.stop="eyeTouchMove"
                         @touchend.stop.prevent="eyeTouchEnd"
@@ -1226,13 +1224,14 @@ export default {
         async openPreview(f, e) {
             if (!this.previewable(f)) return;
             /*
-             * v1.1.4：图片优先用**缩略图**（该格子刚在网格里加载过，命中浏览器缓存，按住即出）；
-             * 原图即便已缓存，元件也要重新 decode 一遍大图，手机上是肉眼可见的延迟。
-             * 小眼睛只是「看一眼」的快速预览，用缩略图完全够。
+             * v1.3.5.1（需求）：不再用格子里的缩略图当预览源。
+             * 旧实现优先取 thumbUrl（只有一两百像素），按住小眼睛显示出来的是一张
+             * 被放大后仍然很小很糊的图；发布瞬间编辑页早已统一改用原图，这里对齐，
+             * 避免「选完文件回到编辑页，长按小眼睛还看得到旧的小缩略图」。
              */
             const src = f.mediaKind === 'audio'
                 ? (f.url || this.mountPreviewUrl(f))
-                : (this.source === 'mount' ? this.mountPreviewUrl(f) : (f.thumbUrl || f.url || ''));
+                : (this.source === 'mount' ? this.mountPreviewUrl(f) : (f.url || f.thumbUrl || ''));
             if (!src) return;
             // 锚点：眼睛按钮自身的矩形（不是鼠标位置），浮层贴着眼睛弹出
             const rect = e && e.currentTarget && e.currentTarget.getBoundingClientRect

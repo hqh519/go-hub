@@ -3,6 +3,8 @@ import { createHead } from '@vueuse/head'; // 导入 createHead
 import ElementPlus, { messageConfig } from 'element-plus'
 import 'element-plus/es/components/message/style/css'
 import 'element-plus/es/components/message-box/style/css'
+/* v1.3.5.1：数学公式块（KaTeX）的排版样式，编辑态与预览态共用 */
+import 'katex/dist/katex.min.css'
 
 import { library } from '@fortawesome/fontawesome-svg-core';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';

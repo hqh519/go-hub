@@ -1070,6 +1070,25 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1351',
+      title: '六十二、v1.3.5.1 更新要点',
+      intro: '这一版修顺了跨实例文件共享、发布瞬间的「标记」、标签管理与复制提示层级，并给笔记编辑器补上数学公式块、页签块和 GitHub 风格提示块。本次开发任务按分批推进，本版为第一批成果：编辑器白板、列表深层嵌套输入、表格增强与「登记」功能仍在开发中。',
+      items: [
+        { t: '图床管理页', d: '相册视图支持按住 Shift 连选，刷新后继续保持「直接展示文件」模式；选中文件打开灯箱后，边缘滑动返回会先关灯箱、最后才关批量操作菜单栏；非根目录时目录选择按钮右上角显示红点。' },
+        { t: '文件共享修复', d: '任意实例共享给其他用户（或共享给自己）的文件 / 文件夹，接收方在任意实例下都能从「共享给我的」筛选项中查到；共享目录按各自的实例精确圈定文件，不会串实例。' },
+        { t: '发布瞬间：标记', d: '标签输入框之后新增「标记」输入框，可手动输入，也可搜索并选择已有标记。标记是独立于标签的第二套体系，一条内容只能有一个标记，按账户 + 实例 + 内容类型隔离，数据存进新建的 markers 表。' },
+        { t: '发布瞬间：输入框与预览', d: '移动端正文输入框在未调出键盘时自动排满页面，键盘弹出按设置值压缩、收起后重新适应；移除附件小眼睛残留的旧缩略图预览动作，长按预览改为显示完整图片。' },
+        { t: '标签管理', d: '修复点击「标签管理」加载不出标签的问题：广场类目不加载标签，瞬间等内容类目只加载该类目标签；页面结构复刻图床管理页，使用同一套工具栏、卡片网格、批量栏与属性弹窗。' },
+        { t: '复制提示层级', d: '修复「复制签发外链」的成功提示被文件详情页盖住看不到的问题。Element Plus 2.12 的消息组件并不读取 zIndex 选项，旧写法一直无效；现在由全局样式把消息固定提到所有弹层之上。' },
+        { t: '笔记编辑页：实例与回退', d: '切换实例后左上角页面切换按钮显示实例序号；移动端边缘滑动返回在键盘未弹出时回到笔记列表，在列表栏中则不再继续回退。' },
+        { t: '笔记编辑页：尺寸与跳动', d: '修复部分手机浏览器滚动时收起顶部 / 底部栏导致的附件尺寸跳动：触屏设备只在宽度明显变化（旋屏）时更新尺寸基准，同方向的高度变化沿用进入页面时的值。' },
+        { t: '数学公式块', d: '用 $$ 包裹 LaTeX 公式即可在编辑态与预览态渲染，工具栏可直接插入；公式原文保存在 md 中，修改走源码模式。' },
+        { t: '页签块', d: '用 ::: tabs 围栏配合 @tab 标题 分页，编辑态与预览态都能点击切换页签，页签正文支持普通内容与块引用。' },
+        { t: '提示块', d: '支持 GitHub 风格写法 > [!IMPORTANT]、> [!NOTE]、> [!TIP]、> [!WARNING]、> [!CAUTION]，不同类型有各自的配色与标签；旧的 :::callout 写法仍可正常打开，保存后平滑转换为新格式。' },
+        { t: '升级兼容', d: '本版新增两张标记相关数据表与一个可选字段，均为可空或带默认值；既有瞬间、笔记、文件、标签与留言数据原样保留，可直接升级。' }
+      ]
+    },
+    {
       id: 'whatsnew-135',
       title: '六十一、v1.3.5 更新要点',
       intro: '这一版把「发布瞬间」的长按预览、笔记回收站和编辑器大纲彻底修顺：预览不再先闪一下再跳到正确位置，移动端也能正常长按弹出；删除笔记会稳定进入回收站，从回收站彻底删除会连带清掉历史；大纲补上关系线与上下级折叠，点击标题会停在吸附栏下方。此外还有代码块换行行号对齐、内容统计页、以及一批图标与排版的一致性收口。',
@@ -2291,6 +2310,25 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1351',
+      title: '62. What is new in v1.3.5.1',
+      intro: 'This release fixes cross-instance file sharing, adds a separate Marker field to the moment composer, repairs tag management and copy-toast layering, and brings math blocks, tabs blocks and GitHub-style alerts to the notes editor. This task is delivered in batches: this is the first batch. The whiteboard tool, deeper list nesting, table enhancements and the registration feature are still in development.',
+      items: [
+        { t: 'Dashboard', d: 'Album view now supports Shift range selection and keeps the expanded file display after a refresh. With files selected and the lightbox open, an edge-swipe back closes the lightbox first and the batch bar last. A red dot marks the directory button when you are not at the root.' },
+        { t: 'File sharing', d: 'Files or folders shared from any instance (including to yourself) are now visible under Shared with me from any instance for the recipient. Each shared directory still scopes files to its own instance, so paths never leak across instances.' },
+        { t: 'Moment composer: markers', d: 'A Marker field sits after the tags field. Type a name or search and pick an existing one. Markers are a second, separate tagging system: one marker per item, isolated by account, instance and content type, stored in a new markers table.' },
+        { t: 'Moment composer: input and preview', d: 'On mobile the body field fills the page when the keyboard is hidden, compresses to the configured limits while typing, and re-fits after the keyboard closes. The leftover thumbnail preview action on the attachment eye button is removed; press-and-hold now shows the full image.' },
+        { t: 'Tag management', d: 'Fixed tags never loading: Square loads no tags, while content categories such as Moments load only their own tags. The page now mirrors the dashboard tag manager with the same toolbar, card grid, batch bar and properties dialog.' },
+        { t: 'Copy toast layering', d: 'Fixed the copy signed link success toast being hidden behind the file detail dialog. Element Plus 2.12 does not read the zIndex message option, so the old fix never worked; a global rule now keeps messages above every overlay.' },
+        { t: 'Notes editor: instance and back', d: 'The page switch button shows the instance number after switching. On mobile, an edge-swipe back returns to the note list when the keyboard is hidden and does nothing further when already in the list.' },
+        { t: 'Notes editor: no size jump', d: 'Fixed attachment sizes jumping when mobile browsers hide their top or bottom bars while scrolling: on touch devices the size baseline only updates when width changes noticeably (rotation), not on height-only changes.' },
+        { t: 'Math block', d: 'Wrap LaTeX in $$ to render it in both editing and preview; a toolbar tool inserts it. The formula text lives in markdown and is edited in source mode.' },
+        { t: 'Tabs block', d: 'Use a ::: tabs fence with @tab headings to create pages. Tabs are clickable in both editing and preview, and tab bodies support regular content and block references.' },
+        { t: 'Alerts', d: 'GitHub-style alerts are supported: > [!IMPORTANT], > [!NOTE], > [!TIP], > [!WARNING] and > [!CAUTION], each with its own colour and label. Older :::callout blocks still open and are converted to the new format on save.' },
+        { t: 'Upgrade compatibility', d: 'Two new marker tables and one optional column are added, all nullable or defaulted. Existing moments, notes, files, tags and comments are untouched and upgrade in place.' }
       ]
     },
     {

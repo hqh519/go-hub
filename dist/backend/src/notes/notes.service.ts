@@ -24,6 +24,7 @@ import { Injectable } from '@nestjs/common';
 import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
 import { TAG_TYPE_MOMENT, TAG_TYPE_NOTE, findOrCreateTag, tagScope, tagTypeOfKind } from '../common/tags';
+import { findOrCreateMarker } from '../common/markers';
 import { syncFileStats } from '../common/file-share-stats';
 import { fileTypeOf } from '../common/file-view';
 // v1.1.3：「图床文件」模式的筛选与图床管理共用同一份求值实现（见 common/file-filter.ts）
@@ -98,6 +99,8 @@ export interface NoteListItem {
     weatherName: string;
     moodName: string;
     location: string;
+    /** v1.3.5.1：标记名称（快照，编辑页回填用） */
+    markerName: string;
   } | null;
   assets: NoteAssetView[];
   tags: { id: string; name: string }[];
@@ -188,6 +191,8 @@ export interface MomentInput {
   visibility?: string;
   assetIds?: string[];
   tagNames?: string[];
+  /** v1.3.5.1：标记（单选，独立于标签体系，提交到 markers 表 + note_markers 关联） */
+  markerName?: string;
   instanceId?: string;
   /**
    * v1.1.6：实际发布时间（点击卡片标题旁的时间可改）。
@@ -622,6 +627,7 @@ export class NotesService {
             weatherName: row.moment.weatherName || '',
             moodName: row.moment.moodName || '',
             location: row.moment.location || '',
+            markerName: row.moment.markerName || '',
           }
         : null,
       assets,
@@ -700,6 +706,11 @@ export class NotesService {
     const mediaKind = mediaKindOf(ordered.map((f) => f.mime));
 
     const tagNames = normalizeTagNames(input.tagNames);
+    /* v1.3.5.1：标记（单选）—— 写 markers 表 + note_markers 关联，moment 里另存名称快照 */
+    const markerName = String(input.markerName || '').trim().slice(0, 120);
+    const marker = markerName
+      ? await findOrCreateMarker(markerName, instanceId, viewer, TAG_TYPE_MOMENT)
+      : null;
     const tagRows: { id: string }[] = [];
     for (const name of tagNames) {
       // 第四个参数 = 标签类型：笔记标签与文件标签同名也是两条记录，互不污染
@@ -740,6 +751,7 @@ export class NotesService {
               moodName: String(input.moodName || '').slice(0, 32),
               weatherName: String(input.weatherName || '').slice(0, 32),
               location: String(input.location || '').slice(0, 80),
+              markerName,
             },
           },
           assets: {
@@ -748,6 +760,7 @@ export class NotesService {
           tags: {
             create: tagRows.map((t) => ({ tagId: t.id })),
           },
+          ...(marker ? { markers: { create: [{ markerId: marker.id }] } } : {}),
         },
         select: { id: true },
       });
@@ -814,6 +827,12 @@ export class NotesService {
     const mediaKind = mediaKindOf(finalFiles.map((f) => f.mime));
 
     const tagNames = input.tagNames === undefined ? null : normalizeTagNames(input.tagNames);
+    /* v1.3.5.1：没传 markerName 就不动标记；传空串代表清空 */
+    const markerTouched = input.markerName !== undefined;
+    const markerName = markerTouched ? String(input.markerName || '').trim().slice(0, 120) : '';
+    const marker = markerName
+      ? await findOrCreateMarker(markerName, instanceId, viewer, TAG_TYPE_MOMENT)
+      : null;
     const tagRows: { id: string }[] = [];
     if (tagNames) {
       for (const name of tagNames) tagRows.push(await findOrCreateTag(name, instanceId, viewer, TAG_TYPE_MOMENT));
@@ -864,6 +883,7 @@ export class NotesService {
                 moodName: String(input.moodName || '').slice(0, 32),
                 weatherName: String(input.weatherName || '').slice(0, 32),
                 location: String(input.location || '').slice(0, 80),
+                markerName: String(input.markerName || '').trim().slice(0, 120),
               },
               update: {
                 // 标题：v1.1.3 起写独立列（此前写 metas.title，改完还要整段重写 JSON）
@@ -876,6 +896,7 @@ export class NotesService {
                 ...(input.moodName === undefined ? {} : { moodName: String(input.moodName).slice(0, 32) }),
                 ...(input.weatherName === undefined ? {} : { weatherName: String(input.weatherName).slice(0, 32) }),
                 ...(input.location === undefined ? {} : { location: String(input.location).slice(0, 80) }),
+                ...(input.markerName === undefined ? {} : { markerName: String(input.markerName || '').trim().slice(0, 120) }),
               },
             },
           },
@@ -899,6 +920,15 @@ export class NotesService {
                 tags: {
                   deleteMany: {},
                   create: tagRows.map((t) => ({ tagId: t.id })),
+                },
+              }
+            : {}),
+          /* v1.3.5.1：标记单选 —— 传了才整体替换，传空串 = 清空关联 */
+          ...(markerTouched
+            ? {
+                markers: {
+                  deleteMany: {},
+                  ...(marker ? { create: [{ markerId: marker.id }] } : {}),
                 },
               }
             : {}),

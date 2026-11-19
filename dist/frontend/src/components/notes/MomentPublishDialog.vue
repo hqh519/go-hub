@@ -286,6 +286,29 @@
                     <el-option :label="$t('notes.visibilityPublic')" value="public" />
                 </el-select>
             </div>
+
+            <!--
+                v1.3.5.1（需求）：底部标签行之后新增「标记」输入框。
+                与位置输入框同一套交互（el-autocomplete：可手输、可查历史、可直选），
+                但走独立的 markers 表，按「用户 + 实例 + 内容类型」隔离，
+                且一条内容只能有一个标记 —— 所以是单值而不是 tagNames 那种多选。
+            -->
+            <el-autocomplete
+                v-model="form.markerName"
+                class="mp-marker"
+                size="small"
+                :fetch-suggestions="queryMarker"
+                :placeholder="$t('notes.markerPlaceholder')"
+                :trigger-on-focus="true"
+                clearable
+                maxlength="120"
+                popper-class="mp-marker-popper"
+            >
+                <template #prefix>
+                    <font-awesome-icon icon="tag" class="mp-marker-icon" />
+                </template>
+            </el-autocomplete>
+
             <p v-if="form.visibility === 'specified'" class="mp-visibility-hint">
                 {{ $t('notes.visibilitySpecifiedTip') }}
             </p>
@@ -407,6 +430,9 @@ const draftKeyOf = (instanceId) => `gohub:note-draft:moment:${instanceId || 'def
  */
 const LOCATION_MAX = 20;
 
+/** v1.3.5.1：标记候选最多给多少条（与位置候选同量级） */
+const MARKER_MAX = 20;
+
 /** 心情 / 天气名称提示的显示时长（需求：2 秒后消失） */
 const NAME_TIP_MS = 2000;
 
@@ -449,7 +475,8 @@ export default {
                 weather: '',
                 location: '',
                 visibility: 'private',
-                tagNames: []
+                tagNames: [],
+                markerName: ''
             },
             // 已选附件（顺序即九宫格顺序）
             assets: [],
@@ -484,6 +511,8 @@ export default {
             /** 最近用过的地点（位置输入框的记忆，存在浏览器里） */
             // v1.1.7：位置候选（来自数据表），按查询词做一层会话内缓存
             locationCache: {},
+            /** v1.3.5.1：标记候选缓存（只在本次弹窗内有效，关窗即清） */
+            markerCache: {},
             /** 本次打开是否恢复过草稿 */
             draftRestored: false,
             /**
@@ -609,6 +638,7 @@ export default {
         'form.mood': 'scheduleSave',
         'form.weather': 'scheduleSave',
         'form.location': 'scheduleSave',
+        'form.markerName': 'scheduleSave',
         'form.visibility': 'scheduleSave',
         'form.tagNames': {
             deep: true,
@@ -638,18 +668,12 @@ export default {
             visible: { id: 'moment-publish', close: () => { this.visible = false; } }
         });
         /*
-         * v1.3.3：小眼睛浮层的关闭条件 —— 点浮层与按钮以外的地方，或按 Esc。
-         * 用捕获阶段：编辑区自己的 pointerdown 可能会 stopPropagation，冒泡收不到。
+         * v1.3.5.1（需求）：移除 v1.3.3「点一下开关预览」时代残留的旧动作。
+         * 那时小眼睛点开后会一直挂着，才需要「点浮层外关闭 / Esc 关闭」；
+         * 现在已是「按住才显示、松手就关闭」，这两套 document 监听不但多余，
+         * 还会和 document 上的 pointerup 兜底互相抢，长按后偶尔留下旧的小预览。
+         * 关闭统一由 eyePressEnd() / _eyeUp 负责。
          */
-        this._floatDown = (e) => {
-            if (!this.assetFloat) return;
-            const t = e.target;
-            if (t && t.closest && (t.closest('.mp-asset-eye') || t.closest('.np-preview'))) return;
-            this.closeAssetFloat();
-        };
-        this._floatEsc = (e) => {
-            if (String(e.key) === 'Escape' && this.assetFloat) this.closeAssetFloat();
-        };
         /*
          * v1.3.5（需求：移动端长按预览显示不出来）
          * 手指可能在按钮外松开（抖动、滚动容器吃掉 pointerup），
@@ -659,8 +683,6 @@ export default {
         this._eyeUp = () => {
             if (this._eyeTimer || this._eyeShowing) this.eyePressEnd();
         };
-        document.addEventListener('pointerdown', this._floatDown, true);
-        document.addEventListener('keydown', this._floatEsc, true);
         document.addEventListener('pointerup', this._eyeUp, true);
         document.addEventListener('pointercancel', this._eyeUp, true);
     },
@@ -693,8 +715,6 @@ export default {
             this._kbTimers.forEach((t) => window.clearTimeout(t));
             this._kbTimers = null;
         }
-        if (this._floatDown) document.removeEventListener('pointerdown', this._floatDown, true);
-        if (this._floatEsc) document.removeEventListener('keydown', this._floatEsc, true);
         if (this._eyeUp) {
             document.removeEventListener('pointerup', this._eyeUp, true);
             document.removeEventListener('pointercancel', this._eyeUp, true);
@@ -722,6 +742,7 @@ export default {
             this.reset();
             // v1.1.7：位置候选每次打开都重新问后端，缓存只在本次弹窗内有效
             this.locationCache = {};
+            this.markerCache = {};
             if (this.isEdit) {
                 this.fillFromNote(this.note);
             } else {
@@ -960,6 +981,21 @@ export default {
                     wrap.style.minHeight = h > base + 1 ? `${Math.round(h)}px` : '';
                     return;
                 }
+                /*
+                 * v1.3.5.1（需求）：打开编辑页、未调出键盘时，正文框要排满页面空余位置。
+                 * .mp-editor-wrap 本身就是 flex:1 1 auto、textarea 是 height:100%，
+                 * 之前这里一律改成 flex:0 0 auto + 固定 px 高度，把「吃掉剩余空间」的
+                 * 能力关掉了。现在未弹键盘时清掉行内覆盖，交回 CSS 自适应；
+                 * 键盘弹起才走下面的压缩 / 内容增长逻辑（min~max）。
+                 * 键盘收起后视口事件会再调一次本方法，自动回到这个分支重新适应页面。
+                 */
+                if (!this.keyboardOpen) {
+                    el.style.height = '';
+                    el.style.overflowY = 'auto';
+                    wrap.style.flex = '';
+                    wrap.style.minHeight = '';
+                    return;
+                }
                 const prevHeight = el.style.height;
                 const prevOverflow = el.style.overflowY;
                 el.style.height = '0px';
@@ -1058,7 +1094,8 @@ export default {
                 weather: '',
                 location: '',
                 visibility: 'private',
-                tagNames: []
+                tagNames: [],
+                markerName: ''
             };
             this.assets = [];
         },
@@ -1072,7 +1109,9 @@ export default {
                 weather: m.weather || '',
                 location: m.location || '',
                 visibility: note.visibility || 'private',
-                tagNames: (note.tags || []).map((t) => t.name)
+                tagNames: (note.tags || []).map((t) => t.name),
+                // v1.3.5.1：编辑已有瞬间时把标记回填，否则保存会把它清空
+                markerName: m.markerName || ''
             };
             this.assets = (note.assets || []).map((a) => ({
                 fileId: a.fileId,
@@ -1095,7 +1134,10 @@ export default {
         saveDraft() {
             if (!this.visible || this.isEdit) return;
             try {
-                const empty = !this.form.content.trim() && !this.assets.length && !this.form.tagNames.length;
+                const empty = !this.form.content.trim()
+                    && !this.assets.length
+                    && !this.form.tagNames.length
+                    && !String(this.form.markerName || '').trim();
                 if (empty) {
                     window.localStorage.removeItem(draftKeyOf(this.instanceId));
                     return;
@@ -1108,6 +1150,7 @@ export default {
                     location: this.form.location,
                     visibility: this.form.visibility,
                     tagNames: this.form.tagNames,
+                    markerName: this.form.markerName,
                     assets: this.assets,
                     savedAt: Date.now()
                 };
@@ -1130,7 +1173,9 @@ export default {
             } catch (e) {
                 d = null;
             }
-            if (!d || (!String(d.content || '').trim() && !(d.assets || []).length)) {
+            if (!d || (!String(d.content || '').trim()
+                && !(d.assets || []).length
+                && !String(d.markerName || '').trim())) {
                 this.clearDraftStorage();
                 return;
             }
@@ -1142,7 +1187,8 @@ export default {
                 weather: d.weather || '',
                 location: d.location || '',
                 visibility: d.visibility || 'private',
-                tagNames: Array.isArray(d.tagNames) ? d.tagNames : []
+                tagNames: Array.isArray(d.tagNames) ? d.tagNames : [],
+                markerName: d.markerName || ''
             };
             this.assets = Array.isArray(d.assets) ? d.assets : [];
             this.draftRestored = true;
@@ -1187,6 +1233,40 @@ export default {
                     .slice(0, LOCATION_MAX)
                     .map((v) => ({ value: v }));
                 this.locationCache[key] = list;
+                cb(list);
+            } catch (e) {
+                cb([]);
+            }
+        },
+
+        /* ── 标记候选（v1.3.5.1） ────────────────────────────────── */
+        /**
+         * 交互与位置候选一致，但数据源是独立的 markers 表：
+         * 后端按「当前账户 + 当前实例 + kind=moment」隔离，类型之间互不串。
+         * 一条内容只能有一个标记，所以 el-autocomplete 单选即可。
+         */
+        async queryMarker(queryString, cb) {
+            const q = String(queryString || '').trim();
+            const key = q.toLowerCase();
+            if (this.markerCache[key]) {
+                cb(this.markerCache[key]);
+                return;
+            }
+            try {
+                const params = new URLSearchParams({
+                    instanceId: this.instanceId || '',
+                    kind: 'moment'
+                });
+                if (q) params.set('keyword', q);
+                const res = await fetchWithAuth(`/api/notes/markers?${params.toString()}`);
+                const data = await res.json().catch(() => []);
+                const rows = Array.isArray(data) ? data : data.list || [];
+                const list = rows
+                    .map((r) => (typeof r === 'string' ? r : (r && r.name) || ''))
+                    .filter((v) => String(v).trim())
+                    .slice(0, MARKER_MAX)
+                    .map((v) => ({ value: v }));
+                this.markerCache[key] = list;
                 cb(list);
             } catch (e) {
                 cb([]);
@@ -1527,6 +1607,8 @@ export default {
                     weather: this.form.weather,
                     weatherName: weatherOpt ? this.nameOf(weatherOpt) : '',
                     location: this.form.location,
+                    // v1.3.5.1：标记名随表单提交，后端写入 markers 表并关联到本条瞬间
+                    markerName: this.form.markerName,
                     visibility: this.form.visibility,
                     assetIds: this.assets.map((a) => a.fileId),
                     tagNames: this.form.tagNames,
@@ -1745,6 +1827,18 @@ export default {
 }
 
 .mp-location-icon {
+    font-size: 12px;
+    opacity: 0.6;
+}
+
+/* v1.3.5.1：标记输入框独占一行，长名称（如「番茄二年级上学期…」）也能看全 */
+.mp-marker {
+    max-width: 100%;
+    width: 100%;
+    flex: 0 0 auto;
+}
+
+.mp-marker-icon {
     font-size: 12px;
     opacity: 0.6;
 }

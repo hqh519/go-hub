@@ -12,6 +12,7 @@ const common_1 = require("@nestjs/common");
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const tags_1 = require("../common/tags");
+const markers_1 = require("../common/markers");
 const file_share_stats_1 = require("../common/file-share-stats");
 const file_view_1 = require("../common/file-view");
 const file_filter_1 = require("../common/file-filter");
@@ -345,6 +346,7 @@ let NotesService = class NotesService {
                     weatherName: row.moment.weatherName || '',
                     moodName: row.moment.moodName || '',
                     location: row.moment.location || '',
+                    markerName: row.moment.markerName || '',
                 }
                 : null,
             assets,
@@ -408,6 +410,10 @@ let NotesService = class NotesService {
         const ordered = resolved.ordered;
         const mediaKind = (0, notes_util_1.mediaKindOf)(ordered.map((f) => f.mime));
         const tagNames = (0, notes_util_1.normalizeTagNames)(input.tagNames);
+        const markerName = String(input.markerName || '').trim().slice(0, 120);
+        const marker = markerName
+            ? await (0, markers_1.findOrCreateMarker)(markerName, instanceId, viewer, tags_1.TAG_TYPE_MOMENT)
+            : null;
         const tagRows = [];
         for (const name of tagNames) {
             tagRows.push(await (0, tags_1.findOrCreateTag)(name, instanceId, viewer, tags_1.TAG_TYPE_MOMENT));
@@ -439,6 +445,7 @@ let NotesService = class NotesService {
                             moodName: String(input.moodName || '').slice(0, 32),
                             weatherName: String(input.weatherName || '').slice(0, 32),
                             location: String(input.location || '').slice(0, 80),
+                            markerName,
                         },
                     },
                     assets: {
@@ -447,6 +454,7 @@ let NotesService = class NotesService {
                     tags: {
                         create: tagRows.map((t) => ({ tagId: t.id })),
                     },
+                    ...(marker ? { markers: { create: [{ markerId: marker.id }] } } : {}),
                 },
                 select: { id: true },
             });
@@ -501,6 +509,11 @@ let NotesService = class NotesService {
             : await prisma_1.prisma.fileRecord.findMany({ where: { id: { in: finalAssetIds } }, select: FILE_SELECT });
         const mediaKind = (0, notes_util_1.mediaKindOf)(finalFiles.map((f) => f.mime));
         const tagNames = input.tagNames === undefined ? null : (0, notes_util_1.normalizeTagNames)(input.tagNames);
+        const markerTouched = input.markerName !== undefined;
+        const markerName = markerTouched ? String(input.markerName || '').trim().slice(0, 120) : '';
+        const marker = markerName
+            ? await (0, markers_1.findOrCreateMarker)(markerName, instanceId, viewer, tags_1.TAG_TYPE_MOMENT)
+            : null;
         const tagRows = [];
         if (tagNames) {
             for (const name of tagNames)
@@ -543,6 +556,7 @@ let NotesService = class NotesService {
                                 moodName: String(input.moodName || '').slice(0, 32),
                                 weatherName: String(input.weatherName || '').slice(0, 32),
                                 location: String(input.location || '').slice(0, 80),
+                                markerName: String(input.markerName || '').trim().slice(0, 120),
                             },
                             update: {
                                 ...(input.title === undefined ? {} : { title: String(input.title).trim().slice(0, 80) }),
@@ -554,6 +568,7 @@ let NotesService = class NotesService {
                                 ...(input.moodName === undefined ? {} : { moodName: String(input.moodName).slice(0, 32) }),
                                 ...(input.weatherName === undefined ? {} : { weatherName: String(input.weatherName).slice(0, 32) }),
                                 ...(input.location === undefined ? {} : { location: String(input.location).slice(0, 80) }),
+                                ...(input.markerName === undefined ? {} : { markerName: String(input.markerName || '').trim().slice(0, 120) }),
                             },
                         },
                     },
@@ -570,6 +585,14 @@ let NotesService = class NotesService {
                             tags: {
                                 deleteMany: {},
                                 create: tagRows.map((t) => ({ tagId: t.id })),
+                            },
+                        }
+                        : {}),
+                    ...(markerTouched
+                        ? {
+                            markers: {
+                                deleteMany: {},
+                                ...(marker ? { create: [{ markerId: marker.id }] } : {}),
                             },
                         }
                         : {}),

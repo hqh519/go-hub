@@ -16,6 +16,7 @@ exports.NotesController = void 0;
 const common_1 = require("@nestjs/common");
 const auth_guard_1 = require("../auth/auth.guard");
 const notes_service_1 = require("./notes.service");
+const markers_1 = require("../common/markers");
 let NotesController = class NotesController {
     notes;
     constructor(notes) {
@@ -53,6 +54,10 @@ let NotesController = class NotesController {
     async tags(req, instanceId, kind) {
         const { viewer } = this.ctx(req);
         return this.notes.tagCandidates(instanceId || '', viewer, kind || 'moment');
+    }
+    async markers(req, instanceId, kind, keyword) {
+        const { viewer } = this.ctx(req);
+        return (0, markers_1.markerCandidates)(instanceId || '', viewer, (0, markers_1.markerTypeOfKind)(kind || 'moment'), keyword || '');
     }
     async getSettings(req, instanceId) {
         const { viewer } = this.ctx(req);
@@ -144,6 +149,7 @@ let NotesController = class NotesController {
             visibility: body.visibility,
             assetIds: body.assetIds,
             tagNames: body.tagNames,
+            markerName: body.markerName,
             instanceId: body.instanceId,
         }, viewer, String(req.ip || ''));
         if ('error' in r && r.error)
@@ -163,6 +169,7 @@ let NotesController = class NotesController {
             visibility: body.visibility,
             assetIds: body.assetIds,
             tagNames: body.tagNames,
+            markerName: body.markerName,
             instanceId: body.instanceId,
             publishedAt: body.publishedAt,
         }, viewer, isAdmin, String(req.ip || ''));
@@ -223,6 +230,16 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, String]),
     __metadata("design:returntype", Promise)
 ], NotesController.prototype, "tags", null);
+__decorate([
+    (0, common_1.Get)('markers'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('instanceId')),
+    __param(2, (0, common_1.Query)('kind')),
+    __param(3, (0, common_1.Query)('keyword')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String, String]),
+    __metadata("design:returntype", Promise)
+], NotesController.prototype, "markers", null);
 __decorate([
     (0, common_1.Get)('settings'),
     __param(0, (0, common_1.Req)()),

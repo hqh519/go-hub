@@ -34,6 +34,7 @@ import {
 import { Request } from 'express';
 import { currentSession, isAdminRole } from '../auth/auth.guard';
 import { NotesService } from './notes.service';
+import { markerCandidates, markerTypeOfKind } from '../common/markers';
 
 @Controller('api/notes')
 export class NotesController {
@@ -105,6 +106,27 @@ export class NotesController {
     // v1.1.4：标签候选按用户隔离（笔记私有的直接推论）
     const { viewer } = this.ctx(req);
     return this.notes.tagCandidates(instanceId || '', viewer, kind || 'moment');
+  }
+
+  /**
+   * v1.3.5.1：标记候选（独立于标签的第二套体系）。
+   * 只取当前账户 + 当前实例 + 当前内容类型下的标记，支持按输入关键字查询，
+   * 供「标记」输入框做 el-autocomplete 联想；路由必须排在 @Get(':id') 之前。
+   */
+  @Get('markers')
+  async markers(
+    @Req() req: Request,
+    @Query('instanceId') instanceId?: string,
+    @Query('kind') kind?: string,
+    @Query('keyword') keyword?: string,
+  ) {
+    const { viewer } = this.ctx(req);
+    return markerCandidates(
+      instanceId || '',
+      viewer,
+      markerTypeOfKind(kind || 'moment'),
+      keyword || '',
+    );
   }
 
   /**
@@ -275,6 +297,7 @@ export class NotesController {
         visibility: body.visibility as string,
         assetIds: body.assetIds as string[],
         tagNames: body.tagNames as string[],
+        markerName: body.markerName as string,
         instanceId: body.instanceId as string,
       },
       viewer,
@@ -301,6 +324,7 @@ export class NotesController {
         visibility: body.visibility as string,
         assetIds: body.assetIds as string[],
         tagNames: body.tagNames as string[],
+        markerName: body.markerName as string,
         instanceId: body.instanceId as string,
         // v1.1.6：实际发布时间（毫秒时间戳 / ISO 字符串）
         publishedAt: body.publishedAt as number | string | undefined,

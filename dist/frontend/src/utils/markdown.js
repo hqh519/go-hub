@@ -15,6 +15,7 @@
  */
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import katex from 'katex';
 
 // ============================================================
 //  行内
@@ -238,6 +239,23 @@ const IFRAME_OPEN_RE = /^\s*:::\s*iframe\s*(?:\{([^}]*)\})?\s*$/i;
 const CALLOUT_OPEN_RE = /^\s*:::\s*callout\s*(?:\{([^}]*)\})?\s*$/i;
 const CALLOUT_OPEN_LOOSE_RE = /^\s*:::\s*([a-z][\w-]*)\s*(?:\{([^}]*)\})?\s*$/i;
 const CALLOUT_CLOSE_RE = /^\s*:::\s*$/;
+/**
+ * v1.3.5.1（需求）：GitHub 风格提示块 `> [!IMPORTANT]` / `> 正文`。
+ * 与既有的 `:::callout{type=...}` 共用【同一个 callout 节点】，只是多一种源码写法；
+ * 保存时统一序列化成这种 `> [!TAG]` 形式，两种输入都能解析，往返不会抖。
+ */
+const GITHUB_ALERT_RE = /^\s{0,3}>\s*\[!([A-Z][A-Z0-9_-]*)\]\s*$/i;
+const GITHUB_ALERT_TYPE = {
+    NOTE: 'info', TIP: 'tip', IMPORTANT: 'important', WARNING: 'warning', CAUTION: 'danger',
+};
+const GITHUB_ALERT_TAG = {
+    info: 'NOTE', tip: 'TIP', important: 'IMPORTANT', warning: 'WARNING', danger: 'CAUTION',
+};
+/** v1.3.5.1：数学公式块 `$$` … `$$`（整块单独成行） */
+const MATH_FENCE_RE = /^\s*\$\$\s*$/;
+/** v1.3.5.1：页签块 `::: tabs` … `:::`，内部用 `@tab 标题` / `@tab:active 标题` 分段 */
+const TABS_OPEN_RE = /^\s*:::\s*tabs\s*$/i;
+const TAB_HEAD_RE = /^\s*@tab(?::active)?\s+(.+?)\s*$/i;
 /**
  * 媒体 / 附件的独占行（html 形式）。
  * 选 html 而不是自定义标记，是因为它在任何 md 查看器里都还能用，
@@ -604,6 +622,26 @@ export function mdToDoc(md) {
       i += 1;
       continue;
     }
+    // ── v1.3.5.1：GitHub 风格提示块 `> [!IMPORTANT]` → callout 节点 ──
+    if (GITHUB_ALERT_RE.test(line)) {
+      flushPara();
+      const m = GITHUB_ALERT_RE.exec(line);
+      const rawType = String(m?.[1] || 'NOTE').toUpperCase();
+      const type = GITHUB_ALERT_TYPE[rawType] || 'info';
+      const body = [];
+      i += 1;
+      while (i < lines.length && QUOTE_RE.test(lines[i])) {
+        body.push(lines[i].replace(QUOTE_RE, ''));
+        i += 1;
+      }
+      const inner = mdToDoc(body.join('\n'));
+      content.push({
+        type: 'callout',
+        attrs: { type },
+        content: inner.content.length ? inner.content : [{ type: 'paragraph' }],
+      });
+      continue;
+    }
     if (QUOTE_RE.test(line)) {
       flushPara();
       const body = [];
@@ -670,6 +708,50 @@ export function mdToDoc(md) {
       while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) i += 1;
       i += 1;
       if (src) content.push({ type: 'iframe', attrs: { src, height, width: width || null } });
+      continue;
+    }
+    // ── v1.3.5.1：页签块 `::: tabs` … `:::`（必须排在 callout 前，否则被宽松围栏抢走） ──
+    if (TABS_OPEN_RE.test(line)) {
+      flushPara();
+      const body = [];
+      i += 1;
+      while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      i += 1; // 吃掉收尾 :::
+      const tabs = [];
+      let cur = null;
+      body.forEach((raw) => {
+        const m = TAB_HEAD_RE.exec(raw);
+        if (m) {
+          cur = { title: String(m[1] || '').trim(), active: /^@tab:active/i.test(String(raw).trim()), lines: [] };
+          tabs.push(cur);
+          return;
+        }
+        if (cur) cur.lines.push(raw);
+      });
+      const clean = tabs
+        .map((t) => ({
+          title: t.title,
+          active: !!t.active,
+          content: t.lines.join('\n').trim(),
+        }))
+        .filter((t) => t.title);
+      content.push({ type: 'tabsBlock', attrs: { tabs: JSON.stringify(clean) } });
+      continue;
+    }
+    // ── v1.3.5.1：数学公式块 `$$` … `$$` ──
+    if (MATH_FENCE_RE.test(line)) {
+      flushPara();
+      const body = [];
+      i += 1;
+      while (i < lines.length && !MATH_FENCE_RE.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      i += 1; // 吃掉收尾 $$
+      content.push({ type: 'mathBlock', attrs: { formula: body.join('\n').trim() } });
       continue;
     }
     // ── v1.3.1：提示块 `:::callout{type=info}` … `:::` ──
@@ -1027,11 +1109,37 @@ function blockToMd(node, depth = 0) {
       const w = Number(node.attrs?.width) || 0;
       return `:::iframe{src="${src}" height="${h}"${w > 0 ? ` width="${Math.round(w)}"` : ''}}\n:::`;
     }
+    case 'mathBlock': {
+      // 公式按原样写回，空公式也保留围栏，避免解析回来变成段落
+      return `$$\n${String(node.attrs?.formula || '').trim()}\n$$`;
+    }
+    case 'tabsBlock': {
+      let tabs = [];
+      try { tabs = JSON.parse(String(node.attrs?.tabs || '[]')); } catch (e) { tabs = []; }
+      if (!Array.isArray(tabs)) tabs = [];
+      const parts = tabs.map((t) => {
+        const tag = t && t.active ? '@tab:active' : '@tab';
+        const title = String((t && t.title) || '').trim() || '页签';
+        const body = String((t && t.content) || '').trim();
+        return `${tag} ${title}\n\n${body}`;
+      });
+      return `::: tabs\n\n${parts.join('\n\n')}\n\n:::`;
+    }
     case 'callout': {
+      /*
+       * v1.3.5.1：统一写成 GitHub 风格 `> [!TAG]`（需求指定的源码格式）。
+       * 旧的 `:::callout{type=...}` 输入仍由 mdToDoc 兼容解析，所以已有内容
+       * 保存一次后平滑换成新格式，不会丢内容、也不会往返抖动。
+       */
       const type = String(node.attrs?.type || 'info');
+      const tag = GITHUB_ALERT_TAG[type] || 'NOTE';
       const inner = (node.content || []).map((c) => blockToMd(c, depth)).join('\n\n');
-      // 内容空也要留一行，否则 `:::callout\n:::` 解析回来是个没有段落的容器，ProseMirror 会补空段落、往返抖动
-      return `:::callout{type=${type}}\n${inner || ''}\n:::`;
+      const body = String(inner || '')
+        .split('\n')
+        .filter((l) => l.trim() !== '')
+        .map((l) => `> ${l}`)
+        .join('\n');
+      return `> [!${tag}]${body ? `\n${body}` : ''}`;
     }
     case 'table': {
       const rows = (node.content || []).filter((r) => r.type === 'tableRow');
@@ -1120,6 +1228,8 @@ const PURIFY_CONFIG = {
     'controls', 'poster', 'download', 'preload', 'align',
     // v1.3.1.2：iframe 的尺寸与惰性加载属性
     'loading', 'referrerpolicy', 'frameborder', 'allowfullscreen', 'width', 'height',
+    // v1.3.5.1：style 只作为「钩子过滤的输入」放行，真正允许的值见下方 uponSanitizeAttribute
+    'style',
   ],
   // 只允许 http/https/相对地址，挡掉 javascript: 与 data:text/html
   ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i,
@@ -1139,9 +1249,20 @@ const PURIFY_CONFIG = {
 if (typeof DOMPurify.addHook === 'function') {
   DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
     if (data.attrName !== 'style') return;
-    const ok =
+    const v = String(data.attrValue || '').trim();
+    let ok =
       node && node.classList && node.classList.contains('gh-file') &&
-      /^(max-)?width:\s*\d{1,4}px$/i.test(String(data.attrValue || '').trim());
+      /^(max-)?width:\s*\d{1,4}px$/i.test(v);
+    /*
+     * v1.3.5.1：KaTeX 的公式排版全靠 inline style（height / top / vertical-align …），
+     * 一律剥掉公式会散架。只对 .katex 容器内的节点放行，且样式值必须是
+     * 「属性名:值;」这种纯排版写法，不许出现 url() / expression / javascript: /
+     * @import / 标签字符，避免把这里开成 XSS 口子。
+     */
+    if (!ok && node && typeof node.closest === 'function' && node.closest('.katex')) {
+      ok = !/url\s*\(|expression|javascript:|@import|[<>]|\\/i.test(v)
+        && /^[\w-]+\s*:\s*[^;:]+(;\s*[\w-]+\s*:\s*[^;:]+)*;?\s*$/.test(v);
+    }
     if (!ok) {
       data.keepAttr = false;
       data.attrValue = '';
@@ -1182,6 +1303,87 @@ function extractFences(md) {
       const height = Number((/height\s*=\s*"?([0-9]+)/i.exec(m?.[1] || '') || [])[1]) || 420;
       while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) i += 1;
       blocks.push({ type: 'iframe', src, height });
+      out.push('', `@@GHBLOCK${blocks.length - 1}@@`, '');
+      continue;
+    }
+    /*
+     * v1.3.5.1：数学公式块 —— marked 会把 `$$` 当普通文本，先用 KaTeX 渲染成 HTML。
+     * throwOnError:false 保证写错的公式只显示红字，不会让整篇预览崩掉。
+     */
+    if (MATH_FENCE_RE.test(line)) {
+      const body = [];
+      i += 1;
+      while (i < lines.length && !MATH_FENCE_RE.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      const formula = body.join('\n').trim();
+      let rendered = '';
+      try {
+        rendered = katex.renderToString(formula, { displayMode: true, throwOnError: false, output: 'html' });
+      } catch (e) {
+        rendered = `<span class="gh-math-error">${formula.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]))}</span>`;
+      }
+      blocks.push({ type: 'math', html: `<div class="gh-math">${rendered}</div>` });
+      out.push('', `@@GHBLOCK${blocks.length - 1}@@`, '');
+      continue;
+    }
+    /*
+     * v1.3.5.1：页签块 —— 预览是静态 HTML，用 radio + label 做无 JS 的切换。
+     * 每个块用 blocks 下标生成唯一 name / id，同页多个页签块互不串台。
+     */
+    if (TABS_OPEN_RE.test(line)) {
+      const body = [];
+      i += 1;
+      while (i < lines.length && !CALLOUT_CLOSE_RE.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      const tabs = [];
+      let cur = null;
+      body.forEach((raw) => {
+        const m = TAB_HEAD_RE.exec(raw);
+        if (m) {
+          cur = { title: String(m[1] || '').trim(), active: /^@tab:active/i.test(String(raw).trim()), lines: [] };
+          tabs.push(cur);
+          return;
+        }
+        if (cur) cur.lines.push(raw);
+      });
+      const escH = (v) => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const uid = blocks.length;
+      const activeIdx = Math.max(0, tabs.findIndex((t) => t.active));
+      const inputs = tabs.map((_t, idx) => `<input type="radio" name="gh-tabs-${uid}" id="gh-tab-${uid}-${idx}"${idx === activeIdx ? ' checked' : ''}>`).join('');
+      const heads = tabs.map((t, idx) => `<label class="gh-tabs-label" for="gh-tab-${uid}-${idx}">${escH(t.title)}</label>`).join('');
+      const panels = tabs.map((t, idx) => `<div class="gh-tabs-panel" data-panel="${idx}">${String(marked.parse(String(t.lines.join('\n').trim() || ''), { async: false }) || '')}</div>`).join('');
+      blocks.push({
+        type: 'tabs',
+        html: `<div class="gh-tabs">${inputs}<div class="gh-tabs-head">${heads}</div><div class="gh-tabs-panels">${panels}</div></div>`,
+      });
+      out.push('', `@@GHBLOCK${blocks.length - 1}@@`, '');
+      continue;
+    }
+    /*
+     * v1.3.5.1：GitHub 风格提示块在预览里也要有「醒目提示」的样子。
+     * marked 只会把 `> [!IMPORTANT]` 渲染成普通引用（还带着方括号文本），
+     * 所以先整块抽出来换成占位符，正文单独过 marked，再包一层 callout 外壳。
+     */
+    if (GITHUB_ALERT_RE.test(line)) {
+      const m = GITHUB_ALERT_RE.exec(line);
+      const rawType = String(m?.[1] || 'NOTE').toUpperCase();
+      const type = GITHUB_ALERT_TYPE[rawType] || 'info';
+      const body = [];
+      i += 1;
+      while (i < lines.length && QUOTE_RE.test(lines[i])) {
+        body.push(lines[i].replace(QUOTE_RE, ''));
+        i += 1;
+      }
+      i -= 1; // 循环停在第一个非「>」行上，回退一步交给 for 的 i += 1
+      const innerHtml = String(marked.parse(body.join('\n'), { async: false }) || '');
+      blocks.push({
+        type: 'callout',
+        html: `<div class="gh-callout gh-callout-${type}" data-callout="${type}"><div class="gh-callout-title">${rawType}</div><div class="gh-callout-body">${innerHtml}</div></div>`,
+      });
       out.push('', `@@GHBLOCK${blocks.length - 1}@@`, '');
       continue;
     }
@@ -1249,6 +1451,8 @@ export function plainTextOf(md) {
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^\s{0,3}#{1,6}\s*/gm, '')
     .replace(/^\s{0,3}>\s?/gm, '')
+    // v1.3.5.1：提示块的类型标签不是正文，摘要里不出现 `[!IMPORTANT]`
+    .replace(/^\s*\[![A-Z][A-Z0-9_-]*\]\s*$/gim, ' ')
     .replace(/^\s*[-*+]\s+(\[[ xX]\]\s+)?/gm, '')
     .replace(/^\s*\d+[.)]\s+/gm, '')
     .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')

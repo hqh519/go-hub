@@ -641,6 +641,15 @@ html.dark .ai-settings .el-button--primary.is-link:not(.is-disabled) {
    Element Plus 全局消息提示
    ============================== */
 .el-message {
+    /*
+     * v1.3.5.1（需求：文件详情页里「复制签发外链」的成功提示被弹窗盖住）
+     * Element Plus 2.12 的 Message 组件并不读取 options.zIndex，它用的是
+     * useGlobalComponentSettings('message') 里的 currentZIndex；而这里的全局
+     * 初始层级是 main.js 的 { zIndex: 3210 }，弹窗打开得越多就越高，消息反而
+     * 会落在详情弹窗下面。旧代码写的 zIndex: 100000 是无效参数，所以一直没生效。
+     * 直接给所有消息一个远高于任何弹层的固定层级（低于 32 位 int 上限）。
+     */
+    z-index: 2147483000 !important;
     border-radius: 10px !important;
     border: 1px solid var(--glass-border) !important;
     padding: 10px 20px !important;

@@ -10,9 +10,10 @@
         ref="pageEl"
         class="memo-page"
         :class="[
-            { 'is-mobile': isMobile, 'is-topbar-hidden': topbarHidden },
+            { 'is-mobile': isMobile, 'is-topbar-hidden': topbarHidden, 'has-instance-badge': instanceSeq > 0 },
             pageThemeClass,
         ]"
+        :style="instanceBadgeStyle"
     >
         <div class="memo-topbar">
             <DashboardTabs active-tab="memo">
@@ -453,6 +454,18 @@ export default {
             const idx = this.instances.findIndex((i) => String(i.id) === cur);
             return idx >= 0 ? idx + 1 : 0;
         },
+        /**
+         * v1.3.5.1：把实例序号画到左上角「页面切换」按钮上。
+         * 与 /post 的 instanceBadgeStyle 完全同款：序号用带圈数字 ①-⑳，
+         * 通过 --instance-seq 变量交给 CSS 的 ::after，避免改动按钮 DOM 结构。
+         */
+        instanceBadgeStyle() {
+            const n = this.instanceSeq;
+            if (!n) return null;
+            const circled = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'];
+            const text = n <= circled.length ? circled[n - 1] : `(${n})`;
+            return { '--instance-seq': `"${text}"` };
+        },
     },
     watch: {
         activeFolder() {
@@ -467,15 +480,23 @@ export default {
         this.syncViewport();
         window.addEventListener('resize', this.syncViewport);
         /*
-         * v1.3.1（需求）：移动端笔记编辑页禁止「屏幕边缘横滑 → 退出页面」。
+         * v1.3.1 起：移动端笔记编辑页禁止「屏幕边缘横滑 → 退出页面」。
+         * v1.3.5.1（需求）：把「键盘是否弹出」也纳入判定。
          *
          * edgeSwipeGuard 把边缘横滑判成返回手势后，会先关浮层栈；栈里没有层时
-         * 走这里的兜底。笔记页的兜底语义是：编辑中 → 回列表（一步，符合预期），
-         * 已在列表 → 直接吃掉这次返回，**不再退回首页**。
+         * 走这里的兜底。现在分三种情况：
+         *   · 编辑中 + 软键盘未弹出 → 回到笔记列表栏（backToList）；
+         *   · 编辑中 + 软键盘正弹出 → 不回列表，只把这次返回吃掉，
+         *     等用户自己收键盘（否则输入法还开着，列表却已经切走了）；
+         *   · 已在列表栏 → 什么也不做，且禁止页面继续回退（return true 消费）。
          * 返回 true 表示「这次返回已被消费」，页面不会真的退出去。
          */
         setEmptyStackBackHandler(() => {
-            if (this.isMobile && this.editingId) {
+            if (!this.isMobile) return true;
+            const ed = this.$refs.editor;
+            // MemoEditor 用 visualViewport 跌幅维护 kbOpen（v1.3.2 同一口径）
+            if (ed && ed.kbOpen) return true;
+            if (this.editingId) {
                 this.backToList();
                 return true;
             }
@@ -1514,5 +1535,47 @@ export default {
 .ms-css-textarea {
     min-height: 120px;
     line-height: 1.6;
+}
+
+/*
+ * v1.3.5.1（需求）：切换实例后，左上角「页面切换」按钮上显示实例序号，
+ * 与「我的发布页」(/post) 完全同款 —— 同一套 --instance-seq 变量 + ::after，
+ * 桌面端跟在名称后面，移动端按钮太窄则悬浮在图标左上方。
+ */
+.memo-page.has-instance-badge :deep(.page-option.is-current .page-switcher-title::after) {
+    content: var(--instance-seq, "");
+    margin-left: 4px;
+    font-size: 0.72em;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--tabs-switcher-accent-color, var(--el-color-primary));
+    vertical-align: 1px;
+}
+
+@media (max-width: 768px) {
+    .memo-page.has-instance-badge :deep(.page-option.is-current) {
+        position: relative;
+    }
+
+    .memo-page.has-instance-badge :deep(.page-option.is-current .page-switcher-title::after) {
+        content: none;
+    }
+
+    .memo-page.has-instance-badge :deep(.page-option.is-current::after) {
+        content: var(--instance-seq, "");
+        position: absolute;
+        z-index: 2;
+        top: -2px;
+        left: 6px;
+        min-width: 14px;
+        padding: 0 3px;
+        border-radius: 999px;
+        background: var(--el-color-primary);
+        color: #fff;
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 14px;
+        text-align: center;
+    }
 }
 </style>

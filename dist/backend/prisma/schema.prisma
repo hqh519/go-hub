@@ -603,6 +603,7 @@ model Note {
   moment NoteMoment?
   assets NoteAsset[]
   tags   NoteTag[]
+  markers NoteMarker[]
   comments NoteComment[]
 
   /// 类型 tab + 时间排序（「全部」视图走 kind 前缀，单类型走等值）
@@ -744,6 +745,9 @@ model NoteMoment {
   weatherName String @default("")
   moodName    String @default("")
   location  String @default("")
+  /// v1.3.5.1：标记名称冗余快照 —— 编辑回填与列表展示不必 join note_markers；
+  /// 真正的关联关系仍写 note_markers，供后续按标记筛选 / 统计使用。
+  markerName String @default("")
   note      Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([mediaKind])
@@ -782,6 +786,49 @@ model NoteTag {
   @@id([noteId, tagId])
   @@index([tagId])
   @@map("note_tags")
+}
+
+/// v1.3.5.1：标记 —— 独立于「标签」的第二套标签体系。
+///   · 一条内容只能有一个标记（NoteMarker 上 noteId 唯一）；标签可以多个。
+///   · 标记一般记长名称（如「番茄二年级上学期语文考试成绩」），用于把同一跟进
+///     事项的多条记录串起来；不同内容可以使用同一个标记。
+///   · 与 Tag 同口径隔离：身份 = 名称 + 实例 + 内容类型 + 账户（scope）。
+///   · 这张表【只存标记本身】，登记功能要用的「类型 / 单位 / 计算规则」另存
+///     在登记的登记表里，通过标记名关联，不往这里塞计算字段（避免污染瞬间 / 笔记）。
+model Marker {
+  id         String   @id @default(cuid())
+  name       String
+  /// 空 = 默认实例
+  instanceId String   @default("")
+  /// 内容类型：moment / note / article / todo / nav / collection / register …
+  type       String   @default("moment")
+  /// 账户隔离（用户名），与 Tag.scope 同一口径
+  scope      String   @default("")
+  /// 创建人，仅记录不参与隔离
+  owner      String   @default("")
+  metas      String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  notes NoteMarker[]
+
+  @@unique([name, instanceId, type, scope])
+  @@index([instanceId, type])
+  @@index([instanceId, scope])
+  @@map("markers")
+}
+
+/// v1.3.5.1：内容-标记关联。结构对标 NoteTag，但一条内容只允许一个标记。
+model NoteMarker {
+  noteId    String
+  markerId  String
+  createdAt DateTime @default(now())
+  note      Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  marker    Marker @relation(fields: [markerId], references: [id], onDelete: Cascade)
+
+  @@id([noteId, markerId])
+  @@unique([noteId])
+  @@index([markerId])
+  @@map("note_markers")
 }
 
 /// v1.1.2：瞬间留言
