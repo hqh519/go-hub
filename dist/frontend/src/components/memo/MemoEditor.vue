@@ -2516,6 +2516,9 @@ const TabItem = Node.create({
     },
 });
 
+/** v1.3.5.5：每个页签块一份 radio 组名，避免同页多个页签块互相抢占 */
+let tabsBlockSeq = 0;
+
 /**
  * v1.3.5.2：页签块（`::: tabs` … `:::`）。
  *
@@ -2562,13 +2565,33 @@ const TabsBlock = Node.create({
                 for (let i = 0; i < idx && i < cur.childCount; i += 1) pos += cur.child(i).nodeSize;
                 return pos;
             };
-            const syncPanels = () => {
-                items.querySelectorAll('.gh-tab-item').forEach((el, i) => {
-                    el.style.display = i === activeIdx ? 'block' : 'none';
-                });
-                head.querySelectorAll('.gh-tabs-label').forEach((el, i) => {
-                    el.classList.toggle('is-active', i === activeIdx);
-                });
+            /*
+             * v1.3.5.5（需求：页签正文无法输入，一输入就冒出一个新页签）
+             *
+             * 根因：面板显隐原来靠 JS 写 display，而同步只排了一次 rAF，跑的时候 contentDOM
+             * 还是空的，之后再没补过 —— 所有面板停在 CSS 的 display:none：
+             *   · 面板看不见，点下去光标落不到正文，PM 的选区还停在 tabsBlock 里；
+             *   · 这时一敲字，输入进了 tabsBlock（不在任何 tabItem 内），
+             *     schema 的 `tabItem+` 自动补一个默认标题「页签」的项 —— 就是「自动创建页签标题」。
+             *
+             * 现在改成**纯 CSS 切换**：头部放 radio + label，面板显隐交给 `:has()`。
+             * JS 不再碰 contentDOM 里的任何 class / style，也就不会和 ProseMirror 的
+             * DOM 观察器互相触发（上一版用 JS 同步直接导致整页卡死）。
+             */
+            const group = `gh-tabs-g${(tabsBlockSeq += 1)}`;
+            const focusTab = (idx) => {
+                const pos = childPos(idx);
+                if (pos < 0) return;
+                const state = editor.state;
+                const sel = state.selection;
+                const size = state.doc.nodeAt(pos)?.nodeSize || 0;
+                if (sel.from > pos && sel.to < pos + size) return;
+                const next = TextSelection.near(state.doc.resolve(pos + 1), 1);
+                if (next.from >= pos) {
+                    editor.view.dispatch(state.tr.setSelection(next).scrollIntoView());
+                    /* 点标题切换后焦点本来落在隐藏 radio 上，这里把焦点交回正文，点完就能直接打字 */
+                    editor.view.focus();
+                }
             };
             const emit = (name, detail) => {
                 window.dispatchEvent(new CustomEvent(name, { detail }));
@@ -2594,58 +2617,56 @@ const TabsBlock = Node.create({
             };
 
             /**
-             * v1.3.5.3（需求：一插入页签块整页就卡死）
-             *
-             * 根因：NodeView 的 update() 在【每次 transaction】都会被调用（每次输入、每次移动光标），
-             * 而它无条件 paint() —— 整个标题栏 innerHTML 清空重建、重新绑定事件，
-             * 还额外排了 setTimeout + requestAnimationFrame 两次 syncPanels，输入越快堆积越多。
-             * 现在：
-             *   · 用 keyOf() 只比较「页签数量 + 标题 + active」，没变就完全不动 DOM；
-             *   · syncPanels 用单次 rAF 合帧，且已排队时不重复排。
+             * 标题栏重建（只在「页签数量 / 标题 / 初始选中项」变化时执行）。
+             * 每个页签 = 一个隐藏 radio + 一个 label，选中态由 `input:checked + label` 表达。
              */
             let lastKey = '';
-            let syncRaf = 0;
             const keyOf = (n) => {
                 const arr = [];
                 n.forEach((c) => arr.push(`${String(c.attrs.title || '')}|${c.attrs.active ? 1 : 0}`));
                 return arr.join('\u0000');
             };
-            const scheduleSync = () => {
-                if (syncRaf) return;
-                syncRaf = requestAnimationFrame(() => {
-                    syncRaf = 0;
-                    syncPanels();
-                });
-            };
             const paint = (n) => {
                 lastKey = keyOf(n);
                 head.innerHTML = '';
                 if (activeIdx >= n.childCount) activeIdx = 0;
-                const titles = [];
                 n.forEach((child, _offset, i) => {
-                    titles.push({ title: String(child.attrs.title || '页签'), i });
-                });
-                titles.forEach(({ title, i }) => {
-                    const btn = document.createElement('button');
-                    btn.type = 'button';
-                    btn.className = 'gh-tabs-label' + (i === activeIdx ? ' is-active' : '');
-                    btn.textContent = title;
-                    btn.title = '双击改名，长按可选改名 / 删除';
-                    btn.addEventListener('mousedown', (ev) => ev.preventDefault());
-                    btn.addEventListener('click', (ev) => {
-                        ev.preventDefault();
-                        ev.stopPropagation();
+                    const title = String(child.attrs.title || '页签');
+                    const radio = document.createElement('input');
+                    radio.type = 'radio';
+                    radio.className = 'gh-tabs-radio';
+                    radio.name = group;
+                    radio.id = `${group}-${i}`;
+                    radio.checked = i === activeIdx;
+                    radio.tabIndex = -1;
+                    radio.setAttribute('aria-hidden', 'true');
+                    radio.addEventListener('change', () => {
+                        const changed = activeIdx !== i;
                         activeIdx = i;
-                        syncPanels();
+                        if (changed) focusTab(i);
                     });
-                    btn.addEventListener('dblclick', (ev) => {
+                    head.appendChild(radio);
+
+                    const label = document.createElement('label');
+                    label.className = 'gh-tabs-label';
+                    label.htmlFor = radio.id;
+                    label.textContent = title;
+                    label.title = '双击改名，长按可选改名 / 删除';
+                    /* 纯 CSS 已经切过去了，这里只负责把光标跟进新面板 */
+                    label.addEventListener('click', () => {
+                        window.setTimeout(() => {
+                            activeIdx = i;
+                            focusTab(i);
+                        }, 0);
+                    });
+                    label.addEventListener('dblclick', (ev) => {
                         ev.preventDefault();
                         ev.stopPropagation();
                         const pos = childPos(i);
                         if (pos >= 0) emit('gh-tab-rename', { pos, title });
                     });
-                    bindLongPress(btn, i, title);
-                    head.appendChild(btn);
+                    bindLongPress(label, i, title);
+                    head.appendChild(label);
                 });
                 const add = document.createElement('button');
                 add.type = 'button';
@@ -2660,7 +2681,6 @@ const TabsBlock = Node.create({
                     if (base >= 0) emit('gh-tab-add', { pos: base });
                 });
                 head.appendChild(add);
-                scheduleSync();
             };
             paint(node);
 
@@ -2669,12 +2689,16 @@ const TabsBlock = Node.create({
                 contentDOM: items,
                 update(updated) {
                     if (updated.type.name !== 'tabsBlock') return false;
-                    /* 标题 / 数量没变就什么都不做 —— 正文变化由 ProseMirror 自己更新 contentDOM */
+                    /* 只有标题栏相关内容变了才重建；正文变化交给 ProseMirror 自己更新 contentDOM */
                     if (keyOf(updated) !== lastKey) paint(updated);
                     return true;
                 },
-                /* 只放行 contentDOM 内部的变更；标题栏是 NodeView 自绘的，忽略掉才不会触发重排 */
-                ignoreMutation: (m) => m.type !== 'selection' && !items.contains(m.target),
+                /* 标题栏是 NodeView 自绘的，全部忽略；contentDOM 内部的正文变更必须放行 */
+                ignoreMutation: (m) => {
+                    if (m.type === 'selection') return false;
+                    if (!items.contains(m.target)) return true;
+                    return m.type === 'attributes';
+                },
             };
         };
     },
@@ -8128,40 +8152,18 @@ export default {
                 }
             }
             /*
-             * v1.3.4（需求：列表回车后按删除键，去掉列表图标但保留在列表内部）
+             * v1.3.5.5（C8：列表项块嵌套输入）
              *
-             * 原生行为是把这一项整个「抬出」列表（变成列表外面的段落），
-             * 用户要的是「变成上一项的下级内容块」—— 也就是 listItem 里
-             * 再插一个 paragraph。做法：删掉这个空项，在上一个 li 的末尾插段落。
+             * 需求（仿思源）：
+             *   · 空列表项末尾按回车 → 退出列表，变普通段落；
+             *   · 非空列表项末尾回车 → 新建同级同类列表项（原生 splitListItem 已如此）；
+             *   · 空列表项末尾按退格 → 删掉列表标识，缩进成上一项的下级内容块。
+             * 两个动作都自己重排节点，不依赖 liftListItem / 原生 Backspace ——
+             * 原生只会把项抬出列表，做不出「变成下级块」。
              */
-            if (event.key === 'Backspace' && this.mode === 'wysiwyg' && !event.shiftKey) {
-                const ed = this.editor;
-                if (!ed) return false;
-                const { $from, empty } = ed.state.selection;
-                if (!empty) return false;
-                const inList = ed.isActive('listItem') || ed.isActive('taskItem');
-                if (!inList) return false;
-                if ($from.parent.content.size !== 0) return false;
-                const item = this.currentListItem();
-                if (!item) return false;
-                // 只处理「光标在列表项的第一个段落里」
-                if ($from.depth - 1 !== item.depth) return false;
-                const $item = ed.state.doc.resolve(item.pos);
-                if ($item.index() === 0) return false;
-                const tr = ed.state.tr;
-                const size = item.node.nodeSize;
-                try {
-                    tr.delete(item.pos, item.pos + size);
-                    const para = ed.schema.nodes.paragraph.createAndFill();
-                    tr.insert(item.pos - 1, para);
-                    tr.setSelection(TextSelection.near(tr.doc.resolve(item.pos)));
-                    ed.view.dispatch(tr);
-                    ed.view.focus();
-                    this.onEditorUpdate();
-                } catch (e) {
-                    return false;
-                }
-                return true;
+            if (this.mode === 'wysiwyg' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+                if (event.key === 'Enter' && this.enterListExit()) return true;
+                if (event.key === 'Backspace' && this.nestListIntoPrev()) return true;
             }
             if (event.key === 'Tab' && this.mode === 'wysiwyg') {
                 const ed = this.editor;
@@ -8315,6 +8317,101 @@ export default {
             }
             return null;
         },
+        /**
+         * v1.3.5.5（C8）：光标所在列表的上下文。
+         *
+         * 只在「折叠光标 + 列表项第一个段落 + 该段落为空 + 是最后一项」时返回，
+         * 其余情况一律 null，把行为交回 ProseMirror 原生处理。
+         */
+        listContext() {
+            const ed = this.editor;
+            if (!ed) return null;
+            const { $from, empty } = ed.state.selection;
+            if (!empty) return null;
+            const item = this.currentListItem();
+            if (!item) return null;
+            /* 光标必须落在列表项的第一个段落里 */
+            if ($from.depth - 1 !== item.depth) return null;
+            if ($from.parent.content.size !== 0) return null;
+            const $item = ed.state.doc.resolve(item.pos);
+            const list = $item.parent;
+            if (!list || !list.type.name.match(/List$/)) return null;
+            const listPos = $item.before($item.depth);
+            if (listPos < 0) return null;
+            return { ed, item, list, listPos, index: $item.index(), count: list.childCount };
+        },
+
+        /**
+         * v1.3.5.5（C8）：空列表项末尾回车 → 变成普通段落。
+         * 列表只有这一项时整块换成段落；否则删掉空项，在列表后面补一个段落。
+         */
+        enterListExit() {
+            const ctx = this.listContext();
+            if (!ctx) return false;
+            const { ed, item, list, listPos, index, count } = ctx;
+            if (index !== count - 1) return false;
+            const para = ed.schema.nodes.paragraph.createAndFill();
+            const tr = ed.state.tr;
+            try {
+                if (count === 1) {
+                    tr.replaceWith(listPos, listPos + list.nodeSize, para);
+                    tr.setSelection(TextSelection.near(tr.doc.resolve(listPos + 1), 1));
+                } else {
+                    tr.delete(item.pos, item.pos + item.node.nodeSize);
+                    const after = tr.mapping.map(listPos + list.nodeSize);
+                    tr.insert(after, para);
+                    tr.setSelection(TextSelection.near(tr.doc.resolve(after + 1), 1));
+                }
+            } catch (e) {
+                return false;
+            }
+            ed.view.dispatch(tr.scrollIntoView());
+            ed.view.focus();
+            this.onEditorUpdate();
+            return true;
+        },
+
+        /**
+         * v1.3.5.5（C8）：空列表项末尾按退格 → 删掉列表标识，缩进成上一项的下级块。
+         *
+         * 直接重建整个列表节点：前缀项原样搬、上一项末尾追加一个空段落、当前空项丢掉。
+         * 这样 listItem（content 为 `paragraph block*`）里就有了「第一段 + 下级块」的结构，
+         * 后续可以在下级块里继续输入 `- ` / `1. ` / `[] ` 造出任意层级的列表。
+         */
+        nestListIntoPrev() {
+            const ctx = this.listContext();
+            if (!ctx) return false;
+            const { ed, item, list, listPos, index, count } = ctx;
+            if (index !== count - 1 || index === 0) return false;
+            const prev = list.child(index - 1);
+            const kids = [];
+            prev.forEach((k) => kids.push(k));
+            kids.push(ed.schema.nodes.paragraph.createAndFill());
+            const prevNew = prev.type.create(prev.attrs, kids, prev.marks);
+            const nextItems = [];
+            for (let i = 0; i < index - 1; i += 1) nextItems.push(list.child(i));
+            nextItems.push(prevNew);
+            for (let i = index + 1; i < count; i += 1) nextItems.push(list.child(i));
+            let nextList;
+            try {
+                nextList = list.type.create(list.attrs, nextItems, list.marks);
+            } catch (e) {
+                return false;
+            }
+            /* 新段落的光标位置：跳过前 index-1 项 + 进上一项 + 原有子块 */
+            let caret = listPos + 1;
+            for (let i = 0; i < index - 1; i += 1) caret += list.child(i).nodeSize;
+            caret += 1;
+            prev.forEach((k) => { caret += k.nodeSize; });
+            const tr = ed.state.tr.replaceWith(listPos, listPos + list.nodeSize, nextList);
+            const target = Math.min(caret + 1, tr.doc.content.size);
+            tr.setSelection(TextSelection.near(tr.doc.resolve(target), 1));
+            ed.view.dispatch(tr.scrollIntoView());
+            ed.view.focus();
+            this.onEditorUpdate();
+            return true;
+        },
+
         /** 行末操作条的动作分发 */
         lineAction(action) {
             const ed = this.editor;
@@ -11550,10 +11647,47 @@ export default {
 }
 /* v1.3.5.2：页签块改成 content 结构后的编辑态样式 */
 .me-wysiwyg :deep(.gh-editor-content .gh-tabs-items) {
-    padding: 10px 14px;
+    padding: 12px 14px;
+    /* v1.3.5.5（需求）：默认正文框太矮，给出一个能直接落笔的高度 */
+    min-height: 140px;
 }
-.me-wysiwyg :deep(.gh-editor-content .gh-tab-item) {
+/*
+ * v1.3.5.5：面板显隐改为纯 CSS（radio + label + :has()）。
+ * 这样 JS 完全不碰 contentDOM 里的 class / style，不会和 ProseMirror 的 DOM 观察器打架。
+ */
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-radio) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-head > input:checked + .gh-tabs-label) {
+    color: var(--el-color-primary);
+    border-bottom-color: var(--el-color-primary);
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node > .gh-tabs-items > .gh-tab-item) {
     display: none;
+}
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:has(> .gh-tabs-head > input:nth-of-type(1):checked) > .gh-tabs-items > .gh-tab-item:nth-child(1)),
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:has(> .gh-tabs-head > input:nth-of-type(2):checked) > .gh-tabs-items > .gh-tab-item:nth-child(2)),
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:has(> .gh-tabs-head > input:nth-of-type(3):checked) > .gh-tabs-items > .gh-tab-item:nth-child(3)),
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:has(> .gh-tabs-head > input:nth-of-type(4):checked) > .gh-tabs-items > .gh-tab-item:nth-child(4)),
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:has(> .gh-tabs-head > input:nth-of-type(5):checked) > .gh-tabs-items > .gh-tab-item:nth-child(5)),
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:has(> .gh-tabs-head > input:nth-of-type(6):checked) > .gh-tabs-items > .gh-tab-item:nth-child(6)),
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:has(> .gh-tabs-head > input:nth-of-type(7):checked) > .gh-tabs-items > .gh-tab-item:nth-child(7)),
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:has(> .gh-tabs-head > input:nth-of-type(8):checked) > .gh-tabs-items > .gh-tab-item:nth-child(8)) {
+    display: block;
+}
+/* 兜底：一个都没选中（刚插入、脚本没跑到）时显示第一页 */
+.me-wysiwyg :deep(.gh-editor-content .gh-tabs-node:not(:has(> .gh-tabs-head > input:checked)) > .gh-tabs-items > .gh-tab-item:first-child) {
+    display: block;
+}
+/* 老浏览器不支持 :has() —— 宁可全部显示（还能编辑），也不要一片空白 */
+@supports not selector(:has(*)) {
+    .me-wysiwyg :deep(.gh-editor-content .gh-tabs-node > .gh-tabs-items > .gh-tab-item) {
+        display: block;
+    }
 }
 .me-wysiwyg :deep(.gh-editor-content .gh-tabs-add) {
     flex: 0 0 auto;

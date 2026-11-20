@@ -1070,6 +1070,17 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1355',
+      title: '六十六、v1.3.5.5 更新要点',
+      intro: '这一版修好页签块无法输入的问题，并补上列表项的下级内容嵌套（回车退出、退格缩进）。',
+      items: [
+        { t: '页签块修复', d: '面板不再空白：点进正文即可输入，切换页签后光标自动落到该页正文，正文默认高度调大。' },
+        { t: '列表回车退出', d: '空列表项末尾按回车，直接变成普通段落，不再多留一个空列表项。' },
+        { t: '列表退格缩进', d: '空列表项末尾按退格，去掉列表标识并缩进成上一项的下级内容块，可逐层往下嵌套。' },
+        { t: '下级块内容', d: '下级块里可以放段落、图片 / 视频 / 音频 / 附件、其它类型列表、引述块、提示块、公式块、代码块，保存后原样保留。' }
+      ]
+    },
+    {
       id: 'whatsnew-1354',
       title: '六十五、v1.3.5.4 更新要点',
       intro: '这一版补全「登记」的统计能力：派生指标（单价 / 结存 / 间隔 / 速度）、同比对比与报表保存。P3 阶段（自然语言录入、家庭共享、预算提醒、直接读 Excel）按计划暂缓。',
@@ -2352,6 +2363,17 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1355',
+      title: '66. What is new in v1.3.5.5',
+      intro: 'This release fixes typing inside tab blocks and adds nested child content under list items (Enter to exit, Backspace to indent).',
+      items: [
+        { t: 'Tab block fix', d: 'Panels are no longer blank: click into the body and type, switching a tab moves the caret into that panel, and the default body height is larger.' },
+        { t: 'Enter exits the list', d: 'Pressing Enter on an empty list item turns it into a normal paragraph instead of leaving another empty item.' },
+        { t: 'Backspace nests', d: 'Pressing Backspace on an empty list item removes the marker and indents it as a child block of the previous item, layer by layer.' },
+        { t: 'Child block types', d: 'Child blocks can hold paragraphs, images / video / audio / attachments, other list types, quotes, callouts, math and code blocks, and survive a reload.' }
       ]
     },
     {
