@@ -1,10 +1,13 @@
 <template>
     <!--
-        v1.3.5.3 登记提交表单（P0）
+        v1.3.5.7 登记提交表单
         ----------------------------------------------------------------------------
-        一套通用表单兼容各种登记：标题 / 标记 / 类型 / 发生人 / 关联人 / 三个时间 /
-        地点 / 事件 / 数值 / 数量 / 单位 / 份量 / 备注 / 标签 / 附件 / 文档。
-        选择已有「标记」时会锁定类型与单位（同一标记的统计口径必须一致）。
+        一套通用表单兼容各种登记，字段顺序按需求给的参考图排：
+          标题 / 详情 / 地点 / 条目 / 发生人·关联人 / 时间·类型 / 起始·截止 /
+          数值·数量 / 单位·分母·币种 / 标签 / 文件 / 文档
+        · 「条目」是登记自己的身份表（reg_trackers），选中已有条目即锁定类型 / 单位 / 分母；
+        · 「标签」走全站共用的 tags 表；
+        · 备注按本轮需求移除。
     -->
     <el-dialog
         v-model="visible"
@@ -14,226 +17,263 @@
         class="reg-dialog"
         @closed="onClosed"
     >
-        <div class="reg-body">
-            <label class="reg-field">
-                <span class="reg-label">{{ $t('reg.fieldTitle') }}</span>
-                <el-input v-model="form.title" size="small" maxlength="120" :placeholder="$t('reg.fieldTitlePh')" />
-            </label>
+        <!--
+            v1.3.5.7（需求：标题输入框要能被浏览器记忆）：
+            用真正的 <form autocomplete="on"> 包一层，标题输入框带 name —— 浏览器
+            才会把它当表单字段记进「上次输入过的值」。保存按钮走 requestSubmit()，
+            这样点保存时表单是真的提交了一次（而不是纯 JS 发请求）。
+        -->
+        <form ref="regForm" class="reg-body" autocomplete="on" @submit.prevent="submit">
+            <div class="reg-grid">
+                <!-- 标题 -->
+                <div class="reg-cell reg-span-6">
+                    <span class="reg-cell-label">{{ $t('reg.fieldTitle') }}</span>
+                    <el-input
+                        v-model="form.title"
+                        class="reg-plain"
+                        name="reg-entry-title"
+                        autocomplete="on"
+                        maxlength="120"
+                        :placeholder="$t('reg.fieldTitlePh')"
+                        @keydown.enter.prevent
+                    />
+                </div>
 
-            <div class="reg-row">
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldMarker') }} <em>*</em></span>
-                    <el-autocomplete
-                        v-model="form.markerName"
-                        size="small"
-                        class="reg-marker"
-                        :fetch-suggestions="queryMarker"
-                        :placeholder="$t('reg.fieldMarkerPh')"
-                        :trigger-on-focus="true"
-                        clearable
-                        maxlength="80"
-                        @select="onMarkerPicked"
-                        @blur="lockByMarkerName"
+                <!-- 详情：内容超出后自动增高，最高不超过视口 35% -->
+                <div class="reg-cell reg-span-6">
+                    <span class="reg-cell-label">{{ $t('reg.fieldDetail') }}</span>
+                    <el-input
+                        v-model="form.event"
+                        class="reg-plain reg-detail"
+                        type="textarea"
+                        :autosize="{ minRows: 4 }"
+                        maxlength="1000"
+                        :placeholder="$t('reg.fieldDetailPh')"
                     />
-                </label>
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldType') }}</span>
-                    <el-select v-model="form.valueType" size="small" :disabled="locked" class="reg-full">
-                        <el-option v-for="t in valueTypes" :key="t.value" :label="$t(t.label)" :value="t.value" />
-                    </el-select>
-                </label>
-            </div>
+                </div>
 
-            <div class="reg-row">
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldSubject') }}</span>
-                    <el-autocomplete
-                        v-model="form.subjectName"
-                        size="small"
-                        class="reg-full"
-                        :fetch-suggestions="(q, cb) => suggestFrom('subjects', q, cb)"
-                        :placeholder="$t('reg.fieldSubjectPh')"
-                        clearable
-                        maxlength="40"
-                    />
-                </label>
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldRelated') }}</span>
-                    <el-autocomplete
-                        v-model="form.relatedName"
-                        size="small"
-                        class="reg-full"
-                        :fetch-suggestions="(q, cb) => suggestFrom('related', q, cb)"
-                        :placeholder="$t('reg.fieldRelatedPh')"
-                        clearable
-                        maxlength="40"
-                    />
-                </label>
-            </div>
-
-            <div class="reg-row">
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldOccurredAt') }} <em>*</em></span>
-                    <el-date-picker
-                        v-model="form.occurredAt"
-                        type="datetime"
-                        size="small"
-                        class="reg-full"
-                        :popper-class="datePopperClass"
-                        :placeholder="$t('reg.fieldOccurredAt')"
-                    />
-                </label>
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldPlace') }}</span>
+                <!-- 地点 -->
+                <div class="reg-cell reg-span-6">
+                    <span class="reg-cell-label">{{ $t('reg.fieldPlace') }}</span>
                     <el-autocomplete
                         v-model="form.placeName"
-                        size="small"
-                        class="reg-full"
+                        class="reg-plain"
                         :fetch-suggestions="(q, cb) => suggestFrom('places', q, cb)"
                         :placeholder="$t('reg.fieldPlacePh')"
                         clearable
                         maxlength="80"
                     />
-                </label>
-            </div>
+                </div>
 
-            <div class="reg-row">
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldStartAt') }}</span>
+                <!-- 条目 -->
+                <div class="reg-cell reg-span-6">
+                    <span class="reg-cell-label">{{ $t('reg.fieldItem') }} <em>*</em></span>
+                    <el-autocomplete
+                        v-model="form.trackerName"
+                        class="reg-plain"
+                        :fetch-suggestions="queryTracker"
+                        :trigger-on-focus="true"
+                        :placeholder="$t('reg.fieldItemPh')"
+                        clearable
+                        maxlength="80"
+                        @select="onTrackerPicked"
+                        @blur="lockByTrackerName"
+                    />
+                </div>
+
+                <!-- 发生人 / 关联人 -->
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldSubject') }}</span>
+                    <el-autocomplete
+                        v-model="form.subjectName"
+                        class="reg-plain"
+                        :fetch-suggestions="(q, cb) => suggestFrom('subjects', q, cb)"
+                        :placeholder="$t('reg.fieldSubjectPh')"
+                        clearable
+                        maxlength="40"
+                    />
+                </div>
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldRelated') }}</span>
+                    <el-autocomplete
+                        v-model="form.relatedName"
+                        class="reg-plain"
+                        :fetch-suggestions="(q, cb) => suggestFrom('related', q, cb)"
+                        :placeholder="$t('reg.fieldRelatedPh')"
+                        clearable
+                        maxlength="40"
+                    />
+                </div>
+
+                <!-- 时间 / 类型 -->
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldTime') }} <em>*</em></span>
+                    <el-date-picker
+                        v-model="form.occurredAt"
+                        type="datetime"
+                        class="reg-plain reg-date"
+                        :popper-class="datePopperClass"
+                        :clearable="false"
+                        :placeholder="$t('reg.fieldTime')"
+                    />
+                    <!-- 登记时间：提交时落库，只读展示，任何入口都不允许改 -->
+                    <span v-if="isEdit" class="reg-cell-hint">
+                        {{ $t('reg.fieldCreatedAt') }} {{ fmtTime(form.createdAt) }}
+                    </span>
+                </div>
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldType') }}</span>
+                    <el-select v-model="form.valueType" class="reg-plain reg-full" :disabled="locked">
+                        <el-option v-for="t in valueTypes" :key="t.value" :label="$t(t.label)" :value="t.value" />
+                    </el-select>
+                </div>
+
+                <!-- 起始时间 / 截止时间 -->
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldStartAt') }}</span>
                     <el-date-picker
                         v-model="form.startAt"
                         type="datetime"
-                        size="small"
-                        class="reg-full"
+                        class="reg-plain reg-date"
                         :popper-class="datePopperClass"
                         clearable
                         :placeholder="$t('reg.fieldOptional')"
                     />
-                </label>
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldDueAt') }}</span>
+                </div>
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldDueAt') }}</span>
                     <el-date-picker
                         v-model="form.dueAt"
                         type="datetime"
-                        size="small"
-                        class="reg-full"
+                        class="reg-plain reg-date"
                         :popper-class="datePopperClass"
                         clearable
                         :placeholder="$t('reg.fieldOptional')"
                     />
-                </label>
-            </div>
+                </div>
 
-            <label class="reg-field">
-                <span class="reg-label">{{ $t('reg.fieldEvent') }}</span>
-                <el-input
-                    v-model="form.event"
-                    type="textarea"
-                    :rows="3"
-                    maxlength="1000"
-                    show-word-limit
-                    :placeholder="$t('reg.fieldEventPh')"
-                />
-            </label>
+                <!-- 数值 / 数量 -->
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldAmount') }} <em>*</em></span>
+                    <el-input
+                        v-model="form.amount"
+                        class="reg-plain"
+                        :placeholder="$t('reg.fieldAmountPh')"
+                        inputmode="decimal"
+                        @keydown.enter.prevent
+                    />
+                </div>
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldQuantity') }}</span>
+                    <el-input v-model="form.quantity" class="reg-plain" inputmode="decimal" @keydown.enter.prevent />
+                </div>
 
-            <div class="reg-row reg-row-nums">
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldAmount') }} <em>*</em></span>
-                    <el-input v-model="form.amount" size="small" class="reg-full" :placeholder="$t('reg.fieldAmountPh')" inputmode="decimal" />
-                </label>
-                <label class="reg-field reg-col reg-col-qty">
-                    <span class="reg-label">{{ $t('reg.fieldQuantity') }}</span>
-                    <el-input v-model="form.quantity" size="small" class="reg-full" inputmode="decimal" />
-                </label>
-                <label class="reg-field reg-col reg-col-unit">
-                    <span class="reg-label">{{ $t('reg.fieldUnit') }}</span>
-                    <el-select
+                <!-- 单位 / 分母 / 币种 -->
+                <div class="reg-cell reg-span-2">
+                    <span class="reg-cell-label">{{ $t('reg.fieldUnit') }}</span>
+                    <el-autocomplete
                         v-model="form.unit"
-                        size="small"
-                        class="reg-full"
-                        filterable
-                        allow-create
-                        default-first-option
-                        :disabled="locked"
+                        class="reg-plain"
+                        :fetch-suggestions="(q, cb) => suggestFrom('units', q, cb)"
                         :placeholder="$t('reg.fieldUnitPh')"
-                    >
-                        <el-option v-for="u in unitOptions" :key="u" :label="u" :value="u" />
-                    </el-select>
-                </label>
-            </div>
-
-            <div class="reg-row">
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldPortion') }}</span>
-                    <el-input v-model="form.portion" size="small" class="reg-full" maxlength="32" :placeholder="$t('reg.fieldPortionPh')" />
-                </label>
-                <label class="reg-field reg-col">
-                    <span class="reg-label">{{ $t('reg.fieldCurrency') }}</span>
-                    <el-select v-model="form.currency" size="small" class="reg-full">
+                        :disabled="locked"
+                        clearable
+                        maxlength="24"
+                    />
+                </div>
+                <div class="reg-cell reg-span-2">
+                    <span class="reg-cell-label">{{ $t('reg.fieldPortion') }}</span>
+                    <el-autocomplete
+                        v-model="form.portion"
+                        class="reg-plain"
+                        :fetch-suggestions="(q, cb) => suggestFrom('portions', q, cb)"
+                        :placeholder="$t('reg.fieldPortionPh')"
+                        :disabled="locked"
+                        clearable
+                        maxlength="32"
+                    />
+                </div>
+                <div class="reg-cell reg-span-2">
+                    <span class="reg-cell-label">{{ $t('reg.fieldCurrency') }}</span>
+                    <el-select v-model="form.currency" class="reg-plain reg-full">
                         <el-option :label="$t('reg.currencyCny')" value="CNY" />
                         <el-option :label="$t('reg.currencyUsd')" value="USD" />
                     </el-select>
-                </label>
-            </div>
-
-            <label class="reg-field">
-                <span class="reg-label">{{ $t('reg.fieldTags') }}</span>
-                <el-select
-                    v-model="form.tags"
-                    class="reg-full"
-                    size="small"
-                    multiple
-                    filterable
-                    allow-create
-                    default-first-option
-                    :reserve-keyword="false"
-                    :placeholder="$t('reg.fieldTagsPh')"
-                >
-                    <el-option v-for="t in tagOptions" :key="t" :label="t" :value="t" />
-                </el-select>
-            </label>
-
-            <label class="reg-field">
-                <span class="reg-label">{{ $t('reg.fieldNote') }}</span>
-                <el-input v-model="form.note" type="textarea" :rows="2" maxlength="500" :placeholder="$t('reg.fieldNotePh')" />
-            </label>
-
-            <div class="reg-field">
-                <span class="reg-label">{{ $t('reg.fieldAttachments') }}</span>
-                <div class="reg-attach-row">
-                    <el-button size="small" @click="pickerVisible = true">
-                        <font-awesome-icon icon="images" class="reg-btn-icon" />{{ $t('reg.addAttachment') }}
-                    </el-button>
-                    <span class="reg-attach-count">{{ $t('reg.attachCount', { n: form.attachments.length }) }}</span>
                 </div>
-                <div v-if="form.attachments.length" class="reg-attach-list">
-                    <span v-for="(a, i) in attachmentViews" :key="a.id + '-' + i" class="reg-attach-item">
-                        <span class="reg-attach-name">{{ a.name || a.id }}</span>
-                        <button type="button" class="reg-attach-del" @click="removeAttachment(i)">×</button>
-                    </span>
-                </div>
-            </div>
 
-            <div class="reg-field">
-                <span class="reg-label">{{ $t('reg.fieldDoc') }}</span>
-                <div class="reg-attach-row">
-                    <el-button size="small" @click="openDocPicker">
-                        <font-awesome-icon icon="file-lines" class="reg-btn-icon" />{{ $t('reg.addDoc') }}
-                    </el-button>
-                    <span v-if="docTitle" class="reg-doc-name">{{ docTitle }}</span>
-                    <button v-if="form.docNoteId" type="button" class="reg-doc-clear" @click="clearDoc">×</button>
+                <!-- 标签：空格与回车都能确认 -->
+                <div class="reg-cell reg-span-6">
+                    <span class="reg-cell-label">{{ $t('reg.fieldTags') }}</span>
+                    <el-select
+                        v-model="form.tags"
+                        class="reg-plain reg-full"
+                        multiple
+                        filterable
+                        allow-create
+                        default-first-option
+                        :reserve-keyword="false"
+                        :placeholder="$t('reg.fieldTagsPh')"
+                        @keydown="onTagKeydown"
+                    >
+                        <el-option v-for="t in tagOptions" :key="t" :label="t" :value="t" />
+                    </el-select>
+                </div>
+
+                <!-- 文件 -->
+                <div class="reg-cell reg-span-6">
+                    <span class="reg-cell-label">{{ $t('reg.fieldAttachments') }}</span>
+                    <div class="reg-file-btns">
+                        <el-button size="small" @click="pickerVisible = true">
+                            <font-awesome-icon icon="images" class="reg-btn-icon" />{{ $t('reg.selectFile') }}
+                        </el-button>
+                        <el-button size="small" :loading="uploading" @click="pickLocalFile">
+                            <font-awesome-icon icon="upload" class="reg-btn-icon" />{{ $t('notes.uploadLocal') }}
+                        </el-button>
+                        <el-button size="small" :loading="uploading" @click="extractLink">
+                            <font-awesome-icon icon="link" class="reg-btn-icon" />{{ $t('notes.linkExtract') }}
+                        </el-button>
+                        <span class="reg-attach-count">{{ $t('reg.attachCount', { n: form.attachments.length }) }}</span>
+                        <input ref="fileInput" type="file" class="reg-file-input" multiple @change="onLocalFilesChosen" />
+                    </div>
+                    <div v-if="form.attachments.length" class="reg-attach-list">
+                        <span v-for="(a, i) in attachmentViews" :key="a.id + '-' + i" class="reg-attach-item">
+                            <span class="reg-attach-name">{{ a.name || a.id }}</span>
+                            <button type="button" class="reg-attach-del" @click="removeAttachment(i)">×</button>
+                        </span>
+                    </div>
+                </div>
+
+                <!-- 挂载文档 -->
+                <div class="reg-cell reg-span-6">
+                    <span class="reg-cell-label">{{ $t('reg.fieldDoc') }}</span>
+                    <div class="reg-doc-row">
+                        <el-button size="small" @click="openDocPicker">
+                            <font-awesome-icon icon="file-lines" class="reg-btn-icon" />{{ $t('reg.addDoc') }}
+                        </el-button>
+                        <span v-if="docTitle" class="reg-doc-name">{{ docTitle }}</span>
+                        <button v-if="form.docNoteId" type="button" class="reg-doc-clear" @click="clearDoc">×</button>
+                    </div>
                 </div>
             </div>
-        </div>
+        </form>
 
         <template #footer>
             <div class="reg-footer">
                 <el-button size="small" @click="visible = false">{{ $t('common.cancel') }}</el-button>
-                <el-button size="small" type="primary" :loading="saving" @click="submit">{{ $t('common.save') }}</el-button>
+                <el-button size="small" type="primary" :loading="saving" @click="requestSubmit">{{ $t('common.save') }}</el-button>
             </div>
         </template>
 
         <FilePickerDialog v-model="pickerVisible" :instance-id="instanceId" @confirm="onPickedFiles" />
+
+        <!-- 本地上传 / 链接提取共用的目标选择（与瞬间发布页同一个组件） -->
+        <UploadTargetDialog
+            v-model="targetVisible"
+            :busy="uploading"
+            :hint="uploadHint"
+            :prefill="uploadPrefill"
+            @confirm="onTargetConfirm"
+        />
 
         <!-- 挂载文档：从笔记里挑一篇 -->
         <el-dialog v-model="docPickerVisible" :title="$t('reg.addDoc')" width="460px" append-to-body class="reg-doc-dialog">
@@ -258,6 +298,8 @@
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
 import FilePickerDialog from '@/components/notes/FilePickerDialog.vue';
+import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
+import { defaultUploadFolder, uploadOne, importUrlToBed } from '@/utils/uploadTarget';
 
 const VALUE_TYPES = [
     { value: 'flow', label: 'reg.typeFlow' },
@@ -270,8 +312,8 @@ const VALUE_TYPES = [
 
 const emptyForm = () => ({
     id: '',
-    title: '',
-    markerName: '',
+    trackerId: '',
+    trackerName: '',
     valueType: 'flow',
     event: '',
     occurredAt: Date.now(),
@@ -285,21 +327,27 @@ const emptyForm = () => ({
     unit: '',
     portion: '',
     currency: 'CNY',
-    note: '',
     tags: [],
     attachments: [],
     docNoteId: '',
+    /* 登记时间：提交时由后端落库，前端只做只读展示 */
+    createdAt: 0,
 });
+
+/** 每个提交字段都去首尾空格（需求原文点名了标题 / 条目 / 发生人 / 关联人 / 单位 / 分母） */
+const trimText = (v) => String(v === undefined || v === null ? '' : v).trim();
 
 export default {
     name: 'RegEntryDialog',
-    components: { FilePickerDialog },
+    components: { FilePickerDialog, UploadTargetDialog },
     props: {
         modelValue: { type: Boolean, default: false },
         instanceId: { type: String, default: '' },
         /** 编辑时传入一条登记（含 id）；新建为 null */
         entry: { type: Object, default: null },
-        /** 新建时预设的标记名（从某个标记点「添加登记」） */
+        /** 新建时预设的条目名（从某个条目点「添加登记」） */
+        presetTracker: { type: String, default: '' },
+        /** 旧属性名，保留兼容 */
         presetMarker: { type: String, default: '' },
     },
     emits: ['update:modelValue', 'saved'],
@@ -308,14 +356,24 @@ export default {
             form: emptyForm(),
             valueTypes: VALUE_TYPES,
             saving: false,
+            uploading: false,
             locked: false,
+            /** 条目候选还没拉回来之前不联动，避免把编辑态的口径冲掉 */
+            ready: false,
+            /** 条目候选还没拉回来之前不联动，避免把编辑态的口径冲掉 */
+            ready: false,
             trackers: [],
-            markerCache: {},
-            candidates: { places: [], subjects: [], related: [], units: [], tags: [] },
+            trackerCache: {},
+            candidates: { places: [], subjects: [], related: [], units: [], portions: [], tags: [] },
             pickerVisible: false,
             attachmentViews: [],
-            /** v1.3.5.3：附件 id → 名称（选文件时缓存，避免额外请求） */
+            /** 附件 id → 名称（选文件 / 上传时缓存，避免额外请求） */
             attachmentNames: {},
+            targetVisible: false,
+            uploadPrefill: {},
+            uploadHint: '',
+            pendingFiles: [],
+            pendingLink: '',
             docPickerVisible: false,
             docLoading: false,
             docKeyword: '',
@@ -330,38 +388,47 @@ export default {
             set(v) { this.$emit('update:modelValue', v); },
         },
         isEdit() { return !!(this.entry && this.entry.id); },
-        dialogWidth() { return window.innerWidth <= 480 ? '94%' : '620px'; },
+        dialogWidth() { return window.innerWidth <= 480 ? '94%' : '660px'; },
         filteredDocs() {
             const q = String(this.docKeyword || '').trim().toLowerCase();
             if (!q) return this.docList;
             return this.docList.filter((d) => String(d.title || '').toLowerCase().includes(q));
         },
-        unitOptions() {
-            const set = new Set(this.candidates.units || []);
-            if (this.form.unit) set.add(this.form.unit);
-            return Array.from(set);
-        },
+        unitOptions() { return this.candidates.units || []; },
+        portionOptions() { return this.candidates.portions || []; },
         tagOptions() { return this.candidates.tags || []; },
     },
     watch: {
         modelValue(v) {
             if (v) this.init();
         },
+        /*
+         * 不挂 @input：el-autocomplete 并不会把内部输入透传成组件的 input 事件，
+         * 监听 v-model 的变化才是唯一可靠的入口（手输、下拉选择、清空都会走到）。
+         */
+        'form.trackerName'() {
+            if (this.ready) this.onTrackerInput();
+        },
     },
     methods: {
         async init() {
             this.form = emptyForm();
             this.locked = false;
+            this.ready = false;
+            this.ready = false;
             this.attachmentNames = {};
             this.attachmentViews = [];
             this.docTitle = '';
+            this.pendingFiles = [];
+            this.pendingLink = '';
             if (this.entry && this.entry.id) {
                 const e = this.entry;
+                const tracker = e.tracker || null;
                 this.form = {
                     id: e.id,
-                    title: e.title || '',
-                    markerName: e.markerName || '',
-                    valueType: e.valueType || 'flow',
+                    trackerId: e.trackerId || (tracker ? tracker.id : '') || '',
+                    trackerName: e.trackerName || (tracker ? tracker.name : '') || '',
+                    valueType: e.valueType || (tracker ? tracker.valueType : '') || 'flow',
                     event: e.event || '',
                     occurredAt: e.occurredAt ? new Date(e.occurredAt) : new Date(),
                     startAt: e.startAt ? new Date(e.startAt) : null,
@@ -374,20 +441,25 @@ export default {
                     unit: e.unit || '',
                     portion: e.portion || '',
                     currency: e.currency || 'CNY',
-                    note: e.note || '',
                     tags: Array.isArray(e.tags) ? e.tags.slice() : [],
                     attachments: Array.isArray(e.attachments) ? e.attachments.slice() : [],
                     docNoteId: e.docNoteId || '',
+                    createdAt: Number(e.createdAt) || 0,
                 };
-                this.locked = true;
+                /* 编辑态：口径本来就是这一条条目的，直接锁住，但不用条目的值覆盖记录里的快照 */
+                this.locked = !!this.form.trackerId;
                 this.loadAttachmentViews();
                 if (e.docNoteId) this.docTitle = e.docTitle || e.docNoteId;
-            } else if (this.presetMarker) {
-                this.form.markerName = this.presetMarker;
-                this.lockByMarkerName();
+            } else {
+                const preset = String(this.presetTracker || this.presetMarker || '').trim();
+                if (preset) {
+                    this.form.trackerName = preset;
+                    this.lockByTrackerName();
+                }
             }
             await Promise.all([this.loadTrackers(), this.loadCandidates()]);
-            if (this.form.markerName) this.lockByMarkerName();
+            this.ready = true;
+            if (!this.isEdit && this.form.trackerName) this.lockByTrackerName();
         },
         async loadTrackers() {
             try {
@@ -404,55 +476,86 @@ export default {
                 const qs = new URLSearchParams({ instanceId: this.instanceId || '' });
                 const res = await fetchWithAuth(`/api/reg/candidates?${qs.toString()}`);
                 const data = await res.json().catch(() => null);
-                if (data) this.candidates = { places: [], subjects: [], related: [], units: [], tags: [], ...data };
+                if (data) {
+                    this.candidates = {
+                        places: [], subjects: [], related: [], units: [], portions: [], tags: [], ...data,
+                    };
+                }
             } catch (e) {
                 /* 候选失败不阻断表单 */
             }
         },
         loadAttachmentViews() {
-            /* 不再额外请求：名称在「选文件」时缓存；编辑旧数据时显示序号即可 */
+            /* 名称在选文件 / 上传时缓存；编辑旧数据时显示序号即可 */
             this.attachmentViews = (this.form.attachments || []).slice(0, 30).map((id, i) => ({
                 id,
                 name: this.attachmentNames[id] || this.$t('reg.attachFallback', { n: i + 1 }),
             }));
         },
-        /** 标记候选：历史登记项 + markers 表（kind=register） */
-        async queryMarker(q, cb) {
+        /* ── 条目 ─────────────────────────────────────────────── */
+        /** 条目候选：登记自己的条目表（按最近使用排序，后端已排好） */
+        async queryTracker(q, cb) {
             const key = String(q || '').trim().toLowerCase();
-            if (this.markerCache[key]) {
-                cb(this.markerCache[key]);
+            if (this.trackerCache[key]) {
+                cb(this.trackerCache[key]);
                 return;
             }
             const list = this.trackers
                 .filter((t) => !key || String(t.name || '').toLowerCase().includes(key))
                 .slice(0, 20)
                 .map((t) => ({ value: t.name, tracker: t }));
-            this.markerCache[key] = list;
+            this.trackerCache[key] = list;
             cb(list);
         },
-        onMarkerPicked(item) {
+        onTrackerPicked(item) {
             if (item && item.tracker) this.applyTracker(item.tracker);
         },
-        /** 手输名称恰好等于已有标记时也要锁定口径 */
-        lockByMarkerName() {
-            const name = String(this.form.markerName || '').trim();
+        /** 手输名称恰好等于已有条目时也锁定口径；改成别的名字则解锁 */
+        onTrackerInput() {
+            const name = trimText(this.form.trackerName);
+            const hit = this.trackers.find((t) => String(t.name) === name);
+            if (hit) {
+                if (hit.id !== this.form.trackerId) this.applyTracker(hit);
+                return;
+            }
+            this.form.trackerId = '';
+            this.locked = false;
+        },
+        lockByTrackerName() {
+            const name = trimText(this.form.trackerName);
             if (!name) {
+                this.form.trackerId = '';
                 this.locked = false;
                 return;
             }
             const hit = this.trackers.find((t) => String(t.name) === name);
-            if (hit) this.applyTracker(hit);
+            if (hit) {
+                if (hit.id !== this.form.trackerId) this.applyTracker(hit);
+                return;
+            }
+            this.form.trackerId = '';
+            this.locked = false;
         },
+        /**
+         * 选中已有条目 → 类型 / 单位 / 分母全部锁定，使用该条目已定的口径。
+         * （需求：选到已有条目时不许在表单里自定义，要改去「条目管理」改根源）
+         */
         applyTracker(t) {
-            this.locked = true;
+            if (!t) return;
+            this.form.trackerId = t.id || '';
+            this.form.trackerName = t.name || this.form.trackerName;
             this.form.valueType = t.valueType || 'flow';
-            this.form.unit = t.unit || this.form.unit;
+            this.form.unit = t.unit || '';
+            this.form.portion = t.portion || '';
+            this.locked = true;
         },
+        /* ── 其它候选 ─────────────────────────────────────────── */
         suggestFrom(key, q, cb) {
             const kw = String(q || '').trim().toLowerCase();
             const arr = (this.candidates && this.candidates[key]) || [];
             cb(arr.filter((v) => !kw || String(v).toLowerCase().includes(kw)).slice(0, 20).map((v) => ({ value: v })));
         },
+        /* ── 附件：选择文件 / 本地上传 / 链接提取 ──────────────── */
         onPickedFiles(files) {
             for (const f of files || []) {
                 const id = String(f.id || f.src || '');
@@ -470,6 +573,100 @@ export default {
             this.form.attachments = list;
             this.loadAttachmentViews();
         },
+        prepareTarget() {
+            this.uploadPrefill = {
+                channelId: '',
+                instanceId: this.instanceId || '',
+                uploadFolder: defaultUploadFolder('register'),
+                uploadSource: 'Attachment',
+            };
+        },
+        pickLocalFile() {
+            this.$refs.fileInput && this.$refs.fileInput.click();
+        },
+        onLocalFilesChosen(e) {
+            const files = Array.from((e.target && e.target.files) || []);
+            e.target.value = '';
+            if (!files.length) return;
+            this.pendingLink = '';
+            this.pendingFiles = files;
+            this.uploadHint = this.$t('reg.uploadHint', { n: files.length });
+            this.prepareTarget();
+            this.targetVisible = true;
+        },
+        extractLink() {
+            this.$prompt(this.$t('notes.linkTip'), this.$t('notes.linkExtract'), {
+                confirmButtonText: this.$t('notes.linkTransfer'),
+                cancelButtonText: this.$t('common.cancel'),
+                inputPlaceholder: 'https://example.com/a.jpg',
+                inputType: 'textarea',
+                inputAttributes: { rows: 4 },
+                inputValidator: (v) => {
+                    const s = String(v || '').trim();
+                    if (!s) return this.$t('notes.linkEmpty');
+                    if (!/^https?:\/\//i.test(s)) return this.$t('notes.linkInvalid');
+                    return true;
+                },
+            })
+                .then(({ value }) => {
+                    this.pendingFiles = [];
+                    this.pendingLink = String(value || '').trim();
+                    this.uploadHint = '';
+                    this.prepareTarget();
+                    this.targetVisible = true;
+                })
+                .catch(() => {});
+        },
+        async onTargetConfirm(target) {
+            this.targetVisible = false;
+            if (this.pendingLink) return this.transferLink(target);
+            return this.uploadLocalFiles(target);
+        },
+        async transferLink(target) {
+            const url = this.pendingLink;
+            this.pendingLink = '';
+            if (!url) return;
+            this.uploading = true;
+            try {
+                const hit = await importUrlToBed(url, target, { source: 'Attachment' });
+                this.addAttachmentFromBed(hit);
+                this.$message.success(this.$t('notes.linkOk'));
+            } catch (e) {
+                this.$message.error(this.$t('notes.linkFail', { msg: e.message || '' }));
+            } finally {
+                this.uploading = false;
+            }
+        },
+        /** 串行上传：避免同时打满带宽，也让失败数可读 */
+        async uploadLocalFiles(target) {
+            const files = this.pendingFiles.slice();
+            this.pendingFiles = [];
+            if (!files.length) return;
+            this.uploading = true;
+            let ok = 0;
+            let fail = 0;
+            for (const f of files) {
+                try {
+                    const hit = await uploadOne(f, target, { source: 'Attachment' });
+                    this.addAttachmentFromBed({ ...hit, originalName: hit.originalName || f.name || '' });
+                    ok += 1;
+                } catch (err) {
+                    fail += 1;
+                }
+            }
+            this.uploading = false;
+            if (fail) this.$message.error(this.$t('notes.uploadPartial', { ok, fail }));
+            else if (ok) this.$message.success(this.$t('notes.uploadOk', { n: ok }));
+        },
+        addAttachmentFromBed(hit) {
+            const id = String((hit && (hit.fileId || hit.id)) || '');
+            if (!id) return;
+            this.attachmentNames[id] = String(hit.originalName || hit.name || '');
+            const set = new Set([...(this.form.attachments || []), id]);
+            this.form.attachments = Array.from(set).slice(0, 30);
+            this.loadAttachmentViews();
+        },
+        /* ── 文档 ─────────────────────────────────────────────── */
         async openDocPicker() {
             this.docPickerVisible = true;
             if (this.docList.length) return;
@@ -495,10 +692,38 @@ export default {
             this.form.docNoteId = '';
             this.docTitle = '';
         },
+        /* ── 标签：空格 = 回车 ─────────────────────────────────── */
+        onTagKeydown(e) {
+            if (!e || (e.key !== ' ' && e.key !== 'Spacebar' && e.keyCode !== 32)) return;
+            // 中文输入法组字时空格是选字键，绝不能抢
+            if (e.isComposing) return;
+            const el = e.target;
+            if (!el || el.tagName !== 'INPUT') return;
+            if (!String(el.value || '').trim()) return;
+            e.preventDefault();
+            e.stopPropagation();
+            el.dispatchEvent(
+                new KeyboardEvent('keydown', {
+                    key: 'Enter',
+                    code: 'Enter',
+                    keyCode: 13,
+                    which: 13,
+                    bubbles: true,
+                    cancelable: true,
+                }),
+            );
+        },
+        /* ── 提交 ─────────────────────────────────────────────── */
+        /** 点「保存」→ 先让浏览器真的提交一次表单（记忆历史值），再由 submit() 校验入库 */
+        requestSubmit() {
+            const f = this.$refs.regForm;
+            if (f && typeof f.requestSubmit === 'function') f.requestSubmit();
+            else this.submit();
+        },
         async submit() {
-            const markerName = String(this.form.markerName || '').trim();
-            if (!markerName) {
-                this.$message.warning(this.$t('reg.markerRequired'));
+            const trackerName = trimText(this.form.trackerName);
+            if (!trackerName) {
+                this.$message.warning(this.$t('reg.itemRequired'));
                 return;
             }
             const amount = Number(String(this.form.amount).replace(/[,\s]/g, ''));
@@ -506,7 +731,8 @@ export default {
                 this.$message.warning(this.$t('reg.amountInvalid'));
                 return;
             }
-            const quantity = String(this.form.quantity).trim() === '' ? 1 : Number(String(this.form.quantity).replace(/[,\s]/g, ''));
+            const qtyRaw = trimText(this.form.quantity);
+            const quantity = qtyRaw === '' ? 1 : Number(qtyRaw.replace(/[,\s]/g, ''));
             if (!Number.isFinite(quantity) || quantity === 0) {
                 this.$message.warning(this.$t('reg.quantityInvalid'));
                 return;
@@ -514,25 +740,24 @@ export default {
             this.saving = true;
             try {
                 const body = {
-                    trackerName: markerName,
-                    markerName,
+                    trackerId: this.form.trackerId || '',
+                    trackerName,
                     valueType: this.form.valueType,
-                    unit: this.form.unit,
+                    unit: trimText(this.form.unit),
+                    portion: trimText(this.form.portion),
                     instanceId: this.instanceId || '',
-                    title: this.form.title,
-                    event: this.form.event,
+                    title: trimText(this.form.title),
+                    event: trimText(this.form.event),
                     occurredAt: this.form.occurredAt ? new Date(this.form.occurredAt).getTime() : Date.now(),
                     startAt: this.form.startAt ? new Date(this.form.startAt).getTime() : null,
                     dueAt: this.form.dueAt ? new Date(this.form.dueAt).getTime() : null,
-                    subjectName: this.form.subjectName,
-                    relatedName: this.form.relatedName,
-                    placeName: this.form.placeName,
+                    subjectName: trimText(this.form.subjectName),
+                    relatedName: trimText(this.form.relatedName),
+                    placeName: trimText(this.form.placeName),
                     amount,
                     quantity,
-                    portion: this.form.portion,
                     currency: this.form.currency,
-                    note: this.form.note,
-                    tags: this.form.tags,
+                    tags: (this.form.tags || []).map((t) => trimText(t)).filter(Boolean),
                     attachments: this.form.attachments,
                     docNoteId: this.form.docNoteId,
                 };
@@ -553,9 +778,17 @@ export default {
                 this.saving = false;
             }
         },
+        fmtTime(ms) {
+            const d = new Date(Number(ms) || 0);
+            if (!ms || !Number.isFinite(d.getTime())) return '—';
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        },
         onClosed() {
             this.form = emptyForm();
-            this.markerCache = {};
+            this.trackerCache = {};
+            this.pendingFiles = [];
+            this.pendingLink = '';
         },
     },
 };
@@ -563,68 +796,116 @@ export default {
 
 <style scoped>
 .reg-body {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
     max-height: 68vh;
     overflow-y: auto;
-    padding-right: 2px;
     text-align: left;
 }
 
-.reg-field {
+/*
+ * v1.3.5.7：按参考图改成「表格化」布局 —— 6 列栅格，整行 span 6、
+ * 两列 span 3、三列 span 2。单元格自己画右边框 / 下边框，容器画上 + 左，
+ * 拼出来就是整张表格，且不会出现 2px 的重叠线。
+ */
+.reg-grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    border-top: 1px solid var(--el-border-color);
+    border-left: 1px solid var(--el-border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.reg-cell {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     min-width: 0;
+    padding: 6px 10px 8px;
+    border-right: 1px solid var(--el-border-color);
+    border-bottom: 1px solid var(--el-border-color);
+    transition: background 0.15s ease;
 }
 
-.reg-row {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
+.reg-cell:focus-within {
+    background: var(--el-fill-color-lighter);
 }
 
-.reg-col {
-    flex: 1 1 200px;
-    min-width: 0;
+.reg-span-6 { grid-column: span 6; }
+.reg-span-3 { grid-column: span 3; }
+.reg-span-2 { grid-column: span 2; }
+
+.reg-cell-label {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--el-text-color-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
-.reg-row-nums .reg-col {
-    flex: 1 1 140px;
+.reg-cell-label em {
+    color: var(--el-color-danger);
+    font-style: normal;
 }
 
-.reg-col-qty {
-    flex: 0 1 110px;
-}
-
-.reg-col-unit {
-    flex: 0 1 140px;
+.reg-cell-hint {
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--el-text-color-placeholder);
+    font-variant-numeric: tabular-nums;
 }
 
 .reg-full {
     width: 100%;
 }
 
-.reg-label {
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-}
-
-.reg-label em {
-    color: var(--el-color-danger);
-    font-style: normal;
-}
-
-.reg-marker {
+/* 表格里的输入框去掉自己的边框，只留单元格的表格线（与参考图一致） */
+.reg-plain {
     width: 100%;
 }
 
-.reg-attach-row {
+/*
+ * 注意：这里必须挂在 .reg-cell 上，不能挂在 .reg-plain 上 ——
+ * el-autocomplete / el-date-picker 是「透传 attrs」的组件，class 落到了根节点，
+ * 但作用域 id（data-v-xxx）没有跟着落下去，`.reg-plain[data-v]` 选择器会全部失配，
+ * 结果自动完成框和时间框还留着自带的边框与白底。挂在原生 div 的 .reg-cell 上才稳定。
+ */
+.reg-cell :deep(.el-input__wrapper),
+.reg-cell :deep(.el-select__wrapper) {
+    padding: 0 2px;
+    background: transparent;
+    box-shadow: none !important;
+}
+
+.reg-cell :deep(.el-input__inner),
+.reg-cell :deep(.el-select__placeholder),
+.reg-cell :deep(.el-select__selected-item) {
+    font-size: 13px;
+    color: var(--el-text-color-primary);
+}
+
+/* 详情：内容超出后自动增高，最高 35vh（超出部分内部滚动） */
+.reg-cell :deep(.el-textarea__inner) {
+    padding: 0 2px;
+    background: transparent;
+    box-shadow: none !important;
+    resize: none;
+    font-size: 13px;
+    line-height: 1.6;
+    max-height: 35vh;
+    overflow-y: auto;
+}
+
+.reg-file-btns,
+.reg-doc-row {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+}
+
+.reg-file-input {
+    display: none;
 }
 
 .reg-btn-icon {
@@ -726,6 +1007,18 @@ export default {
     text-align: center;
     font-size: 12.5px;
     color: var(--el-text-color-secondary);
+}
+
+/* 窄屏：两列 / 三列并排会让输入框只剩几十像素，统一改成整行 */
+@media (max-width: 560px) {
+    .reg-span-3,
+    .reg-span-2 {
+        grid-column: span 6;
+    }
+
+    .reg-body {
+        max-height: 72vh;
+    }
 }
 </style>
 

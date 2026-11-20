@@ -28,7 +28,9 @@ const FOLDER_PREFIX = {
     article: '/notes/article',
     todo: '/notes/todo',
     nav: '/notes/nav',
-    collection: '/notes/collection'
+    collection: '/notes/collection',
+    // v1.3.5.7：登记表单的「本地上传 / 链接提取」落到这里
+    register: '/notes/register'
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');

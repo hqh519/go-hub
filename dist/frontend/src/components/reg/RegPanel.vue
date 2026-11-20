@@ -62,7 +62,7 @@
                 <div class="reg-item-main">
                     <div class="reg-item-head">
                         <span class="reg-item-time">{{ fmtTime(item.occurredAt) }}</span>
-                        <span class="reg-item-marker">#{{ item.markerName }}</span>
+                        <span class="reg-item-marker">#{{ item.trackerName }}</span>
                         <span v-if="item.placeName" class="reg-item-place">
                             <font-awesome-icon icon="location-dot" />{{ item.placeName }}
                         </span>
@@ -75,7 +75,6 @@
                     <div class="reg-item-meta">
                         <span v-if="item.subjectName">{{ $t('reg.fieldSubject') }}：{{ item.subjectName }}</span>
                         <span v-if="item.relatedName">{{ $t('reg.fieldRelated') }}：{{ item.relatedName }}</span>
-                        <span v-if="item.portion">{{ item.portion }}</span>
                         <span v-if="item.attachments && item.attachments.length">
                             <font-awesome-icon icon="paperclip" />{{ item.attachments.length }}
                         </span>
@@ -314,8 +313,8 @@ export default {
                 }
                 return '';
             };
-            const markerName = pick(['标记', '标记名', 'marker', 'markerName']);
-            const dateRaw = pick(['发生时间', '日期', '时间', 'occurredAt', 'date']);
+            const markerName = pick(['条目', '条目名', '标记', '标记名', 'tracker', 'trackerName', 'marker', 'markerName']);
+            const dateRaw = pick(['时间', '发生时间', '日期', 'occurredAt', 'date']);
             const amountRaw = pick(['登记数值', '数值', '金额', 'amount', 'value']);
             if (!markerName || !dateRaw || amountRaw === '') return null;
             const ms = Date.parse(dateRaw.replace(/\//g, '-'));
@@ -331,11 +330,11 @@ export default {
                 quantity: Number.isFinite(quantity) && quantity !== 0 ? quantity : 1,
                 unit: pick(['单位', 'unit']),
                 title: pick(['标题', 'title']),
-                event: pick(['事件', '登记事件', 'event']),
+                event: pick(['详情', '事件', '登记事件', 'event']),
                 subjectName: pick(['发生人', 'subjectName']),
                 relatedName: pick(['关联人', 'relatedName']),
                 placeName: pick(['地点', 'placeName']),
-                note: pick(['备注', 'note']),
+                portion: pick(['分母', 'portion']),
             };
         },
         onSaved() {
@@ -352,7 +351,8 @@ export default {
         fmtAmount(item) {
             const n = Number(item.amount) * (Number(item.quantity) || 1);
             const v = Number.isFinite(n) ? n : 0;
-            const unit = item.unit ? ` ${item.unit}` : '';
+            /* v1.3.5.7：单位 + 分母一起显示（元/升） */
+            const unit = item.unit ? ` ${item.unit}${item.portion ? `/${item.portion}` : ''}` : '';
             return `${v >= 0 ? '+' : ''}${v}${unit}`;
         },
     },

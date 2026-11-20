@@ -266,6 +266,105 @@ async function main() {
       }
     }
 
+    // ------------------------------------------------------------
+    // 规则 4：登记 v1.3.5.7 —— 条目回归独立表
+    //
+    //   这一版把「条目」的身份从 markers 收回 reg_trackers，并删掉了几个
+    //   冗余列。db push 会直接 DROP 掉这些列，数据必须先在这里搬走：
+    //     4.1 reg_entries.tags（JSON 快照）→ tags 主表 + reg_entry_tags
+    //     4.2 reg_entries.portion（旧语义「份量」如 元/升）→ 只留 `/` 后的「分母」
+    //     4.3 markers(type='register') 的孤儿行清理（不再有内容引用它们）
+    // ------------------------------------------------------------
+    if (await tableExists('reg_entries')) {
+      if ((await columnExists('reg_entries', 'tags')) && (await tableExists('reg_entry_tags')) && (await tableExists('tags'))) {
+        const pending = await q(
+          `SELECT e.id, e.tags, e."instanceId", e.owner
+             FROM reg_entries e
+            WHERE e.tags IS NOT NULL AND e.tags <> '' AND e.tags <> '[]'
+              AND NOT EXISTS (SELECT 1 FROM reg_entry_tags r WHERE r."entryId" = e.id)`,
+        );
+        if (!pending.length) {
+          log('登记标签：无待搬迁的记录');
+        } else {
+          log(`登记标签：${pending.length} 条记录的 JSON 标签待搬进 tags 主表${CHECK_ONLY ? '（--check 模式，不改数据）' : ''}`);
+          if (!CHECK_ONLY) {
+            let linked = 0;
+            for (const row of pending) {
+              let names = [];
+              try {
+                const v = JSON.parse(row.tags);
+                if (Array.isArray(v)) names = v.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 20);
+              } catch (e) {
+                names = [];
+              }
+              const instanceId = String(row.instanceId || '');
+              const scope = String(row.owner || '');
+              for (const name of names) {
+                const hit = await q(
+                  'SELECT id FROM tags WHERE name=$1 AND "instanceId"=$2 AND type=$3 AND scope=$4 LIMIT 1',
+                  name,
+                  instanceId,
+                  'register',
+                  scope,
+                );
+                let tagId = hit[0] && hit[0].id;
+                if (!tagId) {
+                  tagId = newId();
+                  await prisma.$executeRawUnsafe(
+                    'INSERT INTO tags (id, name, "instanceId", type, owner, scope, metas, "createdAt") VALUES ($1,$2,$3,$4,$5,$6,$7,now())',
+                    tagId,
+                    name,
+                    instanceId,
+                    'register',
+                    scope,
+                    scope,
+                    '{}',
+                  );
+                }
+                await prisma.$executeRawUnsafe(
+                  'INSERT INTO reg_entry_tags ("entryId", "tagId", "createdAt") VALUES ($1,$2,now()) ON CONFLICT DO NOTHING',
+                  row.id,
+                  tagId,
+                );
+                linked += 1;
+              }
+            }
+            log(`登记标签：搬迁完成，写入 ${linked} 条关联`);
+          }
+        }
+      } else {
+        log('登记标签：列或关联表不存在（已是新结构 / 首次安装，跳过）');
+      }
+
+      if (await columnExists('reg_entries', 'portion')) {
+        const rows = await q(`SELECT count(*)::int AS c FROM reg_entries WHERE position('/' in portion) > 0`);
+        const n = rows[0] ? rows[0].c : 0;
+        if (n > 0) {
+          log(`登记分母：${n} 条记录的「份量」形如 元/升，取 / 之后的部分作分母${CHECK_ONLY ? '（--check 模式，不改数据）' : ''}`);
+          if (!CHECK_ONLY) {
+            await prisma.$executeRawUnsafe(
+              `UPDATE reg_entries SET portion = btrim(split_part(portion, '/', 2)) WHERE position('/' in portion) > 0`,
+            );
+          }
+        }
+      }
+    }
+
+    if ((await tableExists('markers')) && (await tableExists('note_markers'))) {
+      const own = await q(`SELECT count(*)::int AS c FROM markers WHERE type = 'register'`);
+      const n = own[0] ? own[0].c : 0;
+      if (n > 0) {
+        log(`markers：${n} 条 type='register' 的历史行（登记已改用独立条目表）${CHECK_ONLY ? '（--check 模式，不改数据）' : '，清理无引用的孤儿行'}`);
+        if (!CHECK_ONLY) {
+          const del = await prisma.$executeRawUnsafe(
+            `DELETE FROM markers m WHERE m.type = 'register'
+               AND NOT EXISTS (SELECT 1 FROM note_markers nm WHERE nm."markerId" = m.id)`,
+          );
+          log(`markers：已清理 ${del} 行`);
+        }
+      }
+    }
+
     log(CHECK_ONLY ? '检查完成（未修改任何数据）' : '兼容处理完成');
   } catch (e) {
     log(`兼容处理异常（已忽略，继续执行 db push）：${e && e.message ? String(e.message).split('\n')[0] : e}`);

@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.TAG_TYPE_MOMENT = exports.TAG_TYPE_NOTE = exports.TAG_TYPE_FILE = void 0;
+exports.TAG_TYPE_REGISTER = exports.TAG_TYPE_MOMENT = exports.TAG_TYPE_NOTE = exports.TAG_TYPE_FILE = void 0;
 exports.tagTypeOfKind = tagTypeOfKind;
 exports.tagScope = tagScope;
 exports.findOrCreateTag = findOrCreateTag;
@@ -11,6 +11,7 @@ const prisma_1 = require("./prisma");
 exports.TAG_TYPE_FILE = 'file';
 exports.TAG_TYPE_NOTE = 'note';
 exports.TAG_TYPE_MOMENT = 'moment';
+exports.TAG_TYPE_REGISTER = 'register';
 function tagTypeOfKind(kind) {
     switch (String(kind || '')) {
         case 'moment':
@@ -21,6 +22,8 @@ function tagTypeOfKind(kind) {
             return 'todo';
         case 'nav':
             return 'nav';
+        case 'register':
+            return exports.TAG_TYPE_REGISTER;
         case 'note':
         case 'memo':
             return exports.TAG_TYPE_NOTE;

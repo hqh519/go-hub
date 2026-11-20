@@ -39,6 +39,35 @@ export class RegController {
     return { success: true, tracker: (r as any).row, locked: (r as any).locked };
   }
 
+  /**
+   * v1.3.5.7：条目管理 —— 改名称 / 类型 / 单位 / 分母。
+   * 「条目」是登记自己的身份表，改这里等于改根源，关联记录按 trackerId 自动跟着变。
+   */
+  @Put('trackers/:id')
+  async updateTracker(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.reg.updateTracker(id, body as any, viewer);
+    if ('error' in r && r.error) {
+      throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
+    }
+    return { success: true, ...(r as any) };
+  }
+
+  /** v1.3.5.7：合并条目 —— 把 sources 的记录全部并到 target，再删掉 sources */
+  @Post('trackers/merge')
+  async mergeTrackers(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.reg.mergeTrackers(
+      String((body as any)?.targetId || ''),
+      Array.isArray((body as any)?.sourceIds) ? (body as any).sourceIds : [],
+      viewer,
+    );
+    if ('error' in r && r.error) {
+      throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
+    }
+    return { success: true, ...(r as any) };
+  }
+
   /* ── 记录 ── */
   @Get('entries')
   async entries(@Req() req: Request, @Query() q: Record<string, string>) {
@@ -51,6 +80,7 @@ export class RegController {
       from: q.from || '',
       to: q.to || '',
       keyword: q.keyword || '',
+      tag: q.tag || '',
       page: Number(q.page) || 1,
       pageSize: Number(q.pageSize) || 20,
     });
@@ -96,6 +126,7 @@ export class RegController {
       scope: q.scope || 'me',
       trackerId: q.trackerId || '',
       trackerName: q.trackerName || '',
+      tag: q.tag || '',
       from: q.from || '',
       to: q.to || '',
       bucket: q.bucket || 'month',
@@ -131,6 +162,12 @@ export class RegController {
   }
 
   /* ── 候选值 ── */
+  @Get('tag-candidates')
+  async tagCandidates(@Req() req: Request, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    return this.reg.listTagNames(instanceId || '', viewer);
+  }
+
   @Get('candidates')
   async candidates(@Req() req: Request, @Query('instanceId') instanceId?: string) {
     const { viewer } = this.ctx(req);

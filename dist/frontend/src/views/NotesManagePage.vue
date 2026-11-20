@@ -646,7 +646,8 @@ const SWIPE_RATIO = 1.5;
 const SWIPE_EDGE_PX = 30;
 
 /** 类型轮播顺序：与功能栏一致，用于左右滑动循环 */
-const KIND_CYCLE = ['square', 'moment', 'todo', 'nav', 'article', 'collection', 'memo'];
+/* v1.3.5.6：移除旧的 collection「登记」占位，把新的登记放在瞬间之后 */
+const KIND_CYCLE = ['square', 'moment', 'register', 'todo', 'nav', 'article', 'memo'];
 /**
  * v1.2.1（需求：广场分类要记住，刷新后恢复）。
  * 只有这七个值是合法分类，存进 localStorage 的值必须过一遍白名单再使用 ——
@@ -783,7 +784,6 @@ export default {
                 { value: 'todo', label: 'notes.typeTodo' },
                 { value: 'nav', label: 'notes.typeNav' },
                 { value: 'article', label: 'notes.typeArticle' },
-                { value: 'collection', label: 'notes.typeCollection' },
                 // v1.1.9.4（需求）：登记后面新增「笔记」分类（kind = memo）
                 { value: 'memo', label: 'notes.typeMemo' }
             ];

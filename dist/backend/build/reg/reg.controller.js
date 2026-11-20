@@ -41,6 +41,22 @@ let RegController = class RegController {
         }
         return { success: true, tracker: r.row, locked: r.locked };
     }
+    async updateTracker(req, id, body) {
+        const { viewer } = this.ctx(req);
+        const r = await this.reg.updateTracker(id, body, viewer);
+        if ('error' in r && r.error) {
+            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
+        }
+        return { success: true, ...r };
+    }
+    async mergeTrackers(req, body) {
+        const { viewer } = this.ctx(req);
+        const r = await this.reg.mergeTrackers(String(body?.targetId || ''), Array.isArray(body?.sourceIds) ? body.sourceIds : [], viewer);
+        if ('error' in r && r.error) {
+            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
+        }
+        return { success: true, ...r };
+    }
     async entries(req, q) {
         const { viewer } = this.ctx(req);
         return this.reg.listEntries({
@@ -51,6 +67,7 @@ let RegController = class RegController {
             from: q.from || '',
             to: q.to || '',
             keyword: q.keyword || '',
+            tag: q.tag || '',
             page: Number(q.page) || 1,
             pageSize: Number(q.pageSize) || 20,
         });
@@ -87,6 +104,7 @@ let RegController = class RegController {
             scope: q.scope || 'me',
             trackerId: q.trackerId || '',
             trackerName: q.trackerName || '',
+            tag: q.tag || '',
             from: q.from || '',
             to: q.to || '',
             bucket: q.bucket || 'month',
@@ -112,6 +130,10 @@ let RegController = class RegController {
             throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
         }
         return { success: true, ...r };
+    }
+    async tagCandidates(req, instanceId) {
+        const { viewer } = this.ctx(req);
+        return this.reg.listTagNames(instanceId || '', viewer);
     }
     async candidates(req, instanceId) {
         const { viewer } = this.ctx(req);
@@ -162,6 +184,23 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], RegController.prototype, "saveTracker", null);
+__decorate([
+    (0, common_1.Put)('trackers/:id'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "updateTracker", null);
+__decorate([
+    (0, common_1.Post)('trackers/merge'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "mergeTrackers", null);
 __decorate([
     (0, common_1.Get)('entries'),
     __param(0, (0, common_1.Req)()),
@@ -227,6 +266,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], RegController.prototype, "removeUnit", null);
+__decorate([
+    (0, common_1.Get)('tag-candidates'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "tagCandidates", null);
 __decorate([
     (0, common_1.Get)('candidates'),
     __param(0, (0, common_1.Req)()),

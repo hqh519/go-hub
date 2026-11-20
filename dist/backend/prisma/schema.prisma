@@ -369,6 +369,8 @@ model Tag {
   files FileTag[]
   // v1.2.0：笔记板块的标签关联（type='note' 的标签走这里）
   noteTags NoteTag[]
+  // v1.3.5.6：登记板块的标签关联（type='register' 的标签走这里）
+  regEntryTags RegEntryTag[]
 
   // v1.0.3：唯一键正式改为「实例 + 类型 + 名称」（数据库层生效）。
   //   · 旧键 [name, instanceId, owner] 已删除 —— 它允许同一实例下不同用户各存一份同名标签，
@@ -861,24 +863,33 @@ model NoteComment {
 }
 
 // ============================================================
-//  v1.3.5.3 登记功能（P0 + P1）
+//  v1.3.5.3 登记功能（P0 + P1） / v1.3.5.7 条目独立 + 标签归一
 //  ------------------------------------------------------------
 //  · 一套统一的原子数据（RegEntry）+ 按「类型 / 单位」聚合的统计；
-//  · 「标记」= RegTracker.name，选中已有标记即锁定类型与单位（统一口径）；
-//  · 与 markers 表解耦：markers 只存名称身份，这里存登记口径与数据。
+//  · 「条目」是登记自己的身份表（RegTracker），**不写 markers 表**：
+//    条目改名 / 改类型 / 改单位 / 改分母 / 合并都在这一张表上做，
+//    所有关联记录通过 trackerId 自动跟着变（对标标签改名的效果）；
+//  · RegEntry 不再保存 markerName / markerId 快照 —— 名称只有一个真源，
+//    避免改名后两处不一致；查询统一 include tracker 取名；
+//  · 「标签」仍归主表：身份存 tags（type='register'），关联走 reg_entry_tags，
+//    reg_entries.tags 的 JSON 快照列已删除（v1.3.5.7）。
 // ============================================================
 
-/// 登记项：同一「标记」下的容器，锁定类型 / 单位 / 精度
+/// 条目：登记自己的身份表（唯一真源），锁定类型 / 单位 / 分母 / 精度
 model RegTracker {
   id         String   @id @default(cuid())
   owner      String   @default("")
   instanceId String   @default("")
+  /// 条目名称（唯一真源；改名后所有关联记录自动跟着变）
   name       String
   /// 场景分组（仅展示用）：finance|health|vehicle|study|home|pet|work|other
   scene      String   @default("")
   /// 形态：stock|flow|count|duration|ratio|price
   valueType  String   @default("flow")
+  /// 单位（复合单位里 `/` 之前的部分，如 元/升 的「元」）
   unit       String   @default("")
+  /// v1.3.5.7：分母（复合单位里 `/` 之后的部分，如 元/升 的「升」）
+  portion    String   @default("")
   unitKind   String   @default("")
   precision  Int      @default(2)
   /// 0 无方向 / 1 收入增加 / -1 支出减少
@@ -907,9 +918,8 @@ model RegEntry {
   owner       String    @default("")
   instanceId  String    @default("")
   title       String    @default("")
-  /// 标记名快照（便于跨用户联合统计按名称匹配）
-  markerName  String    @default("")
-  /// 登记事件正文（上限 1000 字，按纯文本计）
+  /// v1.3.5.7：详情（上限 1000 字，按纯文本计）
+  /// 名称统一通过 trackerId → RegTracker.name 取，不再存快照
   event       String    @default("")
   occurredAt  DateTime
   startAt     DateTime?
@@ -923,14 +933,12 @@ model RegEntry {
   /// 数量（留空默认 1）
   quantity    Float     @default(1)
   unit        String    @default("")
-  /// 份量（如 元/升、人/年），原样保存
+  /// v1.3.5.7：分母（复合单位 `/` 之后的部分），保存当时的取值
   portion     String    @default("")
   /// CNY | USD
   currency    String    @default("CNY")
   direction   Int       @default(0)
   note        String    @default("")
-  /// JSON 数组：标签名
-  tags        String    @default("[]")
   /// JSON 数组：files.id
   attachments String    @default("[]")
   /// 挂载的笔记 id
@@ -939,12 +947,28 @@ model RegEntry {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  tracker RegTracker @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+  tracker  RegTracker    @relation(fields: [trackerId], references: [id], onDelete: Cascade)
+  tagLinks RegEntryTag[]
 
   @@index([trackerId, occurredAt])
   @@index([owner, instanceId, occurredAt])
   @@index([owner, instanceId, dueAt])
   @@map("reg_entries")
+}
+
+/// v1.3.5.6：登记-标签关联（标签身份在 tags 表，type='register'）
+/// 结构对标 NoteTag / FileTag；区别是登记是私有内容，标签按账户隔离（scope=owner）。
+model RegEntryTag {
+  entryId   String
+  tagId     String
+  createdAt DateTime @default(now())
+
+  entry RegEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  tag   Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, tagId])
+  @@index([tagId])
+  @@map("reg_entry_tags")
 }
 
 /// 自定义单位（登记管理页的「登记设置」里维护）

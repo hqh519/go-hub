@@ -1070,6 +1070,32 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1357',
+      title: '六十八、v1.3.5.7 更新要点',
+      intro: '这一版把「条目」收回登记自己的独立分类，登记表单按新的表格样式重排，设置页新增条目管理。',
+      items: [
+        { t: '表单重排', d: '标题 / 详情 / 地点 / 条目 / 发生人·关联人 / 时间·类型 / 起始·截止 / 数值·数量 / 单位·分母·币种 / 标签 / 文件，按表格排布。' },
+        { t: '字段更名', d: '标记→条目、登记事件→详情、发生时间→时间、份量→分母（即 / 之后的单位）。' },
+        { t: '详情自动增高', d: '内容变多时输入框自己长高，最高到视口高度的 35%，再多就在框内滚动。' },
+        { t: '条目独立', d: '条目存回登记自己的条目表，不再与其它内容的标记混在一起；记录只通过条目 id 关联。' },
+        { t: '条目管理', d: '登记设置里可以改条目名称 / 类型 / 单位 / 分母，改完所有关联登记一起更新；重复条目可以合并。' },
+        { t: '提交规则', d: '标题可被浏览器记住；时间选择器只在点输入框时弹出；单位与分母可查历史值；标签空格或回车都能确认；提交自动去首尾空格。' },
+        { t: '附件按钮', d: '改为选择文件 / 本地上传 / 链接提取三个按钮，与瞬间发布页一致。' }
+      ]
+    },
+    {
+      id: 'whatsnew-1356',
+      title: '六十七、v1.3.5.6 更新要点',
+      intro: '这一版把登记的标记与标签接回全站统一体系（标记表 / 标签表），并调整了入口与统计图表。',
+      items: [
+        { t: '标记归一', d: '登记的标记改存 markers 表（type=register），登记项只保留类型 / 单位等口径，改名全站一致。' },
+        { t: '标签归一', d: '登记标签写入 tags 表并建立关联，候选与其它内容同源；删除登记不会删掉标签本身。' },
+        { t: '自动回填', d: '老登记数据在升级后首次启动时自动补齐标记与标签关联，不需要手工迁移。' },
+        { t: '入口与滑动', d: '去掉重复的旧「登记」占位；手机上在发布中心左右滑动时，登记排在瞬间之后。' },
+        { t: '六种图表', d: '趋势图可切换柱形 / 折线 / 圆环 / 条形 / 雷达 / 分布，分别看总量、趋势、占比、对比、星期分布与数值区间。' }
+      ]
+    },
+    {
       id: 'whatsnew-1355',
       title: '六十六、v1.3.5.5 更新要点',
       intro: '这一版修好页签块无法输入的问题，并补上列表项的下级内容嵌套（回车退出、退格缩进）。',
@@ -2363,6 +2389,32 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1357',
+      title: '68. What is new in v1.3.5.7',
+      intro: 'Items become their own category again, the register form is rebuilt as a table layout, and item management lands in settings.',
+      items: [
+        { t: 'Table form', d: 'Title / details / place / item / subject · related / time · type / start · due / value · quantity / unit · denominator · currency / tags / files, laid out as a grid.' },
+        { t: 'Renamed fields', d: 'Marker → item, event → details, occurred time → time, portion → denominator (the unit after the slash).' },
+        { t: 'Auto-growing details', d: 'The details box grows with its content up to 35% of the viewport height, then scrolls.' },
+        { t: 'Items are separate', d: 'Items live in their own register table again; entries link to an item purely by id.' },
+        { t: 'Item management', d: 'Rename an item or change its type, unit and denominator in settings — every linked entry follows; duplicates can be merged.' },
+        { t: 'Submission rules', d: 'The title is remembered by the browser; date pickers open only when clicking the input; unit and denominator offer values used before; tags confirm with space or Enter; whitespace is trimmed.' },
+        { t: 'Attachment buttons', d: 'Choose files / upload / from link, matching the moment editor.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1356',
+      title: '67. What is new in v1.3.5.6',
+      intro: 'This release links register markers and tags back to the shared marker and tag tables, and polishes entries plus charts.',
+      items: [
+        { t: 'Marker alignment', d: 'Register markers now live in the markers table (type=register); the tracker keeps only the value type and unit, so renames stay consistent everywhere.' },
+        { t: 'Tag alignment', d: 'Register tags are written into the tags table with links; candidates come from the same source, and deleting an entry keeps the tag.' },
+        { t: 'Automatic backfill', d: 'Existing register data is linked on the first start after upgrade, with no manual migration.' },
+        { t: 'Entries and swipe', d: 'The duplicated legacy Register entry is gone; on mobile the Register tab sits right after Moments when swiping.' },
+        { t: 'Six chart types', d: 'Switch the trend card between bar, line, donut, horizontal bar, radar and distribution charts.' }
       ]
     },
     {

@@ -29,6 +29,8 @@ export const TAG_TYPE_NOTE = 'note';
  * 三者叠加后才是完整身份：type（内容类型）+ instanceId（实例）+ scope（账户）。
  */
 export const TAG_TYPE_MOMENT = 'moment';
+/** v1.3.5.6：登记标签 —— 身份统一存 tags 表，关联走 reg_entry_tags */
+export const TAG_TYPE_REGISTER = 'register';
 
 /** 内容种类 → 标签类型（以后加文章 / 待办 / 导航，只改这张映射表） */
 export function tagTypeOfKind(kind: string): string {
@@ -41,6 +43,8 @@ export function tagTypeOfKind(kind: string): string {
       return 'todo';
     case 'nav':
       return 'nav';
+    case 'register':
+      return TAG_TYPE_REGISTER;
     case 'note':
     case 'memo':
       return TAG_TYPE_NOTE;

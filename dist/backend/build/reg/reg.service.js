@@ -9,8 +9,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.RegService = exports.REG_CURRENCIES = exports.REG_VALUE_TYPES = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_1 = require("../common/prisma");
+const tags_1 = require("../common/tags");
 exports.REG_VALUE_TYPES = ['stock', 'flow', 'count', 'duration', 'ratio', 'price'];
 exports.REG_CURRENCIES = ['CNY', 'USD'];
+function text(v, max = 120) {
+    return String(v === undefined || v === null ? '' : v).trim().slice(0, max);
+}
 function num(v, def = 0) {
     const n = Number(v);
     return Number.isFinite(n) ? n : def;
@@ -47,6 +51,64 @@ function bucketKey(d, bucket) {
     return `${y}-${m}-${day}`;
 }
 let RegService = class RegService {
+    logger = new common_1.Logger('RegService');
+    async onApplicationBootstrap() {
+        try {
+            await this.backfillTrackerPortion();
+        }
+        catch (e) {
+            this.logger.warn(`条目分母回填失败（下次启动会重试）：${e?.message || e}`);
+        }
+    }
+    async backfillTrackerPortion() {
+        const rows = await prisma_1.prisma.regTracker.findMany({
+            where: { portion: '' },
+            select: { id: true },
+            take: 1000,
+        });
+        if (!rows.length)
+            return 0;
+        let filled = 0;
+        for (const t of rows) {
+            const last = await prisma_1.prisma.regEntry.findFirst({
+                where: { trackerId: t.id, portion: { not: '' } },
+                orderBy: { occurredAt: 'desc' },
+                select: { portion: true },
+            });
+            if (!last?.portion)
+                continue;
+            await prisma_1.prisma.regTracker.update({ where: { id: t.id }, data: { portion: last.portion } }).catch(() => undefined);
+            filled += 1;
+        }
+        if (filled)
+            this.logger.log(`条目分母回填 ${filled} 条`);
+        return filled;
+    }
+    async syncEntryTags(entryId, names, instanceId, owner) {
+        const tagIds = [];
+        for (const raw of Array.isArray(names) ? names.slice(0, 20) : []) {
+            const tag = await (0, tags_1.findOrCreateTag)(String(raw || ''), instanceId, owner, tags_1.TAG_TYPE_REGISTER);
+            if (tag?.id)
+                tagIds.push(tag.id);
+        }
+        const uniq = Array.from(new Set(tagIds));
+        await prisma_1.prisma.regEntryTag.deleteMany({ where: { entryId } });
+        if (!uniq.length)
+            return;
+        await prisma_1.prisma.regEntryTag.createMany({
+            data: uniq.map((tagId) => ({ entryId, tagId })),
+            skipDuplicates: true,
+        });
+    }
+    async listTagNames(instanceId, owner) {
+        const rows = await prisma_1.prisma.tag.findMany({
+            where: { ...(0, tags_1.tagScope)(instanceId, tags_1.TAG_TYPE_REGISTER, owner) },
+            select: { name: true },
+            orderBy: { createdAt: 'asc' },
+            take: 200,
+        });
+        return rows.map((r) => r.name).filter(Boolean);
+    }
     async listTrackers(owner, instanceId) {
         const me = String(owner || '');
         const where = { owner: me, instanceId: String(instanceId || ''), archived: false };
@@ -67,20 +129,25 @@ let RegService = class RegService {
         }));
     }
     async ensureTracker(input, owner) {
+        const instanceId = String(input.instanceId || '');
+        const id = String(input.trackerId || '');
+        if (id) {
+            const hit = await prisma_1.prisma.regTracker.findFirst({ where: { id, owner } });
+            if (hit)
+                return { row: hit, locked: true };
+        }
         const name = String(input.trackerName || input.markerName || '').trim().slice(0, 80);
         if (!name)
-            return { error: '标记名称不能为空' };
-        const instanceId = String(input.instanceId || '');
+            return { error: '条目名称不能为空' };
         const existed = await prisma_1.prisma.regTracker.findFirst({ where: { owner, instanceId, name } });
         if (existed) {
-            if (input.note !== undefined || input.scene !== undefined) {
-                const row = await prisma_1.prisma.regTracker.update({
-                    where: { id: existed.id },
-                    data: {
-                        ...(input.note === undefined ? {} : { note: String(input.note).slice(0, 200) }),
-                        ...(input.scene === undefined ? {} : { scene: String(input.scene).slice(0, 24) }),
-                    },
-                });
+            const patch = {};
+            if (input.note !== undefined)
+                patch.note = String(input.note).slice(0, 200);
+            if (input.scene !== undefined)
+                patch.scene = String(input.scene).slice(0, 24);
+            if (Object.keys(patch).length) {
+                const row = await prisma_1.prisma.regTracker.update({ where: { id: existed.id }, data: patch });
                 return { row, locked: true };
             }
             return { row: existed, locked: true };
@@ -93,13 +160,72 @@ let RegService = class RegService {
                 name,
                 scene: String(input.scene || '').slice(0, 24),
                 valueType,
-                unit: String(input.unit || '').slice(0, 24),
+                unit: text(input.unit, 24),
+                portion: text(input.portion, 32),
                 unitKind: String(input.unitKind || '').slice(0, 24),
                 precision: Math.max(0, Math.min(6, Math.round(num(input.precision, 2)))),
                 direction: [-1, 0, 1].includes(Math.round(num(input.direction, 0))) ? Math.round(num(input.direction, 0)) : 0,
             },
         });
         return { row, locked: false };
+    }
+    async updateTracker(id, input, owner) {
+        const existed = await prisma_1.prisma.regTracker.findFirst({ where: { id: String(id || ''), owner } });
+        if (!existed)
+            return { error: '条目不存在或无权修改' };
+        const name = input.name === undefined ? existed.name : String(input.name).trim().slice(0, 80);
+        if (!name)
+            return { error: '条目名称不能为空' };
+        if (name !== existed.name) {
+            const dup = await prisma_1.prisma.regTracker.findFirst({
+                where: { owner: existed.owner, instanceId: existed.instanceId, name, NOT: { id: existed.id } },
+                select: { id: true },
+            });
+            if (dup)
+                return { error: `已存在同名条目「${name}」，请改用合并` };
+        }
+        const valueType = input.valueType === undefined
+            ? existed.valueType
+            : (exports.REG_VALUE_TYPES.includes(String(input.valueType)) ? String(input.valueType) : existed.valueType);
+        const unit = input.unit === undefined ? existed.unit : String(input.unit).trim().slice(0, 24);
+        const portion = input.portion === undefined ? existed.portion : String(input.portion).trim().slice(0, 32);
+        const row = await prisma_1.prisma.regTracker.update({
+            where: { id: existed.id },
+            data: {
+                name,
+                valueType,
+                unit,
+                portion,
+                ...(input.scene === undefined ? {} : { scene: String(input.scene).slice(0, 24) }),
+                ...(input.note === undefined ? {} : { note: String(input.note).slice(0, 200) }),
+                ...(input.precision === undefined ? {} : { precision: Math.max(0, Math.min(6, Math.round(num(input.precision, 2)))) }),
+                ...(input.direction === undefined ? {} : { direction: Math.round(num(input.direction, existed.direction)) }),
+            },
+        });
+        if (unit !== existed.unit || portion !== existed.portion) {
+            await prisma_1.prisma.regEntry.updateMany({ where: { trackerId: row.id }, data: { unit, portion } }).catch(() => undefined);
+        }
+        return { id: row.id, name: row.name, unit: row.unit, portion: row.portion, valueType: row.valueType };
+    }
+    async mergeTrackers(targetId, sourceIds, owner) {
+        const target = await prisma_1.prisma.regTracker.findFirst({ where: { id: String(targetId || ''), owner } });
+        if (!target)
+            return { error: '目标条目不存在或无权修改' };
+        const ids = (Array.isArray(sourceIds) ? sourceIds : [])
+            .map((x) => String(x || ''))
+            .filter((x) => x && x !== target.id);
+        if (!ids.length)
+            return { error: '请选择要合并的条目' };
+        const sources = await prisma_1.prisma.regTracker.findMany({ where: { id: { in: ids }, owner }, select: { id: true } });
+        if (!sources.length)
+            return { error: '要合并的条目不存在或无权修改' };
+        const keep = sources.map((s) => s.id);
+        const moved = await prisma_1.prisma.regEntry.updateMany({
+            where: { trackerId: { in: keep } },
+            data: { trackerId: target.id },
+        });
+        await prisma_1.prisma.regTracker.deleteMany({ where: { id: { in: keep } } });
+        return { id: target.id, merged: keep.length, moved: moved.count };
     }
     async listEntries(q) {
         const page = Math.max(1, Math.floor(num(q.page, 1)));
@@ -111,7 +237,10 @@ let RegService = class RegService {
         if (q.trackerId)
             where.trackerId = String(q.trackerId);
         else if (q.trackerName)
-            where.markerName = String(q.trackerName);
+            where.tracker = { name: String(q.trackerName) };
+        const tag = String(q.tag || '').trim();
+        if (tag)
+            where.tagLinks = { some: { tag: { name: tag } } };
         const from = dateOf(q.from);
         const to = dateOf(q.to);
         if (from || to)
@@ -121,7 +250,7 @@ let RegService = class RegService {
             where.OR = [
                 { title: { contains: kw } },
                 { event: { contains: kw } },
-                { markerName: { contains: kw } },
+                { tracker: { name: { contains: kw } } },
                 { placeName: { contains: kw } },
                 { subjectName: { contains: kw } },
                 { note: { contains: kw } },
@@ -131,6 +260,10 @@ let RegService = class RegService {
             prisma_1.prisma.regEntry.count({ where: where }),
             prisma_1.prisma.regEntry.findMany({
                 where: where,
+                include: {
+                    tracker: { select: { id: true, name: true, valueType: true, unit: true, portion: true } },
+                    tagLinks: { select: { tag: { select: { name: true } } } },
+                },
                 orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
                 skip: (page - 1) * pageSize,
                 take: pageSize,
@@ -139,14 +272,18 @@ let RegService = class RegService {
         return { total, page, pageSize, list: rows.map((r) => this.entryView(r)) };
     }
     entryView(r) {
+        const tracker = r.tracker || null;
+        const tagLinks = Array.isArray(r.tagLinks) ? r.tagLinks : [];
         return {
             ...r,
+            tracker,
+            trackerName: tracker ? String(tracker.name || '') : '',
             occurredAt: r.occurredAt ? r.occurredAt.getTime() : 0,
             startAt: r.startAt ? r.startAt.getTime() : null,
             dueAt: r.dueAt ? r.dueAt.getTime() : null,
             createdAt: r.createdAt ? r.createdAt.getTime() : 0,
             updatedAt: r.updatedAt ? r.updatedAt.getTime() : 0,
-            tags: parseArr(r.tags),
+            tags: tagLinks.map((l) => String(l?.tag?.name || '')).filter(Boolean),
             attachments: parseArr(r.attachments),
         };
     }
@@ -167,27 +304,26 @@ let RegService = class RegService {
                 trackerId: row.id,
                 owner,
                 instanceId: String(input.instanceId || ''),
-                title: String(input.title || '').slice(0, 120),
-                markerName: row.name,
-                event: String(input.event || '').slice(0, 1000),
+                title: text(input.title, 120),
+                event: text(input.event, 1000),
                 occurredAt,
                 startAt: dateOf(input.startAt),
                 dueAt: dateOf(input.dueAt),
-                subjectName: String(input.subjectName || '').slice(0, 40),
-                relatedName: String(input.relatedName || '').slice(0, 40),
-                placeName: String(input.placeName || '').slice(0, 80),
+                subjectName: text(input.subjectName, 40),
+                relatedName: text(input.relatedName, 40),
+                placeName: text(input.placeName, 80),
                 amount,
                 quantity,
-                unit: String(input.unit || row.unit || '').slice(0, 24),
-                portion: String(input.portion || '').slice(0, 32),
+                unit: text(input.unit || row.unit, 24),
+                portion: text(input.portion === undefined || input.portion === '' ? row.portion : input.portion, 32),
                 currency: exports.REG_CURRENCIES.includes(String(input.currency || '')) ? String(input.currency) : 'CNY',
                 direction: [-1, 0, 1].includes(Math.round(num(input.direction, row.direction))) ? Math.round(num(input.direction, row.direction)) : 0,
                 note: String(input.note || '').slice(0, 500),
-                tags: JSON.stringify(Array.isArray(input.tags) ? input.tags.map(String).slice(0, 20) : []),
                 attachments: JSON.stringify(Array.isArray(input.attachments) ? input.attachments.map(String).slice(0, 30) : []),
                 docNoteId: String(input.docNoteId || ''),
             },
         });
+        await this.syncEntryTags(created.id, Array.isArray(input.tags) ? input.tags.map(String) : [], String(input.instanceId || ''), owner).catch(() => undefined);
         await prisma_1.prisma.regTracker.update({ where: { id: row.id }, data: { updatedAt: new Date() } }).catch(() => undefined);
         return { id: created.id, trackerId: row.id, locked: 'locked' in tracker ? tracker.locked : false };
     }
@@ -195,30 +331,40 @@ let RegService = class RegService {
         const existed = await prisma_1.prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || '') } });
         if (!existed)
             return { error: '登记不存在或无权修改' };
+        let nextTrackerId = existed.trackerId;
+        if (input.trackerId || input.trackerName) {
+            const t = await this.ensureTracker(input, owner);
+            if ('error' in t && t.error)
+                return { error: t.error };
+            nextTrackerId = t.row.id;
+        }
         const occurredAt = input.occurredAt === undefined ? existed.occurredAt : dateOf(input.occurredAt) || existed.occurredAt;
         const updated = await prisma_1.prisma.regEntry.update({
             where: { id: existed.id },
             data: {
-                ...(input.title === undefined ? {} : { title: String(input.title).slice(0, 120) }),
-                ...(input.event === undefined ? {} : { event: String(input.event).slice(0, 1000) }),
+                trackerId: nextTrackerId,
+                ...(input.title === undefined ? {} : { title: text(input.title, 120) }),
+                ...(input.event === undefined ? {} : { event: text(input.event, 1000) }),
                 occurredAt,
                 ...(input.startAt === undefined ? {} : { startAt: dateOf(input.startAt) }),
                 ...(input.dueAt === undefined ? {} : { dueAt: dateOf(input.dueAt) }),
-                ...(input.subjectName === undefined ? {} : { subjectName: String(input.subjectName).slice(0, 40) }),
-                ...(input.relatedName === undefined ? {} : { relatedName: String(input.relatedName).slice(0, 40) }),
-                ...(input.placeName === undefined ? {} : { placeName: String(input.placeName).slice(0, 80) }),
+                ...(input.subjectName === undefined ? {} : { subjectName: text(input.subjectName, 40) }),
+                ...(input.relatedName === undefined ? {} : { relatedName: text(input.relatedName, 40) }),
+                ...(input.placeName === undefined ? {} : { placeName: text(input.placeName, 80) }),
                 ...(input.amount === undefined ? {} : { amount: num(input.amount, existed.amount) }),
                 ...(input.quantity === undefined ? {} : { quantity: num(input.quantity, existed.quantity) }),
-                ...(input.unit === undefined ? {} : { unit: String(input.unit).slice(0, 24) }),
-                ...(input.portion === undefined ? {} : { portion: String(input.portion).slice(0, 32) }),
+                ...(input.unit === undefined ? {} : { unit: text(input.unit, 24) }),
+                ...(input.portion === undefined ? {} : { portion: text(input.portion, 32) }),
                 ...(input.currency === undefined ? {} : { currency: exports.REG_CURRENCIES.includes(String(input.currency)) ? String(input.currency) : existed.currency }),
                 ...(input.direction === undefined ? {} : { direction: Math.round(num(input.direction, existed.direction)) }),
                 ...(input.note === undefined ? {} : { note: String(input.note).slice(0, 500) }),
-                ...(input.tags === undefined ? {} : { tags: JSON.stringify(Array.isArray(input.tags) ? input.tags.map(String).slice(0, 20) : []) }),
                 ...(input.attachments === undefined ? {} : { attachments: JSON.stringify(Array.isArray(input.attachments) ? input.attachments.map(String).slice(0, 30) : []) }),
                 ...(input.docNoteId === undefined ? {} : { docNoteId: String(input.docNoteId) }),
             },
         });
+        if (input.tags !== undefined) {
+            await this.syncEntryTags(updated.id, Array.isArray(input.tags) ? input.tags.map(String) : [], String(input.instanceId || existed.instanceId || ''), owner).catch(() => undefined);
+        }
         return { id: updated.id };
     }
     async removeEntry(id, owner) {
@@ -236,17 +382,27 @@ let RegService = class RegService {
         if (q.trackerId)
             baseWhere.trackerId = String(q.trackerId);
         else if (q.trackerName)
-            baseWhere.markerName = String(q.trackerName);
+            baseWhere.tracker = { name: String(q.trackerName) };
+        if (String(q.tag || '').trim()) {
+            baseWhere.tagLinks = { some: { tag: { name: String(q.tag).trim() } } };
+        }
         const from = dateOf(q.from);
         const to = dateOf(q.to);
         const where = {
             ...baseWhere,
             ...(from || to ? { occurredAt: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } : {}),
         };
-        const rows = await prisma_1.prisma.regEntry.findMany({ where: where, orderBy: { occurredAt: 'asc' } });
+        const rows = await prisma_1.prisma.regEntry.findMany({
+            where: where,
+            include: { tracker: { select: { name: true } } },
+            orderBy: { occurredAt: 'asc' },
+        });
         const bucket = ['day', 'week', 'month', 'year'].includes(String(q.bucket || '')) ? String(q.bucket) : 'month';
         const buckets = new Map();
         const owners = new Map();
+        const trackerMap = new Map();
+        const weekday = [0, 0, 0, 0, 0, 0, 0];
+        const values = [];
         let total = 0;
         let quantity = 0;
         let max = Number.NEGATIVE_INFINITY;
@@ -269,6 +425,13 @@ let RegService = class RegService {
             o.sum += v;
             o.count += 1;
             owners.set(r.owner, o);
+            const tkey = String(r.tracker?.name || r.trackerId || '未命名');
+            const t = trackerMap.get(tkey) || { name: tkey, sum: 0, count: 0 };
+            t.sum += v;
+            t.count += 1;
+            trackerMap.set(tkey, t);
+            weekday[(r.occurredAt.getDay() + 6) % 7] += v;
+            values.push(v);
         }
         const series = Array.from(buckets.values()).sort((a, b) => a.key.localeCompare(b.key));
         for (let i = 1; i < series.length; i += 1) {
@@ -281,6 +444,12 @@ let RegService = class RegService {
         const compare = String(q.compare || '') === 'year'
             ? await this.buildYoy(baseWhere, from, to, bucket, total)
             : null;
+        const byTracker = Array.from(trackerMap.values()).sort((a, b) => Math.abs(b.sum) - Math.abs(a.sum));
+        const byWeekday = weekday.map((sum, i) => ({
+            weekday: i,
+            label: ['一', '二', '三', '四', '五', '六', '日'][i],
+            sum,
+        }));
         return {
             total,
             count: rows.length,
@@ -290,6 +459,9 @@ let RegService = class RegService {
             min: rows.length ? min : 0,
             series,
             byOwner: Array.from(owners.values()).sort((a, b) => b.sum - a.sum),
+            byTracker,
+            byWeekday,
+            histogram: this.buildHistogram(values),
             unit: rows[0]?.unit || '',
             currency: rows[0]?.currency || 'CNY',
             bucket,
@@ -299,6 +471,30 @@ let RegService = class RegService {
             derive,
             compare,
         };
+    }
+    buildHistogram(values) {
+        if (!values.length)
+            return [];
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        if (min === max)
+            return [{ from: min, to: max, count: values.length }];
+        const bins = Math.min(10, Math.max(4, Math.ceil(Math.sqrt(values.length))));
+        const step = (max - min) / bins;
+        const out = Array.from({ length: bins }, (_, i) => ({
+            from: min + i * step,
+            to: min + (i + 1) * step,
+            count: 0,
+        }));
+        for (const v of values) {
+            let i = Math.floor((v - min) / step);
+            if (i >= bins)
+                i = bins - 1;
+            if (i < 0)
+                i = 0;
+            out[i].count += 1;
+        }
+        return out;
     }
     buildDerive(rows, series, from, to) {
         let sumValue = 0;
@@ -456,35 +652,42 @@ let RegService = class RegService {
         return { id: existed.id };
     }
     async candidates(owner, instanceId) {
-        const rows = await prisma_1.prisma.regEntry.findMany({
-            where: { owner: String(owner || ''), instanceId: String(instanceId || '') },
-            select: { placeName: true, subjectName: true, relatedName: true, unit: true, tags: true },
-            orderBy: { occurredAt: 'desc' },
-            take: 500,
-        });
-        const uniq = (key) => {
+        const [rows, trackers] = await Promise.all([
+            prisma_1.prisma.regEntry.findMany({
+                where: { owner: String(owner || ''), instanceId: String(instanceId || '') },
+                select: { placeName: true, subjectName: true, relatedName: true, unit: true, portion: true },
+                orderBy: { occurredAt: 'desc' },
+                take: 500,
+            }),
+            prisma_1.prisma.regTracker.findMany({
+                where: { owner: String(owner || ''), instanceId: String(instanceId || ''), archived: false },
+                select: { unit: true, portion: true },
+                take: 500,
+            }),
+        ]);
+        const collect = (key) => {
             const set = new Set();
             for (const r of rows) {
                 const v = String(r[key] || '').trim();
                 if (v)
                     set.add(v);
             }
+            for (const t of trackers) {
+                if (key !== 'unit' && key !== 'portion')
+                    break;
+                const v = String(t[key] || '').trim();
+                if (v)
+                    set.add(v);
+            }
             return Array.from(set).slice(0, 50);
         };
-        const tagSet = new Set();
-        for (const r of rows) {
-            for (const t of parseArr(r.tags)) {
-                const v = String(t || '').trim();
-                if (v)
-                    tagSet.add(v);
-            }
-        }
         return {
-            places: uniq('placeName'),
-            subjects: uniq('subjectName'),
-            related: uniq('relatedName'),
-            units: uniq('unit'),
-            tags: Array.from(tagSet).slice(0, 100),
+            places: collect('placeName'),
+            subjects: collect('subjectName'),
+            related: collect('relatedName'),
+            units: collect('unit'),
+            portions: collect('portion'),
+            tags: await this.listTagNames(instanceId, owner),
         };
     }
     async importRows(rows, owner, instanceId) {

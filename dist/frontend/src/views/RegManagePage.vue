@@ -130,22 +130,26 @@
             <div class="reg-chart-card">
                 <div class="reg-chart-head">
                     <span class="reg-chart-title">{{ $t('reg.trendTitle') }}</span>
-                    <span class="reg-chart-sub">{{ $t('reg.trendSub', { n: stats.series.length }) }}</span>
-                </div>
-                <div v-if="!stats.series.length" class="reg-chart-empty">{{ $t('reg.noData') }}</div>
-                <div v-else class="reg-chart">
-                    <div
-                        v-for="b in stats.series"
-                        :key="b.key"
-                        class="reg-bar-wrap"
-                        :title="`${b.key}：${fmt(b.sum)} ${stats.unit}（${b.count} 条）`"
-                    >
-                        <span class="reg-bar-val">{{ fmt(b.sum) }}</span>
-                        <div class="reg-bar" :style="{ height: barHeight(b.sum) }"></div>
-                        <span class="reg-bar-key">{{ shortKey(b.key) }}</span>
+                    <div class="reg-chart-switch">
+                        <button
+                            v-for="c in chartTypes"
+                            :key="c.value"
+                            type="button"
+                            class="reg-chart-tab"
+                            :class="{ 'is-active': chartType === c.value }"
+                            :title="$t(c.label)"
+                            @click="chartType = c.value"
+                        >
+                            <font-awesome-icon :icon="c.icon" />
+                        </button>
                     </div>
                 </div>
-                <div v-if="stats.series.length" class="reg-chart-legend">
+                <div class="reg-chart-sub">{{ chartSub }}</div>
+                <div v-if="!chartHasData" class="reg-chart-empty">{{ $t('reg.noData') }}</div>
+                <div v-else class="reg-chart-canvas">
+                    <component :is="chartKind" :data="chartPayload" :options="chartOptions" />
+                </div>
+                <div v-if="chartHasData && (chartType === 'bar' || chartType === 'line')" class="reg-chart-legend">
                     <span v-for="b in stats.series.slice(-3)" :key="'d' + b.key" class="reg-legend-item">
                         {{ shortKey(b.key) }}：{{ b.diff === undefined ? '—' : (b.diff >= 0 ? '+' : '') + fmt(b.diff) }}
                         <em v-if="b.pct !== null && b.pct !== undefined">({{ b.pct >= 0 ? '+' : '' }}{{ b.pct.toFixed(1) }}%)</em>
@@ -169,36 +173,141 @@
         </section>
 
         <section v-else class="reg-settings">
-            <div class="reg-set-add">
-                <el-input v-model="unitForm.name" size="small" class="reg-set-name" :placeholder="$t('reg.unitName')" maxlength="24" />
-                <el-select v-model="unitForm.kind" size="small" class="reg-set-kind">
-                    <el-option v-for="k in unitKinds" :key="k.value" :label="$t(k.label)" :value="k.value" />
-                </el-select>
-                <el-input v-model="unitForm.baseUnit" size="small" class="reg-set-base" :placeholder="$t('reg.unitBase')" maxlength="24" />
-                <el-button size="small" type="primary" :loading="unitSaving" @click="saveUnit">
-                    <font-awesome-icon icon="plus" class="reg-set-icon" />{{ $t('reg.unitAdd') }}
-                </el-button>
+            <!--
+                v1.3.5.7：条目管理。
+                「条目」是登记自己的身份表，这里改的是根源 —— 名称 / 类型 / 单位 / 分母
+                一改，所有关联记录按 trackerId 自动跟着变；两条重复条目还能合并。
+            -->
+            <div class="reg-set-block">
+                <div class="reg-set-block-head">
+                    <h2 class="reg-set-block-title">{{ $t('reg.itemManage') }}</h2>
+                    <span class="reg-set-block-sub">{{ $t('reg.itemManageSub') }}</span>
+                </div>
+                <div v-if="!trackers.length" class="reg-empty">{{ $t('reg.noItems') }}</div>
+                <div v-else class="reg-tracker-list">
+                    <div v-for="t in trackers" :key="t.id" class="reg-tracker-row">
+                        <span class="reg-tracker-name">{{ t.name }}</span>
+                        <span class="reg-tracker-type">{{ $t(typeLabel(t.valueType)) }}</span>
+                        <span class="reg-tracker-unit">{{ unitText(t) }}</span>
+                        <span class="reg-tracker-count">{{ $t('reg.itemCount', { n: t.count || 0 }) }}</span>
+                        <span class="reg-tracker-actions">
+                            <button type="button" class="reg-act" :title="$t('common.edit')" @click="openItemEdit(t)">
+                                <font-awesome-icon icon="pen" />
+                            </button>
+                            <button
+                                type="button"
+                                class="reg-act"
+                                :title="$t('reg.mergeItem')"
+                                :disabled="trackers.length < 2"
+                                @click="openItemMerge(t)"
+                            >
+                                <font-awesome-icon icon="code-branch" />
+                            </button>
+                        </span>
+                    </div>
+                </div>
             </div>
-            <div v-if="!units.length" class="reg-empty">{{ $t('reg.noUnits') }}</div>
-            <div v-else class="reg-unit-list">
-                <div v-for="u in units" :key="u.id" class="reg-unit-row">
-                    <span class="reg-unit-name">{{ u.name }}</span>
-                    <span class="reg-unit-kind">{{ unitKindLabel(u.kind) }}</span>
-                    <span class="reg-unit-base">{{ u.baseUnit }}</span>
-                    <button type="button" class="reg-unit-del" :title="$t('common.delete')" @click="removeUnit(u)">
-                        <font-awesome-icon icon="trash" />
-                    </button>
+
+            <div class="reg-set-block">
+                <div class="reg-set-block-head">
+                    <h2 class="reg-set-block-title">{{ $t('reg.unitTitle') }}</h2>
+                    <span class="reg-set-block-sub">{{ $t('reg.unitSub') }}</span>
+                </div>
+                <div class="reg-set-add">
+                    <el-input v-model="unitForm.name" size="small" class="reg-set-name" :placeholder="$t('reg.unitName')" maxlength="24" />
+                    <el-select v-model="unitForm.kind" size="small" class="reg-set-kind">
+                        <el-option v-for="k in unitKinds" :key="k.value" :label="$t(k.label)" :value="k.value" />
+                    </el-select>
+                    <el-input v-model="unitForm.baseUnit" size="small" class="reg-set-base" :placeholder="$t('reg.unitBase')" maxlength="24" />
+                    <el-button size="small" type="primary" :loading="unitSaving" @click="saveUnit">
+                        <font-awesome-icon icon="plus" class="reg-set-icon" />{{ $t('reg.unitAdd') }}
+                    </el-button>
+                </div>
+                <div v-if="!units.length" class="reg-empty">{{ $t('reg.noUnits') }}</div>
+                <div v-else class="reg-unit-list">
+                    <div v-for="u in units" :key="u.id" class="reg-unit-row">
+                        <span class="reg-unit-name">{{ u.name }}</span>
+                        <span class="reg-unit-kind">{{ unitKindLabel(u.kind) }}</span>
+                        <span class="reg-unit-base">{{ u.baseUnit }}</span>
+                        <button type="button" class="reg-unit-del" :title="$t('common.delete')" @click="removeUnit(u)">
+                            <font-awesome-icon icon="trash" />
+                        </button>
+                    </div>
                 </div>
             </div>
         </section>
+
+        <!-- 编辑条目 -->
+        <el-dialog v-model="itemEditVisible" :title="$t('reg.editItem')" width="420px" append-to-body>
+            <div class="reg-item-form">
+                <div class="reg-item-field">
+                    <span>{{ $t('reg.itemName') }}</span>
+                    <el-input v-model="itemForm.name" size="small" maxlength="80" />
+                </div>
+                <div class="reg-item-field">
+                    <span>{{ $t('reg.fieldType') }}</span>
+                    <el-select v-model="itemForm.valueType" size="small" class="reg-full">
+                        <el-option v-for="t in valueTypes" :key="t.value" :label="$t(t.label)" :value="t.value" />
+                    </el-select>
+                </div>
+                <div class="reg-item-field">
+                    <span>{{ $t('reg.fieldUnit') }}</span>
+                    <el-input v-model="itemForm.unit" size="small" maxlength="24" />
+                </div>
+                <div class="reg-item-field">
+                    <span>{{ $t('reg.fieldPortion') }}</span>
+                    <el-input v-model="itemForm.portion" size="small" maxlength="32" :placeholder="$t('reg.fieldPortionPh')" />
+                </div>
+            </div>
+            <p class="reg-item-tip">{{ $t('reg.itemEditTip') }}</p>
+            <template #footer>
+                <el-button size="small" @click="itemEditVisible = false">{{ $t('common.cancel') }}</el-button>
+                <el-button size="small" type="primary" :loading="itemSaving" @click="saveItem">{{ $t('common.save') }}</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- 合并条目 -->
+        <el-dialog v-model="itemMergeVisible" :title="$t('reg.mergeItem')" width="440px" append-to-body>
+            <p class="reg-item-tip">{{ $t('reg.mergeTip', { name: mergeTarget.name }) }}</p>
+            <el-select v-model="mergeSources" multiple filterable class="reg-full" :placeholder="$t('reg.mergePick')">
+                <el-option v-for="t in mergeCandidates" :key="t.id" :label="t.name" :value="t.id" />
+            </el-select>
+            <template #footer>
+                <el-button size="small" @click="itemMergeVisible = false">{{ $t('common.cancel') }}</el-button>
+                <el-button size="small" type="primary" :loading="itemMerging" @click="doMerge">{{ $t('reg.mergeItem') }}</el-button>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
+import { Bar, Doughnut, Line, Radar } from 'vue-chartjs';
+import {
+    Chart as ChartJS,
+    ArcElement,
+    BarElement,
+    CategoryScale,
+    Filler,
+    Legend,
+    LineElement,
+    LinearScale,
+    PointElement,
+    RadialLinearScale,
+    Tooltip,
+} from 'chart.js';
+
+ChartJS.register(
+    ArcElement, BarElement, CategoryScale, Filler, Legend,
+    LineElement, LinearScale, PointElement, RadialLinearScale, Tooltip,
+);
+
+/** 六种图表共用的配色（与系统状态页同一套色感） */
+const REG_CHART_COLORS = ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399', '#14b8a6', '#8b5cf6', '#f97316'];
 
 export default {
     name: 'RegManagePage',
+    components: { Bar, Doughnut, Line, Radar },
     data() {
         return {
             tab: 'stats',
@@ -213,12 +322,38 @@ export default {
                 series: [], byOwner: [], unit: '', currency: 'CNY',
                 derive: null, compare: null,
             },
+            /* v1.3.5.6：趋势图可切换形态 */
+            chartType: 'bar',
+            chartTypes: [
+                { value: 'bar', label: 'reg.chartBar', icon: 'chart-bar' },
+                { value: 'line', label: 'reg.chartLine', icon: 'chart-line' },
+                { value: 'doughnut', label: 'reg.chartDonut', icon: 'chart-pie' },
+                { value: 'hbar', label: 'reg.chartHBar', icon: 'align-left' },
+                { value: 'radar', label: 'reg.chartRadar', icon: 'spider' },
+                { value: 'hist', label: 'reg.chartHist', icon: 'chart-area' },
+            ],
             compareYear: false,
             reports: [],
             activeReport: '',
             units: [],
             unitSaving: false,
             unitForm: { name: '', kind: 'count', baseUnit: '' },
+            /* v1.3.5.7：条目管理 */
+            itemEditVisible: false,
+            itemSaving: false,
+            itemForm: { id: '', name: '', valueType: 'flow', unit: '', portion: '' },
+            itemMergeVisible: false,
+            itemMerging: false,
+            mergeTarget: { id: '', name: '' },
+            mergeSources: [],
+            valueTypes: [
+                { value: 'flow', label: 'reg.typeFlow' },
+                { value: 'stock', label: 'reg.typeStock' },
+                { value: 'count', label: 'reg.typeCount' },
+                { value: 'duration', label: 'reg.typeDuration' },
+                { value: 'ratio', label: 'reg.typeRatio' },
+                { value: 'price', label: 'reg.typePrice' },
+            ],
             unitKinds: [
                 { value: 'count', label: 'reg.kindCount' },
                 { value: 'currency', label: 'reg.kindCurrency' },
@@ -235,6 +370,164 @@ export default {
         balanceLast() {
             const arr = (this.stats.derive && this.stats.derive.balance) || [];
             return arr.length ? arr[arr.length - 1].value : 0;
+        },
+        /** 可合并到当前条目的其它条目 */
+        mergeCandidates() {
+            const id = this.mergeTarget && this.mergeTarget.id;
+            return (this.trackers || []).filter((t) => t.id !== id);
+        },
+        /** 图表组件映射（hbar / hist 复用 Bar，靠 indexAxis 与数据区分） */
+        chartKind() {
+            const map = { bar: 'Bar', line: 'Line', doughnut: 'Doughnut', hbar: 'Bar', radar: 'Radar', hist: 'Bar' };
+            return map[this.chartType] || 'Bar';
+        },
+        chartHasData() {
+            const st = this.stats || {};
+            if (this.chartType === 'doughnut' || this.chartType === 'hbar') return (st.byTracker || []).length > 0;
+            if (this.chartType === 'radar') return (st.byWeekday || []).some((d) => Number(d.sum));
+            if (this.chartType === 'hist') return (st.histogram || []).length > 0;
+            return (st.series || []).length > 0;
+        },
+        chartSub() {
+            const st = this.stats || {};
+            if (this.chartType === 'doughnut' || this.chartType === 'hbar') {
+                return this.$t('reg.chartSubTracker', { n: (st.byTracker || []).length });
+            }
+            if (this.chartType === 'radar') return this.$t('reg.chartSubWeekday');
+            if (this.chartType === 'hist') return this.$t('reg.chartSubHist', { n: (st.histogram || []).length });
+            return this.$t('reg.trendSub', { n: (st.series || []).length });
+        },
+        chartPayload() {
+            const unit = (this.stats && this.stats.unit) || '';
+            const label = unit ? this.$t('reg.chartValueUnit', { unit }) : this.$t('reg.chartValue');
+            const type = this.chartType;
+            const colors = REG_CHART_COLORS;
+            if (type === 'doughnut' || type === 'hbar') {
+                const rows = (this.stats.byTracker || []).slice(0, 8);
+                return {
+                    labels: rows.map((r) => r.name),
+                    datasets: [{
+                        label,
+                        data: rows.map((r) => Math.abs(Number(r.sum) || 0)),
+                        backgroundColor: type === 'doughnut'
+                            ? rows.map((_, i) => colors[i % colors.length])
+                            : colors[0],
+                        borderWidth: type === 'doughnut' ? 2 : 0,
+                        borderColor: 'transparent',
+                        borderRadius: type === 'hbar' ? 6 : 0,
+                        hoverOffset: type === 'doughnut' ? 6 : 0,
+                    }],
+                };
+            }
+            if (type === 'radar') {
+                const rows = this.stats.byWeekday || [];
+                return {
+                    labels: rows.map((r) => this.$t('reg.weekdayShort', { d: r.label })),
+                    datasets: [{
+                        label,
+                        data: rows.map((r) => Number(r.sum) || 0),
+                        borderColor: colors[0],
+                        backgroundColor: 'rgba(64, 158, 255, 0.18)',
+                        pointBackgroundColor: colors[0],
+                        borderWidth: 2,
+                    }],
+                };
+            }
+            if (type === 'hist') {
+                const rows = this.stats.histogram || [];
+                return {
+                    labels: rows.map((r) => `${this.fmt(r.from)}~${this.fmt(r.to)}`),
+                    datasets: [{
+                        label: this.$t('reg.chartCount'),
+                        data: rows.map((r) => r.count),
+                        backgroundColor: colors[5],
+                        borderRadius: 4,
+                    }],
+                };
+            }
+            const rows = this.stats.series || [];
+            return {
+                labels: rows.map((r) => this.shortKey(r.key)),
+                datasets: [{
+                    label,
+                    data: rows.map((r) => Number(r.sum) || 0),
+                    backgroundColor: type === 'line' ? 'rgba(64, 158, 255, 0.16)' : colors[0],
+                    borderColor: colors[0],
+                    borderWidth: type === 'line' ? 2 : 0,
+                    borderRadius: type === 'line' ? 0 : 4,
+                    fill: type === 'line',
+                    tension: 0.35,
+                    pointRadius: type === 'line' ? 3 : 0,
+                    pointBackgroundColor: colors[0],
+                }],
+            };
+        },
+        chartOptions() {
+            const narrow = typeof window !== 'undefined' && window.innerWidth <= 768;
+            const textColor = '#64748B';
+            const fontSize = narrow ? 10 : 12;
+            const base = {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: this.chartType === 'doughnut' || this.chartType === 'line' || this.chartType === 'radar',
+                        position: 'bottom',
+                        labels: {
+                            usePointStyle: true,
+                            boxWidth: 8,
+                            boxHeight: 8,
+                            padding: narrow ? 10 : 14,
+                            font: { size: fontSize },
+                            color: textColor,
+                        },
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                        titleColor: '#fff',
+                        bodyColor: '#fff',
+                        padding: 10,
+                        cornerRadius: 8,
+                    },
+                },
+            };
+            if (this.chartType === 'doughnut') {
+                return { ...base, cutout: '64%', layout: { padding: 6 } };
+            }
+            if (this.chartType === 'radar') {
+                return {
+                    ...base,
+                    scales: {
+                        r: {
+                            beginAtZero: true,
+                            grid: { color: 'rgba(148, 163, 184, 0.22)' },
+                            angleLines: { color: 'rgba(148, 163, 184, 0.22)' },
+                            pointLabels: { color: textColor, font: { size: fontSize } },
+                            ticks: { display: false },
+                        },
+                    },
+                };
+            }
+            const horizontal = this.chartType === 'hbar';
+            const categoryAxis = {
+                grid: { display: false },
+                ticks: { color: textColor, font: { size: fontSize }, autoSkip: true, maxTicksLimit: narrow ? 5 : 8 },
+            };
+            const valueAxis = {
+                beginAtZero: true,
+                grid: { color: 'rgba(148, 163, 184, 0.18)' },
+                ticks: {
+                    color: textColor,
+                    font: { size: fontSize },
+                    precision: this.chartType === 'hist' ? 0 : undefined,
+                },
+            };
+            return {
+                ...base,
+                indexAxis: horizontal ? 'y' : 'x',
+                interaction: { mode: 'index', intersect: false },
+                scales: horizontal ? { x: valueAxis, y: categoryAxis } : { x: categoryAxis, y: valueAxis },
+            };
         },
         instanceId() {
             try { return localStorage.getItem('gohub_instance_id') || ''; } catch (e) { return ''; }
@@ -255,6 +548,87 @@ export default {
                 this.trackers = Array.isArray(data) ? data : [];
             } catch (e) {
                 this.trackers = [];
+            }
+        },
+        /** 形态的 i18n key（valueType 存的是枚举，展示要过一层） */
+        typeLabel(v) {
+            const hit = this.valueTypes.find((t) => t.value === v);
+            return hit ? hit.label : 'reg.typeFlow';
+        },
+        /** 复合单位的展示：单位/分母（分母为空时只显示单位） */
+        unitText(t) {
+            const unit = String((t && t.unit) || '');
+            const portion = String((t && t.portion) || '');
+            if (unit && portion) return `${unit}/${portion}`;
+            return unit || portion || '—';
+        },
+        openItemEdit(t) {
+            this.itemForm = {
+                id: t.id,
+                name: t.name || '',
+                valueType: t.valueType || 'flow',
+                unit: t.unit || '',
+                portion: t.portion || '',
+            };
+            this.itemEditVisible = true;
+        },
+        async saveItem() {
+            const name = String(this.itemForm.name || '').trim();
+            if (!name) {
+                this.$message.warning(this.$t('reg.itemNameRequired'));
+                return;
+            }
+            this.itemSaving = true;
+            try {
+                const res = await fetchWithAuth(`/api/reg/trackers/${encodeURIComponent(this.itemForm.id)}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name,
+                        valueType: this.itemForm.valueType,
+                        unit: String(this.itemForm.unit || '').trim(),
+                        portion: String(this.itemForm.portion || '').trim(),
+                    }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
+                this.$message.success(this.$t('reg.itemSaved'));
+                this.itemEditVisible = false;
+                await this.loadTrackers();
+                this.loadStats();
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            } finally {
+                this.itemSaving = false;
+            }
+        },
+        openItemMerge(t) {
+            this.mergeTarget = { id: t.id, name: t.name || '' };
+            this.mergeSources = [];
+            this.itemMergeVisible = true;
+        },
+        async doMerge() {
+            if (!this.mergeSources.length) {
+                this.$message.warning(this.$t('reg.mergePick'));
+                return;
+            }
+            this.itemMerging = true;
+            try {
+                const res = await fetchWithAuth('/api/reg/trackers/merge', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ targetId: this.mergeTarget.id, sourceIds: this.mergeSources }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
+                this.$message.success(this.$t('reg.mergeOk', { n: Number(data.moved) || 0 }));
+                this.itemMergeVisible = false;
+                await this.loadTrackers();
+                this.loadStats();
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            } finally {
+                this.itemMerging = false;
             }
         },
         rangeQuery() {
@@ -484,6 +858,143 @@ export default {
 }
 
 .reg-f-marker { width: 190px; }
+
+/* v1.3.5.7：设置页分区块 */
+.reg-full {
+    width: 100%;
+}
+
+.reg-full {
+    width: 100%;
+}
+
+.reg-set-block {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    background: var(--glass-bg);
+}
+
+.reg-set-block-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.reg-set-block-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.reg-set-block-sub {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+
+.reg-tracker-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.reg-tracker-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 2px;
+    border-bottom: 1px dashed var(--el-border-color-lighter);
+    font-size: 13px;
+}
+
+.reg-tracker-row:last-child {
+    border-bottom: 0;
+}
+
+.reg-tracker-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.reg-tracker-type {
+    flex: 0 0 auto;
+    font-size: 12px;
+    color: var(--el-color-primary);
+}
+
+.reg-tracker-unit {
+    flex: 0 0 auto;
+    min-width: 72px;
+    font-size: 12px;
+    color: var(--el-text-color-regular);
+    font-variant-numeric: tabular-nums;
+}
+
+.reg-tracker-count {
+    flex: 0 0 auto;
+    min-width: 64px;
+    text-align: right;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+
+.reg-tracker-actions {
+    flex: 0 0 auto;
+    display: inline-flex;
+    gap: 6px;
+}
+
+/* 与流水账页同一套小方块按钮 */
+.reg-act {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    cursor: pointer;
+}
+
+.reg-act:hover {
+    color: var(--el-color-primary);
+    border-color: var(--el-color-primary-light-5);
+}
+
+.reg-tracker-actions .reg-act:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.reg-item-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.reg-item-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+}
+
+.reg-item-tip {
+    margin: 10px 0 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+}
 .reg-f-range { width: 108px; }
 .reg-f-bucket { width: 108px; }
 .reg-f-scope { width: 128px; }
@@ -575,9 +1086,55 @@ export default {
 
 .reg-chart-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
+    justify-content: space-between;
     gap: 10px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
+}
+
+/* v1.3.5.6：趋势图形态切换 */
+.reg-chart-switch {
+    display: flex;
+    gap: 4px;
+    flex: 0 0 auto;
+}
+
+.reg-chart-tab {
+    width: 28px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--glass-border);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.reg-chart-tab:hover {
+    color: var(--el-color-primary);
+    border-color: var(--el-color-primary-light-5);
+}
+
+.reg-chart-tab.is-active {
+    color: var(--el-color-primary);
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+}
+
+.reg-chart-canvas {
+    height: 260px;
+    position: relative;
+}
+
+@media (max-width: 768px) {
+    .reg-chart-canvas {
+        height: 220px;
+    }
 }
 
 .reg-chart-title {

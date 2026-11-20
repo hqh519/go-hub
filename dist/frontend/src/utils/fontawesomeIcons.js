@@ -50,6 +50,9 @@ import { faBullhorn } from '@fortawesome/free-solid-svg-icons/faBullhorn';
 import { faCalendar } from '@fortawesome/free-solid-svg-icons/faCalendar';
 import { faChartBar } from '@fortawesome/free-solid-svg-icons/faChartBar';
 import { faChartLine } from '@fortawesome/free-solid-svg-icons/faChartLine';
+import { faChartPie } from '@fortawesome/free-solid-svg-icons/faChartPie';
+import { faChartArea } from '@fortawesome/free-solid-svg-icons/faChartArea';
+import { faSpider } from '@fortawesome/free-solid-svg-icons/faSpider';
 import { faCheck } from '@fortawesome/free-solid-svg-icons/faCheck';
 import { faCheckSquare } from '@fortawesome/free-solid-svg-icons/faCheckSquare';
 import { faChevronDown } from '@fortawesome/free-solid-svg-icons/faChevronDown';
@@ -229,6 +232,9 @@ export default [
     faCalendar,
     faChartBar,
     faChartLine,
+    faChartPie,
+    faChartArea,
+    faSpider,
     faCheck,
     faCheckSquare,
     faChevronDown,
