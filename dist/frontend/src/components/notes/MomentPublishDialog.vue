@@ -150,9 +150,10 @@
                     v-for="(a, i) in assets"
                     :key="a.fileId + '-' + i"
                     class="mp-asset"
-                    :class="{ 'is-dragging': dragIndex === i, 'is-pressable': longPressDragging }"
+                    :class="{ 'is-dragging': dragIndex === i, 'is-pressable': longPressDragging, 'is-previewing': isAssetPreviewing(a) }"
                     :data-asset-index="i"
                     draggable="true"
+                    @contextmenu.prevent
                     @dragstart="onDragStart(i, $event)"
                     @dragover.prevent="onDragOver(i)"
                     @dragend="onDragEnd"
@@ -919,6 +920,11 @@ export default {
                     ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height }
                     : null
             };
+        },
+        /** 当前这个附件是不是正在被预览（触屏时用来隐藏小缩略图） */
+        isAssetPreviewing(a) {
+            if (!this.assetFloat || !a) return false;
+            return this.assetFloat.key === (a.fileId || a.url);
         },
         closeAssetFloat() {
             /*
@@ -2022,6 +2028,15 @@ export default {
     flex-wrap: wrap;
     gap: 6px;
     flex: 0 0 auto;
+    /*
+     * v1.3.8（需求：按住小眼睛时会加载两套预览图）
+     * 移动端浏览器对图片有「长按预览 / 放大镜」的原生行为，会和我们的
+     * 大预览框叠在一起，看起来就是一小一大两套图。这里关掉原生长按预览，
+     * 只保留组件自己的大预览框。
+     */
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .mp-asset {
@@ -2032,6 +2047,19 @@ export default {
     overflow: hidden;
     background: var(--note-cell-bg, rgba(127, 127, 127, 0.12));
     cursor: grab;
+    -webkit-touch-callout: none;
+}
+
+/*
+ * v1.3.8（需求：按住小眼睛只保留大的预览框）
+ * 触屏长按预览时，把被预览的那张小缩略图藏起来（小眼睛 / 删除等按钮不动），
+ * 视觉上就只剩一个大的预览框；松手后预览关闭，缩略图自动恢复。
+ * 桌面端悬停预览不隐藏，避免鼠标扫过时整个附件区闪烁。
+ */
+@media (hover: none), (pointer: coarse) {
+    .mp-asset.is-previewing .mp-asset-img {
+        visibility: hidden;
+    }
 }
 
 .mp-asset.is-dragging {

@@ -79,6 +79,9 @@ import { faCloudUpload } from '@fortawesome/free-solid-svg-icons/faCloudUpload';
 import { faCloudUploadAlt } from '@fortawesome/free-solid-svg-icons/faCloudUploadAlt';
 import { faCode } from '@fortawesome/free-solid-svg-icons/faCode';
 import { faCodeBranch } from '@fortawesome/free-solid-svg-icons/faCodeBranch';
+// v1.3.8：编辑器「数学公式块」与「字体颜色」的专用图标
+import { faSquareRootVariable } from '@fortawesome/free-solid-svg-icons/faSquareRootVariable';
+import { faPalette } from '@fortawesome/free-solid-svg-icons/faPalette';
 import { faCog } from '@fortawesome/free-solid-svg-icons/faCog';
 import { faCogs } from '@fortawesome/free-solid-svg-icons/faCogs';
 import { faComments } from '@fortawesome/free-solid-svg-icons/faComments';
@@ -407,4 +410,7 @@ export default [
     faClipboard,
     faClone,
     faColumns,
+    // v1.3.8：编辑器工具图标
+    faSquareRootVariable,
+    faPalette,
 ];

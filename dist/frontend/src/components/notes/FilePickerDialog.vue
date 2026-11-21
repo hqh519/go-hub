@@ -418,10 +418,15 @@ import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import { defaultUploadFolder } from '@/utils/uploadTarget';
 import { bindDialogLayers } from '@/utils/layerStack';
 
-/** 预览浮层最长边 */
-const PREVIEW_MAX = 300;
+/**
+ * v1.3.8（需求：小眼睛预览框要更大，且不能盖住小眼睛）
+ * 与发布瞬间编辑页 / 旧版图床管理页统一口径：高度优先、最长 90% 视口，
+ * 桌面端再加一个 760px 的绝对上限，避免大屏上夸张。
+ */
+const PREVIEW_MAX = 760;
+const PREVIEW_VIEWPORT = 0.9;
 /** 预览浮层最短边（极端长图 / 长条视频不至于变成一条线） */
-const PREVIEW_MIN = 96;
+const PREVIEW_MIN = 120;
 /** 浮层与视口边缘的安全距离 */
 const PREVIEW_MARGIN = 8;
 /** 浮层与小眼睛按钮的间距（保证「不遮盖按钮」是硬约束，不靠运气） */
@@ -1254,33 +1259,45 @@ export default {
             this.showPreview(f, src, rect, ratio);
         },
         /**
-         * 摆位：先按文件比例算浮层尺寸，再比较四周剩余空间，
-         * 挑「装得下且余量最大」的那个方位 —— 保证浮层整体在按钮之外，不压住小眼睛。
+         * 摆位：先按 90% 视口定基准尺寸，再比较眼睛四周的空间，
+         * 选出空间最大的一侧并把浮层缩进该侧可用区域 —— 任何视口下
+         * 都不会压住小眼睛（这是硬约束，不靠最后的夹取碰运气）。
          */
         showPreview(f, src, rect, ratio) {
             const vw = window.innerWidth;
             const vh = window.innerHeight;
-            let w = PREVIEW_MAX;
-            let h = PREVIEW_MAX;
+            const maxW = Math.max(200, Math.round(Math.min(vw * PREVIEW_VIEWPORT, PREVIEW_MAX)));
+            const maxH = Math.max(140, Math.round(vh * PREVIEW_VIEWPORT) - PREVIEW_HEAD_H);
+            let w;
+            let h;
             if (ratio && Number.isFinite(ratio) && ratio > 0) {
-                if (ratio >= 1) {
-                    w = PREVIEW_MAX;
-                    h = Math.max(PREVIEW_MIN, Math.round(PREVIEW_MAX / ratio));
-                } else {
-                    h = PREVIEW_MAX;
-                    w = Math.max(PREVIEW_MIN, Math.round(PREVIEW_MAX * ratio));
+                h = maxH;
+                w = Math.round(h * ratio);
+                if (w > maxW) {
+                    w = maxW;
+                    h = Math.round(w / ratio);
+                }
+                if (w < PREVIEW_MIN) {
+                    w = PREVIEW_MIN;
+                    h = Math.max(PREVIEW_MIN, Math.round(w / ratio));
+                }
+                if (h < PREVIEW_MIN) {
+                    h = PREVIEW_MIN;
+                    w = Math.max(PREVIEW_MIN, Math.round(h * ratio));
                 }
             } else if (f.mediaKind === 'audio') {
-                w = 260;
+                w = Math.min(420, maxW);
                 h = 96;
+            } else {
+                // 比例未知（还在探测）：先给一个偏大的方框，元数据回来会再收敛
+                w = Math.min(maxW, 520);
+                h = Math.min(maxH, 520);
             }
-            // 视口装不下时按视口收
-            w = Math.min(w, vw - PREVIEW_MARGIN * 2);
-            h = Math.min(h, vh - PREVIEW_MARGIN * 2);
-            const boxH = h + PREVIEW_HEAD_H;
+            w = Math.min(w, maxW);
+            h = Math.min(h, maxH);
 
             let left = (vw - w) / 2;
-            let top = (vh - boxH) / 2;
+            let top = (vh - h - PREVIEW_HEAD_H) / 2;
             if (rect) {
                 const space = {
                     right: vw - rect.right - PREVIEW_GAP - PREVIEW_MARGIN,
@@ -1288,31 +1305,41 @@ export default {
                     bottom: vh - rect.bottom - PREVIEW_GAP - PREVIEW_MARGIN,
                     top: rect.top - PREVIEW_GAP - PREVIEW_MARGIN
                 };
-                // 该方位「宽度方向」够不够（左右比宽，上下比高）
-                const fits = {
-                    right: space.right >= w,
-                    left: space.left >= w,
-                    bottom: space.bottom >= boxH,
-                    top: space.top >= boxH
-                };
-                const sides = ['right', 'left', 'bottom', 'top'];
-                const able = sides.filter((s) => fits[s]).sort((a, b) => space[b] - space[a]);
-                const side = able[0] || sides.slice().sort((a, b) => space[b] - space[a])[0];
+                // 四向择大（与 AssetPreviewFloat 同一套顺序，保证两处手感一致）
+                const sides = ['right', 'bottom', 'top', 'left'];
+                let side = sides[0];
+                let best = -Infinity;
+                for (const s of sides) {
+                    if (space[s] > best) {
+                        best = space[s];
+                        side = s;
+                    }
+                }
+                const availW = (side === 'left' || side === 'right')
+                    ? Math.max(80, space[side])
+                    : Math.max(80, vw - PREVIEW_MARGIN * 2);
+                const availH = (side === 'top' || side === 'bottom')
+                    ? Math.max(80, space[side])
+                    : Math.max(80, vh - PREVIEW_MARGIN * 2);
+                const scale = Math.min(1, availW / Math.max(1, w), availH / Math.max(1, h + PREVIEW_HEAD_H));
+                w = Math.round(w * scale);
+                h = Math.round(h * scale);
                 if (side === 'right') {
                     left = rect.right + PREVIEW_GAP;
-                    top = rect.top + rect.height / 2 - boxH / 2;
+                    top = rect.top + rect.height / 2 - (h + PREVIEW_HEAD_H) / 2;
                 } else if (side === 'left') {
                     left = rect.left - PREVIEW_GAP - w;
-                    top = rect.top + rect.height / 2 - boxH / 2;
+                    top = rect.top + rect.height / 2 - (h + PREVIEW_HEAD_H) / 2;
                 } else if (side === 'bottom') {
                     top = rect.bottom + PREVIEW_GAP;
                     left = rect.left + rect.width / 2 - w / 2;
                 } else {
-                    top = rect.top - PREVIEW_GAP - boxH;
+                    top = rect.top - PREVIEW_GAP - (h + PREVIEW_HEAD_H);
                     left = rect.left + rect.width / 2 - w / 2;
                 }
             }
-            // 最后统一夹进视口
+            // 最后统一夹进视口（尺寸已经缩进可用区域，夹取只处理 1~2px 的取整误差）
+            const boxH = h + PREVIEW_HEAD_H;
             left = Math.min(Math.max(PREVIEW_MARGIN, left), Math.max(PREVIEW_MARGIN, vw - w - PREVIEW_MARGIN));
             top = Math.min(Math.max(PREVIEW_MARGIN, top), Math.max(PREVIEW_MARGIN, vh - boxH - PREVIEW_MARGIN));
 
@@ -1353,12 +1380,17 @@ export default {
         },
         /**
          * v1.3.7：桌面端点小眼睛 / 悬停都要能预览。
-         * 之前只绑了 touchstart（长按），鼠标用户点上去毫无反应 ——
-         * 发布瞬间与登记表单共用这个弹窗，所以两处一起修好。
+         * v1.3.8（需求：点击时就要出预览，且要大）：
+         *   · 触屏「轻点」= 打开并保持（原来的实现 touchend 无条件关闭，轻点等于没反应）；
+         *   · 触屏「按住」= 只在该次按住期间显示，松手关闭；
+         *   · 鼠标 = 点击开关，悬停同样预览。
          */
         eyeClick(f, e) {
+            // 长按结束后的合成 click：不再重新打开
             if (Date.now() - (this._eyeTouchedAt || 0) < 600) return;
             if (this.preview.visible) {
+                // 触屏轻点时浏览器会补一个 mouseenter 先把预览打开，这里保持打开而不是立刻关掉
+                if (Date.now() - (this._eyeHoverAt || 0) < 500) return;
                 this.closePreview();
                 return;
             }
@@ -1366,6 +1398,7 @@ export default {
         },
         eyeHover(f, e) {
             if (this._eyeTouchedAt && Date.now() - this._eyeTouchedAt < 600) return;
+            this._eyeHoverAt = Date.now();
             this.cancelEyeClose();
             this.openPreview(f, e);
         },
@@ -1387,7 +1420,9 @@ export default {
         },
         eyeTouchStart(f, e) {
             this.clearEyeTimer();
-            this._eyeTouchedAt = Date.now();
+            // 只有真的按住到 300ms 才记「这次是长按」；轻点在 touchend 打开并保持
+            this._eyePressOpened = false;
+            this._eyeMoved = false;
             const touch = (e.touches && e.touches[0]) || e;
             this._eyeX = touch.clientX || 0;
             this._eyeY = touch.clientY || 0;
@@ -1397,6 +1432,8 @@ export default {
             this._eyeFile = f;
             this._eyeTimer = setTimeout(() => {
                 this._eyeTimer = null;
+                this._eyeTouchedAt = Date.now();
+                this._eyePressOpened = true;
                 this.openPreview(this._eyeFile, { currentTarget: { getBoundingClientRect: () => this._eyeRect } });
             }, EYE_PRESS_MS);
         },
@@ -1407,13 +1444,39 @@ export default {
             const dx = touch.clientX - this._eyeX;
             const dy = touch.clientY - this._eyeY;
             if (dx * dx + dy * dy > 100) {
+                this._eyeMoved = true;
                 this.clearEyeTimer();
                 this.closePreview();
+                this._eyePressOpened = false;
             }
         },
         eyeTouchEnd() {
             this.clearEyeTimer();
-            this.closePreview();
+            /*
+             * v1.3.8：`touchstart` 上做了 preventDefault，部分浏览器不会再补发 click，
+             * 所以轻点必须在 touchend 里自己处理：
+             *   · 长按松手 → 关闭；
+             *   · 滑动取消 → 什么都不做；
+             *   · 其它（轻点）→ 打开；已经开着就关掉。
+             */
+            this._eyeTouchedAt = Date.now();
+            if (this._eyePressOpened) {
+                this._eyePressOpened = false;
+                this.closePreview();
+                return;
+            }
+            if (this._eyeMoved) {
+                this._eyeMoved = false;
+                return;
+            }
+            const file = this._eyeFile;
+            const rect = this._eyeRect;
+            if (!file) return;
+            if (this.preview.visible) {
+                this.closePreview();
+                return;
+            }
+            this.openPreview(file, { currentTarget: { getBoundingClientRect: () => rect } });
         },
         clearEyeTimer() {
             if (this._eyeTimer) {

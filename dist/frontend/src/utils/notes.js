@@ -143,8 +143,8 @@ export const WEATHER_OPTIONS = [
   { value: 'cloudy', emoji: '⛅', label: 'notes.weatherCloudy' },
   { value: 'overcast', emoji: '☁️', label: 'notes.weatherOvercast' },
   { value: 'rain', emoji: '🌧️', label: 'notes.weatherRain' },
-  { value: 'snow', emoji: '❄️', label: 'notes.weatherSnow' },
-  { value: 'wind', emoji: '🌬️', label: 'notes.weatherWind' },
+  { value: 'snow', emoji: '⛄', label: 'notes.weatherSnow' },
+  { value: 'wind', emoji: '💨', label: 'notes.weatherWind' },
   { value: 'fog', emoji: '🌫️', label: 'notes.weatherFog' }
 ]
 

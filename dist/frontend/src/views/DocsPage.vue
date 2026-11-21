@@ -1118,6 +1118,23 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-138',
+      title: '七十四、v1.3.8 更新要点',
+      intro: '这一版把小眼睛预览放大并保证不挡按钮，表格的列宽 / 尺寸拖动真正稳住，工具组补齐图标；批注在手机上居中、输入框自动增高，移动端信息行也与标题栏对齐。',
+      items: [
+        { t: '预览框更大', d: '「选择文件」弹窗的小眼睛预览改为按 90% 视口定尺寸（桌面最高 760px），按图片 / 视频比例自动收敛；浮层在眼睛四周空间最大的一侧弹出，并缩进该侧可用范围，任何视口下都不会盖住小眼睛。' },
+        { t: '只留一个预览框', d: '手机在发布瞬间编辑页按住附件小眼睛时，关闭浏览器原生的长按图片预览，并隐藏该附件的小缩略图，只保留大的预览框；松手即恢复。' },
+        { t: '图例配色', d: '登记统计的自定义图例项 3 / 4 / 5 分别改为 #CC0066 / #006666 / #191919，默认项与项 1、项 2 保持原样。' },
+        { t: '分隔线可拖提示', d: '鼠标移到表格的行 / 列分隔线上时显示 col-resize / row-resize 光标，并在分隔线位置画一条高亮细线，不用猜有没有压准。' },
+        { t: '表格尺寸不再回弹', d: '右下角手柄松手后尺寸立即写回节点（列宽 + tableSize 一次提交），刷新 / 重开仍是新尺寸；合并单元格按 colspan 展开列宽，不会再退回铺满整行。' },
+        { t: '列宽只动一列', d: '拖动某列分隔线时先冻结其余列的实际宽度，只有被拖的那一列变宽 / 变窄，表格总宽按增量变化，其他列不再跟着挤。' },
+        { t: '表格图标统一', d: '工具组菜单里的表格操作（加行 / 加列 / 删行 / 删列 / 合并 / 拆分 / 删除）全部换成新版「网格 + 操作方向」图标，不再是加号、箭头、压缩图标。' },
+        { t: '编辑器图标补齐', d: '工具组菜单补齐行内代码、代码块、HTML 块的内联图标，以及全选、符号（Ω）的图标；数学公式块改用 √x，字体颜色改用调色板，不再与白板共用画笔。' },
+        { t: '批注更好用', d: '手机上点问号上标，悬浮页水平居中显示；点悬浮页修改批注时输入框默认 4 行高，内容多了自动增高，最高不超过视口 35%；光标移到别处或点到页面其它位置，悬浮页自动收起。' },
+        { t: '移动端对齐', d: '笔记编辑页「版本记录 / 时间 / 字数」这一行的左右边距改为与标题栏一致，不再比标题多缩进。' }
+      ]
+    },
+    {
       id: 'whatsnew-137',
       title: '七十三、v1.3.7 更新要点',
       intro: '这一版把批注改成问号上标＋悬浮查看，重做表格的图标、尺寸与拖拽；笔记摘要不再混入源码字符，工具栏配置取消长度限制并换上新出厂默认。',
@@ -2541,6 +2558,23 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-138',
+      title: '74. What is new in v1.3.8',
+      intro: 'The eye preview gets much larger without covering its button, table column and size dragging finally sticks, tool groups get their missing icons, and annotations center on phones with an auto-growing editor.',
+      items: [
+        { t: 'Larger preview', d: 'The eye preview in the file picker is sized against 90% of the viewport (up to 760px on desktop) and follows the media aspect ratio. It opens on the side of the eye with the most room and shrinks into that side, so it never covers the eye button.' },
+        { t: 'One preview only', d: 'On phones, holding the attachment eye in the moment editor disables the browser native long-press image preview and hides that attachment thumbnail, leaving only the large preview; everything returns on release.' },
+        { t: 'Legend colors', d: 'Custom legends 3, 4 and 5 in register statistics now use #CC0066, #006666 and #191919. The default legend and legends 1 and 2 are unchanged.' },
+        { t: 'Divider affordance', d: 'Hovering a table row or column divider shows a col-resize / row-resize cursor and a thin highlight line exactly on the divider.' },
+        { t: 'Table sizes stick', d: 'Releasing the bottom-right handle writes column widths and table size back to the document in one step, so the size survives reopen and refresh. Merged cells expand colwidth by colspan and no longer fall back to full width.' },
+        { t: 'One column at a time', d: 'Starting a column drag freezes the measured width of every other column, so only the dragged column changes and the table width grows by the same delta.' },
+        { t: 'Table icons', d: 'Table actions in tool group menus (insert row/column, delete row/column, merge, split, delete table) all use the new grid-plus-direction icons instead of plus, arrow and compress glyphs.' },
+        { t: 'Editor icons', d: 'Tool group menus now show inline icons for inline code, code block and HTML block, plus select-all and symbol. The math block uses a square-root icon and text color uses a palette instead of the whiteboard brush.' },
+        { t: 'Better annotations', d: 'On phones the annotation card is horizontally centered. The edit box starts at four lines, grows with content and stops at 35% of the viewport. Moving the caret or clicking elsewhere closes the card.' },
+        { t: 'Mobile alignment', d: 'The version / time / word-count row now uses the same horizontal padding as the title row.' }
       ]
     },
     {

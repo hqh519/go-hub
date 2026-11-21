@@ -26,6 +26,7 @@
             @mouseout="onAnnOut"
             @pointerdown="onTablePointerDown"
             @pointermove="onTablePointerMove"
+            @mouseleave="clearTableCursor"
             @touchstart="onTableTouchStart"
             @scroll.passive="onBodyScroll"
         >
@@ -71,7 +72,9 @@
                             <template #dropdown>
                                 <el-dropdown-menu>
                                     <el-dropdown-item v-for="g in groupTools(token)" :key="`g-${li}-${ti}-${g}`" :command="g">
-                                        <font-awesome-icon v-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
+                                        <span v-if="toolsOf(g) && toolsOf(g).svgKey" class="me-svg-icon me-group-icon" v-html="svgOf(g)"></span>
+                                        <span v-else-if="toolsOf(g) && toolsOf(g).glyph" class="me-glyph-tool me-group-icon">{{ toolsOf(g).glyph }}</span>
+                                        <font-awesome-icon v-else-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
                                         <span class="me-group-label">{{ toolsOf(g) ? $t(toolsOf(g).label) : g }}</span>
                                     </el-dropdown-item>
                                 </el-dropdown-menu>
@@ -159,7 +162,9 @@
                         <template #dropdown>
                             <el-dropdown-menu>
                                 <el-dropdown-item v-for="g in toolbarOverflowTools[li]" :key="`ov-${li}-${g}`" :command="g">
-                                    <font-awesome-icon v-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
+                                    <span v-if="toolsOf(g) && toolsOf(g).svgKey" class="me-svg-icon me-group-icon" v-html="svgOf(g)"></span>
+                                    <span v-else-if="toolsOf(g) && toolsOf(g).glyph" class="me-glyph-tool me-group-icon">{{ toolsOf(g).glyph }}</span>
+                                    <font-awesome-icon v-else-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
                                     <span class="me-group-label">{{ toolsOf(g) ? $t(toolsOf(g).label) : g }}</span>
                                 </el-dropdown-item>
                             </el-dropdown-menu>
@@ -566,7 +571,9 @@
                         <template #dropdown>
                             <el-dropdown-menu>
                                 <el-dropdown-item v-for="g in it.items" :key="`selg-${g}`" :command="g">
-                                    <font-awesome-icon v-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
+                                    <span v-if="toolsOf(g) && toolsOf(g).svgKey" class="me-svg-icon me-group-icon" v-html="svgOf(g)"></span>
+                                    <span v-else-if="toolsOf(g) && toolsOf(g).glyph" class="me-glyph-tool me-group-icon">{{ toolsOf(g).glyph }}</span>
+                                    <font-awesome-icon v-else-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
                                     <span class="me-group-label">{{ toolsOf(g) ? $t(toolsOf(g).label) : g }}</span>
                                 </el-dropdown-item>
                             </el-dropdown-menu>
@@ -620,10 +627,10 @@
                         <button type="button" class="me-bub-btn me-bub-dd" :title="$t('memo.bubColor')">
                             <!--
                                 v1.3.3.3（需求：颜色按钮没有图标）—— 带色条的画笔
-                                v1.3.5（需求：图标要和斜杠命令菜单里的文字颜色一致）——
-                                换掉原来的字母 A，直接用 TOOLS.textColor 的 paintbrush，色条保留。
+                                v1.3.5（需求：图标要和斜杠命令菜单里的文字颜色一致）
+                                v1.3.8（需求：字体颜色不要和白板同图标）—— 改用调色板，色条保留
                             -->
-                            <font-awesome-icon icon="paintbrush" class="me-bub-color-icon" />
+                            <font-awesome-icon icon="palette" class="me-bub-color-icon" />
                             <span class="me-bub-color-preview"></span>
                             <font-awesome-icon icon="caret-down" class="me-bub-caret" />
                         </button>
@@ -752,7 +759,10 @@
                 <template v-for="(item, i) in ctxMenuItems" :key="`ctx-${i}`">
                     <div v-if="item.sep" class="me-ctx-sep"></div>
                     <button v-else type="button" class="me-ctx-item" @click="runCtx(item)">
-                        <font-awesome-icon v-if="item.icon" :icon="item.icon" class="me-ctx-icon" />
+                        <!-- v1.3.8：右键菜单同样支持内联 SVG / 字形图标（原来只认 FontAwesome） -->
+                        <span v-if="item.svgKey" class="me-svg-icon me-ctx-icon" v-html="svgOf(item.id)"></span>
+                        <span v-else-if="item.glyph" class="me-glyph-tool me-ctx-icon">{{ item.glyph }}</span>
+                        <font-awesome-icon v-else-if="item.icon" :icon="item.icon" class="me-ctx-icon" />
                         <span>{{ $t(item.label) }}</span>
                         <span v-if="item.hint" class="me-ctx-key">{{ item.hint }}</span>
                     </button>
@@ -1008,7 +1018,9 @@
                             <template #dropdown>
                                 <el-dropdown-menu>
                                     <el-dropdown-item v-for="g in groupTools(t)" :key="`ibg-${ti}-${g}`" :command="g">
-                                        <font-awesome-icon v-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
+                                        <span v-if="toolsOf(g) && toolsOf(g).svgKey" class="me-svg-icon me-group-icon" v-html="svgOf(g)"></span>
+                                        <span v-else-if="toolsOf(g) && toolsOf(g).glyph" class="me-glyph-tool me-group-icon">{{ toolsOf(g).glyph }}</span>
+                                        <font-awesome-icon v-else-if="toolsOf(g) && toolsOf(g).icon" :icon="toolsOf(g).icon" class="me-group-icon" />
                                         <span class="me-group-label">{{ toolsOf(g) ? $t(toolsOf(g).label) : g }}</span>
                                     </el-dropdown-item>
                                 </el-dropdown-menu>
@@ -1285,7 +1297,7 @@
         <div
             v-if="annPop.visible"
             class="me-ann-pop"
-            :style="{ left: annPop.left + 'px', top: annPop.top + 'px' }"
+            :style="{ left: annPop.left + 'px', top: annPop.top + 'px', width: annPop.width + 'px' }"
             @mousedown.stop.prevent
             @mouseenter="cancelAnnHide"
             @mouseleave="hideAnnPopSoon"
@@ -3442,7 +3454,8 @@ const TOOLS = {
     tableAddColBefore: { svgKey: 'svgTblAddColBefore', icon: 'arrow-left', label: 'memo.tblAddColBefore', run: (e) => e.chain().focus().addColumnBefore().run() },
     callout: { icon: 'circle-info', label: 'memo.toolCallout', run: null },
     /* v1.3.5.1：数学公式块 / 页签块 —— 都要先问参数，run 留 null 走特判 */
-    mathBlock: { icon: 'code', label: 'memo.toolMathBlock', run: null },
+    /* v1.3.8：公式块换成 √x 图标（原来用 code，与代码块撞语义） */
+    mathBlock: { icon: 'square-root-variable', label: 'memo.toolMathBlock', run: null },
     whiteboard: { icon: 'paintbrush', label: 'memo.toolWhiteboard', run: null },
     tabsBlock: { icon: 'folder-open', label: 'memo.toolTabsBlock', run: null },
     video: { icon: 'file-video', label: 'memo.toolVideo', run: null },
@@ -3531,7 +3544,8 @@ const TOOLS = {
      * publish 是普通按钮，直接把当前选中文字发到瞬间。
      */
     fontSize: { icon: 'font', label: 'memo.bubFontSize', run: null },
-    textColor: { icon: 'paintbrush', label: 'memo.bubColor', run: null },
+    /* v1.3.8（需求）：字体颜色不再和白板共用 paintbrush，改用调色板 */
+    textColor: { icon: 'palette', label: 'memo.bubColor', run: null },
     publish: { icon: 'paper-plane', label: 'memo.publishToMoment', run: null },
     listConvert: { icon: 'right-left', label: 'memo.toolListConvert', run: null },
 };
@@ -3961,8 +3975,8 @@ export default {
             /* v1.3.1.2：浮层 / 右键菜单 / 表格 */
             TEXT_COLORS,
             tableBar: { open: false, above: true, style: {} },
-            /** v1.3.7：批注悬浮页（note / 位置 / 节点位置） */
-            annPop: { open: false, visible: false, note: '', left: 0, top: 0, pos: null },
+            /** v1.3.7：批注悬浮页（note / 位置 / 节点位置）；v1.3.8 加 width（移动端居中用） */
+            annPop: { open: false, visible: false, note: '', left: 0, top: 0, width: 280, pos: null },
             ctxMenu: { open: false, x: 0, y: 0, kind: 'text' },
             /** v1.3.2：桌面端每行工具栏的第一个溢出下标（li → ti） */
             toolbarOverflow: {},
@@ -4416,6 +4430,18 @@ export default {
         window.addEventListener('gh-tab-rename', this.onTabRenameEvent);
         window.addEventListener('gh-tab-longpress', this.onTabLongPressEvent);
         window.addEventListener('gh-tab-add', this.onTabAddEvent);
+        /*
+         * v1.3.8（需求：点了别处批注悬浮页要消失）
+         * 光标变化已经由 onSelectionChange 兜住；这里再补一层「点到编辑器外」——
+         * 点侧边栏 / 工具栏 / 页面空白时编辑器选区不会变，只靠选区判断会一直挂着。
+         */
+        this._annOutside = (ev) => {
+            if (!this.annPop.visible) return;
+            const t = ev.target;
+            if (t && t.closest && (t.closest('.me-ann-pop') || t.closest('.gh-ann'))) return;
+            this.annPop = { ...this.annPop, visible: false };
+        };
+        document.addEventListener('pointerdown', this._annOutside, true);
         this.applyCustomCss();
         this.$nextTick(() => {
             this.measureToolbar();
@@ -4693,6 +4719,9 @@ export default {
         if (this.onTabLongPressEvent) window.removeEventListener('gh-tab-longpress', this.onTabLongPressEvent);
         if (this.onTabAddEvent) window.removeEventListener('gh-tab-add', this.onTabAddEvent);
         if (this.onGlobalPointer) window.removeEventListener('pointerdown', this.onGlobalPointer, true);
+        if (this._annOutside) document.removeEventListener('pointerdown', this._annOutside, true);
+        if (this._tblHint && this._tblHint.parentElement) this._tblHint.parentElement.removeChild(this._tblHint);
+        this._tblHint = null;
         clearTimeout(this._hoverTimer);
         const body = this.$refs.bodyEl;
         if (body && this.onHoverStart) {
@@ -5155,15 +5184,25 @@ export default {
             }
             const note = el.getAttribute('data-note') || '';
             const r = el.getBoundingClientRect();
-            const width = 280;
-            const left = Math.max(8, Math.min(r.left - 8, window.innerWidth - width - 8));
+            const vw = window.innerWidth || 360;
+            const vh = window.innerHeight || 640;
+            /*
+             * v1.3.8（需求：移动端点问号时悬浮页要水平居中）
+             * 桌面端仍贴着上标弹（跟着内容走，眼睛不用来回找）；
+             * 触屏 / 窄屏统一按视口居中，宽度收到视口内 —— 手机上贴边弹会被裁掉半截。
+             */
+            const mobile = this.isMobileViewport || (this.isTouchUi && vw <= 1024);
+            const width = mobile ? Math.min(320, Math.max(240, vw - 24)) : 280;
+            const left = mobile
+                ? Math.round((vw - width) / 2)
+                : Math.max(8, Math.min(r.left - 8, vw - width - 8));
             const below = r.bottom + 8;
             const estimated = Math.min(260, 60 + Math.ceil(note.length / 18) * 20);
-            const top = below + estimated > window.innerHeight - 8
+            const top = below + estimated > vh - 8
                 ? Math.max(8, r.top - estimated - 8)
                 : below;
             this.cancelAnnHide();
-            this.annPop = { open: true, visible: true, note, left, top, pos };
+            this.annPop = { open: true, visible: true, note, left, top, width, pos };
         },
         /** 点悬浮页 → 改批注内容（改完留在原处，不重新写一遍文档） */
         async editAnnPop() {
@@ -5173,13 +5212,23 @@ export default {
             if (!node || node.type.name !== 'annotation') return;
             let note = '';
             try {
-                const r = await ElMessageBox.prompt(this.$t('memo.annotateTip'), this.$t('memo.toolAnnotate'), {
+                /*
+                 * v1.3.8（需求）：批注输入框默认 4 行、随内容增高、最高不超过视口 35%。
+                 * ElMessageBox 没有 textarea 的自适应参数，这里在它挂到 body 之后
+                 * 直接接管那个 textarea：rows=4 → 每次 input 按 scrollHeight 重算高度，
+                 * 超过上限就改成内部滚动。
+                 */
+                const promise = ElMessageBox.prompt(this.$t('memo.annotateTip'), this.$t('memo.toolAnnotate'), {
                     inputType: 'textarea',
                     inputValue: String(node.attrs.note || ''),
                     inputPlaceholder: this.$t('memo.annotatePlaceholder'),
                     confirmButtonText: this.$t('common.confirm'),
                     cancelButtonText: this.$t('common.cancel'),
+                    customClass: 'me-ann-edit-box',
                 });
+                this.$nextTick(() => this.fitAnnEditor());
+                setTimeout(() => this.fitAnnEditor(), 60);
+                const r = await promise;
                 note = String(r?.value || '').trim();
             } catch (e) {
                 return;
@@ -5190,6 +5239,27 @@ export default {
             }).run();
             this.annPop = { ...this.annPop, note, visible: true };
             this.onEditorUpdate();
+        },
+        /** v1.3.8：把批注输入框调成「4 行起步 + 自动增高 + 最高 35vh」 */
+        fitAnnEditor() {
+            const box = document.querySelector('.me-ann-edit-box');
+            const ta = box && box.querySelector('textarea');
+            if (!ta || ta._annFit) return;
+            ta._annFit = true;
+            const max = Math.max(120, Math.round((window.innerHeight || 640) * 0.35));
+            ta.rows = 4;
+            ta.style.maxHeight = `${max}px`;
+            ta.style.overflowY = 'hidden';
+            ta.style.resize = 'none';
+            const grow = () => {
+                ta.style.height = 'auto';
+                const h = Math.min(ta.scrollHeight, max);
+                ta.style.height = `${h}px`;
+                ta.style.overflowY = ta.scrollHeight > max ? 'auto' : 'hidden';
+            };
+            grow();
+            ta.addEventListener('input', grow);
+            // 弹窗关闭后 textarea 会被移除，监听器随元素一起回收，不需要手工解绑
         },
 
         onBodyClick(ev) {
@@ -7499,76 +7569,133 @@ export default {
             } catch (e) { /* 忽略 */ }
             return null;
         },
+        /** v1.3.8：读 tableSize（`宽x高`，允许缺省一半） */
+        tableSizeOf(node) {
+            const m = /^\s*(\d+)?\s*x\s*(\d+)?\s*$/.exec(String(node?.attrs?.tableSize || '')) || [];
+            return { w: Number(m[1]) || 0, h: Number(m[2]) || 0 };
+        },
         /**
-         * 设置整表尺寸（宽 / 高，单位 px；null 表示不改）。
-         *
-         * 宽度不能只写 tableSize：TipTap 的 TableView 每次重绘都会按 colgroup
-         * 的列宽重新算 table.style.width，直接写宽度会被它盖掉（实测 680 被改回 380）。
-         * 所以宽度按比例摊到每一列的 colwidth 上 —— 列宽之和就是表格宽度，
-         * TableView 怎么重算都一致；tableSize 只保留高度与元数据。
+         * v1.3.8：把单元格的 colspan 展开成「网格列号」。
+         * 拖拽时用 DOM 的 childIndex 当列号，遇到合并单元格会整体错位。
          */
-        setTableSize(ctx, w, h) {
-            if (!ctx) return;
-            const cur = /^\s*(\d+)?\s*x\s*(\d+)?\s*$/.exec(String(ctx.node.attrs?.tableSize || ''));
-            const height = h === null ? (cur && cur[2] ? Number(cur[2]) : null) : h;
-            if (w !== null && w > 0) {
-                const firstRow = ctx.node.firstChild;
-                const cols = firstRow ? firstRow.childCount : 0;
-                const curWidths = [];
-                firstRow?.forEach((cell) => curWidths.push(Number(cell.attrs?.colwidth?.[0]) || 0));
-                const sum = curWidths.reduce((a, b) => a + b, 0);
-                const base = sum > 0 ? curWidths : new Array(cols).fill(1);
-                const unit = w / base.reduce((a, b) => a + b, 0);
-                const out = base.map((x) => Math.max(30, Math.round(x * unit)));
-                if (out.length) out[out.length - 1] += w - out.reduce((a, b) => a + b, 0);
-                this.editor.chain().focus().command(({ tr }) => {
+        gridColOf(cell) {
+            if (!cell || !cell.parentElement) return 0;
+            let col = 0;
+            for (const c of cell.parentElement.children) {
+                if (c === cell) return col;
+                if (c.tagName === 'TD' || c.tagName === 'TH') col += Math.max(1, Number(c.getAttribute('colspan')) || 1);
+            }
+            return col;
+        },
+        /**
+         * v1.3.8：量出每一列的实际宽度（px，按 colspan 摊平）。
+         * 有 colgroup 时优先用 col 的计算宽度；没有（或取不到）就按首行单元格实测。
+         * 结果会归一到表格当前宽度，拖动时不会因为 1px 边框误差跳一下。
+         */
+        measureColumns(tableEl) {
+            if (!tableEl) return [];
+            const out = [];
+            const cols = tableEl.querySelectorAll('colgroup > col');
+            if (cols.length) {
+                cols.forEach((c) => {
+                    const w = c.getBoundingClientRect().width || parseFloat(getComputedStyle(c).width) || 0;
+                    out.push(w);
+                });
+            }
+            if (!out.length || out.some((w) => !(w > 0))) {
+                out.length = 0;
+                const row = tableEl.querySelector('tr');
+                const cells = row ? [...row.children].filter((c) => c.tagName === 'TD' || c.tagName === 'TH') : [];
+                for (const cell of cells) {
+                    const span = Math.max(1, Number(cell.getAttribute('colspan')) || 1);
+                    const w = cell.getBoundingClientRect().width / span;
+                    for (let i = 0; i < span; i += 1) out.push(w);
+                }
+            }
+            if (!out.length) return [];
+            const sum = out.reduce((a, b) => a + b, 0) || 1;
+            const tableW = tableEl.getBoundingClientRect().width || sum;
+            const k = tableW / sum;
+            return out.map((w) => Math.max(24, Math.round(w * k)));
+        },
+        /**
+         * v1.3.8：一次性写回整表尺寸。
+         *
+         * 只发一个 transaction：先写每个单元格的 colwidth（含 colspan 的数组），
+         * 再写表格节点的 tableSize。分两次写会因为第一次写回触发节点重建，
+         * 第二次拿到的 ctx 已经过期 —— 这正是「松手后尺寸弹回原样」的根因。
+         * 宽度以列宽之和为准（TableView.updateColumns 会按它重算 table.style.width）。
+         */
+        commitTableSize(ctx, opts = {}) {
+            if (!ctx || !this.editor) return;
+            const cur = this.tableSizeOf(ctx.node);
+            let widths = Array.isArray(opts.widths) && opts.widths.length
+                ? opts.widths.map((w) => Math.max(24, Math.round(w)))
+                : null;
+            let width = opts.width !== undefined && opts.width !== null ? Math.round(opts.width) : (widths ? widths.reduce((a, b) => a + b, 0) : cur.w);
+            const height = opts.height !== undefined && opts.height !== null ? Math.round(opts.height) : cur.h;
+            if (!widths && width > 0) {
+                const base = this.measureColumns(ctx.dom);
+                if (base.length) {
+                    const sum = base.reduce((a, b) => a + b, 0) || 1;
+                    const unit = width / sum;
+                    widths = base.map((x) => Math.max(28, Math.round(x * unit)));
+                    widths[widths.length - 1] += width - widths.reduce((a, b) => a + b, 0);
+                }
+            }
+            if (widths) width = widths.reduce((a, b) => a + b, 0);
+            const size = width || height ? `${width || ''}x${height || ''}` : null;
+            this.editor.chain().command(({ tr }) => {
+                if (widths) {
                     let rowOffset = 0;
                     ctx.node.forEach((row) => {
                         let cellOffset = 0;
-                        row.forEach((cell, ci) => {
-                            if (out[ci]) {
-                                tr.setNodeMarkup(ctx.pos + 1 + rowOffset + 1 + cellOffset, undefined, {
-                                    ...cell.attrs,
-                                    colwidth: [out[ci]],
-                                });
+                        let col = 0;
+                        row.forEach((cell) => {
+                            const span = Math.max(1, Number(cell.attrs?.colspan) || 1);
+                            const slice = [];
+                            for (let j = 0; j < span; j += 1) {
+                                slice.push(Number(widths[col + j] ?? widths[widths.length - 1] ?? 60));
                             }
+                            tr.setNodeMarkup(ctx.pos + 1 + rowOffset + 1 + cellOffset, undefined, {
+                                ...cell.attrs,
+                                colwidth: slice
+                            });
                             cellOffset += cell.nodeSize;
+                            col += span;
                         });
                         rowOffset += row.nodeSize;
                     });
-                    return true;
-                }).run();
-            }
-            const widthMeta = w !== null ? w : (cur && cur[1] ? Number(cur[1]) : null);
-            const size = widthMeta || height ? `${widthMeta || ''}x${height || ''}` : null;
-            this.editor.chain().focus().command(({ tr }) => {
+                }
                 tr.setNodeMarkup(ctx.pos, undefined, { ...ctx.node.attrs, tableSize: size });
                 return true;
             }).run();
             this.onEditorUpdate();
-            this.$nextTick(() => this.attachTableResizer());
+            const pos = ctx.pos;
+            this.$nextTick(() => {
+                const dom = this.editor && this.editor.view.nodeDOM(pos);
+                const table = dom && (dom.tagName === 'TABLE' ? dom : dom.querySelector?.('table'));
+                if (table) this.attachTableResizer(table);
+            });
+        },
+        /** 设置整表尺寸（宽 / 高，单位 px；null 表示不改） */
+        setTableSize(ctx, w, h) {
+            if (!ctx) return;
+            const cur = this.tableSizeOf(ctx.node);
+            const height = h === null || h === undefined ? cur.h : h;
+            this.commitTableSize(ctx, {
+                width: w !== null && w > 0 ? w : cur.w,
+                height
+            });
         },
         /** 设置某一列宽度：同列每个单元格都要写 colwidth，否则重绘只改一行 */
         setColumnWidth(ctx, colIdx, w) {
             if (!ctx || !(w > 0)) return;
-            this.editor.chain().focus().command(({ tr }) => {
-                let rowOffset = 0;
-                ctx.node.forEach((row) => {
-                    let cellOffset = 0;
-                    row.forEach((cell, ci) => {
-                        if (ci === colIdx) {
-                            tr.setNodeMarkup(ctx.pos + 1 + rowOffset + 1 + cellOffset, undefined, {
-                                ...cell.attrs,
-                                colwidth: [Math.round(w)],
-                            });
-                        }
-                        cellOffset += cell.nodeSize;
-                    });
-                    rowOffset += row.nodeSize;
-                });
-                return true;
-            }).run();
-            this.onEditorUpdate();
+            const base = this.measureColumns(ctx.dom);
+            if (!base.length || base[colIdx] === undefined) return;
+            const widths = base.slice();
+            widths[colIdx] = Math.round(w);
+            this.commitTableSize(ctx, { widths, width: widths.reduce((a, b) => a + b, 0) });
         },
         /** 设置某一行高度 */
         setRowHeight(ctx, rowIdx, h) {
@@ -7626,11 +7753,13 @@ export default {
             if (cellDepth < 0) return;
             const tableCtx = this.currentTableCtx();
             const cellNode = $from.node(cellDepth);
-            const cellEl = ed.view.nodeDOM($from.before(cellDepth));
+            const cellPos = $from.before(cellDepth);
+            const cellEl = ed.view.nodeDOM(cellPos);
             if (!tableCtx || !cellEl) return;
             const row = cellEl.parentElement;
             const rowIdx = Array.prototype.indexOf.call(row.parentElement.children, row);
-            const colIdx = Array.prototype.indexOf.call(row.children, cellEl);
+            // v1.3.8：列号按 colspan 展开，合并单元格不会错位
+            const colIdx = this.gridColOf(cellEl);
             let value = null;
             try {
                 const r = await ElMessageBox.prompt('列宽,行高（px）。留空表示不改，例如 160,48', '行列尺寸', {
@@ -7644,63 +7773,114 @@ export default {
             }
             const [w, h] = String(value || '').split(/[,，]/).map((v) => String(v || '').trim());
             if (/^\d+$/.test(w)) this.setColumnWidth(tableCtx, colIdx, Number(w));
-            if (/^\d+$/.test(h)) this.setRowHeight(tableCtx, rowIdx, Number(h));
+            if (/^\d+$/.test(h)) {
+                /*
+                 * v1.3.8：改列宽会重建表格节点，旧的 ctx 里还是改之前的行属性；
+                 * 直接拿旧 ctx 写行高会把刚写好的 colwidth 又覆盖回去。
+                 * 这里按节点位置重新取一次 DOM / ctx 再写。
+                 */
+                const freshCell = ed.view.nodeDOM(cellPos);
+                const freshCtx = (freshCell && this.tableCtxAtDom(freshCell)) || tableCtx;
+                this.setRowHeight(freshCtx, rowIdx, Number(h));
+            }
             this.$nextTick(() => this.attachTableResizer());
         },
         /**
-         * v1.3.7：表格右下角拖拽手柄（重写）。
+         * v1.3.7：表格右下角拖拽手柄；v1.3.8 重写。
          *
-         * 旧手柄挂在 .tableWrapper 的右下角，而 wrapper 是整行宽：
-         * 用户看到的方块离表格很远，拖完表格变宽、方块却不动。
-         * 现在按表格自身的 offset 定位，拖动同时改宽高，松手写回节点属性。
+         * 与旧版的区别：
+         *   · 手柄跟着「当前这张表」走（悬停或光标进入就出现），位置按表格自身的
+         *     offset 算，并扣掉 wrapper 的横向滚动量；
+         *   · 拖动过程只改 DOM 做预览，松手才一次性写回 colwidth + tableSize ——
+         *     写回会触发 ProseMirror 重建表格节点，边拖边写会把手指“甩掉”。
          */
-        attachTableResizer() {
+        attachTableResizer(domTable) {
             if (!this.editor) return;
-            const ctx = this.currentTableCtx();
-            const table = ctx && ctx.dom && (ctx.dom.tagName === 'TABLE' ? ctx.dom : ctx.dom.querySelector?.('table'));
+            let table = domTable || null;
+            if (!table) {
+                const ctx = this.currentTableCtx();
+                table = ctx && ctx.dom && (ctx.dom.tagName === 'TABLE' ? ctx.dom : ctx.dom.querySelector?.('table'));
+            }
             if (!table) return;
             const host = table.parentElement;
             if (!host) return;
             if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
-            let handle = host.querySelector(':scope > .gh-table-resizer');
-            if (!handle) {
+            let handle = this._tableResizer;
+            if (!handle || !handle.isConnected) {
                 handle = document.createElement('span');
                 handle.className = 'gh-table-resizer';
                 handle.title = '拖动调整表格大小';
                 handle.innerHTML = '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M8 2 2 8M8 5.5 5.5 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
-                handle.addEventListener('pointerdown', (ev) => this.startTableResize(ev, table, ctx));
-                host.appendChild(handle);
+                handle.addEventListener('pointerdown', (ev) => this.startTableResize(ev, handle._table));
+                this._tableResizer = handle;
             }
+            handle._table = table;
+            if (handle.parentElement !== host) host.appendChild(handle);
             const place = () => {
-                handle.style.left = `${table.offsetLeft + table.offsetWidth - 6}px`;
-                handle.style.top = `${table.offsetTop + table.offsetHeight - 6}px`;
+                const t = handle._table;
+                if (!t || !t.isConnected) return;
+                /*
+                 * v1.3.8：手柄必须落在可见区域内。
+                 * 表格比 wrapper 宽 / 高时（横向滚动、超长表格），右下角在可视区之外，
+                 * 手柄跟着 table 走就会被裁掉 —— 用户看到方块却点不到。这里夹进
+                 * wrapper 的可视范围，保证任何情况下都能按住。
+                 */
+                const maxLeft = Math.max(2, host.clientWidth - 20);
+                const maxTop = Math.max(2, host.clientHeight - 20);
+                const left = t.offsetLeft - host.scrollLeft + t.offsetWidth - 6;
+                const top = t.offsetTop - host.scrollTop + t.offsetHeight - 6;
+                handle.style.left = `${Math.max(2, Math.min(left, maxLeft))}px`;
+                handle.style.top = `${Math.max(2, Math.min(top, maxTop))}px`;
             };
+            if (!host._ghTblResizeBound) {
+                host._ghTblResizeBound = true;
+                host.addEventListener('scroll', () => this._tableResizer?._place?.(), { passive: true });
+            }
             place();
             handle._place = place;
-            this._tableResizer = handle;
         },
-        startTableResize(ev, table, ctx) {
+        startTableResize(ev, table) {
             ev.preventDefault();
             ev.stopPropagation();
-            const startX = ev.clientX;
-            const startY = ev.clientY;
+            if (!table || !table.isConnected) return;
+            const ctx = this.tableCtxAtDom(table.querySelector('td, th'));
+            const base = this.measureColumns(table);
+            if (!ctx || !base.length) return;
+            const baseTotal = base.reduce((a, b) => a + b, 0) || 1;
             const startW = table.getBoundingClientRect().width;
             const startH = table.getBoundingClientRect().height;
-            const handle = ev.currentTarget;
-            const move = (e) => {
-                const w = Math.max(160, Math.round(startW + (e.clientX - startX)));
-                const h = Math.max(80, Math.round(startH + (e.clientY - startY)));
-                table.style.width = `${w}px`;
-                table.style.height = `${h}px`;
-                if (handle && handle._place) handle._place();
+            const startX = ev.clientX;
+            const startY = ev.clientY;
+            const handle = this._tableResizer;
+            const cols = table.querySelectorAll('colgroup col');
+            let widths = base.slice();
+            let height = Math.round(startH);
+            this.clearTableCursor();
+            document.body.style.cursor = 'nwse-resize';
+            const preview = (w, h) => {
+                const target = Math.max(160, Math.round(w));
+                const unit = target / baseTotal;
+                widths = base.map((x) => Math.max(28, Math.round(x * unit)));
+                widths[widths.length - 1] += target - widths.reduce((a, b) => a + b, 0);
+                widths.forEach((cw, i) => { if (cols[i]) cols[i].style.width = `${cw}px`; });
+                table.style.width = `${widths.reduce((a, b) => a + b, 0)}px`;
+                height = Math.max(80, Math.round(h));
+                table.style.height = `${height}px`;
+                handle?._place?.();
             };
+            const move = (e) => preview(startW + (e.clientX - startX), startH + (e.clientY - startY));
             const up = (e) => {
                 window.removeEventListener('pointermove', move);
                 window.removeEventListener('pointerup', up);
                 window.removeEventListener('pointercancel', up);
-                const w = Math.max(160, Math.round(startW + (e.clientX - startX)));
-                const h = Math.max(80, Math.round(startH + (e.clientY - startY)));
-                this.setTableSize(ctx, w, h);
+                document.body.style.cursor = '';
+                preview(startW + (e.clientX - startX), startH + (e.clientY - startY));
+                const fresh = this.tableCtxAtDom(table.querySelector('td, th')) || ctx;
+                this.commitTableSize(fresh, {
+                    widths,
+                    width: widths.reduce((a, b) => a + b, 0),
+                    height
+                });
             };
             window.addEventListener('pointermove', move);
             window.addEventListener('pointerup', up);
@@ -7711,17 +7891,20 @@ export default {
          *
          * 关闭了 TipTap 自带的 columnResizing：它只监听鼠标，手机上根本拖不动；
          * 这里统一用 pointerdown/move/up，手指按在分隔线附近就能拖。
+         * v1.3.8：拖动前先把每一列的实际宽度量出来（colspan 摊平），
+         * 拖动时只改被拖的那一列 —— 其它列有了明确的 px 就不会跟着重新分配。
          */
         onTablePointerDown(ev) {
             if (!this.editor || this.mode !== 'wysiwyg') return;
             if (ev.button !== undefined && ev.button !== 0) return;
+            if (document.body.style.cursor) return;
             const cell = ev.target?.closest?.('td, th');
             if (!cell) return;
             if (ev.target.closest?.('.gh-table-resizer')) return;
             const ctx = this.tableCtxAtDom(cell);
             if (!ctx) return;
             const rect = cell.getBoundingClientRect();
-            const tol = ev.pointerType === 'touch' ? 14 : 7;
+            const tol = ev.pointerType === 'touch' ? 16 : 8;
             const nearRight = Math.abs(ev.clientX - rect.right) <= tol;
             const nearBottom = Math.abs(ev.clientY - rect.bottom) <= tol;
             if (!nearRight && !nearBottom) return;
@@ -7730,8 +7913,8 @@ export default {
             const rowEl = cell.parentElement;
             const tableEl = cell.closest('table');
             const rowIdx = Array.prototype.indexOf.call(rowEl.parentElement.children, rowEl);
-            const colIdx = Array.prototype.indexOf.call(rowEl.children, cell);
-            if (nearRight) this.startColDrag(ev, tableEl, ctx, colIdx, rect.width);
+            const colIdx = this.gridColOf(cell);
+            if (nearRight) this.startColDrag(ev, tableEl, ctx, colIdx);
             else this.startRowDrag(ev, rowEl, ctx, rowIdx, rect.height);
         },
         /**
@@ -7748,59 +7931,78 @@ export default {
             const cell = ev.target?.closest?.('td, th');
             if (!touch || !cell) return;
             const rect = cell.getBoundingClientRect();
-            if (Math.abs(touch.clientX - rect.right) > 16) return;
+            if (Math.abs(touch.clientX - rect.right) > 18) return;
             const tableEl = cell.closest('table');
             const ctx = this.tableCtxAtDom(cell);
             if (!tableEl || !ctx) return;
+            const base = this.measureColumns(tableEl);
+            const colIdx = this.gridColOf(cell);
+            if (!base.length || base[colIdx] === undefined) return;
             ev.preventDefault();
-            const row = cell.parentElement;
-            const colIdx = Array.prototype.indexOf.call(row.children, cell);
             const startX = touch.clientX;
-            const startW = rect.width;
-            const totalW = tableEl.getBoundingClientRect().width;
+            const startBase = base[colIdx];
+            const cols = tableEl.querySelectorAll('colgroup col');
+            const height = this.tableSizeOf(ctx.node).h;
+            let widths = base.slice();
+            const preview = (dx) => {
+                widths = base.slice();
+                widths[colIdx] = Math.max(40, Math.round(startBase + dx));
+                widths.forEach((cw, i) => { if (cols[i]) cols[i].style.width = `${cw}px`; });
+                tableEl.style.width = `${widths.reduce((a, b) => a + b, 0)}px`;
+                this._tableResizer?._place?.();
+            };
             const move = (e) => {
                 e.preventDefault();
                 const t = e.touches && e.touches[0];
-                if (!t) return;
-                const w = Math.max(40, Math.round(startW + (t.clientX - startX)));
-                const col = tableEl.querySelectorAll('colgroup col')[colIdx];
-                if (col) col.style.width = `${w}px`;
-                tableEl.style.width = `${Math.max(totalW, w)}px`;
-                if (this._tableResizer) this._tableResizer._place?.();
+                if (t) preview(t.clientX - startX);
             };
             const end = (e) => {
                 window.removeEventListener('touchmove', move);
                 window.removeEventListener('touchend', end);
                 window.removeEventListener('touchcancel', end);
                 const t = (e.changedTouches && e.changedTouches[0]) || null;
-                const w = t ? Math.max(40, Math.round(startW + (t.clientX - startX))) : startW;
-                this.setColumnWidth(ctx, colIdx, w);
-                this.$nextTick(() => this.attachTableResizer());
+                if (t) preview(t.clientX - startX);
+                const fresh = this.tableCtxAtDom(tableEl.querySelector('td, th')) || ctx;
+                this.commitTableSize(fresh, {
+                    widths,
+                    width: widths.reduce((a, b) => a + b, 0),
+                    height
+                });
             };
             window.addEventListener('touchmove', move, { passive: false });
             window.addEventListener('touchend', end);
             window.addEventListener('touchcancel', end);
         },
-        startColDrag(ev, tableEl, ctx, colIdx, startW) {
+        startColDrag(ev, tableEl, ctx, colIdx) {
+            const base = this.measureColumns(tableEl);
+            if (!base.length || base[colIdx] === undefined) return;
             const startX = ev.clientX;
-            const totalW = tableEl.getBoundingClientRect().width;
+            const startBase = base[colIdx];
+            const height = this.tableSizeOf(ctx.node).h;
+            const cols = tableEl.querySelectorAll('colgroup col');
+            let widths = base.slice();
             this.clearTableCursor();
             document.body.style.cursor = 'col-resize';
-            const move = (e) => {
-                const w = Math.max(40, Math.round(startW + (e.clientX - startX)));
-                const col = tableEl.querySelectorAll('colgroup col')[colIdx];
-                if (col) col.style.width = `${w}px`;
-                tableEl.style.width = `${Math.max(totalW, w)}px`;
-                if (this._tableResizer) this._tableResizer._place?.();
+            const preview = (dx) => {
+                widths = base.slice();
+                widths[colIdx] = Math.max(40, Math.round(startBase + dx));
+                widths.forEach((cw, i) => { if (cols[i]) cols[i].style.width = `${cw}px`; });
+                tableEl.style.width = `${widths.reduce((a, b) => a + b, 0)}px`;
+                this._tableResizer?._place?.();
             };
+            const move = (e) => preview(e.clientX - startX);
             const up = (e) => {
                 window.removeEventListener('pointermove', move);
                 window.removeEventListener('pointerup', up);
                 window.removeEventListener('pointercancel', up);
                 document.body.style.cursor = '';
-                const w = Math.max(40, Math.round(startW + (e.clientX - startX)));
-                this.setColumnWidth(ctx, colIdx, w);
-                this.$nextTick(() => this.attachTableResizer());
+                preview(e.clientX - startX);
+                const fresh = this.tableCtxAtDom(tableEl.querySelector('td, th')) || ctx;
+                this.commitTableSize(fresh, {
+                    widths,
+                    width: widths.reduce((a, b) => a + b, 0),
+                    height
+                });
             };
             window.addEventListener('pointermove', move);
             window.addEventListener('pointerup', up);
@@ -7818,40 +8020,84 @@ export default {
                 window.removeEventListener('pointerup', up);
                 window.removeEventListener('pointercancel', up);
                 document.body.style.cursor = '';
+                rowEl.style.height = `${Math.max(32, Math.round(startH + (e.clientY - startY)))}px`;
                 this.setRowHeight(ctx, rowIdx, Math.max(32, Math.round(startH + (e.clientY - startY))));
             };
             window.addEventListener('pointermove', move);
             window.addEventListener('pointerup', up);
             window.addEventListener('pointercancel', up);
         },
-        /** 悬停在分隔线附近时显示拖动光标（触屏不做 hover） */
+        /**
+         * v1.3.8：悬停在行 / 列分隔线附近时，光标变成可拖动样式，
+         * 并在分隔线位置画一条高亮细线 —— 只有光标形状的话，手机 / 触控板用户
+         * 很难判断自己是不是「正好压在线上」。
+         */
         onTablePointerMove(ev) {
             if (!this.editor || this.mode !== 'wysiwyg' || ev.pointerType === 'touch') return;
+            if (document.body.style.cursor) return;
             const cell = ev.target?.closest?.('td, th');
+            const tableEl = cell ? cell.closest('table') : (ev.target?.closest?.('table') || null);
+            if (!tableEl) {
+                this.clearTableCursor();
+                return;
+            }
+            if (this._resizerTable !== tableEl) {
+                this._resizerTable = tableEl;
+                this.attachTableResizer(tableEl);
+            }
             if (!cell) {
                 this.clearTableCursor();
                 return;
             }
             const rect = cell.getBoundingClientRect();
-            const nearRight = Math.abs(ev.clientX - rect.right) <= 7;
-            const nearBottom = Math.abs(ev.clientY - rect.bottom) <= 7;
-            if (nearRight) this.setTableCursor(cell, 'col-resize');
-            else if (nearBottom) this.setTableCursor(cell, 'row-resize');
-            else this.clearTableCursor();
+            const tol = 8;
+            const nearRight = Math.abs(ev.clientX - rect.right) <= tol;
+            const nearBottom = Math.abs(ev.clientY - rect.bottom) <= tol;
+            if (nearRight) {
+                this.setTableCursor(tableEl, 'col-resize');
+                this.showTableHint('col', { x: rect.right, top: rect.top, height: rect.height });
+            } else if (nearBottom) {
+                this.setTableCursor(tableEl, 'row-resize');
+                this.showTableHint('row', { y: rect.bottom, left: rect.left, width: rect.width });
+            } else {
+                this.clearTableCursor();
+            }
         },
-        setTableCursor(cell, cursor) {
-            if (this._cursorCell === cell && this._cursorKind === cursor) return;
+        setTableCursor(tableEl, cursor) {
+            if (this._cursorTable === tableEl && this._cursorKind === cursor) return;
             this.clearTableCursor();
-            this._cursorCell = cell;
+            this._cursorTable = tableEl;
             this._cursorKind = cursor;
-            cell.style.cursor = cursor;
+            tableEl.style.cursor = cursor;
+        },
+        showTableHint(kind, box) {
+            let el = this._tblHint;
+            if (!el || !el.isConnected) {
+                el = document.createElement('div');
+                el.className = 'gh-tbl-hint';
+                document.body.appendChild(el);
+                this._tblHint = el;
+            }
+            el.style.display = 'block';
+            if (kind === 'col') {
+                el.style.left = `${Math.round(box.x) - 1}px`;
+                el.style.top = `${Math.round(box.top)}px`;
+                el.style.width = '2px';
+                el.style.height = `${Math.round(box.height)}px`;
+            } else {
+                el.style.left = `${Math.round(box.left)}px`;
+                el.style.top = `${Math.round(box.y) - 1}px`;
+                el.style.width = `${Math.round(box.width)}px`;
+                el.style.height = '2px';
+            }
         },
         clearTableCursor() {
-            if (this._cursorCell) {
-                this._cursorCell.style.cursor = '';
-                this._cursorCell = null;
+            if (this._cursorTable) {
+                this._cursorTable.style.cursor = '';
+                this._cursorTable = null;
                 this._cursorKind = '';
             }
+            if (this._tblHint) this._tblHint.style.display = 'none';
         },
         insertTableAt(pos) {
             const rows = Math.max(1, Math.min(10, Number(pos?.r) || 3));
@@ -9686,6 +9932,13 @@ export default {
         /** 选中非空时在选区上方显示浮层；位置手算，不用 Tiptap 内置 BubbleMenu */
         onSelectionChange() {
             /*
+             * v1.3.8（需求：点了别处批注悬浮页要消失）
+             * 光标 / 选区只要变了，说明用户已经在别的位置操作，悬浮页立刻收起。
+             * 点问号本身会先触发一次 selectionUpdate（收起），随后的 click 再重新弹出，
+             * 视觉上没有闪烁；点悬浮页时 mousedown 已被 stop，不会被这里误关。
+             */
+            if (this.annPop.visible) this.annPop = { ...this.annPop, visible: false };
+            /*
              * v1.3.4：记住最后一个有效光标位置。
              * 弹窗 / 工具栏按钮抢走焦点后，编辑器 selection 会被重置到文首，
              * 「创建子页并引用」就会把引用插到第一段前面 —— 这里留一份兜底。
@@ -10567,6 +10820,13 @@ export default {
 :global(.el-popper.me-tb-popper) {
     z-index: 3400 !important;
 }
+/* v1.3.8：批注编辑框（ElMessageBox 挂在 body 上）—— 4 行起步、行高与正文一致 */
+:global(.me-ann-edit-box .el-textarea__inner) {
+    line-height: 22px;
+    padding: 8px 10px;
+    font-family: inherit;
+    resize: none;
+}
 .me-tooltip {
     z-index: 3400;
 }
@@ -10636,6 +10896,7 @@ export default {
         padding: 0 2px;
     }
     .me-title-row,
+    .me-meta,
     .me-tags {
         padding-left: 3px;
         padding-right: 3px;
@@ -12330,6 +12591,20 @@ export default {
     opacity: 1;
 }
 
+/*
+ * v1.3.8：鼠标压到行 / 列分隔线时的高亮细线。
+ * 直接挂在 body 上（fixed），不参与表格布局，也不会被 wrapper 的 overflow 裁掉。
+ */
+:global(.gh-tbl-hint) {
+    position: fixed;
+    z-index: 5200;
+    display: none;
+    pointer-events: none;
+    border-radius: 1px;
+    background: var(--el-color-primary, #409eff);
+    box-shadow: 0 0 0 1px rgba(64, 158, 255, 0.25);
+}
+
 /* 手机上横向拖动列宽时不要被页面滚动抢走；纵向仍可正常滚动 */
 @media (max-width: 900px) {
     .me-wysiwyg :deep(.gh-editor-content table) {
@@ -13040,6 +13315,7 @@ export default {
     position: fixed;
     z-index: 4200;
     width: 280px;
+    box-sizing: border-box;
     max-height: 260px;
     overflow: auto;
     padding: 10px 12px 8px;

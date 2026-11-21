@@ -934,7 +934,12 @@ export function mdToDoc(md) {
           }
           if (Array.isArray(meta.cols) || w) {
             /* 宽度以列宽之和为准：按 meta.w 等比缩放，Table 重绘时才不会被改回去 */
-            const nCols = Math.max(1, (rows[0].content || []).length);
+            /* v1.3.8：列数按 colspan 展开后的网格列算，合并单元格也不会错位 */
+            const gridCount = (row) => (row.content || []).reduce(
+              (n, cell) => n + Math.max(1, Number(cell.attrs?.colspan) || 1),
+              0,
+            );
+            const nCols = Math.max(1, gridCount(rows[0]));
             const raw = Array.from({ length: nCols }, (_, idx) => Number(meta.cols?.[idx]) || 0);
             const sum = raw.reduce((a, b) => a + b, 0);
             let widths = raw;
@@ -945,8 +950,14 @@ export function mdToDoc(md) {
               widths[widths.length - 1] += w - widths.reduce((a, b) => a + b, 0);
             }
             rows.forEach((row) => {
-              (row.content || []).forEach((cell, idx) => {
-                if (widths[idx] > 0) cell.attrs = { ...(cell.attrs || {}), colwidth: [widths[idx]] };
+              let col = 0;
+              (row.content || []).forEach((cell) => {
+                const span = Math.max(1, Number(cell.attrs?.colspan) || 1);
+                const slice = widths.slice(col, col + span);
+                if (slice.length && slice.every((n) => n > 0)) {
+                  cell.attrs = { ...(cell.attrs || {}), colwidth: slice };
+                }
+                col += span;
               });
             });
           }
@@ -1258,15 +1269,27 @@ function blockToMd(node, depth = 0) {
       /* v1.3.7：把表格 / 行 / 列尺寸写进一行注释，重新打开还能还原 */
       const meta = {};
       const size = /^\s*(\d+)?\s*x\s*(\d+)?\s*$/.exec(String(node.attrs?.tableSize || ''));
-      const colWidths = (rows[0].content || []).map((c) => Number(c.attrs?.colwidth?.[0]) || 0);
-      const colSum = colWidths.reduce((a, b) => a + b, 0);
+      /*
+       * v1.3.8：列宽按 colspan 展开成网格列。
+       * 旧写法只看第一行每个单元格的 colwidth[0]，合并单元格的表格会被写成
+       * 少几列 / 宽度对不上，重开后被当成「没有列宽」，整表又铺满 100%。
+       */
+      const gridWidths = [];
+      (rows[0].content || []).forEach((cell) => {
+        const span = Math.max(1, Number(cell.attrs?.colspan) || 1);
+        const cw = Array.isArray(cell.attrs?.colwidth) ? cell.attrs.colwidth : [];
+        for (let j = 0; j < span; j += 1) {
+          gridWidths.push(Number(cw[j]) || Number(cw[0]) || 0);
+        }
+      });
+      const colSum = gridWidths.reduce((a, b) => a + b, 0);
       if (size && (size[1] || size[2])) {
         if (size[1]) meta.w = Number(size[1]);
         if (size[2]) meta.h = Number(size[2]);
       }
       if (colSum > 0) {
-        meta.w = colSum;
-        meta.cols = colWidths.map((n) => n || null);
+        if (!meta.w) meta.w = colSum;
+        meta.cols = gridWidths.map((n) => n || null);
       }
       const rowHeights = rows.map((r) => Number(r.attrs?.rowHeight) || 0);
       if (rowHeights.some(Boolean)) meta.rows = rowHeights.map((n) => n || null);

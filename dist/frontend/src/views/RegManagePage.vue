@@ -559,8 +559,12 @@ ChartJS.register(
     LineElement, LinearScale, PointElement, RadialLinearScale, Tooltip,
 );
 
-/** 多系列配色（与系统状态页同一套色感） */
-const REG_CHART_COLORS = ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#8b5cf6', '#14b8a6', '#f97316', '#909399'];
+/**
+ * 多系列配色（与系统状态页同一套色感）
+ * v1.3.8（需求）：默认项 / 项1 / 项2 保持不变，项3~项5 改为指定的三个深色，
+ * 让后三条自定义图例在浅色背景上也有明确的区分度。
+ */
+const REG_CHART_COLORS = ['#409eff', '#67c23a', '#FF33CC', '#CC0066', '#006666', '#191919', '#f97316', '#909399'];
 
 const emptyLegend = () => ({
     trackerId: '',
