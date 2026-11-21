@@ -343,6 +343,7 @@
         >
             <!-- v1.3.5.3：登记类目 —— 独立流水账面板（与标签管理互斥） -->
             <RegPanel
+                ref="regPanel"
                 v-if="isRegisterKind && !tagMode"
                 :instance-id="instanceId"
                 @changed="reload"
@@ -1442,6 +1443,12 @@ export default {
          * 清空列表、给出 loading、保留搜索/筛选/排序，行为与「刷新」两个字一致。
          */
         async refreshList() {
+            /* v1.3.5.10：登记类目由 RegPanel 自己取数，顶栏刷新要转给它 */
+            if (this.isRegisterKind) {
+                const panel = this.$refs.regPanel;
+                if (panel && typeof panel.reload === 'function') return panel.reload(panel.page || 1);
+                return;
+            }
             if (this.tagMode) {
                 // 标签管理模式下刷新交给面板自己（它有自己的刷新按钮与数据源）
                 const panel = this.$refs.tagPanel;

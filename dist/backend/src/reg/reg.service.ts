@@ -96,6 +96,10 @@ export interface RegAttachmentView {
 }
 
 export interface RegLegendInput {
+  /** v1.3.5.10：系列显示名（默认项 / 项1 …）；空则按序号生成 */
+  name?: string;
+  /** v1.3.5.10：「默认项」= 总范围里的发生人 / 关联人 / 地点 / 标签，可以没有条目 */
+  isDefault?: boolean;
   trackerId?: string;
   trackerName?: string;
   placeName?: string;
@@ -377,11 +381,13 @@ export class RegService {
     const views = await this.resolveAttachments(
       rows.flatMap((r) => parseArr(r.attachments)),
     );
+    /* v1.3.5.10：卡片要显示「上次 4500 元 / 43 天前」—— 一次把这几条条目的历史取回来 */
+    const prevs = await this.previousEntries(rows, String(q.owner || ''), String(q.instanceId || ''));
     return {
       total,
       page,
       pageSize,
-      list: rows.map((r) => this.entryView(r, views)),
+      list: rows.map((r) => this.entryView(r, views, prevs)),
     };
   }
 
@@ -391,7 +397,38 @@ export class RegService {
    * v1.3.5.9：direction 改回读记录自己的列；附件一并给出可显示的视图
    *   （流水账页与表单缩略图都靠它，前端不用再单独查文件）。
    */
-  private entryView(r: any, views?: Map<string, RegAttachmentView>) {
+  /**
+   * v1.3.5.10：每条记录「同条目的上一条」。
+   * 只查当前这一页涉及的条目，每个条目最多取 500 条近期记录，内存里配对。
+   */
+  private async previousEntries(rows: any[], owner: string, instanceId: string) {
+    const map = new Map<string, { occurredAt: number; value: number; unit: string; portion: string }>();
+    if (!rows.length) return map;
+    const ids = Array.from(new Set(rows.map((r) => String(r.trackerId || '')).filter(Boolean)));
+    if (!ids.length) return map;
+    /* 取到本页最晚那条为止的全部历史，再按时间比出「上一条」（只取 1000 条，够覆盖常规使用） */
+    const latest = rows.reduce((max, r) => Math.max(max, (r.occurredAt as Date).getTime()), 0);
+    const history = await prisma.regEntry.findMany({
+      where: { trackerId: { in: ids }, owner: String(owner || ''), instanceId, occurredAt: { lte: new Date(latest) } },
+      orderBy: { occurredAt: 'desc' },
+      take: 1000,
+      select: { id: true, trackerId: true, occurredAt: true, amount: true, quantity: true, tracker: { select: { unit: true, portion: true } } },
+    });
+    for (const r of rows) {
+      const at = (r.occurredAt as Date).getTime();
+      const prev = history.find((h) => h.trackerId === r.trackerId && h.id !== r.id && h.occurredAt.getTime() < at);
+      if (!prev) continue;
+      map.set(String(r.id), {
+        occurredAt: prev.occurredAt.getTime(),
+        value: num(prev.amount) * (prev.quantity === 0 ? 1 : num(prev.quantity, 1)),
+        unit: String((prev as any).tracker?.unit || ''),
+        portion: String((prev as any).tracker?.portion || ''),
+      });
+    }
+    return map;
+  }
+
+  private entryView(r: any, views?: Map<string, RegAttachmentView>, prevs?: Map<string, any>) {
     const tracker = r.tracker || null;
     const tagLinks = Array.isArray(r.tagLinks) ? r.tagLinks : [];
     const ids = parseArr(r.attachments);
@@ -414,6 +451,8 @@ export class RegService {
       attachmentViews: map
         ? ids.map((id) => map.get(id)).filter(Boolean)
         : [],
+      /* v1.3.5.10：上一条（同条目、更早）的数值与时间，卡片上显示「上次…」 */
+      prev: prevs && prevs.get(String(r.id)) ? prevs.get(String(r.id)) : null,
     };
   }
 
@@ -621,6 +660,11 @@ export class RegService {
     trackerName?: string;
     /** v1.3.5.6：按标签筛选 */
     tag?: string;
+    /** v1.3.5.10：总范围的人物 / 地点 / 标签（多条标签按「且」处理） */
+    subjectName?: string;
+    relatedName?: string;
+    placeName?: string;
+    tags?: string[] | string;
     from?: string;
     to?: string;
     bucket?: string;
@@ -650,6 +694,19 @@ export class RegService {
     if (Object.keys(trackerWhere).length) baseWhere.tracker = trackerWhere;
     if (String(q.tag || '').trim()) {
       baseWhere.tagLinks = { some: { tag: { name: String(q.tag).trim() } } };
+    }
+    /* v1.3.5.10：总范围把「发生人 / 关联人 / 地点 / 标签」也纳进来（卡片按它统计） */
+    if (String(q.subjectName || '').trim()) baseWhere.subjectName = String(q.subjectName).trim();
+    if (String(q.relatedName || '').trim()) baseWhere.relatedName = String(q.relatedName).trim();
+    if (String(q.placeName || '').trim()) baseWhere.placeName = String(q.placeName).trim();
+    const totalTags = (Array.isArray(q.tags) ? q.tags : String(q.tags || '').split(','))
+      .map((t) => String(t || '').trim())
+      .filter(Boolean)
+      .slice(0, 10);
+    if (totalTags.length) {
+      const and = Array.isArray(baseWhere.AND) ? baseWhere.AND : [];
+      for (const t of totalTags) and.push({ tagLinks: { some: { tag: { name: t } } } });
+      baseWhere.AND = and;
     }
     const from = dateOf(q.from);
     const to = dateOf(q.to);
@@ -721,8 +778,8 @@ export class RegService {
 
     const legends = this.normalizeLegends(q.legends);
     const chart = this.buildChart(rows, { axisX, axisY, bucket, from, to, legends });
-    /* 没设图例时是「全部条目」一起统计，单位不一致就不显示单位（否则会误导） */
-    if (!legends.length && unitKeys.size > 1) {
+    /* 只有「默认项」时是全部条目一起统计，单位不一致就不显示单位（否则会误导） */
+    if (!legends.some((l) => !l.isDefault) && unitKeys.size > 1) {
       chart.unit = '';
       chart.portion = '';
     }
@@ -773,8 +830,11 @@ export class RegService {
     }
     if (!Array.isArray(arr)) return [];
     return arr
-      .slice(0, 5)
+      /* v1.3.5.10：默认项 + 最多 3 条自定义 = 4 条 */
+      .slice(0, 4)
       .map((x) => ({
+        name: String(x?.name || ''),
+        isDefault: !!x?.isDefault,
         trackerId: String(x?.trackerId || ''),
         trackerName: String(x?.trackerName || ''),
         placeName: String(x?.placeName || ''),
@@ -782,7 +842,8 @@ export class RegService {
         relatedName: String(x?.relatedName || ''),
         tags: Array.isArray(x?.tags) ? x.tags.map(String).filter(Boolean).slice(0, 10) : [],
       }))
-      .filter((x) => x.trackerId || x.trackerName);
+      /* 默认项允许没有条目（它就是总范围本身）；自定义项必须有条目 */
+      .filter((x) => x.isDefault || x.trackerId || x.trackerName);
   }
 
   /**
@@ -835,9 +896,13 @@ export class RegService {
       }
       const cond: string[] = [];
       if (lg) {
-        const t = (hit[0] as any)?.tracker;
-        const name = String(t?.name || lg.trackerName || '条目');
-        cond.push(name);
+        /* 默认项可以没有条目 —— 它是「总范围里的全部条目」再加人物 / 地点 / 标签 */
+        if (lg.trackerId || lg.trackerName) {
+          const t = (hit[0] as any)?.tracker;
+          cond.push(String(t?.name || lg.trackerName || '条目'));
+        } else {
+          cond.push('全部条目');
+        }
         if (lg.placeName) cond.push(`地点=${lg.placeName}`);
         if (lg.subjectName) cond.push(`发生人=${lg.subjectName}`);
         if (lg.relatedName) cond.push(`关联人=${lg.relatedName}`);
@@ -846,7 +911,9 @@ export class RegService {
         cond.push('全部条目');
       }
       per.push({
-        name: legends.length ? `项${i + 1}` : '全部',
+        name: lg?.name
+          ? String(lg.name)
+          : (legends.length ? `项${i + 1}` : '全部'),
         condition: cond.join(' · '),
         map,
         total: sum,

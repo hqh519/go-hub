@@ -17,6 +17,10 @@
                     <el-radio-button label="stats">{{ $t('reg.tabStats') }}</el-radio-button>
                     <el-radio-button label="settings">{{ $t('reg.tabSettings') }}</el-radio-button>
                 </el-radio-group>
+                <!-- v1.3.5.10：刷新按钮紧跟「数据统计 / 登记设置」 -->
+                <el-button size="small" :loading="loading" :title="$t('notes.refresh')" @click="reloadAll">
+                    <font-awesome-icon icon="sync" />
+                </el-button>
                 <div class="reg-head-actions">
                     <el-select
                         v-if="tab === 'stats'"
@@ -32,17 +36,15 @@
                     <el-button v-if="tab === 'stats'" size="small" @click="saveCurrentReport">
                         <font-awesome-icon icon="save" />{{ $t('reg.saveReport') }}
                     </el-button>
-                    <el-button size="small" :loading="loading" @click="reloadAll">
-                        <font-awesome-icon icon="sync" />
-                    </el-button>
                 </div>
             </div>
         </header>
 
         <section v-if="tab === 'stats'" class="reg-stats">
             <!--
-                v1.3.5.9 总范围：登记类型 + 条目 + 时间段 + 用户。
-                类型不再有「全部」（默认第一项「流水」）；条目为空表示全部条目。
+                v1.3.5.10 总范围（全局）：登记类型 + 条目 + 时间段 + 用户。
+                第二行是「默认项」的可选条件：发生人 / 关联人 / 地点 / 标签，
+                它们同样参与卡片统计，但不影响自定义图例项的条目候选。
             -->
             <div class="reg-filters">
                 <div class="reg-f-item">
@@ -51,21 +53,8 @@
                         <el-option v-for="t in valueTypes" :key="t.value" :label="$t(t.label)" :value="t.value" />
                     </el-select>
                 </div>
-                <div class="reg-f-item">
-                    <span class="reg-f-label">{{ $t('reg.fieldItem') }}</span>
-                    <el-select
-                        v-model="trackerFilter"
-                        size="small"
-                        clearable
-                        filterable
-                        class="reg-f-tracker"
-                        :placeholder="$t('reg.allItems')"
-                        @change="onTotalRangeChange"
-                    >
-                        <el-option v-for="t in trackerOptions" :key="t.id" :label="t.name" :value="t.id" />
-                    </el-select>
-                </div>
-                <div class="reg-f-item">
+                <!-- 桌面端用一个日期范围；移动端换成两个单日期框（范围面板在手机上放不下） -->
+                <div v-if="!narrow" class="reg-f-item">
                     <span class="reg-f-label">{{ $t('reg.rangeLabel') }}</span>
                     <el-date-picker
                         v-model="rangeDates"
@@ -73,13 +62,39 @@
                         size="small"
                         unlink-panels
                         class="reg-f-dates"
-                        :popper-class="narrow ? 'reg-range-popper--center' : ''"
+                        :popper-class="'reg-range-popper--center'"
                         value-format="x"
                         :start-placeholder="$t('reg.axisStart')"
                         :end-placeholder="$t('reg.axisDue')"
                         @change="onTotalRangeChange"
                     />
                 </div>
+                <template v-else>
+                    <div class="reg-f-item">
+                        <span class="reg-f-label">{{ $t('reg.axisStart') }}</span>
+                        <el-date-picker
+                            v-model="rangeFrom"
+                            type="date"
+                            size="small"
+                            class="reg-f-date"
+                            value-format="x"
+                            :placeholder="$t('reg.axisStart')"
+                            @change="onMobileRangeChange"
+                        />
+                    </div>
+                    <div class="reg-f-item">
+                        <span class="reg-f-label">{{ $t('reg.axisDue') }}</span>
+                        <el-date-picker
+                            v-model="rangeTo"
+                            type="date"
+                            size="small"
+                            class="reg-f-date"
+                            value-format="x"
+                            :placeholder="$t('reg.axisDue')"
+                            @change="onMobileRangeChange"
+                        />
+                    </div>
+                </template>
                 <div class="reg-f-item">
                     <span class="reg-f-label">{{ $t('reg.bucketLabel') }}</span>
                     <el-select v-model="bucket" size="small" class="reg-f-bucket" @change="loadStats">
@@ -100,7 +115,49 @@
                 </el-checkbox>
             </div>
 
-            <!-- v1.3.5.9：纵轴 / 横轴单独一栏（横轴不再挂在图表右上角） -->
+            <!-- 第二行：条目 + 「默认项」的四个人物 / 地点 / 标签条件 -->
+            <div class="reg-filters">
+                <div class="reg-f-item is-grow">
+                    <span class="reg-f-label">{{ $t('reg.fieldItem') }}</span>
+                    <el-select
+                        v-model="trackerFilter"
+                        size="small"
+                        clearable
+                        filterable
+                        class="reg-f-tracker"
+                        :placeholder="$t('reg.allItems')"
+                        @change="onTotalRangeChange"
+                    >
+                        <el-option v-for="t in trackerOptions" :key="t.id" :label="t.name" :value="t.id" />
+                    </el-select>
+                </div>
+                <div class="reg-f-item">
+                    <span class="reg-f-label">{{ $t('reg.fieldSubject') }}</span>
+                    <el-select v-model="subjectFilter" size="small" clearable filterable class="reg-f-person" :placeholder="$t('reg.legendSubjectPh')" @change="onTotalRangeChange">
+                        <el-option v-for="v in cand.subjects" :key="v" :label="v" :value="v" />
+                    </el-select>
+                </div>
+                <div class="reg-f-item">
+                    <span class="reg-f-label">{{ $t('reg.fieldRelated') }}</span>
+                    <el-select v-model="relatedFilter" size="small" clearable filterable class="reg-f-person" :placeholder="$t('reg.legendRelatedPh')" @change="onTotalRangeChange">
+                        <el-option v-for="v in cand.related" :key="v" :label="v" :value="v" />
+                    </el-select>
+                </div>
+                <div class="reg-f-item">
+                    <span class="reg-f-label">{{ $t('reg.fieldPlace') }}</span>
+                    <el-select v-model="placeFilter" size="small" clearable filterable class="reg-f-place" :placeholder="$t('reg.legendPlacePh')" @change="onTotalRangeChange">
+                        <el-option v-for="v in cand.places" :key="v" :label="v" :value="v" />
+                    </el-select>
+                </div>
+                <div class="reg-f-item">
+                    <span class="reg-f-label">{{ $t('reg.fieldTags') }}</span>
+                    <el-select v-model="tagFilters" size="small" multiple filterable collapse-tags collapse-tags-tooltip class="reg-f-tags" :placeholder="$t('reg.legendTagsPh')" @change="onTotalRangeChange">
+                        <el-option v-for="v in cand.tags" :key="v" :label="v" :value="v" />
+                    </el-select>
+                </div>
+            </div>
+
+            <!-- 坐标设置：数据源（纵轴）+ 时间源（横轴） -->
             <div class="reg-filters reg-filters-axes">
                 <div class="reg-f-item">
                     <span class="reg-f-label">{{ $t('reg.axisYTitle') }}</span>
@@ -188,54 +245,42 @@
                     <span class="reg-chart-title">{{ $t('reg.trendTitle') }}</span>
                 </div>
 
-                <div class="reg-chart-tools">
-                    <span class="reg-chart-sub">{{ chartSub }}</span>
-                    <div class="reg-chart-switch">
-                        <button
-                            v-for="c in chartTypes"
-                            :key="c.value"
-                            type="button"
-                            class="reg-chart-tab"
-                            :class="{ 'is-active': chartType === c.value }"
-                            :title="$t(c.label)"
-                            @click="chartType = c.value"
-                        >
-                            <font-awesome-icon :icon="c.icon" />
-                        </button>
-                    </div>
-                </div>
-
-                <!-- 图例项设置：每条图例 = 一组筛选条件 -->
+                <!-- v1.3.5.10：图表切换挪到图例项设置的下方 -->
                 <div class="reg-legend-box">
                     <div class="reg-legend-head">
                         <button type="button" class="reg-legend-toggle" @click="legendOpen = !legendOpen">
                             <font-awesome-icon icon="sliders-h" class="reg-legend-toggle-icon" />
                             <span>{{ $t('reg.legendTitle') }}</span>
-                            <em v-if="legends.length">{{ legendSummary }}</em>
+                            <em>{{ legendSummary }}</em>
                         </button>
-                        <span class="reg-legend-sub">{{ $t('reg.legendSub') }}；{{ $t('reg.legend1Rule') }}</span>
+                        <span class="reg-legend-sub">{{ $t('reg.legendSub') }}</span>
                     </div>
                     <template v-if="legendOpen">
-                    <div v-for="(lg, i) in legends" :key="'lg' + i" class="reg-legend-row">
-                        <span class="reg-legend-idx" :class="{ 'is-first': i === 0 }">
-                            {{ $t('reg.seriesName', { n: i + 1 }) }}
+                    <!-- 默认项：就是总范围本身，不可删、不可改（改它请改上面的筛选） -->
+                    <div class="reg-legend-row is-fixed">
+                        <span class="reg-legend-idx is-first">{{ $t('reg.legendDefault') }}</span>
+                        <span class="reg-legend-fixed-text">{{ defaultTraceText }}</span>
+                        <span class="reg-legend-del is-locked" :title="$t('reg.legendFirstLocked')">
+                            <font-awesome-icon icon="lock" />
                         </span>
-                        <div class="reg-legend-field is-wide">
-                            <span class="reg-legend-label">{{ $t('reg.fieldItem') }}</span>
+                    </div>
+
+                    <!-- 自定义图例项：最多 3 条（加默认项一共 4 条） -->
+                    <div v-for="(lg, i) in legends" :key="'lg' + i" class="reg-legend-row">
+                        <span class="reg-legend-idx">{{ $t('reg.seriesName', { n: i + 1 }) }}</span>
+                        <div class="reg-legend-field is-item">
                             <el-select
                                 v-model="lg.trackerId"
                                 size="small"
                                 filterable
                                 clearable
-                                :disabled="i > 0 && !firstLegendTrackerId"
-                                :placeholder="i > 0 && !firstLegendTrackerId ? $t('reg.legendNeedItem') : $t('reg.legendItemPh')"
+                                :placeholder="$t('reg.legendItemPh')"
                                 @change="onLegendTracker(i)"
                             >
                                 <el-option v-for="t in legendTrackers(i)" :key="t.id" :label="t.name" :value="t.id" />
                             </el-select>
                         </div>
-                        <div class="reg-legend-field">
-                            <span class="reg-legend-label">{{ $t('reg.fieldSubject') }}</span>
+                        <div class="reg-legend-field is-subject">
                             <el-select
                                 v-model="lg.subjectName"
                                 size="small"
@@ -248,8 +293,7 @@
                                 <el-option v-for="v in legendOpts(i).subjects" :key="v" :label="v" :value="v" />
                             </el-select>
                         </div>
-                        <div class="reg-legend-field">
-                            <span class="reg-legend-label">{{ $t('reg.fieldRelated') }}</span>
+                        <div class="reg-legend-field is-related">
                             <el-select
                                 v-model="lg.relatedName"
                                 size="small"
@@ -262,9 +306,7 @@
                                 <el-option v-for="v in legendOpts(i).related" :key="v" :label="v" :value="v" />
                             </el-select>
                         </div>
-                        <!-- v1.3.5.9：地点挪到关联人后面 -->
-                        <div class="reg-legend-field">
-                            <span class="reg-legend-label">{{ $t('reg.fieldPlace') }}</span>
+                        <div class="reg-legend-field is-place">
                             <el-select
                                 v-model="lg.placeName"
                                 size="small"
@@ -277,8 +319,7 @@
                                 <el-option v-for="v in legendOpts(i).places" :key="v" :label="v" :value="v" />
                             </el-select>
                         </div>
-                        <div class="reg-legend-field is-wide">
-                            <span class="reg-legend-label">{{ $t('reg.fieldTags') }}</span>
+                        <div class="reg-legend-field is-tags">
                             <el-select
                                 v-model="lg.tags"
                                 size="small"
@@ -293,9 +334,7 @@
                                 <el-option v-for="v in legendOpts(i).tags" :key="v" :label="v" :value="v" />
                             </el-select>
                         </div>
-                        <!-- v1.3.5.9：图例 1 是默认加载项，不可删除 -->
                         <button
-                            v-if="i > 0"
                             type="button"
                             class="reg-legend-del"
                             :title="$t('common.delete')"
@@ -303,23 +342,35 @@
                         >
                             <font-awesome-icon icon="trash" />
                         </button>
-                        <span v-else class="reg-legend-del is-locked" :title="$t('reg.legendFirstLocked')">
-                            <font-awesome-icon icon="lock" />
-                        </span>
                     </div>
                     <div class="reg-legend-foot">
                         <button
                             type="button"
                             class="reg-legend-add"
-                            :disabled="legends.length >= 5"
+                            :disabled="!canAddLegend"
                             @click="addLegend"
                         >
                             <font-awesome-icon icon="plus" />{{ $t('reg.legendAdd') }}
                         </button>
-                        <span v-if="legends.length >= 5" class="reg-legend-max">{{ $t('reg.legendMax') }}</span>
-                        <span v-else-if="!firstLegendTrackerId" class="reg-legend-max">{{ $t('reg.noLegendHint') }}</span>
+                        <span v-if="!trackerFilter" class="reg-legend-max">{{ $t('reg.legendNeedTotalItem') }}</span>
+                        <span v-else-if="!canAddLegend" class="reg-legend-max">{{ $t('reg.legendMax') }}</span>
                     </div>
                     </template>
+                </div>
+
+                <!-- v1.3.5.10：图表类型切换（圆环 / 条形 / 雷达需要≥2个图例项） -->
+                <div class="reg-chart-switch is-under-legend">
+                    <button
+                        v-for="c in availableChartTypes"
+                        :key="c.value"
+                        type="button"
+                        class="reg-chart-tab"
+                        :class="{ 'is-active': chartType === c.value }"
+                        :title="$t(c.label)"
+                        @click="chartType = c.value"
+                    >
+                        <font-awesome-icon :icon="c.icon" />
+                    </button>
                 </div>
 
                 <div v-if="!chartHasData" class="reg-chart-empty">{{ $t('reg.noData') }}</div>
@@ -330,6 +381,13 @@
                 </div>
 
                 <!-- 图例条件：tooltip 之外再给出完整条件，避免只看「项1」猜不到是什么 -->
+                <!-- v1.3.5.10：圆环 / 条形 / 雷达的「颜色方块 + 名称」图例 -->
+                <div v-if="chartHasData && !isSeriesChart && seriesLegend.length" class="reg-chart-legend is-color">
+                    <span v-for="(nm, si) in seriesLegend" :key="'sl' + si" class="reg-legend-item">
+                        <i class="reg-cond-dot" :style="{ background: chartColor(si) }"></i>{{ nm }}
+                    </span>
+                </div>
+
                 <div v-if="chartHasData && chartConditions.length" class="reg-legend-conds">
                     <span v-for="(c, i) in chartConditions" :key="'c' + i" class="reg-legend-cond">
                         <i class="reg-cond-dot" :style="{ background: chartColor(i) }"></i>{{ c }}
@@ -524,7 +582,17 @@ export default {
             /* 总范围：类型（默认流水，不再有「全部」）+ 条目（空 = 全部条目） */
             typeFilter: 'flow',
             trackerFilter: '',
+            /* v1.3.5.10：「默认项」的可选条件（也属于总范围） */
+            subjectFilter: '',
+            relatedFilter: '',
+            placeFilter: '',
+            tagFilters: [],
+            /* 候选值（发生人 / 关联人 / 地点 / 标签） */
+            cand: { places: [], subjects: [], related: [], tags: [] },
             rangeDates: null,
+            /* 移动端：范围面板放不下，拆成两个单日期 */
+            rangeFrom: '',
+            rangeTo: '',
             scope: 'me',
             bucket: 'day',
             /* 轴与图例 */
@@ -536,8 +604,9 @@ export default {
                 { value: 'dueAt', label: 'reg.axisDue' },
                 { value: 'createdAt', label: 'reg.axisCreated' },
             ],
-            legends: [emptyLegend()],
-            legendOptions: [emptyLegendOpts()],
+            /* v1.3.5.10：默认只有「默认项」，自定义图例为空（最多再加 3 条） */
+            legends: [],
+            legendOptions: [],
             stats: {
                 total: 0, count: 0, quantity: 0, avg: 0, max: 0, min: 0,
                 series: [], byOwner: [], byTracker: [], byWeekday: [], histogram: [],
@@ -554,7 +623,6 @@ export default {
                 { value: 'doughnut', label: 'reg.chartDonut', icon: 'chart-pie' },
                 { value: 'hbar', label: 'reg.chartHBar', icon: 'align-left' },
                 { value: 'radar', label: 'reg.chartRadar', icon: 'spider' },
-                { value: 'hist', label: 'reg.chartHist', icon: 'chart-area' },
             ],
             compareYear: false,
             reports: [],
@@ -610,12 +678,43 @@ export default {
         totalTracker() {
             return (this.trackers || []).find((t) => t.id === this.trackerFilter) || null;
         },
-        /** 图例 1 选中的条目（图例 2~5 的候选靠它收窄） */
-        firstLegendTrackerId() {
-            return String((this.legends[0] && this.legends[0].trackerId) || '');
+        /** 已选条目的自定义图例条数（决定图表能画哪些形态） */
+        customLegendCount() {
+            return this.legends.filter((lg) => !!lg.trackerId).length;
         },
-        firstLegendTracker() {
-            return this.trackers.find((t) => t.id === this.firstLegendTrackerId) || null;
+        /** 系列数 = 默认项 + 自定义项（圆环 / 条形 / 雷达至少要 2 个才有意义） */
+        seriesCount() {
+            return 1 + this.customLegendCount;
+        },
+        /** 图例最多 3 条自定义；总范围没选条目时一条都不给加 */
+        canAddLegend() {
+            return !!this.trackerFilter && this.legends.length < 3;
+        },
+        availableChartTypes() {
+            return this.chartTypes.filter((c) => c.value === 'bar' || c.value === 'line' || this.seriesCount >= 2);
+        },
+        /** 默认项 = 总范围本身（类型 + 条目 + 时间 + 人物 / 地点 / 标签） */
+        defaultTraceText() {
+            const bits = [];
+            const typeHit = this.valueTypes.find((v) => v.value === this.typeFilter);
+            bits.push(typeHit ? this.$t(typeHit.label) : this.$t('reg.allTypes'));
+            const t = this.totalTracker;
+            bits.push(t ? t.name : this.$t('reg.allItems'));
+            const rq = this.rangeQuery();
+            if (rq.from || rq.to) {
+                const fmt = (ms) => (ms ? new Date(Number(ms)).toLocaleDateString() : '…');
+                bits.push(`${fmt(rq.from)} ~ ${fmt(rq.to)}`);
+            } else {
+                bits.push(this.$t('reg.rangeAllShort'));
+            }
+            if (this.subjectFilter) bits.push(`${this.$t('reg.fieldSubject')}=${this.subjectFilter}`);
+            if (this.relatedFilter) bits.push(`${this.$t('reg.fieldRelated')}=${this.relatedFilter}`);
+            if (this.placeFilter) bits.push(`${this.$t('reg.fieldPlace')}=${this.placeFilter}`);
+            if (this.tagFilters.length) bits.push(`${this.$t('reg.fieldTags')}=${this.tagFilters.join('+')}`);
+            if (!this.subjectFilter && !this.relatedFilter && !this.placeFilter && !this.tagFilters.length) {
+                bits.push(this.$t('reg.noExtraFilter'));
+            }
+            return bits.join(' · ');
         },
         /** 纵轴单位：数值带「单位/分母」，份量本身没有单位 */
         metricUnit() {
@@ -644,11 +743,10 @@ export default {
             if (unit && portion) return `${unit}/${portion}`;
             return unit;
         },
-        /** 折叠状态下的一行摘要：项1 / 项2 … */
+        /** 折叠状态下的一行摘要：默认项 + n 条 */
         legendSummary() {
-            const n = this.legends.length;
-            return this.legends.some((lg) => lg.trackerId)
-                ? this.$t('reg.legendSummaryOn', { n })
+            return this.customLegendCount
+                ? this.$t('reg.legendSummaryOn', { n: this.customLegendCount })
                 : this.$t('reg.legendSummaryOff');
         },
         /**
@@ -681,16 +779,13 @@ export default {
         },
         chartHasData() {
             const st = this.stats || {};
+            const sets = (st.chart && st.chart.datasets) || [];
             if (this.isSeriesChart) {
-                const ch = st.chart || {};
-                const sets = ch.datasets || [];
                 /* 有标签但一条数据都没有时也算空（例如横轴切到「起始时间」而记录都没填） */
                 return sets.length > 0 && sets.some((d) => Number(d.count) > 0);
             }
-            if (this.chartType === 'doughnut' || this.chartType === 'hbar') return (st.byTracker || []).length > 0;
-            if (this.chartType === 'radar') return (st.byWeekday || []).some((d) => Number(d.sum));
-            if (this.chartType === 'hist') return (st.histogram || []).length > 0;
-            return (st.series || []).length > 0;
+            /* 圆环 / 条形 / 雷达：统计的是「图例项 × 数据源」，至少要两个系列 */
+            return this.seriesCount >= 2 && sets.some((d) => Math.abs(Number(d.total) || 0) > 0);
         },
         chartSub() {
             const st = this.stats || {};
@@ -699,6 +794,15 @@ export default {
             if (!this.isSeriesChart) return hint;
             const n = ((st.chart && st.chart.labels) || []).length;
             return `${hint} · ${this.$t('reg.trendSub', { n })}`;
+        },
+        /** 图例项名称（含默认项）—— 圆环 / 条形 / 雷达的类别 */
+        seriesNames() {
+            return ((this.stats.chart && this.stats.chart.datasets) || []).map((d) => String(d.name || ''));
+        },
+        /** 图表下方那片颜色方块图例（圆环 / 条形 / 雷达用） */
+        seriesLegend() {
+            if (this.isSeriesChart) return [];
+            return this.seriesNames;
         },
         chartCanvasStyle() {
             if (!this.isSeriesChart) return {};
@@ -718,46 +822,49 @@ export default {
             const valueLabel = this.$t(this.axisY === 'quantity' ? 'reg.axisYQuantity' : 'reg.axisYValue') + tag;
             const type = this.chartType;
             const colors = REG_CHART_COLORS;
-            if (type === 'doughnut' || type === 'hbar') {
-                const rows = (this.stats.byTracker || []).slice(0, 8);
+            const sets = (this.stats.chart && this.stats.chart.datasets) || [];
+            const names = sets.map((d) => String(d.name || ''));
+            const totals = sets.map((d) => Number(d.total) || 0);
+
+            if (type === 'doughnut') {
                 return {
-                    labels: rows.map((r) => r.name),
+                    labels: names,
                     datasets: [{
                         label: valueLabel,
-                        data: rows.map((r) => Math.abs(Number(r.sum) || 0)),
-                        backgroundColor: type === 'doughnut'
-                            ? rows.map((_, i) => colors[i % colors.length])
-                            : colors[0],
-                        borderWidth: type === 'doughnut' ? 2 : 0,
+                        data: totals.map((v) => Math.abs(v)),
+                        backgroundColor: names.map((_, i) => colors[i % colors.length]),
+                        borderWidth: 2,
                         borderColor: 'transparent',
-                        borderRadius: type === 'hbar' ? 6 : 0,
-                        hoverOffset: type === 'doughnut' ? 6 : 0,
+                        hoverOffset: 6,
+                    }],
+                };
+            }
+            if (type === 'hbar') {
+                /* 纵轴名称改成颜色方块（见 chartOptions 的 ticks），真实名称在图表下方 */
+                return {
+                    labels: names,
+                    datasets: [{
+                        label: valueLabel,
+                        data: totals,
+                        backgroundColor: names.map((_, i) => colors[i % colors.length]),
+                        borderRadius: 6,
+                        borderWidth: 0,
                     }],
                 };
             }
             if (type === 'radar') {
-                const rows = this.stats.byWeekday || [];
+                /* 雷达图统计「图例项 × 数据源」：每个轴是一个图例项，值是该系列的合计 */
                 return {
-                    labels: rows.map((r) => this.$t('reg.weekdayShort', { d: r.label })),
+                    labels: names,
                     datasets: [{
                         label: valueLabel,
-                        data: rows.map((r) => Number(r.sum) || 0),
+                        data: totals,
                         borderColor: colors[0],
                         backgroundColor: 'rgba(64, 158, 255, 0.18)',
-                        pointBackgroundColor: colors[0],
                         borderWidth: 2,
-                    }],
-                };
-            }
-            if (type === 'hist') {
-                const rows = this.stats.histogram || [];
-                return {
-                    labels: rows.map((r) => `${this.fmt(r.from)}~${this.fmt(r.to)}`),
-                    datasets: [{
-                        label: this.$t('reg.chartCount'),
-                        data: rows.map((r) => r.count),
-                        backgroundColor: colors[5],
-                        borderRadius: 4,
+                        pointBackgroundColor: names.map((_, i) => colors[i % colors.length]),
+                        pointBorderColor: names.map((_, i) => colors[i % colors.length]),
+                        pointRadius: 4,
                     }],
                 };
             }
@@ -770,6 +877,8 @@ export default {
                     /* 自定义字段：tooltip 里拼完整条件用 */
                     condition: d.condition,
                     data: d.data,
+                    /* 原始时间桶（tooltip 算「距离上条间隔」） */
+                    rawKeys: chart.labels || [],
                 };
                 if (type === 'line') {
                     return {
@@ -793,7 +902,7 @@ export default {
                     /* 多系列时柱子细一点，避免挤成一团 */
                     barPercentage: 0.72,
                     categoryPercentage: 0.7,
-                    maxBarThickness: (this.stats.chart.datasets || []).length > 1 ? 16 : 30,
+                    maxBarThickness: (sets || []).length > 1 ? 16 : 30,
                 };
             });
             return {
@@ -805,22 +914,15 @@ export default {
             const textColor = '#64748B';
             const fontSize = this.narrow ? 10 : 12;
             const unit = this.metricUnit;
+            const colors = REG_CHART_COLORS;
+            const series = this.seriesNames;
+            const colorAt = (i) => colors[i % colors.length];
             const base = {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
-                    legend: {
-                        display: this.chartType === 'doughnut' || this.isSeriesChart || this.chartType === 'radar',
-                        position: 'bottom',
-                        labels: {
-                            usePointStyle: true,
-                            boxWidth: 8,
-                            boxHeight: 8,
-                            padding: this.narrow ? 10 : 14,
-                            font: { size: fontSize },
-                            color: textColor,
-                        },
-                    },
+                    /* v1.3.5.10：图例统一写在图表下方（颜色方块 + 名称），原生图例关掉 */
+                    legend: { display: false },
                     tooltip: {
                         backgroundColor: 'rgba(0, 0, 0, 0.8)',
                         titleColor: '#fff',
@@ -835,10 +937,15 @@ export default {
                                     const raw = ctx.parsed && ctx.parsed.y !== undefined ? ctx.parsed.y : ctx.raw;
                                     const v = Number(raw) || 0;
                                     const cond = ctx.dataset && ctx.dataset.condition ? ` · ${ctx.dataset.condition}` : '';
-                                    return ` ${ctx.dataset.label}${cond}：${this.fmt(v)}${unit ? ` ${unit}` : ''}`;
+                                    const line = ` ${ctx.dataset.label}${cond}：${this.fmt(v)}${unit ? ` ${unit}` : ''}`;
+                                    /* v1.3.5.10：再给一行「距离上条间隔 N 天，相差 X」 */
+                                    const gap = this.gapText(ctx.dataset, ctx.dataIndex);
+                                    return gap ? [line, ` ${gap}`] : line;
                                 },
                             }
-                            : {},
+                            : {
+                                label: (ctx) => ` ${ctx.label}：${this.fmt(Number(ctx.raw) || 0)}${unit ? ` ${unit}` : ''}`,
+                            },
                     },
                 },
             };
@@ -853,8 +960,22 @@ export default {
                             beginAtZero: true,
                             grid: { color: 'rgba(148, 163, 184, 0.22)' },
                             angleLines: { color: 'rgba(148, 163, 184, 0.22)' },
-                            pointLabels: { color: textColor, font: { size: fontSize } },
+                            /*
+                             * v1.3.5.10：外围标签改成颜色方块（替代原来的周一~周日）；
+                             * 名称写在图表下方的色块图例里。
+                             */
+                            pointLabels: {
+                                color: series.map((_, i) => colorAt(i)),
+                                font: { size: this.narrow ? 15 : 17, weight: '700' },
+                                padding: 8,
+                                callback: () => '■',
+                            },
                             ticks: { display: false },
+                            /* 顶点贴在最外圈会被网格线盖住，留 20% 余量 */
+                            suggestedMax: (() => {
+                                const max = Math.max(0, ...((this.stats.chart.datasets || []).map((d) => Number(d.total) || 0)));
+                                return max > 0 ? max * 1.2 : 1;
+                            })(),
                         },
                     },
                 };
@@ -865,12 +986,19 @@ export default {
                    加 offset 让每个桶都占一条"带"，柱形与折线的位置也一致 */
                 offset: true,
                 grid: { display: false },
-                ticks: {
-                    color: textColor,
-                    font: { size: fontSize },
-                    autoSkip: this.isSeriesChart ? false : true,
-                    maxTicksLimit: this.isSeriesChart ? undefined : (this.narrow ? 5 : 8),
-                },
+                ticks: horizontal
+                    ? {
+                        /* v1.3.5.10：条形图纵轴名称换成颜色方块 */
+                        color: (ctx) => colorAt(ctx.index),
+                        font: { size: this.narrow ? 12 : 14, weight: '700' },
+                        callback: () => '■',
+                    }
+                    : {
+                        color: textColor,
+                        font: { size: fontSize },
+                        autoSkip: this.isSeriesChart ? false : true,
+                        maxTicksLimit: this.isSeriesChart ? undefined : (this.narrow ? 5 : 8),
+                    },
             };
             const valueAxis = {
                 beginAtZero: true,
@@ -878,7 +1006,6 @@ export default {
                 ticks: {
                     color: textColor,
                     font: { size: fontSize },
-                    precision: this.chartType === 'hist' ? 0 : undefined,
                 },
             };
             return {
@@ -897,15 +1024,55 @@ export default {
         this.legendOpen = !this.narrow;
         window.addEventListener('resize', this.onResize);
         this.loadTrackers();
+        this.loadCandidates();
         this.loadStats();
         this.loadUnits();
         this.loadReports();
         this.$nextTick(this.measureChartBox);
     },
+    watch: {
+        /* 窄屏 / 宽屏切换：日期值互搬，避免筛选看起来被清空 */
+        narrow() {
+            this.syncRangeBetweenModes();
+        },
+        /* 自定义图例被删到只剩默认项时，圆环 / 条形 / 雷达要退回柱形 */
+        seriesCount(n) {
+            if (n < 2 && ['doughnut', 'hbar', 'radar'].includes(this.chartType)) this.chartType = 'bar';
+        },
+    },
     beforeUnmount() {
         window.removeEventListener('resize', this.onResize);
     },
     methods: {
+        /** 时间桶的起点（tooltip 算间隔用） */
+        bucketStart(key) {
+            const k = String(key || '');
+            if (/^\d{4}-\d{2}-\d{2}$/.test(k)) return new Date(`${k}T00:00:00`);
+            if (/^\d{4}-\d{2}$/.test(k)) return new Date(`${k}-01T00:00:00`);
+            if (/^\d{4}$/.test(k)) return new Date(`${k}-01-01T00:00:00`);
+            return null;
+        },
+        /**
+         * v1.3.5.10：tooltip 里的「距离上条间隔 N 天，相差 X」。
+         * 取同一系列的上一个时间桶：天数按桶起点算，差值是两桶数值之差。
+         */
+        gapText(dataset, index) {
+            const i = Number(index);
+            if (!dataset || !Number.isFinite(i) || i <= 0) return '';
+            const keys = (dataset.rawKeys || []);
+            const prev = this.bucketStart(keys[i - 1]);
+            const cur = this.bucketStart(keys[i]);
+            const prevVal = Number((dataset.data || [])[i - 1]);
+            const curVal = Number((dataset.data || [])[i]);
+            if (!prev || !cur) return '';
+            const days = Math.max(0, Math.round((cur.getTime() - prev.getTime()) / 86400000));
+            const diff = (Number.isFinite(curVal) ? curVal : 0) - (Number.isFinite(prevVal) ? prevVal : 0);
+            const unit = this.metricUnit;
+            return this.$t('reg.tooltipGap', {
+                days,
+                diff: `${diff >= 0 ? '+' : ''}${this.fmt(diff)}${unit ? ` ${unit}` : ''}`,
+            });
+        },
         syncNarrow() {
             this.narrow = typeof window !== 'undefined' && window.innerWidth <= 768;
         },
@@ -919,7 +1086,26 @@ export default {
         },
         reloadAll() {
             this.loadTrackers();
+            this.loadCandidates();
             this.loadStats();
+        },
+        /** v1.3.5.10：总范围的人物 / 地点 / 标签候选（与登记表单同一份） */
+        async loadCandidates() {
+            try {
+                const qs = new URLSearchParams({ instanceId: this.instanceId });
+                const res = await fetchWithAuth(`/api/reg/candidates?${qs.toString()}`);
+                const data = await res.json().catch(() => null);
+                if (data) {
+                    this.cand = {
+                        places: Array.isArray(data.places) ? data.places : [],
+                        subjects: Array.isArray(data.subjects) ? data.subjects : [],
+                        related: Array.isArray(data.related) ? data.related : [],
+                        tags: Array.isArray(data.tags) ? data.tags : [],
+                    };
+                }
+            } catch (e) {
+                /* 候选拿不到不影响统计 */
+            }
         },
         async loadTrackers() {
             try {
@@ -1049,10 +1235,18 @@ export default {
         onTypeChange() {
             const still = this.trackerOptions.some((t) => t.id === this.trackerFilter);
             if (!still) this.trackerFilter = '';
-            const lg1 = this.legends[0];
-            if (lg1 && lg1.trackerId) {
-                const ok = this.legendTrackers(0).some((t) => t.id === lg1.trackerId);
-                if (!ok) this.clearLegend(0);
+            /* 总范围条目变了 → 不再兼容「单位 + 分母」的自定义图例直接清掉 */
+            const allowed = new Set(this.legendTrackers().map((t) => t.id));
+            if (!this.trackerFilter) {
+                this.legends = [];
+                this.legendOptions = [];
+            } else {
+                for (let k = this.legends.length - 1; k >= 0; k -= 1) {
+                    if (this.legends[k].trackerId && !allowed.has(this.legends[k].trackerId)) {
+                        this.legends.splice(k, 1);
+                        this.legendOptions.splice(k, 1);
+                    }
+                }
             }
             this.onTotalRangeChange();
         },
@@ -1064,30 +1258,28 @@ export default {
             this.loadStats();
         },
         /**
-         * 图例 i 的条目候选（v1.3.5.9）：
-         *   图例 1 —— 跟着「总范围」的条目走：选了条目就只列「单位 + 分母」一致的，
-         *             没选就是该类型下的全部条目；
-         *   图例 2~5 —— 只列与图例 1「单位 + 分母」一致的条目。
+         * 图例项的条目候选（v1.3.5.10）：
+         *   自定义项 1~3 统一按「总范围」的条目来校验「单位 + 分母」，
+         *   不再以「项1」为基准；总范围没选条目时一条都不给选（也就加不了自定义项）。
          */
-        legendTrackers(i) {
+        legendTrackers() {
+            const base = this.totalTracker;
+            if (!base) return [];
             const list = (this.trackers || []).filter(
                 (t) => !this.typeFilter || this.typeFilter === 'all' || t.valueType === this.typeFilter,
             );
-            const sameUnit = (base) => list.filter((t) => String(t.unit || '') === String(base.unit || '')
+            return list.filter((t) => String(t.unit || '') === String(base.unit || '')
                 && String(t.portion || '') === String(base.portion || ''));
-            if (i === 0) {
-                const base = this.totalTracker;
-                return base ? sameUnit(base) : list;
-            }
-            const first = this.firstLegendTracker;
-            if (!first) return [];
-            return sameUnit(first);
         },
         legendOpts(i) {
             return this.legendOptions[i] || emptyLegendOpts();
         },
         addLegend() {
-            if (this.legends.length >= 5) {
+            if (!this.trackerFilter) {
+                this.$message.warning(this.$t('reg.legendNeedTotalItem'));
+                return;
+            }
+            if (this.legends.length >= 3) {
                 this.$message.warning(this.$t('reg.legendMax'));
                 return;
             }
@@ -1106,32 +1298,19 @@ export default {
             this.legendOptions[i] = emptyLegendOpts();
         },
         removeLegend(i) {
-            /* v1.3.5.9：图例 1 是默认加载项，不允许删 */
-            if (i === 0 || this.legends.length <= 1) return;
+            if (i < 0 || i >= this.legends.length) return;
             this.legends.splice(i, 1);
             this.legendOptions.splice(i, 1);
             this.loadStats();
         },
         onLegendTracker(i) {
             const lg = this.legends[i];
+            if (!lg) return;
             lg.placeName = '';
             lg.subjectName = '';
             lg.relatedName = '';
             lg.tags = [];
             this.legendOptions[i] = emptyLegendOpts();
-            if (i === 0) {
-                /* 第 1 条换了口径，2~5 里不兼容的条目要清掉 */
-                const first = this.firstLegendTracker;
-                for (let k = 1; k < this.legends.length; k += 1) {
-                    const id = this.legends[k].trackerId;
-                    if (!id) continue;
-                    const hit = this.trackers.find((t) => t.id === id);
-                    const ok = first && hit
-                        && String(hit.unit || '') === String(first.unit || '')
-                        && String(hit.portion || '') === String(first.portion || '');
-                    if (!ok) this.clearLegend(k);
-                }
-            }
             if (lg.trackerId) this.loadLegendOptions(i);
             this.loadStats();
         },
@@ -1172,6 +1351,19 @@ export default {
         },
         /* ── 查询 ─────────────────────────────────────────────── */
         rangeQuery() {
+            /* 移动端用两个单日期框（范围面板在 390px 屏上放不下） */
+            if (this.narrow) {
+                const out = {};
+                const f = Number(this.rangeFrom);
+                const t = Number(this.rangeTo);
+                if (Number.isFinite(f) && this.rangeFrom !== '' && this.rangeFrom !== null) out.from = f;
+                if (Number.isFinite(t) && this.rangeTo !== '' && this.rangeTo !== null) {
+                    const d = new Date(t);
+                    d.setHours(23, 59, 59, 999);
+                    out.to = d.getTime();
+                }
+                return out;
+            }
             const arr = this.rangeDates;
             if (!Array.isArray(arr) || !arr.length) return {};
             const from = Number(arr[0]);
@@ -1181,20 +1373,51 @@ export default {
             to.setHours(23, 59, 59, 999);
             return { from, to: to.getTime() };
         },
+        onMobileRangeChange() {
+            this.onTotalRangeChange();
+        },
+        /** 窄屏 / 宽屏切换时把日期值搬过去，别让筛选凭空消失 */
+        syncRangeBetweenModes() {
+            if (this.narrow) {
+                if (Array.isArray(this.rangeDates) && this.rangeDates.length === 2) {
+                    if (!this.rangeFrom) this.rangeFrom = Number(this.rangeDates[0]);
+                    if (!this.rangeTo) this.rangeTo = Number(this.rangeDates[1]);
+                }
+            } else if (this.rangeFrom || this.rangeTo) {
+                const f = Number(this.rangeFrom);
+                const t = Number(this.rangeTo);
+                this.rangeDates = Number.isFinite(f) && Number.isFinite(t) ? [f, t] : null;
+            }
+        },
         onTotalRangeChange() {
             this.refreshAllLegendOptions();
             this.loadStats();
         },
         legendQuery() {
-            return this.legends
-                .filter((lg) => lg.trackerId)
-                .map((lg) => ({
+            /* 默认项永远排第一：它就是总范围（人物 / 地点 / 标签条件也一起带上） */
+            const list = [{
+                name: this.$t('reg.legendDefault'),
+                isDefault: true,
+                trackerId: '',
+                trackerName: '',
+                placeName: String(this.placeFilter || ''),
+                subjectName: String(this.subjectFilter || ''),
+                relatedName: String(this.relatedFilter || ''),
+                tags: (this.tagFilters || []).filter(Boolean),
+            }];
+            for (const lg of this.legends) {
+                if (!lg.trackerId) continue;
+                list.push({
+                    name: this.$t('reg.seriesName', { n: list.length }),
+                    isDefault: false,
                     trackerId: lg.trackerId,
                     placeName: String(lg.placeName || ''),
                     subjectName: String(lg.subjectName || ''),
                     relatedName: String(lg.relatedName || ''),
                     tags: Array.isArray(lg.tags) ? lg.tags.filter(Boolean) : [],
-                }));
+                });
+            }
+            return list;
         },
         async loadStats() {
             this.loading = true;
@@ -1208,6 +1431,11 @@ export default {
                 });
                 if (this.typeFilter && this.typeFilter !== 'all') qs.set('type', this.typeFilter);
                 if (this.trackerFilter) qs.set('trackerId', this.trackerFilter);
+                /* v1.3.5.10：总范围的发生人 / 关联人 / 地点 / 标签 */
+                if (this.subjectFilter) qs.set('subjectName', this.subjectFilter);
+                if (this.relatedFilter) qs.set('relatedName', this.relatedFilter);
+                if (this.placeFilter) qs.set('placeName', this.placeFilter);
+                if (this.tagFilters.length) qs.set('tags', this.tagFilters.join(','));
                 if (this.compareYear) qs.set('compare', 'year');
                 const lg = this.legendQuery();
                 if (lg.length) qs.set('legends', JSON.stringify(lg));
@@ -1251,6 +1479,10 @@ export default {
             return {
                 type: this.typeFilter === 'all' ? '' : this.typeFilter,
                 trackerId: this.trackerFilter || '',
+                subjectName: this.subjectFilter || '',
+                relatedName: this.relatedFilter || '',
+                placeName: this.placeFilter || '',
+                tags: this.tagFilters || [],
                 from: rq.from || null,
                 to: rq.to || null,
                 bucket: this.bucket,
@@ -1298,23 +1530,35 @@ export default {
             const q = r.query || {};
             this.typeFilter = q.type || 'flow';
             this.trackerFilter = String(q.trackerId || '');
+            this.subjectFilter = String(q.subjectName || '');
+            this.relatedFilter = String(q.relatedName || '');
+            this.placeFilter = String(q.placeName || '');
+            this.tagFilters = Array.isArray(q.tags) ? q.tags.slice() : [];
             this.bucket = ['day', 'month', 'year'].includes(q.bucket) ? q.bucket : 'day';
             this.scope = q.scope === 'all' ? 'all' : 'me';
             this.axisX = ['occurredAt', 'startAt', 'dueAt', 'createdAt'].includes(q.axisX) ? q.axisX : 'occurredAt';
             this.axisY = q.axisY === 'quantity' ? 'quantity' : 'value';
             this.compareYear = q.compare === 'year';
-            if (q.from && q.to) this.rangeDates = [Number(q.from), Number(q.to)];
-            else this.rangeDates = null;
-            const lgs = Array.isArray(q.legends) ? q.legends : [];
+            if (q.from && q.to) {
+                this.rangeDates = [Number(q.from), Number(q.to)];
+                this.rangeFrom = Number(q.from);
+                this.rangeTo = Number(q.to);
+            } else {
+                this.rangeDates = null;
+                this.rangeFrom = '';
+                this.rangeTo = '';
+            }
+            /* 报表里的默认项是算出来的，不落库（见 legendQuery），这里只还原自定义项 */
+            const lgs = (Array.isArray(q.legends) ? q.legends : []).filter((x) => !x.isDefault);
             this.legends = lgs.length
-                ? lgs.slice(0, 5).map((x) => ({
+                ? lgs.slice(0, 3).map((x) => ({
                     trackerId: String(x.trackerId || ''),
                     placeName: String(x.placeName || ''),
                     subjectName: String(x.subjectName || ''),
                     relatedName: String(x.relatedName || ''),
                     tags: Array.isArray(x.tags) ? x.tags.slice() : [],
                 }))
-                : [emptyLegend()];
+                : [];
             this.legendOptions = this.legends.map(() => emptyLegendOpts());
             this.refreshAllLegendOptions();
             this.loadStats();
@@ -1489,11 +1733,15 @@ export default {
     min-width: 0;
 }
 
-.reg-f-type { width: 128px; }
-.reg-f-tracker { width: 168px; }
+.reg-f-type { width: 178px; }
+.reg-f-tracker { width: 220px; }
 .reg-f-dates { width: 262px; }
 .reg-f-bucket { width: 92px; }
 .reg-f-scope { width: 110px; }
+.reg-f-date { width: 168px; }
+.reg-f-person { width: 118px; }
+.reg-f-place { width: 148px; }
+.reg-f-tags { width: 180px; }
 .reg-f-compare { margin-left: 2px; font-size: 12px; }
 .reg-report-select { width: 150px; }
 
@@ -1668,14 +1916,17 @@ export default {
 }
 
 .reg-card-value {
-    font-size: 22px;
+    /* v1.3.5.10：所有卡片的数值统一 20px，不再有大有小 */
+    font-size: 20px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     color: var(--el-color-primary);
+    line-height: 1.25;
 }
 
+/* 旧版给「最大/最小」「间隔」等卡片加过 is-small，现在统一字号，保留类名只为兼容 */
 .reg-card-value.is-small {
-    font-size: 16px;
+    font-size: 20px;
 }
 
 .reg-card-value em {
@@ -1688,7 +1939,7 @@ export default {
 /* 「条数 / 份量」里的条数是主值，别被 em 的小字号压下去 */
 .reg-card-value em.is-lead {
     margin: 0;
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
     color: var(--el-color-primary);
 }
@@ -1881,22 +2132,49 @@ export default {
     color: var(--el-text-color-secondary);
 }
 
+/*
+ * v1.3.5.10：图例行 = 「项n + 五个选择框 + 删除」，不再显示字段名（名称由占位文案承担）。
+ * 发生人 / 关联人窄一些，地点 / 标签宽一些。
+ */
 .reg-legend-row {
     display: grid;
-    grid-template-columns: 34px minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr) 26px;
+    grid-template-areas: 'idx item subject related place tags del';
+    grid-template-columns: 34px minmax(0, 1.7fr) minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.3fr) minmax(0, 1.3fr) 26px;
     align-items: center;
     gap: 6px;
 }
 
+/* 默认项：没有选择框，一行说明文字 + 锁 */
+.reg-legend-row.is-fixed {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter, rgba(127, 127, 127, 0.06));
+}
+
+.reg-legend-fixed-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--el-text-color-secondary);
+    word-break: break-word;
+}
+
 .reg-legend-idx {
+    grid-area: idx;
     font-size: 12px;
     font-weight: 600;
     color: var(--el-text-color-secondary);
     text-align: center;
+    white-space: nowrap;
 }
 
 .reg-legend-idx.is-first {
     color: var(--el-color-primary);
+    text-align: left;
 }
 
 .reg-legend-field {
@@ -1906,14 +2184,14 @@ export default {
     min-width: 0;
 }
 
-/*
- * v1.3.5.9：桌面端在选择框上方显示字段名；
- * 移动端去掉这行名称（名称改由选择框自己的占位文案承担）。
- */
-.reg-legend-label {
-    display: block;
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
+.reg-legend-field.is-item { grid-area: item; }
+.reg-legend-field.is-subject { grid-area: subject; }
+.reg-legend-field.is-related { grid-area: related; }
+.reg-legend-field.is-place { grid-area: place; }
+.reg-legend-field.is-tags { grid-area: tags; }
+
+.reg-legend-del {
+    grid-area: del;
 }
 
 .reg-legend-del {
@@ -2029,6 +2307,13 @@ export default {
     text-align: center;
     font-size: 13px;
     color: var(--el-text-color-secondary);
+}
+
+.reg-chart-legend.is-color .reg-cond-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 5px;
 }
 
 .reg-chart-legend {
@@ -2195,26 +2480,67 @@ export default {
         min-width: 0;
     }
 
-    .reg-f-type,
-    .reg-f-dates {
+    /*
+     * v1.3.5.10：筛选改成「一行一项」—— 名称固定 62px，控件吃满剩余宽度。
+     * 原来给 select 写 width:100% 会把自动宽度的 flex 项压成只剩一个箭头。
+     */
+    .reg-filters {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .reg-f-item,
+    .reg-f-item.is-grow {
         width: 100%;
+        flex: 1 1 auto;
     }
 
-    .reg-f-bucket {
-        width: 92px;
+    .reg-f-label {
+        flex: 0 0 62px;
     }
 
+    .reg-f-type,
+    .reg-f-tracker,
+    .reg-f-dates,
+    .reg-f-date,
+    .reg-f-person,
+    .reg-f-place,
+    .reg-f-tags,
+    .reg-f-bucket,
     .reg-f-scope {
-        width: 110px;
+        width: auto;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .reg-f-compare {
+        margin-left: 0;
+    }
+
+    /* 时间源四个页签在窄屏铺满一行可横滑 */
+    .reg-filters-axes .reg-axis-tabs {
+        width: 100%;
+        justify-content: flex-start;
     }
 
     .reg-chart-canvas {
         height: 220px;
     }
 
-    /* 图例行在窄屏改成两列卡片，字段名显式显示 */
+    /*
+     * 图例项：项名与删除按钮同一行（删除在行末），
+     * 条目 / 地点 / 标签各占整行，发生人 / 关联人并排。
+     */
     .reg-legend-row {
-        grid-template-columns: 1fr 1fr;
+        grid-template-areas:
+            'idx del'
+            'item item'
+            'subject related'
+            'place place'
+            'tags tags';
+        grid-template-columns: minmax(0, 1fr) 26px;
+        row-gap: 6px;
         padding: 8px;
         border: 1px solid var(--el-border-color-lighter);
         border-radius: 8px;
@@ -2222,21 +2548,10 @@ export default {
     }
 
     .reg-legend-idx {
-        grid-column: 1 / -1;
         text-align: left;
     }
 
-    .reg-legend-field.is-wide {
-        grid-column: 1 / -1;
-    }
-
-    /* v1.3.5.9：移动端不再显示字段名，名称由选择框的占位文案承担 */
-    .reg-legend-label {
-        display: none;
-    }
-
     .reg-legend-del {
-        grid-column: 1 / -1;
         justify-self: end;
     }
 

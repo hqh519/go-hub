@@ -254,14 +254,43 @@ let RegService = class RegService {
             }),
         ]);
         const views = await this.resolveAttachments(rows.flatMap((r) => parseArr(r.attachments)));
+        const prevs = await this.previousEntries(rows, String(q.owner || ''), String(q.instanceId || ''));
         return {
             total,
             page,
             pageSize,
-            list: rows.map((r) => this.entryView(r, views)),
+            list: rows.map((r) => this.entryView(r, views, prevs)),
         };
     }
-    entryView(r, views) {
+    async previousEntries(rows, owner, instanceId) {
+        const map = new Map();
+        if (!rows.length)
+            return map;
+        const ids = Array.from(new Set(rows.map((r) => String(r.trackerId || '')).filter(Boolean)));
+        if (!ids.length)
+            return map;
+        const latest = rows.reduce((max, r) => Math.max(max, r.occurredAt.getTime()), 0);
+        const history = await prisma_1.prisma.regEntry.findMany({
+            where: { trackerId: { in: ids }, owner: String(owner || ''), instanceId, occurredAt: { lte: new Date(latest) } },
+            orderBy: { occurredAt: 'desc' },
+            take: 1000,
+            select: { id: true, trackerId: true, occurredAt: true, amount: true, quantity: true, tracker: { select: { unit: true, portion: true } } },
+        });
+        for (const r of rows) {
+            const at = r.occurredAt.getTime();
+            const prev = history.find((h) => h.trackerId === r.trackerId && h.id !== r.id && h.occurredAt.getTime() < at);
+            if (!prev)
+                continue;
+            map.set(String(r.id), {
+                occurredAt: prev.occurredAt.getTime(),
+                value: num(prev.amount) * (prev.quantity === 0 ? 1 : num(prev.quantity, 1)),
+                unit: String(prev.tracker?.unit || ''),
+                portion: String(prev.tracker?.portion || ''),
+            });
+        }
+        return map;
+    }
+    entryView(r, views, prevs) {
         const tracker = r.tracker || null;
         const tagLinks = Array.isArray(r.tagLinks) ? r.tagLinks : [];
         const ids = parseArr(r.attachments);
@@ -283,6 +312,7 @@ let RegService = class RegService {
             attachmentViews: map
                 ? ids.map((id) => map.get(id)).filter(Boolean)
                 : [],
+            prev: prevs && prevs.get(String(r.id)) ? prevs.get(String(r.id)) : null,
         };
     }
     async attachmentViews(ids, owner) {
@@ -466,6 +496,22 @@ let RegService = class RegService {
         if (String(q.tag || '').trim()) {
             baseWhere.tagLinks = { some: { tag: { name: String(q.tag).trim() } } };
         }
+        if (String(q.subjectName || '').trim())
+            baseWhere.subjectName = String(q.subjectName).trim();
+        if (String(q.relatedName || '').trim())
+            baseWhere.relatedName = String(q.relatedName).trim();
+        if (String(q.placeName || '').trim())
+            baseWhere.placeName = String(q.placeName).trim();
+        const totalTags = (Array.isArray(q.tags) ? q.tags : String(q.tags || '').split(','))
+            .map((t) => String(t || '').trim())
+            .filter(Boolean)
+            .slice(0, 10);
+        if (totalTags.length) {
+            const and = Array.isArray(baseWhere.AND) ? baseWhere.AND : [];
+            for (const t of totalTags)
+                and.push({ tagLinks: { some: { tag: { name: t } } } });
+            baseWhere.AND = and;
+        }
         const from = dateOf(q.from);
         const to = dateOf(q.to);
         const who = { ...baseWhere };
@@ -531,7 +577,7 @@ let RegService = class RegService {
             : null;
         const legends = this.normalizeLegends(q.legends);
         const chart = this.buildChart(rows, { axisX, axisY, bucket, from, to, legends });
-        if (!legends.length && unitKeys.size > 1) {
+        if (!legends.some((l) => !l.isDefault) && unitKeys.size > 1) {
             chart.unit = '';
             chart.portion = '';
         }
@@ -582,8 +628,10 @@ let RegService = class RegService {
         if (!Array.isArray(arr))
             return [];
         return arr
-            .slice(0, 5)
+            .slice(0, 4)
             .map((x) => ({
+            name: String(x?.name || ''),
+            isDefault: !!x?.isDefault,
             trackerId: String(x?.trackerId || ''),
             trackerName: String(x?.trackerName || ''),
             placeName: String(x?.placeName || ''),
@@ -591,7 +639,7 @@ let RegService = class RegService {
             relatedName: String(x?.relatedName || ''),
             tags: Array.isArray(x?.tags) ? x.tags.map(String).filter(Boolean).slice(0, 10) : [],
         }))
-            .filter((x) => x.trackerId || x.trackerName);
+            .filter((x) => x.isDefault || x.trackerId || x.trackerName);
     }
     buildChart(rows, opt) {
         const { axisX, axisY, bucket, from, to, legends } = opt;
@@ -638,9 +686,13 @@ let RegService = class RegService {
             }
             const cond = [];
             if (lg) {
-                const t = hit[0]?.tracker;
-                const name = String(t?.name || lg.trackerName || '条目');
-                cond.push(name);
+                if (lg.trackerId || lg.trackerName) {
+                    const t = hit[0]?.tracker;
+                    cond.push(String(t?.name || lg.trackerName || '条目'));
+                }
+                else {
+                    cond.push('全部条目');
+                }
                 if (lg.placeName)
                     cond.push(`地点=${lg.placeName}`);
                 if (lg.subjectName)
@@ -654,7 +706,9 @@ let RegService = class RegService {
                 cond.push('全部条目');
             }
             per.push({
-                name: legends.length ? `项${i + 1}` : '全部',
+                name: lg?.name
+                    ? String(lg.name)
+                    : (legends.length ? `项${i + 1}` : '全部'),
                 condition: cond.join(' · '),
                 map,
                 total: sum,

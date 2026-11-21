@@ -144,6 +144,11 @@ export class RegController {
       scope: q.scope || 'me',
       type: q.type || '',
       trackerId: q.trackerId || '',
+      /* v1.3.5.10：总范围的发生人 / 关联人 / 地点 / 标签（tags 用逗号分隔） */
+      subjectName: q.subjectName || '',
+      relatedName: q.relatedName || '',
+      placeName: q.placeName || '',
+      tags: q.tags || '',
       trackerName: q.trackerName || '',
       tag: q.tag || '',
       from: q.from || '',

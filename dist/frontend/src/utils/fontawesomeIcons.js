@@ -4,6 +4,12 @@ import { faFileLines } from '@fortawesome/free-solid-svg-icons/faFileLines';
 import { faPenToSquare } from '@fortawesome/free-solid-svg-icons/faPenToSquare';
 import { faPaperclip } from '@fortawesome/free-solid-svg-icons/faPaperclip';
 import { faLock } from '@fortawesome/free-solid-svg-icons/faLock';
+import { faAngleDown } from '@fortawesome/free-solid-svg-icons/faAngleDown';
+import { faCircleQuestion } from '@fortawesome/free-solid-svg-icons/faCircleQuestion';
+import { faNetworkWired } from '@fortawesome/free-solid-svg-icons/faNetworkWired';
+import { faUserPlus } from '@fortawesome/free-solid-svg-icons/faUserPlus';
+import { faCompress } from '@fortawesome/free-solid-svg-icons/faCompress';
+import { faUserShield } from '@fortawesome/free-solid-svg-icons/faUserShield';
 import { faHeading } from '@fortawesome/free-solid-svg-icons/faHeading';
 import { faBold } from '@fortawesome/free-solid-svg-icons/faBold';
 import { faItalic } from '@fortawesome/free-solid-svg-icons/faItalic';
@@ -206,6 +212,12 @@ export default [
     faPenToSquare,
     faPaperclip,
     faLock,
+    faAngleDown,
+    faCircleQuestion,
+    faNetworkWired,
+    faUserPlus,
+    faCompress,
+    faUserShield,
     faHeading,
     faBold,
     faItalic,

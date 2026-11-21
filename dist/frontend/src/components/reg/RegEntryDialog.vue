@@ -252,9 +252,19 @@
                         fit="cover"
                         preview-teleported
                     />
+                    <!-- v1.3.5.10：视频抽首帧当缩略图，抽不到才退回胶片图标 -->
+                    <img
+                        v-else-if="a.mediaKind === 'video' && posters[a.fileId]"
+                        class="reg-asset-img reg-asset-video"
+                        :src="posters[a.fileId]"
+                        alt=""
+                    />
                     <span v-else class="reg-asset-cover">
                         <font-awesome-icon :icon="a.mediaKind === 'video' ? 'film' : (a.mediaKind === 'audio' ? 'music' : 'file')" />
                         <span class="reg-asset-name">{{ a.originalName || a.name || a.fileId }}</span>
+                    </span>
+                    <span v-if="a.mediaKind === 'video' && posters[a.fileId]" class="reg-asset-play">
+                        <font-awesome-icon icon="play" />
                     </span>
                     <button type="button" class="reg-asset-del" :title="$t('common.delete')" @click.stop="removeAttachment(i)">
                         <font-awesome-icon icon="times" />
@@ -334,6 +344,7 @@
 
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
+import { videoPoster } from '@/utils/videoPoster';
 import FilePickerDialog from '@/components/notes/FilePickerDialog.vue';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import { defaultUploadFolder, uploadOne, importUrlToBed } from '@/utils/uploadTarget';
@@ -418,6 +429,8 @@ export default {
             attachmentViews: [],
             /** 附件 id → 视图，选文件 / 上传 / 编辑回填时缓存，避免重复请求 */
             attachMap: {},
+            /** v1.3.5.10：视频首帧（fileId → dataURL） */
+            posters: {},
             targetVisible: false,
             uploadPrefill: {},
             uploadHint: '',
@@ -567,6 +580,16 @@ export default {
             });
             const missing = ids.filter((id) => !this.attachMap[id]);
             if (missing.length) this.fetchAttachmentViews(missing);
+            this.loadVideoPosters();
+        },
+        /** v1.3.5.10：附件里的视频抽首帧（按 fileId 缓存，失败就保留胶片图标） */
+        loadVideoPosters() {
+            for (const a of this.attachmentViews || []) {
+                if (a.mediaKind !== 'video' || this.posters[a.fileId]) continue;
+                videoPoster(a.url).then((dataUrl) => {
+                    if (dataUrl) this.posters = { ...this.posters, [a.fileId]: dataUrl };
+                }).catch(() => {});
+            }
         },
         async fetchAttachmentViews(ids) {
             try {
@@ -1140,6 +1163,23 @@ export default {
     height: 100%;
     object-fit: cover;
     display: block;
+}
+
+.reg-asset-video {
+    object-fit: contain;
+    background: #000;
+}
+
+.reg-asset-play {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 15px;
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+    pointer-events: none;
 }
 
 .reg-asset-cover {

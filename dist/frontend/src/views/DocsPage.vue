@@ -1070,6 +1070,30 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1310',
+      title: '七十一、v1.3.5.10 更新要点',
+      intro: '这一版重做统计图表的「总范围 + 默认项 + 自定义项」三层口径，发布页的登记卡片也按瞬间内容区的样式补齐了附件灯箱、全文折叠与更多菜单。',
+      items: [
+        { t: '表单视频封面', d: '登记表单里的附件如果是视频，会自动抽首帧当缩略图（抽不到才显示胶片图标），并带播放角标。' },
+        { t: '刷新按钮修复', d: '发布页顶栏的「刷新」现在也会重新加载登记类内容。' },
+        { t: '登记卡片重排', d: '条目挪到时间行的下一行，格式为「@条目 (上次 4500 元 / 43 天前)」；条目改动会同步刷新上次的金额与天数。' },
+        { t: '附件一行上限', d: '桌面一行最多 10 个、手机 6 个，尺寸不变；超出的部分在最后一格叠「+N」，点开可在灯箱里翻完全部。' },
+        { t: '系统灯箱', d: '点附件改用系统灯箱浏览，右上角有「详情」按钮，手机上滑也能进文件详情；原来那行「附件数量」已移除。' },
+        { t: '更多菜单', d: '标签行末尾新增「更多」按钮，「编辑」「删除」收进菜单，不再常驻两个操作按钮。' },
+        { t: '详情全文', d: '详情超过高度时在末尾显示「全文」，点开变「收起」，与瞬间内容区的折叠逻辑一致。' },
+        { t: '数值颜色', d: '有「+」号的数值为红色、有「-」号的为绿色、既无加号也无减号的用正文色，三种情况颜色各不相同。' },
+        { t: '标签筛选', d: '登记流水账工具栏新增标签筛选下拉框，可按标签过滤记录。' },
+        { t: '总范围扩展', d: '统计页的总范围在「类型 + 条目 + 时间段 + 用户」之外，新增发生人 / 关联人 / 地点 / 标签；条目移到第二行并加宽，人物与地点标签同排。' },
+        { t: '坐标改名', d: '「纵轴」改名为「数据源」，「横轴」改名为「时间源」。' },
+        { t: '图例默认项', d: '图例项改为「默认项 + 项1~项3」，默认项就是总范围本身且不可删除；只有总范围选中条目后才能添加自定义项，且自定义项的条目必须与总范围条目「单位 + 分母」一致。' },
+        { t: '图表形态', d: '移除「分布图」；只有默认项时只提供柱形 / 折线，添加自定义项后才出现圆环、条形、雷达。图表切换按钮移到图例项设置下方。' },
+        { t: '条形与雷达', d: '条形图的纵轴名称、雷达图的外围标签都换成颜色方块，名称统一写在图表下方的色块图例里。' },
+        { t: '提示增加间隔', d: '鼠标悬停（手机点按）时，除了数值与筛选条件，再显示「距离上条间隔 N 天，相差 X」。' },
+        { t: '登记管理调整', d: '「统计」按钮改名「数据统计」，刷新按钮紧跟切换按钮；卡片数值统一字号；手机上图例的地点独占一行、删除按钮移到项名行末，时间范围拆成两个日期框不再溢出屏幕。' },
+        { t: '图标补齐', d: '补齐了此前缺失的 6 个图标（展开箭头、问号、网络、加人、压缩、用户盾牌），相关按钮不再显示空白。' }
+      ]
+    },
+    {
       id: 'whatsnew-1359',
       title: '七十、v1.3.5.9 更新要点',
       intro: '这一版把「性质」从条目搬到每一条登记上，登记表单补上必填校验与 4 位小数，附件改成缩略图；发布页与统计页也按新口径重排。',
@@ -2427,6 +2451,30 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1310',
+      title: '71. What is new in v1.3.5.10',
+      intro: 'This release rebuilds the statistics chart around overall scope + a default row + custom rows, and brings the register card in line with the moment content area (lightbox, full-text collapse, more menu).',
+      items: [
+        { t: 'Video posters', d: 'Video attachments in the register form now show a first-frame thumbnail with a play badge; the film icon is only a fallback.' },
+        { t: 'Refresh fix', d: 'The refresh button on the post page now reloads register content too.' },
+        { t: 'Register card', d: 'The item moved to the line below the time, written as "@item (last 4500 / 43 days ago)".' },
+        { t: 'Attachment row', d: 'Up to 10 thumbnails on desktop and 6 on phones at a fixed size; the last tile stacks +N and opens the lightbox for the rest.' },
+        { t: 'System lightbox', d: 'Attachments open in the system lightbox with a Detail button (swipe up on phones); the old attachment count line is gone.' },
+        { t: 'More menu', d: 'A More button at the end of the tag row now holds Edit and Delete.' },
+        { t: 'Full text', d: 'Long details collapse behind a Full text / Collapse toggle, same as moments.' },
+        { t: 'Value colours', d: 'Plus values are red, minus values green, and unsigned values use the body colour.' },
+        { t: 'Tag filter', d: 'The register toolbar gains a tag filter.' },
+        { t: 'Wider scope', d: 'The overall scope now also filters by main person, related person, place and tags; the item selector moved to a wider second row.' },
+        { t: 'Renamed axes', d: 'Y axis is now "Data source" and X axis is "Time source".' },
+        { t: 'Default legend row', d: 'Legend rows are Default plus Item 1-3. The default row is the overall scope and cannot be removed; custom rows require an item in the scope and must share its unit and denominator.' },
+        { t: 'Chart types', d: 'The distribution chart is removed. With only the default row you get bar and line; doughnut, horizontal bar and radar appear once a custom row exists. The switcher moved below the legend.' },
+        { t: 'Bar and radar', d: 'The horizontal bar axis labels and radar perimeter labels are colour squares; names appear in the colour legend under the chart.' },
+        { t: 'Gap tooltip', d: 'Hovering a point also shows "N days since the previous point, changed by X".' },
+        { t: 'Register admin', d: 'The Statistics tab is renamed Data, refresh sits right after the switch, card values share one size, the mobile legend gives place its own row with delete at the row end, and the date range becomes two pickers that no longer overflow.' },
+        { t: 'Icons', d: 'Six previously missing icons are registered, so those buttons no longer render blank.' }
       ]
     },
     {
