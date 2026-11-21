@@ -46,14 +46,29 @@ function parseArr(raw) {
         return [];
     }
 }
+function isoWeek(d) {
+    const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    const day = t.getUTCDay() || 7;
+    t.setUTCDate(t.getUTCDate() + 4 - day);
+    const year = t.getUTCFullYear();
+    const start = new Date(Date.UTC(year, 0, 1));
+    const week = Math.ceil((((t.getTime() - start.getTime()) / 86400000) + 1) / 7);
+    return { year, week };
+}
 function bucketKey(d, bucket) {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     if (bucket === 'year')
         return `${y}`;
+    if (bucket === 'quarter')
+        return `${y}-Q${Math.floor(d.getMonth() / 3) + 1}`;
     if (bucket === 'month')
         return `${y}-${m}`;
+    if (bucket === 'week') {
+        const w = isoWeek(d);
+        return `${w.year}-W${String(w.week).padStart(2, '0')}`;
+    }
     return `${y}-${m}-${day}`;
 }
 function bucketLabel(key) {
@@ -94,7 +109,7 @@ let RegService = class RegService {
             return [];
         const counts = await prisma_1.prisma.regEntry.groupBy({
             by: ['trackerId'],
-            where: { trackerId: { in: rows.map((r) => r.id) } },
+            where: { trackerId: { in: rows.map((r) => r.id) }, deletedAt: null },
             _count: { _all: true },
         });
         const map = new Map(counts.map((c) => [c.trackerId, c._count._all]));
@@ -218,6 +233,7 @@ let RegService = class RegService {
         const where = {
             owner: String(q.owner || ''),
             instanceId: String(q.instanceId || ''),
+            deletedAt: q.trash ? { not: null } : null,
         };
         if (q.trackerId)
             where.trackerId = String(q.trackerId);
@@ -271,7 +287,7 @@ let RegService = class RegService {
             return map;
         const latest = rows.reduce((max, r) => Math.max(max, r.occurredAt.getTime()), 0);
         const history = await prisma_1.prisma.regEntry.findMany({
-            where: { trackerId: { in: ids }, owner: String(owner || ''), instanceId, occurredAt: { lte: new Date(latest) } },
+            where: { trackerId: { in: ids }, owner: String(owner || ''), instanceId, deletedAt: null, occurredAt: { lte: new Date(latest) } },
             orderBy: { occurredAt: 'desc' },
             take: 1000,
             select: { id: true, trackerId: true, occurredAt: true, amount: true, quantity: true, tracker: { select: { unit: true, portion: true } } },
@@ -457,11 +473,57 @@ let RegService = class RegService {
         return { id: updated.id };
     }
     async removeEntry(id, owner) {
-        const existed = await prisma_1.prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || '') } });
+        const existed = await prisma_1.prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || ''), deletedAt: null } });
         if (!existed)
             return { error: '登记不存在或无权删除' };
+        await prisma_1.prisma.regEntry.update({ where: { id: existed.id }, data: { deletedAt: new Date() } });
+        return { id: existed.id, trashed: true };
+    }
+    async restoreEntry(id, owner) {
+        const existed = await prisma_1.prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || ''), deletedAt: { not: null } } });
+        if (!existed)
+            return { error: '回收站里没有这条登记' };
+        await prisma_1.prisma.regEntry.update({ where: { id: existed.id }, data: { deletedAt: null } });
+        return { id: existed.id };
+    }
+    async purgeEntry(id, owner) {
+        const existed = await prisma_1.prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || ''), deletedAt: { not: null } } });
+        if (!existed)
+            return { error: '回收站里没有这条登记' };
         await prisma_1.prisma.regEntry.delete({ where: { id: existed.id } });
         return { id: existed.id };
+    }
+    async exportCsv(owner, instanceId) {
+        const rows = await prisma_1.prisma.regEntry.findMany({
+            where: { owner: String(owner || ''), instanceId: String(instanceId || ''), deletedAt: null },
+            include: {
+                tracker: { select: { name: true, valueType: true, unit: true, portion: true } },
+            },
+            orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+        });
+        const typeLabels = {
+            stock: '存量', flow: '流水', count: '计数', duration: '时长', ratio: '比例', price: '单价',
+        };
+        const dirLabels = { 0: '无', 1: '收入', [-1]: '支出' };
+        const c = (v) => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`;
+        const dt = (d) => {
+            if (!d)
+                return '';
+            const p = (n) => String(n).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+        };
+        const heads = ['标题', '详情', '地点', '发生时间', '起始时间', '截止时间', '登记时间', '条目名称', '类型名称', '性质名称', '登记数值', '份量', '单位', '分母', '币种', '发生对象', '关联对象'];
+        const lines = [heads.map(c).join(',')];
+        for (const r of rows) {
+            const tk = r.tracker || {};
+            lines.push([
+                c(r.title), c(r.event), c(r.placeName), c(dt(r.occurredAt)), c(dt(r.startAt)), c(dt(r.dueAt)),
+                c(dt(r.createdAt)), c(tk.name || ''), c(typeLabels[String(tk.valueType || '')] || String(tk.valueType || '')),
+                c(dirLabels[Number(r.direction) || 0] || '无'), c(r.amount), c(r.quantity),
+                c(tk.unit || ''), c(tk.portion || ''), c(r.currency), c(r.subjectName), c(r.relatedName),
+            ].join(','));
+        }
+        return `\uFEFF${lines.join('\r\n')}\r\n`;
     }
     axisField(v) {
         const s = String(v || '');
@@ -479,52 +541,64 @@ let RegService = class RegService {
         const instanceId = String(q.instanceId || '');
         const axisX = this.axisField(q.axisX);
         const axisY = exports.REG_AXIS_Y.includes(String(q.axisY || '')) ? String(q.axisY) : 'value';
-        const bucket = ['day', 'month', 'year'].includes(String(q.bucket || '')) ? String(q.bucket) : 'month';
-        const baseWhere = { instanceId };
+        const bucket = ['day', 'week', 'month', 'quarter', 'year'].includes(String(q.bucket || '')) ? String(q.bucket) : 'month';
+        const baseWhere = { instanceId, deletedAt: null };
         if (String(q.scope || 'me') !== 'all')
             baseWhere.owner = String(q.owner || '');
         const type = String(q.type || '').trim();
         const trackerWhere = {};
         if (type && exports.REG_VALUE_TYPES.includes(type))
             trackerWhere.valueType = type;
-        if (q.trackerId)
-            baseWhere.trackerId = String(q.trackerId);
-        else if (q.trackerName)
+        if (q.trackerName)
             trackerWhere.name = String(q.trackerName);
         if (Object.keys(trackerWhere).length)
             baseWhere.tracker = trackerWhere;
         if (String(q.tag || '').trim()) {
             baseWhere.tagLinks = { some: { tag: { name: String(q.tag).trim() } } };
         }
+        const from = dateOf(q.from);
+        const to = dateOf(q.to);
+        const totalWhere = { ...baseWhere };
+        if (from || to)
+            totalWhere[axisX] = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
+        const defaultWhere = { ...totalWhere };
+        if (q.trackerId)
+            defaultWhere.trackerId = String(q.trackerId);
         if (String(q.subjectName || '').trim())
-            baseWhere.subjectName = String(q.subjectName).trim();
+            defaultWhere.subjectName = String(q.subjectName).trim();
         if (String(q.relatedName || '').trim())
-            baseWhere.relatedName = String(q.relatedName).trim();
+            defaultWhere.relatedName = String(q.relatedName).trim();
         if (String(q.placeName || '').trim())
-            baseWhere.placeName = String(q.placeName).trim();
+            defaultWhere.placeName = String(q.placeName).trim();
         const totalTags = (Array.isArray(q.tags) ? q.tags : String(q.tags || '').split(','))
             .map((t) => String(t || '').trim())
             .filter(Boolean)
             .slice(0, 10);
         if (totalTags.length) {
-            const and = Array.isArray(baseWhere.AND) ? baseWhere.AND : [];
+            const and = Array.isArray(defaultWhere.AND) ? defaultWhere.AND : [];
             for (const t of totalTags)
                 and.push({ tagLinks: { some: { tag: { name: t } } } });
-            baseWhere.AND = and;
+            defaultWhere.AND = and;
         }
-        const from = dateOf(q.from);
-        const to = dateOf(q.to);
-        const who = { ...baseWhere };
-        if (from || to)
-            who[axisX] = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
+        const hasDefaultExtra = Object.keys(defaultWhere).length !== Object.keys(totalWhere).length;
         const rows = await prisma_1.prisma.regEntry.findMany({
-            where: who,
+            where: defaultWhere,
             include: {
                 tracker: { select: { id: true, name: true, valueType: true, unit: true, portion: true } },
                 tagLinks: { select: { tag: { select: { name: true } } } },
             },
             orderBy: { occurredAt: 'asc' },
         });
+        const chartRows = hasDefaultExtra
+            ? await prisma_1.prisma.regEntry.findMany({
+                where: totalWhere,
+                include: {
+                    tracker: { select: { id: true, name: true, valueType: true, unit: true, portion: true } },
+                    tagLinks: { select: { tag: { select: { name: true } } } },
+                },
+                orderBy: { occurredAt: 'asc' },
+            })
+            : rows;
         let total = 0;
         let quantity = 0;
         let max = Number.NEGATIVE_INFINITY;
@@ -545,8 +619,9 @@ let RegService = class RegService {
             if (m < min)
                 min = m;
             const k = bucketKey(r.occurredAt, bucket);
-            const b = buckets.get(k) || { key: k, sum: 0, count: 0, quantity: 0 };
+            const b = buckets.get(k) || { key: k, sum: 0, metric: 0, count: 0, quantity: 0 };
             b.sum += v;
+            b.metric += m;
             b.count += 1;
             b.quantity += num(r.quantity, 1);
             buckets.set(k, b);
@@ -571,12 +646,16 @@ let RegService = class RegService {
             series[i].diff = cur - prev;
             series[i].pct = prev ? ((cur - prev) / Math.abs(prev)) * 100 : null;
         }
-        const derive = this.buildDerive(rows, series, from, to);
+        const derive = this.buildDerive(rows, series, from, to, axisY);
         const compare = String(q.compare || '') === 'year'
-            ? await this.buildYoy(baseWhere, axisX, from, to, bucket, total, axisY)
+            ? await this.buildYoy(defaultWhere, axisX, from, to, bucket, total, axisY)
             : null;
         const legends = this.normalizeLegends(q.legends);
-        const chart = this.buildChart(rows, { axisX, axisY, bucket, from, to, legends });
+        const defaultLegend = legends.find((l) => l.isDefault);
+        if (defaultLegend && !defaultLegend.trackerId && !defaultLegend.trackerName && q.trackerId) {
+            defaultLegend.trackerId = String(q.trackerId);
+        }
+        const chart = this.buildChart(legends.length ? chartRows : rows, { axisX, axisY, bucket, from, to, legends });
         if (!legends.some((l) => !l.isDefault) && unitKeys.size > 1) {
             chart.unit = '';
             chart.portion = '';
@@ -628,7 +707,7 @@ let RegService = class RegService {
         if (!Array.isArray(arr))
             return [];
         return arr
-            .slice(0, 4)
+            .slice(0, 6)
             .map((x) => ({
             name: String(x?.name || ''),
             isDefault: !!x?.isDefault,
@@ -696,9 +775,9 @@ let RegService = class RegService {
                 if (lg.placeName)
                     cond.push(`地点=${lg.placeName}`);
                 if (lg.subjectName)
-                    cond.push(`发生人=${lg.subjectName}`);
+                    cond.push(`发生对象=${lg.subjectName}`);
                 if (lg.relatedName)
-                    cond.push(`关联人=${lg.relatedName}`);
+                    cond.push(`关联对象=${lg.relatedName}`);
                 if (tags.length)
                     cond.push(`标签=${tags.join('+')}`);
             }
@@ -722,15 +801,9 @@ let RegService = class RegService {
             keys = this.fillBuckets(from, to, bucket);
         if (!keys.length) {
             const set = new Set();
-            for (const r of rows) {
-                const d = this.axisDate(r, axisX);
-                if (d)
-                    set.add(bucketKey(d, bucket));
-            }
-            if (!set.size)
-                for (const g of per)
-                    for (const k of g.map.keys())
-                        set.add(k);
+            for (const g of per)
+                for (const k of g.map.keys())
+                    set.add(k);
             keys = Array.from(set).sort((a, b) => a.localeCompare(b));
         }
         const labels = keys.map((k) => bucketLabel(k));
@@ -750,6 +823,25 @@ let RegService = class RegService {
         if (bucket === 'year') {
             for (let y = from.getFullYear(); y <= to.getFullYear() && out.length < 400; y += 1) {
                 out.push(String(y));
+            }
+            return out;
+        }
+        if (bucket === 'quarter') {
+            const cur = new Date(from.getFullYear(), Math.floor(from.getMonth() / 3) * 3, 1);
+            const end = new Date(to.getFullYear(), Math.floor(to.getMonth() / 3) * 3, 1);
+            while (cur <= end && out.length < 400) {
+                out.push(`${cur.getFullYear()}-Q${Math.floor(cur.getMonth() / 3) + 1}`);
+                cur.setMonth(cur.getMonth() + 3);
+            }
+            return out;
+        }
+        if (bucket === 'week') {
+            const cur = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+            const day = cur.getDay() || 7;
+            cur.setDate(cur.getDate() - (day - 1));
+            while (cur <= to && out.length < 400) {
+                out.push(bucketKey(cur, 'week'));
+                cur.setDate(cur.getDate() + 7);
             }
             return out;
         }
@@ -794,17 +886,19 @@ let RegService = class RegService {
         }
         return out;
     }
-    buildDerive(rows, series, from, to) {
+    buildDerive(rows, series, from, to, axisY = 'value') {
         let sumValue = 0;
         let sumQty = 0;
+        let sumMetric = 0;
         for (const r of rows) {
             sumValue += num(r.amount) * (r.quantity === 0 ? 1 : num(r.quantity, 1));
             sumQty += num(r.quantity, 1);
+            sumMetric += this.metricOf(r, axisY);
         }
         const unitPrice = sumQty > 0 ? sumValue / sumQty : null;
         let acc = 0;
         const balance = series.map((b) => {
-            acc += num(b.sum);
+            acc += num(b.metric !== undefined ? b.metric : b.sum);
             return { key: b.key, value: acc };
         });
         const intervals = [];
@@ -819,7 +913,7 @@ let RegService = class RegService {
         const start = from || (rows.length ? rows[0].occurredAt : null);
         const end = to || (rows.length ? rows[rows.length - 1].occurredAt : null);
         const spanDays = start && end ? Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1) : 0;
-        const perDay = spanDays ? sumQty / spanDays : null;
+        const perDay = spanDays ? sumMetric / spanDays : null;
         return {
             unitPrice,
             balance,
@@ -907,56 +1001,10 @@ let RegService = class RegService {
         await prisma_1.prisma.regReport.delete({ where: { id: existed.id } });
         return { id: existed.id };
     }
-    async listUnits(owner, instanceId) {
-        const rows = await prisma_1.prisma.regUnit.findMany({
-            where: { owner: String(owner || ''), instanceId: String(instanceId || '') },
-            orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
-        });
-        return rows.map((r) => ({ ...r, createdAt: r.createdAt.getTime() }));
-    }
-    async saveUnit(input, owner) {
-        const name = String(input.name || '').trim().slice(0, 24);
-        if (!name)
-            return { error: '单位名称不能为空' };
-        const instanceId = String(input.instanceId || '');
-        const existed = input.id
-            ? await prisma_1.prisma.regUnit.findFirst({ where: { id: String(input.id), owner } })
-            : await prisma_1.prisma.regUnit.findFirst({ where: { owner, instanceId, name } });
-        if (existed) {
-            const row = await prisma_1.prisma.regUnit.update({
-                where: { id: existed.id },
-                data: {
-                    name,
-                    kind: String(input.kind || existed.kind).slice(0, 24),
-                    factor: num(input.factor, existed.factor),
-                    baseUnit: String(input.baseUnit === undefined ? existed.baseUnit : input.baseUnit).slice(0, 24),
-                },
-            });
-            return { id: row.id };
-        }
-        const row = await prisma_1.prisma.regUnit.create({
-            data: {
-                owner,
-                instanceId,
-                name,
-                kind: String(input.kind || 'count').slice(0, 24),
-                factor: num(input.factor, 1),
-                baseUnit: String(input.baseUnit || '').slice(0, 24),
-            },
-        });
-        return { id: row.id };
-    }
-    async removeUnit(id, owner) {
-        const existed = await prisma_1.prisma.regUnit.findFirst({ where: { id: String(id || ''), owner } });
-        if (!existed)
-            return { error: '单位不存在' };
-        await prisma_1.prisma.regUnit.delete({ where: { id: existed.id } });
-        return { id: existed.id };
-    }
     async candidates(owner, instanceId) {
         const [rows, trackers] = await Promise.all([
             prisma_1.prisma.regEntry.findMany({
-                where: { owner: String(owner || ''), instanceId: String(instanceId || '') },
+                where: { owner: String(owner || ''), instanceId: String(instanceId || ''), deletedAt: null },
                 select: { placeName: true, subjectName: true, relatedName: true },
                 orderBy: { occurredAt: 'desc' },
                 take: 500,
@@ -996,7 +1044,7 @@ let RegService = class RegService {
     async legendOptions(q) {
         const instanceId = String(q.instanceId || '');
         const axisX = this.axisField(q.axisX);
-        const where = { instanceId };
+        const where = { instanceId, deletedAt: null };
         if (String(q.scope || 'me') !== 'all')
             where.owner = String(q.owner || '');
         if (q.trackerId)

@@ -362,10 +362,21 @@ async function bootstrap() {
         res.setHeader('Content-Encoding', 'gzip');
         res.setHeader('Vary', 'Accept-Encoding');
         res.setHeader('Content-Length', String(body.length));
+        /*
+         * v1.3.6：HTML 一律 no-store（连磁盘缓存都不留），
+         * 保证重新打开页面一定会拿到新的入口文件与新的哈希资源；
+         * 带内容哈希的 assets 仍可永久缓存。
+         */
         res.setHeader(
           'Cache-Control',
-          /[/\\]assets[/\\]/.test(full) ? 'public, max-age=31536000, immutable' : 'no-cache',
+          /[/\\]assets[/\\]/.test(full)
+            ? 'public, max-age=31536000, immutable'
+            : (ext === '.html' ? 'no-store, no-cache, must-revalidate' : 'no-cache'),
         );
+        if (ext === '.html') {
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
+        }
         if (req.method === 'HEAD') return res.status(200).end();
         return res.status(200).end(body);
       } catch (e) {
@@ -378,6 +389,10 @@ async function bootstrap() {
       setHeaders(res, filePath) {
         if (/[/\\]assets[/\\]/.test(filePath)) {
           res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        } else if (/\.html?$/i.test(filePath)) {
+          res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          res.setHeader('Pragma', 'no-cache');
+          res.setHeader('Expires', '0');
         } else {
           res.setHeader('Cache-Control', 'no-cache');
         }
@@ -397,8 +412,10 @@ async function bootstrap() {
       // 显式声明「只接受非 HTML」的请求不回落（例如脚本抓取 JSON 资源）
       const accept = req.headers.accept || '';
       if (accept && !accept.includes('*/*') && !accept.includes('text/html')) return next();
-      // v2.8.2：index.html 协商缓存 —— 更新后浏览器总能立刻拿到新版本入口
-      res.setHeader('Cache-Control', 'no-cache');
+      // v2.8.2：index.html 协商缓存；v1.3.6 起改为 no-store，绝不复用旧入口
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       return res.sendFile(join(frontendDir, 'index.html'));
     });
   }

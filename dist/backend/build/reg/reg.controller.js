@@ -76,9 +76,17 @@ let RegController = class RegController {
             to: q.to || '',
             keyword: q.keyword || '',
             tag: q.tag || '',
+            trash: q.trash === '1' || q.trash === 'true',
             page: Number(q.page) || 1,
             pageSize: Number(q.pageSize) || 20,
         });
+    }
+    async exportCsv(req, res, instanceId) {
+        const { viewer } = this.ctx(req);
+        const csv = await this.reg.exportCsv(viewer, instanceId || '');
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        return res.send(csv);
     }
     async createEntry(req, body) {
         const { viewer } = this.ctx(req);
@@ -99,6 +107,22 @@ let RegController = class RegController {
     async removeEntry(req, id) {
         const { viewer } = this.ctx(req);
         const r = await this.reg.removeEntry(id, viewer);
+        if ('error' in r && r.error) {
+            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
+        }
+        return { success: true, ...r };
+    }
+    async restoreEntry(req, id) {
+        const { viewer } = this.ctx(req);
+        const r = await this.reg.restoreEntry(id, viewer);
+        if ('error' in r && r.error) {
+            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
+        }
+        return { success: true, ...r };
+    }
+    async purgeEntry(req, id) {
+        const { viewer } = this.ctx(req);
+        const r = await this.reg.purgeEntry(id, viewer);
         if ('error' in r && r.error) {
             throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
         }
@@ -143,26 +167,6 @@ let RegController = class RegController {
             from: q.from || '',
             to: q.to || '',
         });
-    }
-    async units(req, instanceId) {
-        const { viewer } = this.ctx(req);
-        return this.reg.listUnits(viewer, instanceId || '');
-    }
-    async saveUnit(req, body) {
-        const { viewer } = this.ctx(req);
-        const r = await this.reg.saveUnit(body, viewer);
-        if ('error' in r && r.error) {
-            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
-        }
-        return { success: true, ...r };
-    }
-    async removeUnit(req, id) {
-        const { viewer } = this.ctx(req);
-        const r = await this.reg.removeUnit(id, viewer);
-        if ('error' in r && r.error) {
-            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
-        }
-        return { success: true, ...r };
     }
     async tagCandidates(req, instanceId) {
         const { viewer } = this.ctx(req);
@@ -251,6 +255,15 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], RegController.prototype, "entries", null);
 __decorate([
+    (0, common_1.Get)('export'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Res)()),
+    __param(2, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object, String]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "exportCsv", null);
+__decorate([
     (0, common_1.Post)('entries'),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Body)()),
@@ -276,6 +289,22 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], RegController.prototype, "removeEntry", null);
 __decorate([
+    (0, common_1.Post)('entries/:id/restore'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "restoreEntry", null);
+__decorate([
+    (0, common_1.Delete)('entries/:id/purge'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "purgeEntry", null);
+__decorate([
     (0, common_1.Get)('attachments'),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Query)('ids')),
@@ -299,30 +328,6 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], RegController.prototype, "legendOptions", null);
-__decorate([
-    (0, common_1.Get)('units'),
-    __param(0, (0, common_1.Req)()),
-    __param(1, (0, common_1.Query)('instanceId')),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
-    __metadata("design:returntype", Promise)
-], RegController.prototype, "units", null);
-__decorate([
-    (0, common_1.Post)('units'),
-    __param(0, (0, common_1.Req)()),
-    __param(1, (0, common_1.Body)()),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, Object]),
-    __metadata("design:returntype", Promise)
-], RegController.prototype, "saveUnit", null);
-__decorate([
-    (0, common_1.Delete)('units/:id'),
-    __param(0, (0, common_1.Req)()),
-    __param(1, (0, common_1.Param)('id')),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
-    __metadata("design:returntype", Promise)
-], RegController.prototype, "removeUnit", null);
 __decorate([
     (0, common_1.Get)('tag-candidates'),
     __param(0, (0, common_1.Req)()),

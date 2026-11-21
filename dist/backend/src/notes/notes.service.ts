@@ -1156,6 +1156,24 @@ export class NotesService {
       bucket.set(noteKind, (bucket.get(noteKind) || 0) + 1);
       byTag.set(l.tagId, bucket);
     }
+    /*
+     * v1.3.6：登记标签的关联不在 note_tag 里，单独按 reg_entry_tags 计数。
+     * 不补这一段，标签管理面板会因为「计数为 0」把登记标签全部过滤掉。
+     */
+    if (String(kind || '') === 'register') {
+      const regLinks = await prisma.regEntryTag.findMany({
+        where: {
+          tagId: { in: tags.map((t) => t.id) },
+          entry: { owner: String(viewer || ''), instanceId: String(instanceId || ''), deletedAt: null },
+        },
+        select: { tagId: true },
+      });
+      for (const l of regLinks) {
+        const bucket = byTag.get(l.tagId) || new Map<string, number>();
+        bucket.set('register', (bucket.get('register') || 0) + 1);
+        byTag.set(l.tagId, bucket);
+      }
+    }
     const out = tags.map((t) => {
       const bucket = byTag.get(t.id) || new Map<string, number>();
       const kindCounts: Record<string, number> = {};

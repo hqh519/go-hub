@@ -923,7 +923,7 @@ model RegEntry {
   occurredAt  DateTime
   startAt     DateTime?
   dueAt       DateTime?
-  /// 发生人 / 关联人（字符串，免建人物表；候选来自历史值）
+  /// 发生对象 / 关联对象（字符串，免建人物表；候选来自历史值）
   subjectName String    @default("")
   relatedName String    @default("")
   placeName   String    @default("")
@@ -942,6 +942,8 @@ model RegEntry {
   docNoteId   String    @default("")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+  /// v1.3.6：软删除 —— 删除先进回收站，恢复 / 彻底删除分开
+  deletedAt   DateTime?
 
   tracker  RegTracker    @relation(fields: [trackerId], references: [id], onDelete: Cascade)
   tagLinks RegEntryTag[]
@@ -952,6 +954,7 @@ model RegEntry {
   /// v1.3.5.8：横轴可切到起始时间 / 登记时间，给这两条查询路径补索引
   @@index([owner, instanceId, startAt])
   @@index([owner, instanceId, createdAt])
+  @@index([owner, instanceId, deletedAt])
   @@map("reg_entries")
 }
 
@@ -968,23 +971,6 @@ model RegEntryTag {
   @@id([entryId, tagId])
   @@index([tagId])
   @@map("reg_entry_tags")
-}
-
-/// 自定义单位（登记管理页的「登记设置」里维护）
-model RegUnit {
-  id         String   @id @default(cuid())
-  owner      String   @default("")
-  instanceId String   @default("")
-  name       String
-  /// currency|count|weight|length|volume|time|ratio|compound
-  kind       String   @default("count")
-  factor     Float    @default(1)
-  baseUnit   String   @default("")
-  sort       Int      @default(0)
-  createdAt  DateTime @default(now())
-
-  @@unique([owner, instanceId, name])
-  @@map("reg_units")
 }
 
 /// v1.3.5.4（P2）：保存的统计报表（查询条件 + 名称）

@@ -2,7 +2,7 @@
     <!--
         v1.3.5.8 登记管理（/reg）
         ----------------------------------------------------------------------------
-        · 概览卡片：只跟「总范围」（类型 + 条目 + 时间 + 用户口径），图例不影响卡片；
+        · 概览卡片：跟「总范围配置 + 默认项配置」，自定义图例不影响卡片；
         · 统计图表：横轴 = 时间范围，纵轴 = 数据口径，图例 1~5 = 筛选条件；
         · 设置：条目管理（改名 / 改类型 / 改单位 / 改分母 / 改性质 / 合并 / 删除）与自定义单位。
     -->
@@ -42,11 +42,15 @@
 
         <section v-if="tab === 'stats'" class="reg-stats">
             <!--
-                v1.3.5.10 总范围（全局）：登记类型 + 条目 + 时间段 + 用户。
-                第二行是「默认项」的可选条件：发生人 / 关联人 / 地点 / 标签，
-                它们同样参与卡片统计，但不影响自定义图例项的条目候选。
+                v1.3.5.10 总范围配置（全局）：登记类型 + 时间段 + 用户。
+                默认项的附属条件（发生人 / 关联人 / 地点 / 标签）单独放在下一组，
+                自定义图例项只受这一组影响，不再继承默认项的附属条件。
             -->
-            <div class="reg-filters">
+            <div class="reg-filters is-group">
+                <div class="reg-group-head">
+                    <span class="reg-group-title">{{ $t('reg.groupScope') }}</span>
+                    <span class="reg-group-sub">{{ $t('reg.groupScopeSub') }}</span>
+                </div>
                 <div class="reg-f-item">
                     <span class="reg-f-label">{{ $t('reg.typeScope') }}</span>
                     <el-select v-model="typeFilter" size="small" class="reg-f-type" @change="onTypeChange">
@@ -96,27 +100,20 @@
                     </div>
                 </template>
                 <div class="reg-f-item">
-                    <span class="reg-f-label">{{ $t('reg.bucketLabel') }}</span>
-                    <el-select v-model="bucket" size="small" class="reg-f-bucket" @change="loadStats">
-                        <el-option :label="$t('reg.bucketDay')" value="day" />
-                        <el-option :label="$t('reg.bucketMonth')" value="month" />
-                        <el-option :label="$t('reg.bucketYear')" value="year" />
-                    </el-select>
-                </div>
-                <div class="reg-f-item">
                     <span class="reg-f-label">{{ $t('reg.scopeLabel') }}</span>
                     <el-select v-model="scope" size="small" class="reg-f-scope" @change="onTotalRangeChange">
                         <el-option :label="$t('reg.scopeMe')" value="me" />
                         <el-option :label="$t('reg.scopeAll')" value="all" />
                     </el-select>
                 </div>
-                <el-checkbox v-model="compareYear" class="reg-f-compare" @change="loadStats">
-                    {{ $t('reg.compareYear') }}
-                </el-checkbox>
             </div>
 
-            <!-- 第二行：条目 + 「默认项」的四个人物 / 地点 / 标签条件 -->
-            <div class="reg-filters">
+            <!-- 第二组：默认项配置（条目 + 附属条件；只叠加在总范围配置之上） -->
+            <div class="reg-filters is-group">
+                <div class="reg-group-head">
+                    <span class="reg-group-title">{{ $t('reg.groupDefault') }}</span>
+                    <span class="reg-group-sub">{{ $t('reg.groupDefaultSub') }}</span>
+                </div>
                 <div class="reg-f-item is-grow">
                     <span class="reg-f-label">{{ $t('reg.fieldItem') }}</span>
                     <el-select
@@ -157,8 +154,12 @@
                 </div>
             </div>
 
-            <!-- 坐标设置：数据源（纵轴）+ 时间源（横轴） -->
-            <div class="reg-filters reg-filters-axes">
+            <!-- 第三组：统计源配置（数据源 + 时间源 + 周期） -->
+            <div class="reg-filters reg-filters-axes is-group">
+                <div class="reg-group-head">
+                    <span class="reg-group-title">{{ $t('reg.groupSource') }}</span>
+                    <span class="reg-group-sub">{{ $t('reg.groupSourceSub') }}</span>
+                </div>
                 <div class="reg-f-item">
                     <span class="reg-f-label">{{ $t('reg.axisYTitle') }}</span>
                     <el-radio-group v-model="axisY" size="small" @change="loadStats">
@@ -181,59 +182,78 @@
                         </button>
                     </div>
                 </div>
-            </div>
-
-            <div class="reg-cards">
-                <div class="reg-card">
-                    <span class="reg-card-label">{{ $t('reg.statTotal') }}</span>
-                    <span class="reg-card-value">{{ fmt(stats.total) }}<em>{{ metricUnit }}</em></span>
-                </div>
-                <div class="reg-card">
-                    <span class="reg-card-label">{{ $t('reg.statCountQty') }}</span>
-                    <span class="reg-card-value"><em class="is-lead">{{ stats.count }}</em> / {{ fmt(stats.quantity) }}</span>
-                </div>
-                <div class="reg-card">
-                    <span class="reg-card-label">{{ $t('reg.statAvg') }}</span>
-                    <span class="reg-card-value">{{ fmt(stats.avg) }}<em>{{ metricUnit }}</em></span>
-                </div>
-                <!-- v1.3.5.9：单价卡片挪到「平均」后面 -->
-                <div class="reg-card">
-                    <span class="reg-card-label">{{ $t('reg.deriveUnitPrice') }}</span>
-                    <span class="reg-card-value is-small">
-                        {{ !stats.derive || stats.derive.unitPrice === null ? '—' : fmt(stats.derive.unitPrice) }}
-                        <em v-if="stats.derive && stats.derive.unitPrice !== null">{{ metricUnit }}</em>
-                    </span>
+                <!-- v1.3.5.10：周期挪到时间源后面 -->
+                <div class="reg-f-item">
+                    <span class="reg-f-label">{{ $t('reg.bucketLabel') }}</span>
+                    <el-select v-model="bucket" size="small" class="reg-f-bucket" @change="loadStats">
+                        <el-option :label="$t('reg.bucketDay')" value="day" />
+                        <el-option :label="$t('reg.bucketWeek')" value="week" />
+                        <el-option :label="$t('reg.bucketMonth')" value="month" />
+                        <el-option :label="$t('reg.bucketQuarter')" value="quarter" />
+                        <el-option :label="$t('reg.bucketYear')" value="year" />
+                    </el-select>
                 </div>
             </div>
 
-            <div v-if="stats.derive" class="reg-cards reg-cards-derive">
-                <div class="reg-card">
-                    <span class="reg-card-label">{{ $t('reg.statMaxMin') }}</span>
-                    <span class="reg-card-value is-small">{{ fmt(stats.max) }} / {{ fmt(stats.min) }}</span>
+            <!-- 第四组：数据卡片（只跟「总范围配置 + 默认项配置」走） -->
+            <div class="reg-card-block">
+                <div class="reg-group-head">
+                    <span class="reg-group-title">{{ $t('reg.groupCards') }}</span>
+                    <span class="reg-group-sub">{{ $t('reg.groupCardsSub') }}</span>
                 </div>
-                <div class="reg-card">
-                    <span class="reg-card-label">{{ $t('reg.deriveInterval') }}</span>
-                    <span class="reg-card-value is-small">
-                        {{ stats.derive.interval.avgDays === null ? '—' : fmt(stats.derive.interval.avgDays) }}
-                        <em v-if="stats.derive.interval.avgDays !== null">{{ $t('reg.days') }}</em>
-                    </span>
+                <div class="reg-cards">
+                    <div class="reg-card">
+                        <span class="reg-card-label">{{ $t('reg.statTotal') }}</span>
+                        <span class="reg-card-value">{{ fmt(stats.total) }}<em v-if="cardUnit">{{ cardUnit }}</em></span>
+                    </div>
+                    <div class="reg-card">
+                        <span class="reg-card-label">{{ $t('reg.statCountQty') }}</span>
+                        <span class="reg-card-value"><em class="is-lead">{{ stats.count }}</em> / {{ fmt(stats.quantity) }}</span>
+                    </div>
+                    <div class="reg-card">
+                        <span class="reg-card-label">{{ $t('reg.statAvg') }}</span>
+                        <span class="reg-card-value">{{ fmt(stats.avg) }}<em>{{ metricUnit }}</em></span>
+                    </div>
+                    <!-- v1.3.5.9：单价卡片挪到「平均」后面 -->
+                    <div class="reg-card">
+                        <span class="reg-card-label">{{ $t('reg.deriveUnitPrice') }}</span>
+                        <span class="reg-card-value is-small">
+                            {{ !stats.derive || stats.derive.unitPrice === null ? '—' : fmt(stats.derive.unitPrice) }}
+                            <em v-if="stats.derive && stats.derive.unitPrice !== null">{{ unitPriceUnit }}</em>
+                        </span>
+                    </div>
                 </div>
-                <div class="reg-card">
-                    <span class="reg-card-label">{{ $t('reg.deriveSpeed') }}</span>
-                    <span class="reg-card-value is-small">
-                        {{ stats.derive.speed.perDay === null ? '—' : fmt(stats.derive.speed.perDay) }}
-                        <em v-if="stats.derive.speed.perDay !== null">/{{ $t('reg.day') }}</em>
-                    </span>
-                </div>
-                <div class="reg-card">
-                    <span class="reg-card-label">{{ $t('reg.deriveBalance') }}</span>
-                    <span class="reg-card-value is-small">{{ fmt(balanceLast) }}<em>{{ metricUnit }}</em></span>
+
+                <div v-if="stats.derive" class="reg-cards reg-cards-derive">
+                    <div class="reg-card">
+                        <span class="reg-card-label">{{ $t('reg.statMaxMin') }}</span>
+                        <span class="reg-card-value is-small">{{ fmt(stats.max) }} / {{ fmt(stats.min) }}</span>
+                    </div>
+                    <div class="reg-card">
+                        <span class="reg-card-label">{{ $t('reg.deriveInterval') }}</span>
+                        <span class="reg-card-value is-small">
+                            {{ stats.derive.interval.avgDays === null ? '—' : fmt(stats.derive.interval.avgDays) }}
+                            <em v-if="stats.derive.interval.avgDays !== null">{{ $t('reg.days') }}</em>
+                        </span>
+                    </div>
+                    <div class="reg-card">
+                        <span class="reg-card-label">{{ $t('reg.deriveSpeed') }}</span>
+                        <span class="reg-card-value is-small">
+                            {{ stats.derive.speed.perDay === null ? '—' : fmt(stats.derive.speed.perDay) }}
+                            <em v-if="stats.derive.speed.perDay !== null">{{ speedUnit }}</em>
+                        </span>
+                    </div>
+                    <div class="reg-card">
+                        <span class="reg-card-label">{{ $t('reg.deriveBalance') }}</span>
+                        <span class="reg-card-value is-small">{{ fmt(balanceLast) }}<em v-if="cardUnit">{{ cardUnit }}</em></span>
+                    </div>
                 </div>
             </div>
 
+            <!-- v1.3.5.10：同比常显，不再提供开关 -->
             <div v-if="stats.compare" class="reg-yoy">
                 <font-awesome-icon icon="chart-line" class="reg-yoy-icon" />
-                <span>{{ $t('reg.yoyTitle') }}：{{ fmt(stats.compare.total) }} {{ metricUnit }}</span>
+                <span>{{ $t('reg.yoyTitle') }}：{{ fmt(stats.compare.total) }} {{ cardUnit }}</span>
                 <em v-if="stats.compare.pct !== null" :class="{ 'is-up': stats.compare.pct >= 0 }">
                     {{ stats.compare.pct >= 0 ? '+' : '' }}{{ stats.compare.pct.toFixed(1) }}%
                 </em>
@@ -376,15 +396,23 @@
                 <div v-if="!chartHasData" class="reg-chart-empty">{{ $t('reg.noData') }}</div>
                 <div v-else class="reg-chart-scroll">
                     <div class="reg-chart-canvas" :style="chartCanvasStyle">
-                        <component :is="chartKind" :data="chartPayload" :options="chartOptions" />
+                        <component
+                            :is="chartKind"
+                            :data="chartPayload"
+                            :options="chartOptions"
+                            :plugins="chartPlugins"
+                        />
                     </div>
                 </div>
 
                 <!-- 图例条件：tooltip 之外再给出完整条件，避免只看「项1」猜不到是什么 -->
                 <!-- v1.3.5.10：圆环 / 条形 / 雷达的「颜色方块 + 名称」图例 -->
                 <div v-if="chartHasData && !isSeriesChart && seriesLegend.length" class="reg-chart-legend is-color">
-                    <span v-for="(nm, si) in seriesLegend" :key="'sl' + si" class="reg-legend-item">
-                        <i class="reg-cond-dot" :style="{ background: chartColor(si) }"></i>{{ nm }}
+                    <span v-for="(s, si) in seriesLegend" :key="'sl' + si" class="reg-legend-item is-rich">
+                        <i class="reg-cond-dot" :style="{ background: s.color }"></i>
+                        <b class="reg-legend-name">{{ s.name }}</b>
+                        <em>{{ fmt(s.total) }}{{ chartUnit ? ' ' + chartUnit : '' }}</em>
+                        <span class="reg-legend-count">{{ $t('reg.entryCount', { n: s.count }) }}</span>
                     </span>
                 </div>
 
@@ -463,33 +491,6 @@
                 </div>
             </div>
 
-            <div class="reg-set-block">
-                <div class="reg-set-block-head">
-                    <h2 class="reg-set-block-title">{{ $t('reg.unitTitle') }}</h2>
-                    <span class="reg-set-block-sub">{{ $t('reg.unitSub') }}</span>
-                </div>
-                <div class="reg-set-add">
-                    <el-input v-model="unitForm.name" size="small" class="reg-set-name" :placeholder="$t('reg.unitName')" maxlength="24" />
-                    <el-select v-model="unitForm.kind" size="small" class="reg-set-kind">
-                        <el-option v-for="k in unitKinds" :key="k.value" :label="$t(k.label)" :value="k.value" />
-                    </el-select>
-                    <el-input v-model="unitForm.baseUnit" size="small" class="reg-set-base" :placeholder="$t('reg.unitBase')" maxlength="24" />
-                    <el-button size="small" type="primary" :loading="unitSaving" @click="saveUnit">
-                        <font-awesome-icon icon="plus" class="reg-set-icon" />{{ $t('reg.unitAdd') }}
-                    </el-button>
-                </div>
-                <div v-if="!units.length" class="reg-empty">{{ $t('reg.noUnits') }}</div>
-                <div v-else class="reg-unit-list">
-                    <div v-for="u in units" :key="u.id" class="reg-unit-row">
-                        <span class="reg-unit-name">{{ u.name }}</span>
-                        <span class="reg-unit-kind">{{ unitKindLabel(u.kind) }}</span>
-                        <span class="reg-unit-base">{{ u.baseUnit }}</span>
-                        <button type="button" class="reg-unit-del" :title="$t('common.delete')" @click="removeUnit(u)">
-                            <font-awesome-icon icon="trash" />
-                        </button>
-                    </div>
-                </div>
-            </div>
         </section>
 
         <!-- 编辑条目 -->
@@ -624,12 +625,8 @@ export default {
                 { value: 'hbar', label: 'reg.chartHBar', icon: 'align-left' },
                 { value: 'radar', label: 'reg.chartRadar', icon: 'spider' },
             ],
-            compareYear: false,
             reports: [],
             activeReport: '',
-            units: [],
-            unitSaving: false,
-            unitForm: { name: '', kind: 'count', baseUnit: '' },
             /* 条目管理 */
             itemEditVisible: false,
             itemSaving: false,
@@ -645,15 +642,6 @@ export default {
                 { value: 'duration', label: 'reg.typeDuration' },
                 { value: 'ratio', label: 'reg.typeRatio' },
                 { value: 'price', label: 'reg.typePrice' },
-            ],
-            unitKinds: [
-                { value: 'count', label: 'reg.kindCount' },
-                { value: 'currency', label: 'reg.kindCurrency' },
-                { value: 'weight', label: 'reg.kindWeight' },
-                { value: 'length', label: 'reg.kindLength' },
-                { value: 'volume', label: 'reg.kindVolume' },
-                { value: 'time', label: 'reg.kindTime' },
-                { value: 'ratio', label: 'reg.kindRatio' },
             ],
             /* 图例设置面板：移动端默认收起，避免图表被挤到首屏之外 */
             legendOpen: true,
@@ -688,7 +676,7 @@ export default {
         },
         /** 图例最多 3 条自定义；总范围没选条目时一条都不给加 */
         canAddLegend() {
-            return !!this.trackerFilter && this.legends.length < 3;
+            return !!this.trackerFilter && this.legends.length < 5;
         },
         availableChartTypes() {
             return this.chartTypes.filter((c) => c.value === 'bar' || c.value === 'line' || this.seriesCount >= 2);
@@ -723,6 +711,26 @@ export default {
             const portion = String(this.stats.portion || '');
             if (unit && portion) return `${unit}/${portion}`;
             return unit;
+        },
+        /**
+         * 合计 / 结存卡片的单位：只保留单位、不再带分母。
+         * 份量口径下用「分母」当计量单位（如 元/份 取「份」）。
+         */
+        cardUnit() {
+            if (this.axisY === 'quantity') return String(this.stats.portion || '');
+            return String(this.stats.unit || '');
+        },
+        /** 单价 = 数值 / 份量，是两个口径的比值，不随「数据源」变化 */
+        unitPriceUnit() {
+            const unit = String(this.stats.unit || '');
+            const portion = String(this.stats.portion || '');
+            if (unit && portion) return `${unit}/${portion}`;
+            return unit;
+        },
+        /** 日均速度 = 所选数据源 / 天（之前只写了「/天」，漏了前面的计量单位） */
+        speedUnit() {
+            const base = this.cardUnit || this.$t('reg.chartValue');
+            return `${base}/${this.$t('reg.day')}`;
         },
         mergeCandidates() {
             const t = this.mergeTarget && this.trackers.find((x) => x.id === this.mergeTarget.id);
@@ -799,10 +807,53 @@ export default {
         seriesNames() {
             return ((this.stats.chart && this.stats.chart.datasets) || []).map((d) => String(d.name || ''));
         },
-        /** 图表下方那片颜色方块图例（圆环 / 条形 / 雷达用） */
+        /** 图表下方那片颜色方块图例（圆环 / 条形 / 雷达用）：名称 + 合计 + 条数 */
         seriesLegend() {
             if (this.isSeriesChart) return [];
-            return this.seriesNames;
+            return ((this.stats.chart && this.stats.chart.datasets) || []).map((d, i) => ({
+                name: String(d.name || ''),
+                total: Number(d.total) || 0,
+                count: Number(d.count) || 0,
+                color: this.chartColor(i),
+            }));
+        },
+        /**
+         * v1.3.6：在数值 0 处画一条深色虚线（网格层之上、数据之下）。
+         * 柱形 / 折线画水平线，条形图画垂直线；圆环 / 雷达不涉及坐标轴。
+         */
+        chartPlugins() {
+            if (!['bar', 'line', 'hbar'].includes(this.chartType)) return [];
+            const horizontal = this.chartType === 'hbar';
+            /* 暗色主题下深灰线会融进背景，改为浅灰；亮色主题仍用深灰 */
+            const dark = !!(this.$store && this.$store.getters && this.$store.getters.useDarkMode);
+            const color = dark ? 'rgba(226, 232, 240, 0.8)' : 'rgba(51, 65, 85, 0.9)';
+            return [{
+                id: 'regZeroLine',
+                beforeDatasetsDraw(chart) {
+                    const area = chart.chartArea;
+                    const scale = horizontal ? chart.scales.x : chart.scales.y;
+                    if (!area || !scale) return;
+                    const px = scale.getPixelForValue(0);
+                    if (!Number.isFinite(px)) return;
+                    const ctx = chart.ctx;
+                    ctx.save();
+                    ctx.setLineDash([5, 4]);
+                    ctx.lineWidth = 1;
+                    ctx.strokeStyle = color;
+                    ctx.beginPath();
+                    if (horizontal) {
+                        if (px < area.left || px > area.right) { ctx.restore(); return; }
+                        ctx.moveTo(px, area.top);
+                        ctx.lineTo(px, area.bottom);
+                    } else {
+                        if (px < area.top || px > area.bottom) { ctx.restore(); return; }
+                        ctx.moveTo(area.left, px);
+                        ctx.lineTo(area.right, px);
+                    }
+                    ctx.stroke();
+                    ctx.restore();
+                },
+            }];
         },
         chartCanvasStyle() {
             if (!this.isSeriesChart) return {};
@@ -917,44 +968,82 @@ export default {
             const colors = REG_CHART_COLORS;
             const series = this.seriesNames;
             const colorAt = (i) => colors[i % colors.length];
+            /* v1.3.6：三类「系列图」统一在 tooltip 里给出完整项名与合计 */
+            const seriesLabel = (ctx) => {
+                const raw = Number(ctx.raw) || 0;
+                return ` ${this.$t('reg.statTotal')}：${this.fmt(raw)}${unit ? ` ${unit}` : ''}`;
+            };
+            const tooltipBase = {
+                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                titleColor: '#fff',
+                bodyColor: '#fff',
+                padding: 10,
+                cornerRadius: 8,
+                displayColors: true,
+                callbacks: this.isSeriesChart
+                    ? {
+                        /* v1.3.5.8：tooltip 里给出完整筛选条件（语文考试成绩 · 发生人=小红） */
+                        label: (ctx) => {
+                            const raw = ctx.parsed && ctx.parsed.y !== undefined ? ctx.parsed.y : ctx.raw;
+                            const v = Number(raw) || 0;
+                            const cond = ctx.dataset && ctx.dataset.condition ? ` · ${ctx.dataset.condition}` : '';
+                            const line = ` ${ctx.dataset.label}${cond}：${this.fmt(v)}${unit ? ` ${unit}` : ''}`;
+                            /* v1.3.5.10：再给一行「距离上条间隔 N 天，相差 X」 */
+                            const gap = this.gapText(ctx.dataset, ctx.dataIndex);
+                            return gap ? [line, ` ${gap}`] : line;
+                        },
+                    }
+                    : {
+                        label: (ctx) => ` ${ctx.label}：${this.fmt(Number(ctx.raw) || 0)}${unit ? ` ${unit}` : ''}`,
+                    },
+            };
             const base = {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: {
                     /* v1.3.5.10：图例统一写在图表下方（颜色方块 + 名称），原生图例关掉 */
                     legend: { display: false },
-                    tooltip: {
-                        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                        titleColor: '#fff',
-                        bodyColor: '#fff',
-                        padding: 10,
-                        cornerRadius: 8,
-                        displayColors: true,
-                        callbacks: this.isSeriesChart
-                            ? {
-                                /* v1.3.5.8：tooltip 里给出完整筛选条件（语文考试成绩 · 发生人=小红） */
-                                label: (ctx) => {
-                                    const raw = ctx.parsed && ctx.parsed.y !== undefined ? ctx.parsed.y : ctx.raw;
-                                    const v = Number(raw) || 0;
-                                    const cond = ctx.dataset && ctx.dataset.condition ? ` · ${ctx.dataset.condition}` : '';
-                                    const line = ` ${ctx.dataset.label}${cond}：${this.fmt(v)}${unit ? ` ${unit}` : ''}`;
-                                    /* v1.3.5.10：再给一行「距离上条间隔 N 天，相差 X」 */
-                                    const gap = this.gapText(ctx.dataset, ctx.dataIndex);
-                                    return gap ? [line, ` ${gap}`] : line;
-                                },
-                            }
-                            : {
-                                label: (ctx) => ` ${ctx.label}：${this.fmt(Number(ctx.raw) || 0)}${unit ? ` ${unit}` : ''}`,
-                            },
-                    },
+                    tooltip: tooltipBase,
                 },
             };
             if (this.chartType === 'doughnut') {
-                return { ...base, cutout: '64%', layout: { padding: 6 } };
+                return {
+                    ...base,
+                    cutout: '64%',
+                    layout: { padding: 6 },
+                    plugins: {
+                        ...base.plugins,
+                        tooltip: {
+                            ...tooltipBase,
+                            callbacks: {
+                                /* v1.3.6：圆环 —— 完整项名 + 该块占比 */
+                                title: (items) => String((items[0] && items[0].label) || ''),
+                                label: (ctx) => {
+                                    const arr = (ctx.dataset.data || []).map((v) => Math.abs(Number(v) || 0));
+                                    const sum = arr.reduce((a, b) => a + b, 0);
+                                    const val = Math.abs(Number(ctx.raw) || 0);
+                                    const pct = sum ? (val / sum) * 100 : 0;
+                                    return `${seriesLabel(ctx)} · ${pct.toFixed(1)}%`;
+                                },
+                            },
+                        },
+                    },
+                };
             }
             if (this.chartType === 'radar') {
                 return {
                     ...base,
+                    plugins: {
+                        ...base.plugins,
+                        tooltip: {
+                            ...tooltipBase,
+                            callbacks: {
+                                /* v1.3.6：雷达外围是「■」色块，tooltip 标题换回真实项名 */
+                                title: (items) => String(this.seriesNames[(items[0] && items[0].dataIndex) || 0] || ''),
+                                label: seriesLabel,
+                            },
+                        },
+                    },
                     scales: {
                         r: {
                             beginAtZero: true,
@@ -1002,14 +1091,31 @@ export default {
             };
             const valueAxis = {
                 beginAtZero: true,
+                /* v1.3.6：0 值分界线改由 chartPlugins 画虚线（网格保持原样） */
                 grid: { color: 'rgba(148, 163, 184, 0.18)' },
                 ticks: {
                     color: textColor,
                     font: { size: fontSize },
                 },
             };
+            const finalBase = horizontal
+                ? {
+                    ...base,
+                    plugins: {
+                        ...base.plugins,
+                        tooltip: {
+                            ...tooltipBase,
+                            callbacks: {
+                                /* v1.3.6：条形图 —— 完整项名 + 合计 */
+                                title: (items) => String((items[0] && items[0].label) || ''),
+                                label: seriesLabel,
+                            },
+                        },
+                    },
+                }
+                : base;
             return {
-                ...base,
+                ...finalBase,
                 indexAxis: horizontal ? 'y' : 'x',
                 interaction: { mode: 'index', intersect: false },
                 scales: horizontal ? { x: valueAxis, y: categoryAxis } : { x: categoryAxis, y: valueAxis },
@@ -1021,12 +1127,14 @@ export default {
     },
     mounted() {
         this.syncNarrow();
-        this.legendOpen = !this.narrow;
+        /* v1.3.6：图例项设置默认展开（不再因为窄屏收起） */
+        this.legendOpen = true;
         window.addEventListener('resize', this.onResize);
-        this.loadTrackers();
+        /* v1.3.6：移动端点图表外任意位置，收起已弹出的数据提示 */
+        document.addEventListener('pointerdown', this.hideChartTooltip, true);
         this.loadCandidates();
-        this.loadStats();
-        this.loadUnits();
+        /* v1.3.6：支持 /reg?tracker=条目名（发布页点条目跳转过来） */
+        this.initTrackers();
         this.loadReports();
         this.$nextTick(this.measureChartBox);
     },
@@ -1042,6 +1150,7 @@ export default {
     },
     beforeUnmount() {
         window.removeEventListener('resize', this.onResize);
+        document.removeEventListener('pointerdown', this.hideChartTooltip, true);
     },
     methods: {
         /** 时间桶的起点（tooltip 算间隔用） */
@@ -1050,6 +1159,16 @@ export default {
             if (/^\d{4}-\d{2}-\d{2}$/.test(k)) return new Date(`${k}T00:00:00`);
             if (/^\d{4}-\d{2}$/.test(k)) return new Date(`${k}-01T00:00:00`);
             if (/^\d{4}$/.test(k)) return new Date(`${k}-01-01T00:00:00`);
+            /* v1.3.6：ISO 周（该周周一）/ 季度（首月 1 日） */
+            const w = /^(\d{4})-W(\d{2})$/.exec(k);
+            if (w) {
+                const y = Number(w[1]);
+                const jan4 = new Date(y, 0, 4);
+                const day = jan4.getDay() || 7;
+                return new Date(y, 0, 4 - (day - 1) + (Number(w[2]) - 1) * 7);
+            }
+            const q = /^(\d{4})-Q([1-4])$/.exec(k);
+            if (q) return new Date(Number(q[1]), (Number(q[2]) - 1) * 3, 1);
             return null;
         },
         /**
@@ -1072,6 +1191,23 @@ export default {
                 days,
                 diff: `${diff >= 0 ? '+' : ''}${this.fmt(diff)}${unit ? ` ${unit}` : ''}`,
             });
+        },
+        /** v1.3.6：点图表画布以外的地方 → 收起 tooltip（移动端点完不会一直挂着） */
+        hideChartTooltip(e) {
+            const canvas = this.$el && this.$el.querySelector
+                ? this.$el.querySelector('.reg-chart-canvas canvas')
+                : null;
+            if (canvas && e && e.target && canvas.contains(e.target)) return;
+            if (!canvas) return;
+            const chart = ChartJS.getChart(canvas);
+            if (!chart || !chart.tooltip) return;
+            try {
+                chart.tooltip.setActiveElements([], { x: 0, y: 0 });
+                chart.tooltip.setOpacity(0);
+                chart.update('none');
+            } catch (err) {
+                /* 图表正在重建时忽略 */
+            }
         },
         syncNarrow() {
             this.narrow = typeof window !== 'undefined' && window.innerWidth <= 768;
@@ -1106,6 +1242,24 @@ export default {
             } catch (e) {
                 /* 候选拿不到不影响统计 */
             }
+        },
+        /**
+         * 先取条目，再按 URL 的 tracker 参数预填「默认项」。
+         * 参数是名称（便于人工拼链接），找不到就保持默认的全部条目。
+         */
+        async initTrackers() {
+            await this.loadTrackers();
+            const raw = this.$route && this.$route.query ? this.$route.query.tracker : '';
+            const name = String(Array.isArray(raw) ? raw[0] : (raw || '')).trim();
+            if (name) {
+                const hit = this.trackers.find((t) => String(t.name) === name)
+                    || this.trackers.find((t) => String(t.name).includes(name));
+                if (hit) {
+                    if (hit.valueType) this.typeFilter = hit.valueType;
+                    this.trackerFilter = hit.id;
+                }
+            }
+            this.loadStats();
         },
         async loadTrackers() {
             try {
@@ -1279,7 +1433,7 @@ export default {
                 this.$message.warning(this.$t('reg.legendNeedTotalItem'));
                 return;
             }
-            if (this.legends.length >= 3) {
+            if (this.legends.length >= 5) {
                 this.$message.warning(this.$t('reg.legendMax'));
                 return;
             }
@@ -1394,7 +1548,7 @@ export default {
             this.loadStats();
         },
         legendQuery() {
-            /* 默认项永远排第一：它就是总范围（人物 / 地点 / 标签条件也一起带上） */
+            /* 默认项永远排第一：总范围配置 + 默认项自己的附属条件 */
             const list = [{
                 name: this.$t('reg.legendDefault'),
                 isDefault: true,
@@ -1436,7 +1590,8 @@ export default {
                 if (this.relatedFilter) qs.set('relatedName', this.relatedFilter);
                 if (this.placeFilter) qs.set('placeName', this.placeFilter);
                 if (this.tagFilters.length) qs.set('tags', this.tagFilters.join(','));
-                if (this.compareYear) qs.set('compare', 'year');
+                /* v1.3.5.10：同比常显，不再由开关控制 */
+                qs.set('compare', 'year');
                 const lg = this.legendQuery();
                 if (lg.length) qs.set('legends', JSON.stringify(lg));
                 const rq = this.rangeQuery();
@@ -1490,7 +1645,8 @@ export default {
                 axisX: this.axisX,
                 axisY: this.axisY,
                 legends: this.legendQuery(),
-                compare: this.compareYear ? 'year' : '',
+                /* 同比常显（v1.3.5.10 起不再由开关控制） */
+                compare: 'year',
                 /* 兼容 v1.3.5.7 及更早保存的报表 */
                 trackerName: '',
                 range: 'all',
@@ -1534,11 +1690,10 @@ export default {
             this.relatedFilter = String(q.relatedName || '');
             this.placeFilter = String(q.placeName || '');
             this.tagFilters = Array.isArray(q.tags) ? q.tags.slice() : [];
-            this.bucket = ['day', 'month', 'year'].includes(q.bucket) ? q.bucket : 'day';
+            this.bucket = ['day', 'week', 'month', 'quarter', 'year'].includes(q.bucket) ? q.bucket : 'day';
             this.scope = q.scope === 'all' ? 'all' : 'me';
             this.axisX = ['occurredAt', 'startAt', 'dueAt', 'createdAt'].includes(q.axisX) ? q.axisX : 'occurredAt';
             this.axisY = q.axisY === 'quantity' ? 'quantity' : 'value';
-            this.compareYear = q.compare === 'year';
             if (q.from && q.to) {
                 this.rangeDates = [Number(q.from), Number(q.to)];
                 this.rangeFrom = Number(q.from);
@@ -1551,7 +1706,7 @@ export default {
             /* 报表里的默认项是算出来的，不落库（见 legendQuery），这里只还原自定义项 */
             const lgs = (Array.isArray(q.legends) ? q.legends : []).filter((x) => !x.isDefault);
             this.legends = lgs.length
-                ? lgs.slice(0, 3).map((x) => ({
+                ? lgs.slice(0, 5).map((x) => ({
                     trackerId: String(x.trackerId || ''),
                     placeName: String(x.placeName || ''),
                     subjectName: String(x.subjectName || ''),
@@ -1562,64 +1717,6 @@ export default {
             this.legendOptions = this.legends.map(() => emptyLegendOpts());
             this.refreshAllLegendOptions();
             this.loadStats();
-        },
-        /* ── 单位 ─────────────────────────────────────────────── */
-        async loadUnits() {
-            try {
-                const qs = new URLSearchParams({ instanceId: this.instanceId });
-                const res = await fetchWithAuth(`/api/reg/units?${qs.toString()}`);
-                const data = await res.json().catch(() => []);
-                this.units = Array.isArray(data) ? data : [];
-            } catch (e) {
-                this.units = [];
-            }
-        },
-        async saveUnit() {
-            const name = String(this.unitForm.name || '').trim();
-            if (!name) {
-                this.$message.warning(this.$t('reg.unitNameRequired'));
-                return;
-            }
-            this.unitSaving = true;
-            try {
-                const res = await fetchWithAuth('/api/reg/units', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ...this.unitForm, name, instanceId: this.instanceId }),
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
-                this.$message.success(this.$t('reg.unitSaved'));
-                this.unitForm = { name: '', kind: 'count', baseUnit: '' };
-                this.loadUnits();
-            } catch (e) {
-                this.$message.error(e.message || this.$t('common.failed'));
-            } finally {
-                this.unitSaving = false;
-            }
-        },
-        async removeUnit(u) {
-            try {
-                await this.$confirm(this.$t('reg.unitDeleteConfirm', { name: u.name }), this.$t('common.delete'), {
-                    type: 'warning',
-                    confirmButtonText: this.$t('common.confirm'),
-                    cancelButtonText: this.$t('common.cancel'),
-                });
-            } catch (e) {
-                return;
-            }
-            try {
-                const res = await fetchWithAuth(`/api/reg/units/${encodeURIComponent(u.id)}`, { method: 'DELETE' });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
-                this.loadUnits();
-            } catch (e) {
-                this.$message.error(e.message || this.$t('common.failed'));
-            }
-        },
-        unitKindLabel(kind) {
-            const hit = this.unitKinds.find((k) => k.value === kind);
-            return hit ? this.$t(hit.label) : kind;
         },
         /* ── 小工具 ───────────────────────────────────────────── */
         chartColor(i) {
@@ -1634,6 +1731,7 @@ export default {
             const s = String(k || '');
             if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.slice(5);
             if (/^\d{4}-\d{2}$/.test(s)) return s.slice(2);
+            /* 周 / 季保留完整键，截断会分不清年份 */
             return s;
         },
         ownerWidth(v) {
@@ -1713,6 +1811,53 @@ export default {
     background: var(--glass-bg);
 }
 
+/* v1.3.5.10：每组配置的组名（总范围配置 / 默认项配置 / 统计源配置 / 数据卡片） */
+.reg-group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    margin-bottom: 2px;
+}
+
+/* 筛选组是 flex-wrap，组名必须独占一行 */
+.reg-filters > .reg-group-head {
+    flex: 0 0 100%;
+}
+
+.reg-group-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+    white-space: nowrap;
+}
+
+.reg-group-title::before {
+    content: '';
+    width: 3px;
+    height: 12px;
+    border-radius: 2px;
+    background: var(--el-color-primary);
+}
+
+.reg-group-sub {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--el-text-color-placeholder);
+}
+
+.reg-card-block {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
 .reg-f-label {
     font-size: 12px;
     color: var(--el-text-color-secondary);
@@ -1742,7 +1887,6 @@ export default {
 .reg-f-person { width: 118px; }
 .reg-f-place { width: 148px; }
 .reg-f-tags { width: 180px; }
-.reg-f-compare { margin-left: 2px; font-size: 12px; }
 .reg-report-select { width: 150px; }
 
 /* 坐标设置栏：与总范围栏同款卡片，略矮一点 */
@@ -2053,6 +2197,12 @@ export default {
     flex: 0 0 auto;
 }
 
+/* v1.3.5.10：图表形态切换靠右对齐 */
+.reg-chart-switch.is-under-legend {
+    justify-content: flex-end;
+    margin-left: auto;
+}
+
 .reg-chart-tab {
     width: 28px;
     height: 26px;
@@ -2316,6 +2466,23 @@ export default {
     margin-right: 5px;
 }
 
+/* v1.3.6：圆环 / 条形 / 雷达下方的图例带项目信息（名称 + 合计 + 条数） */
+.reg-legend-item.is-rich {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+}
+
+.reg-legend-name {
+    font-weight: 600;
+    color: var(--el-text-color-regular);
+}
+
+.reg-legend-count {
+    font-size: 11px;
+    color: var(--el-text-color-placeholder);
+}
+
 .reg-chart-legend {
     display: flex;
     gap: 14px;
@@ -2397,68 +2564,9 @@ export default {
     color: var(--el-text-color-secondary);
 }
 
-.reg-set-add {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 10px;
-    border: 1px solid var(--glass-border);
-    border-radius: 10px;
-    background: var(--glass-bg);
-}
-
-.reg-set-name { width: 160px; }
-.reg-set-kind { width: 120px; }
-.reg-set-base { width: 140px; }
-.reg-set-icon { margin-right: 5px; }
-
-.reg-unit-list {
-    display: flex;
-    flex-direction: column;
-}
-
-.reg-unit-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 9px 10px;
-    border-bottom: 1px solid var(--el-border-color-lighter);
-    font-size: 13px;
-}
-
-.reg-unit-name {
-    flex: 1 1 auto;
-    font-weight: 500;
-}
-
-.reg-unit-kind,
-.reg-unit-base {
-    flex: 0 0 auto;
-    width: 110px;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-}
-
-.reg-unit-del {
-    border: 0;
-    background: transparent;
-    color: var(--el-text-color-secondary);
-    cursor: pointer;
-}
-
-.reg-unit-del:hover {
-    color: var(--el-color-danger);
-}
-
 @media (max-width: 900px) {
     .reg-cards {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .reg-unit-kind,
-    .reg-unit-base {
-        width: 76px;
     }
 }
 
@@ -2490,6 +2598,17 @@ export default {
         gap: 8px;
     }
 
+    /* 列方向下 flex-basis 是高度，组名不能再用 100% */
+    .reg-filters > .reg-group-head {
+        flex: 0 0 auto;
+        width: 100%;
+    }
+
+    .reg-group-head {
+        flex-wrap: wrap;
+        gap: 4px 8px;
+    }
+
     .reg-f-item,
     .reg-f-item.is-grow {
         width: 100%;
@@ -2512,10 +2631,6 @@ export default {
         width: auto;
         flex: 1 1 auto;
         min-width: 0;
-    }
-
-    .reg-f-compare {
-        margin-left: 0;
     }
 
     /* 时间源四个页签在窄屏铺满一行可横滑 */

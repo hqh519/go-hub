@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, HttpException, HttpStatus, Param, Post, Put, Query, Req } from '@nestjs/common';
-import type { Request } from 'express';
+import { Body, Controller, Delete, Get, HttpException, HttpStatus, Param, Post, Put, Query, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { currentSession, isAdminRole } from '../auth/auth.guard';
 import { RegService } from './reg.service';
 
@@ -92,9 +92,21 @@ export class RegController {
       to: q.to || '',
       keyword: q.keyword || '',
       tag: q.tag || '',
+      /* v1.3.6：回收站模式 */
+      trash: q.trash === '1' || q.trash === 'true',
       page: Number(q.page) || 1,
       pageSize: Number(q.pageSize) || 20,
     });
+  }
+
+  /** v1.3.6：导出当前实例的登记数据（CSV，17 列） */
+  @Get('export')
+  async exportCsv(@Req() req: Request, @Res() res: Response, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const csv = await this.reg.exportCsv(viewer, instanceId || '');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(csv);
   }
 
   @Post('entries')
@@ -127,6 +139,28 @@ export class RegController {
     return { success: true, ...(r as any) };
   }
 
+  /** v1.3.6：回收站 —— 恢复 */
+  @Post('entries/:id/restore')
+  async restoreEntry(@Req() req: Request, @Param('id') id: string) {
+    const { viewer } = this.ctx(req);
+    const r = await this.reg.restoreEntry(id, viewer);
+    if ('error' in r && r.error) {
+      throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
+    }
+    return { success: true, ...(r as any) };
+  }
+
+  /** v1.3.6：回收站 —— 彻底删除 */
+  @Delete('entries/:id/purge')
+  async purgeEntry(@Req() req: Request, @Param('id') id: string) {
+    const { viewer } = this.ctx(req);
+    const r = await this.reg.purgeEntry(id, viewer);
+    if ('error' in r && r.error) {
+      throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
+    }
+    return { success: true, ...(r as any) };
+  }
+
   /** v1.3.5.9：按 id 取附件视图（表单里的缩略图） */
   @Get('attachments')
   async attachments(@Req() req: Request, @Query('ids') ids?: string) {
@@ -144,7 +178,7 @@ export class RegController {
       scope: q.scope || 'me',
       type: q.type || '',
       trackerId: q.trackerId || '',
-      /* v1.3.5.10：总范围的发生人 / 关联人 / 地点 / 标签（tags 用逗号分隔） */
+      /* v1.3.5.10：总范围的发生对象 / 关联对象 / 地点 / 标签（tags 用逗号分隔） */
       subjectName: q.subjectName || '',
       relatedName: q.relatedName || '',
       placeName: q.placeName || '',
@@ -176,33 +210,6 @@ export class RegController {
       from: q.from || '',
       to: q.to || '',
     });
-  }
-
-  /* ── 单位 ── */
-  @Get('units')
-  async units(@Req() req: Request, @Query('instanceId') instanceId?: string) {
-    const { viewer } = this.ctx(req);
-    return this.reg.listUnits(viewer, instanceId || '');
-  }
-
-  @Post('units')
-  async saveUnit(@Req() req: Request, @Body() body: Record<string, unknown>) {
-    const { viewer } = this.ctx(req);
-    const r = await this.reg.saveUnit(body as any, viewer);
-    if ('error' in r && r.error) {
-      throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
-    }
-    return { success: true, ...(r as any) };
-  }
-
-  @Delete('units/:id')
-  async removeUnit(@Req() req: Request, @Param('id') id: string) {
-    const { viewer } = this.ctx(req);
-    const r = await this.reg.removeUnit(id, viewer);
-    if ('error' in r && r.error) {
-      throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
-    }
-    return { success: true, ...(r as any) };
   }
 
   /* ── 候选值 ── */

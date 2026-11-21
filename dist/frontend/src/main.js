@@ -24,6 +24,8 @@ import { setupEdgeSwipeGuard } from './utils/edgeSwipeGuard'
 import { readThemeCookie } from './utils/themeCookie'
 // v3.0.0：长时间闲置 / 标签页被回收后重新访问时的「自动复活」守护
 import { setupPageRevive } from './utils/page-revive'
+// v1.3.6：系统更新后自动发现新版本并刷新（不再需要手动清缓存）
+import { setupVersionWatch } from './utils/version-watch'
 // v1.3.0：HTML 白名单过滤（v-safe-html 指令 + markdown 预览共用一套规则）
 import { sanitizeHtml } from './utils/markdown'
 // v1.1.6：网站标题占位符（{host} / {user} / {pagename}）
@@ -42,6 +44,8 @@ library.add(...fontAwesomeIcons);
 
 // v3.0.0：必须在挂载之前装好 —— 入口请求挂死导致始终没挂载时也要能自愈
 setupPageRevive();
+// v1.3.6：定时比对入口脚本，发现已重新构建就自动刷新一次
+setupVersionWatch();
 
 // 保留首条消息的顶部间距，同时允许 Element Plus 动态计算后续消息的位置。
 messageConfig.offset = 30;

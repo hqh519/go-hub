@@ -7,9 +7,10 @@ import { fileUrlOf, mediaKindOfMime } from '../notes/notes.util';
  * v1.3.5.3 登记功能（P0 + P1）
  * ---------------------------------------------------------------------------
  * 「一套原子数据 + 按形态聚合的统计」：
- *   · RegTracker  登记项（= 用户口中的「条目」），锁定类型 / 单位 / 分母 / 性质；
- *   · RegEntry    一次登记（原子数据，统计只读这张表）；
- *   · RegUnit     自定义单位（登记设置里维护）。
+ *   · RegTracker  登记项（= 用户口中的「条目」），锁定类型 / 单位 / 分母；
+ *   · RegEntry    一次登记（原子数据，统计只读这张表；v1.3.6 起软删除进回收站）；
+ *
+ * v1.3.6：移除 RegUnit 自定义单位表 —— 表单里的单位/分母直接来自条目，这张表没有实际用途。
  *
  * v1.3.5.7：条目回归登记自己的独立表 ——
  *   · 「条目」= RegTracker，是登记的身份表，**不再写 markers**。改名 / 改类型 /
@@ -69,12 +70,28 @@ function parseArr(raw: unknown): string[] {
 }
 
 /** 时间分桶键：day / month / year（v1.3.5.8 起不再提供「按周」） */
+/** v1.3.6：ISO 周（周一为一周起点，跨年按 ISO 规则归属） */
+function isoWeek(d: Date): { year: number; week: number } {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const year = t.getUTCFullYear();
+  const start = new Date(Date.UTC(year, 0, 1));
+  const week = Math.ceil((((t.getTime() - start.getTime()) / 86400000) + 1) / 7);
+  return { year, week };
+}
+
 function bucketKey(d: Date, bucket: string): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   if (bucket === 'year') return `${y}`;
+  if (bucket === 'quarter') return `${y}-Q${Math.floor(d.getMonth() / 3) + 1}`;
   if (bucket === 'month') return `${y}-${m}`;
+  if (bucket === 'week') {
+    const w = isoWeek(d);
+    return `${w.year}-W${String(w.week).padStart(2, '0')}`;
+  }
   return `${y}-${m}-${day}`;
 }
 
@@ -98,7 +115,7 @@ export interface RegAttachmentView {
 export interface RegLegendInput {
   /** v1.3.5.10：系列显示名（默认项 / 项1 …）；空则按序号生成 */
   name?: string;
-  /** v1.3.5.10：「默认项」= 总范围里的发生人 / 关联人 / 地点 / 标签，可以没有条目 */
+  /** v1.3.5.10：「默认项」= 总范围里的发生对象 / 关联对象 / 地点 / 标签，可以没有条目 */
   isDefault?: boolean;
   trackerId?: string;
   trackerName?: string;
@@ -184,7 +201,7 @@ export class RegService {
     if (!rows.length) return [];
     const counts = await prisma.regEntry.groupBy({
       by: ['trackerId'],
-      where: { trackerId: { in: rows.map((r) => r.id) } },
+      where: { trackerId: { in: rows.map((r) => r.id) }, deletedAt: null },
       _count: { _all: true },
     });
     const map = new Map(counts.map((c) => [c.trackerId, c._count._all]));
@@ -338,6 +355,8 @@ export class RegService {
     keyword?: string;
     /** v1.3.5.6：按标签筛选，走 reg_entry_tags 关联表 */
     tag?: string;
+    /** v1.3.6：true = 回收站（只取已软删除的） */
+    trash?: boolean;
     page?: number;
     pageSize?: number;
   }) {
@@ -346,6 +365,8 @@ export class RegService {
     const where: Record<string, unknown> = {
       owner: String(q.owner || ''),
       instanceId: String(q.instanceId || ''),
+      /* v1.3.6：正常列表排除回收站，回收站只看已删除 */
+      deletedAt: q.trash ? { not: null } : null,
     };
     if (q.trackerId) where.trackerId = String(q.trackerId);
     else if (q.trackerName) where.tracker = { name: String(q.trackerName) };
@@ -409,7 +430,7 @@ export class RegService {
     /* 取到本页最晚那条为止的全部历史，再按时间比出「上一条」（只取 1000 条，够覆盖常规使用） */
     const latest = rows.reduce((max, r) => Math.max(max, (r.occurredAt as Date).getTime()), 0);
     const history = await prisma.regEntry.findMany({
-      where: { trackerId: { in: ids }, owner: String(owner || ''), instanceId, occurredAt: { lte: new Date(latest) } },
+      where: { trackerId: { in: ids }, owner: String(owner || ''), instanceId, deletedAt: null, occurredAt: { lte: new Date(latest) } },
       orderBy: { occurredAt: 'desc' },
       take: 1000,
       select: { id: true, trackerId: true, occurredAt: true, amount: true, quantity: true, tracker: { select: { unit: true, portion: true } } },
@@ -616,11 +637,68 @@ export class RegService {
     return { id: updated.id };
   }
 
+  /**
+   * v1.3.6：删除改为软删除（进回收站），可恢复 / 彻底删除。
+   * 统计、候选、列表默认都排除 deletedAt 非空的记录。
+   */
   async removeEntry(id: string, owner: string) {
-    const existed = await prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || '') } });
+    const existed = await prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || ''), deletedAt: null } });
     if (!existed) return { error: '登记不存在或无权删除' as string };
+    await prisma.regEntry.update({ where: { id: existed.id }, data: { deletedAt: new Date() } });
+    return { id: existed.id, trashed: true };
+  }
+
+  /** v1.3.6：从回收站恢复 */
+  async restoreEntry(id: string, owner: string) {
+    const existed = await prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || ''), deletedAt: { not: null } } });
+    if (!existed) return { error: '回收站里没有这条登记' as string };
+    await prisma.regEntry.update({ where: { id: existed.id }, data: { deletedAt: null } });
+    return { id: existed.id };
+  }
+
+  /** v1.3.6：彻底删除（物理删除，关联标签一并清理） */
+  async purgeEntry(id: string, owner: string) {
+    const existed = await prisma.regEntry.findFirst({ where: { id: String(id || ''), owner: String(owner || ''), deletedAt: { not: null } } });
+    if (!existed) return { error: '回收站里没有这条登记' as string };
     await prisma.regEntry.delete({ where: { id: existed.id } });
     return { id: existed.id };
+  }
+
+  /**
+   * v1.3.6：导出当前实例（当前账户）的全部登记为 CSV。
+   * 列顺序按需求固定；时间统一 YYYY-MM-DD HH:mm:ss，字段全部加引号转义。
+   */
+  async exportCsv(owner: string, instanceId: string) {
+    const rows = await prisma.regEntry.findMany({
+      where: { owner: String(owner || ''), instanceId: String(instanceId || ''), deletedAt: null },
+      include: {
+        tracker: { select: { name: true, valueType: true, unit: true, portion: true } },
+      },
+      orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+    });
+    const typeLabels: Record<string, string> = {
+      stock: '存量', flow: '流水', count: '计数', duration: '时长', ratio: '比例', price: '单价',
+    };
+    const dirLabels: Record<number, string> = { 0: '无', 1: '收入', [-1]: '支出' };
+    const c = (v: unknown) => `"${String(v === null || v === undefined ? '' : v).replace(/"/g, '""')}"`;
+    const dt = (d: Date | null | undefined) => {
+      if (!d) return '';
+      const p = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    };
+    const heads = ['标题', '详情', '地点', '发生时间', '起始时间', '截止时间', '登记时间', '条目名称', '类型名称', '性质名称', '登记数值', '份量', '单位', '分母', '币种', '发生对象', '关联对象'];
+    const lines = [heads.map(c).join(',')];
+    for (const r of rows) {
+      const tk = (r as any).tracker || {};
+      lines.push([
+        c(r.title), c(r.event), c(r.placeName), c(dt(r.occurredAt)), c(dt(r.startAt)), c(dt(r.dueAt)),
+        c(dt(r.createdAt)), c(tk.name || ''), c(typeLabels[String(tk.valueType || '')] || String(tk.valueType || '')),
+        c(dirLabels[Number(r.direction) || 0] || '无'), c(r.amount), c(r.quantity),
+        c(tk.unit || ''), c(tk.portion || ''), c(r.currency), c(r.subjectName), c(r.relatedName),
+      ].join(','));
+    }
+    /* BOM：Excel 直接双击打开不乱码 */
+    return `\uFEFF${lines.join('\r\n')}\r\n`;
   }
 
   /* ── 统计（P1 / v1.3.5.8 多系列） ────────────────────────── */
@@ -646,9 +724,10 @@ export class RegService {
   /**
    * 统计（一次查库，内存里按「总范围 → 图例」分派）。
    *
-   * 总范围 = 实例 + 账户口径（scope）+ 类型范围 + 时间范围（按横轴字段筛）
-   * 图例    = 条目 + 地点 + 发生人 + 关联人 + 标签（且条件），最多 5 条
-   * 卡片    = 只受总范围影响；图例只影响图表本身
+   * 总范围配置 = 实例 + 账户口径（scope）+ 类型范围 + 条目 + 时间范围（按横轴字段筛）
+   * 默认项     = 总范围配置 + 发生人 / 关联人 / 地点 / 标签（数据卡片同此口径）
+   * 图例       = 默认项 + 自定义项；自定义项只受「总范围配置」约束，
+   *              不再继承默认项的附属条件（v1.3.5.10）
    */
   async stats(q: {
     owner: string;
@@ -678,57 +757,76 @@ export class RegService {
     const instanceId = String(q.instanceId || '');
     const axisX = this.axisField(q.axisX);
     const axisY = REG_AXIS_Y.includes(String(q.axisY || '')) ? String(q.axisY) : 'value';
-    const bucket = ['day', 'month', 'year'].includes(String(q.bucket || '')) ? String(q.bucket) : 'month';
+    const bucket = ['day', 'week', 'month', 'quarter', 'year'].includes(String(q.bucket || '')) ? String(q.bucket) : 'month';
 
-    const baseWhere: Record<string, unknown> = { instanceId };
+    const baseWhere: Record<string, unknown> = { instanceId, deletedAt: null };
     if (String(q.scope || 'me') !== 'all') baseWhere.owner = String(q.owner || '');
     /**
-     * 总范围 = 登记类型 + 条目 + 时间段 + 用户（v1.3.5.9 起条目也参与）。
-     * 两者可以同时给：类型限定大类，条目再收窄到某一条。
+     * 总范围配置 = 实例 + 账户口径 + 登记类型 + 时间段（条目属于默认项配置）。
+     * 类型限定大类，条目再收窄到某一条，两者可以同时给。
      */
     const type = String(q.type || '').trim();
     const trackerWhere: Record<string, unknown> = {};
     if (type && REG_VALUE_TYPES.includes(type)) trackerWhere.valueType = type;
-    if (q.trackerId) baseWhere.trackerId = String(q.trackerId);
-    else if (q.trackerName) trackerWhere.name = String(q.trackerName);
+    if (q.trackerName) trackerWhere.name = String(q.trackerName);
     if (Object.keys(trackerWhere).length) baseWhere.tracker = trackerWhere;
     if (String(q.tag || '').trim()) {
       baseWhere.tagLinks = { some: { tag: { name: String(q.tag).trim() } } };
     }
-    /* v1.3.5.10：总范围把「发生人 / 关联人 / 地点 / 标签」也纳进来（卡片按它统计） */
-    if (String(q.subjectName || '').trim()) baseWhere.subjectName = String(q.subjectName).trim();
-    if (String(q.relatedName || '').trim()) baseWhere.relatedName = String(q.relatedName).trim();
-    if (String(q.placeName || '').trim()) baseWhere.placeName = String(q.placeName).trim();
+    const from = dateOf(q.from);
+    const to = dateOf(q.to);
+
+    /* 总范围配置（类型 + 时间段 + 用户）：自定义图例项只认这一层 */
+    const totalWhere: Record<string, unknown> = { ...baseWhere };
+    if (from || to) totalWhere[axisX] = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
+
+    /**
+     * v1.3.5.10：默认项 = 总范围配置 + 条目 + 附属条件（发生人 / 关联人 / 地点 / 标签）。
+     * 卡片与默认项走这一层；自定义图例项只用 totalWhere，避免被默认项的条目 / 条件连带过滤。
+     */
+    const defaultWhere: Record<string, unknown> = { ...totalWhere };
+    if (q.trackerId) defaultWhere.trackerId = String(q.trackerId);
+    if (String(q.subjectName || '').trim()) defaultWhere.subjectName = String(q.subjectName).trim();
+    if (String(q.relatedName || '').trim()) defaultWhere.relatedName = String(q.relatedName).trim();
+    if (String(q.placeName || '').trim()) defaultWhere.placeName = String(q.placeName).trim();
     const totalTags = (Array.isArray(q.tags) ? q.tags : String(q.tags || '').split(','))
       .map((t) => String(t || '').trim())
       .filter(Boolean)
       .slice(0, 10);
     if (totalTags.length) {
-      const and = Array.isArray(baseWhere.AND) ? baseWhere.AND : [];
+      const and = Array.isArray(defaultWhere.AND) ? defaultWhere.AND : [];
       for (const t of totalTags) and.push({ tagLinks: { some: { tag: { name: t } } } });
-      baseWhere.AND = and;
+      defaultWhere.AND = and;
     }
-    const from = dateOf(q.from);
-    const to = dateOf(q.to);
-    const who: Record<string, unknown> = { ...baseWhere };
-    if (from || to) who[axisX] = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
+    const hasDefaultExtra = Object.keys(defaultWhere).length !== Object.keys(totalWhere).length;
 
     const rows = await prisma.regEntry.findMany({
-      where: who as any,
+      where: defaultWhere as any,
       include: {
         tracker: { select: { id: true, name: true, valueType: true, unit: true, portion: true } },
         tagLinks: { select: { tag: { select: { name: true } } } },
       },
       orderBy: { occurredAt: 'asc' },
     });
+    /* 设了默认项附属条件时，图表另取一份「只按总范围」的数据 */
+    const chartRows = hasDefaultExtra
+      ? await prisma.regEntry.findMany({
+        where: totalWhere as any,
+        include: {
+          tracker: { select: { id: true, name: true, valueType: true, unit: true, portion: true } },
+          tagLinks: { select: { tag: { select: { name: true } } } },
+        },
+        orderBy: { occurredAt: 'asc' },
+      })
+      : rows;
 
-    /* ── 卡片（总范围，口径跟纵轴） ── */
+    /* ── 卡片（默认项口径，跟纵轴） ── */
     let total = 0;
     let quantity = 0;
     let max = Number.NEGATIVE_INFINITY;
     let min = Number.POSITIVE_INFINITY;
     /* 旧图表（圆环 / 条形 / 雷达 / 分布）仍用「数值」口径 + 发生时间 */
-    const buckets = new Map<string, { key: string; sum: number; count: number; quantity: number }>();
+    const buckets = new Map<string, { key: string; sum: number; metric: number; count: number; quantity: number }>();
     const owners = new Map<string, { owner: string; sum: number; count: number }>();
     const trackerMap = new Map<string, { name: string; sum: number; count: number }>();
     const weekday = [0, 0, 0, 0, 0, 0, 0];
@@ -743,8 +841,9 @@ export class RegService {
       if (m > max) max = m;
       if (m < min) min = m;
       const k = bucketKey(r.occurredAt, bucket);
-      const b = buckets.get(k) || { key: k, sum: 0, count: 0, quantity: 0 };
+      const b = buckets.get(k) || { key: k, sum: 0, metric: 0, count: 0, quantity: 0 };
       b.sum += v;
+      b.metric += m;
       b.count += 1;
       b.quantity += num(r.quantity, 1);
       buckets.set(k, b);
@@ -771,13 +870,24 @@ export class RegService {
       (series[i] as any).pct = prev ? ((cur - prev) / Math.abs(prev)) * 100 : null;
     }
 
-    const derive = this.buildDerive(rows, series, from, to);
+    const derive = this.buildDerive(rows, series, from, to, axisY);
     const compare = String(q.compare || '') === 'year'
-      ? await this.buildYoy(baseWhere, axisX, from, to, bucket, total, axisY)
+      ? await this.buildYoy(defaultWhere, axisX, from, to, bucket, total, axisY)
       : null;
 
     const legends = this.normalizeLegends(q.legends);
-    const chart = this.buildChart(rows, { axisX, axisY, bucket, from, to, legends });
+    /**
+     * 默认项没写条目时，用总范围里选中的条目兜底。
+     * 总范围配置这一层的查询已不再带条目（要让自定义项能取到别的条目），
+     * 若不兜底，默认项会把同类型的全部条目混进来。
+     */
+    const defaultLegend = legends.find((l) => l.isDefault);
+    if (defaultLegend && !defaultLegend.trackerId && !defaultLegend.trackerName && q.trackerId) {
+      defaultLegend.trackerId = String(q.trackerId);
+    }
+    /* v1.3.5.10：图表用「只按总范围配置」的数据，自定义图例项不再被默认项附属条件过滤；
+       没有传图例时退回按默认项范围出图（兼容旧调用） */
+    const chart = this.buildChart(legends.length ? chartRows : rows, { axisX, axisY, bucket, from, to, legends });
     /* 只有「默认项」时是全部条目一起统计，单位不一致就不显示单位（否则会误导） */
     if (!legends.some((l) => !l.isDefault) && unitKeys.size > 1) {
       chart.unit = '';
@@ -830,8 +940,8 @@ export class RegService {
     }
     if (!Array.isArray(arr)) return [];
     return arr
-      /* v1.3.5.10：默认项 + 最多 3 条自定义 = 4 条 */
-      .slice(0, 4)
+      /* v1.3.6：默认项 + 最多 5 条自定义 = 6 条 */
+      .slice(0, 6)
       .map((x) => ({
         name: String(x?.name || ''),
         isDefault: !!x?.isDefault,
@@ -904,8 +1014,8 @@ export class RegService {
           cond.push('全部条目');
         }
         if (lg.placeName) cond.push(`地点=${lg.placeName}`);
-        if (lg.subjectName) cond.push(`发生人=${lg.subjectName}`);
-        if (lg.relatedName) cond.push(`关联人=${lg.relatedName}`);
+        if (lg.subjectName) cond.push(`发生对象=${lg.subjectName}`);
+        if (lg.relatedName) cond.push(`关联对象=${lg.relatedName}`);
         if (tags.length) cond.push(`标签=${tags.join('+')}`);
       } else {
         cond.push('全部条目');
@@ -924,21 +1034,17 @@ export class RegService {
     });
 
     /**
-     * labels（横轴）：横轴负责的是「时间范围」，所以时间桶要取【总范围】里
-     * 出现过的桶，而不是图例里出现过的桶 —— 否则切换图例会连带把横轴缩短，
-     * 出现「明明选了 6 个月，图上只剩 1 个点」的错觉。
-     * 设了起止时间就补齐连续桶，折线不会断成虚线。
+     * labels（横轴）：按各图例项实际出现的桶取并集（默认项一定会参与）。
+     * v1.3.5.10：默认项加了附属条件后，时间节点会变少 —— 横轴必须跟着筛选后的
+     * 数据重新生成，不能继续沿用总范围里的全部节点。
+     * 自定义图例项若有额外的桶也一并纳入，避免它的数据被裁掉；
+     * 设了起止时间则补齐连续桶，折线不会断成虚线。
      */
     let keys: string[] = [];
     if (from && to) keys = this.fillBuckets(from, to, bucket);
     if (!keys.length) {
       const set = new Set<string>();
-      for (const r of rows) {
-        const d = this.axisDate(r, axisX);
-        if (d) set.add(bucketKey(d, bucket));
-      }
-      /* 兜底：总范围里一条都落不到横轴上时，至少把图例自己的桶画出来 */
-      if (!set.size) for (const g of per) for (const k of g.map.keys()) set.add(k);
+      for (const g of per) for (const k of g.map.keys()) set.add(k);
       keys = Array.from(set).sort((a, b) => a.localeCompare(b));
     }
 
@@ -966,6 +1072,26 @@ export class RegService {
     if (bucket === 'year') {
       for (let y = from.getFullYear(); y <= to.getFullYear() && out.length < 400; y += 1) {
         out.push(String(y));
+      }
+      return out;
+    }
+    if (bucket === 'quarter') {
+      const cur = new Date(from.getFullYear(), Math.floor(from.getMonth() / 3) * 3, 1);
+      const end = new Date(to.getFullYear(), Math.floor(to.getMonth() / 3) * 3, 1);
+      while (cur <= end && out.length < 400) {
+        out.push(`${cur.getFullYear()}-Q${Math.floor(cur.getMonth() / 3) + 1}`);
+        cur.setMonth(cur.getMonth() + 3);
+      }
+      return out;
+    }
+    if (bucket === 'week') {
+      /* 从 from 所在周的周一开始，每 7 天一个桶 */
+      const cur = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+      const day = cur.getDay() || 7;
+      cur.setDate(cur.getDate() - (day - 1));
+      while (cur <= to && out.length < 400) {
+        out.push(bucketKey(cur, 'week'));
+        cur.setDate(cur.getDate() + 7);
       }
       return out;
     }
@@ -1013,18 +1139,21 @@ export class RegService {
   }
 
   /** P2：派生指标 —— 单价 / 结存累计 / 相邻间隔 / 消耗速度 */
-  private buildDerive(rows: any[], series: any[], from: Date | null, to: Date | null) {
+  private buildDerive(rows: any[], series: any[], from: Date | null, to: Date | null, axisY = 'value') {
     let sumValue = 0;
     let sumQty = 0;
+    let sumMetric = 0;
     for (const r of rows) {
       sumValue += num(r.amount) * (r.quantity === 0 ? 1 : num(r.quantity, 1));
       sumQty += num(r.quantity, 1);
+      sumMetric += this.metricOf(r, axisY);
     }
     const unitPrice = sumQty > 0 ? sumValue / sumQty : null;
 
+    /* v1.3.5.10：结存跟随「数据源」累计（原来固定累计数值，切份量时不会变） */
     let acc = 0;
     const balance = series.map((b) => {
-      acc += num(b.sum);
+      acc += num((b as any).metric !== undefined ? (b as any).metric : b.sum);
       return { key: b.key, value: acc };
     });
 
@@ -1040,7 +1169,7 @@ export class RegService {
     const start = from || (rows.length ? (rows[0].occurredAt as Date) : null);
     const end = to || (rows.length ? (rows[rows.length - 1].occurredAt as Date) : null);
     const spanDays = start && end ? Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1) : 0;
-    const perDay = spanDays ? sumQty / spanDays : null;
+    const perDay = spanDays ? sumMetric / spanDays : null;
 
     return {
       unitPrice,
@@ -1139,55 +1268,6 @@ export class RegService {
     return { id: existed.id };
   }
 
-  /* ── 单位 ───────────────────────────────────────────────── */
-
-  async listUnits(owner: string, instanceId: string) {
-    const rows = await prisma.regUnit.findMany({
-      where: { owner: String(owner || ''), instanceId: String(instanceId || '') },
-      orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
-    });
-    return rows.map((r) => ({ ...r, createdAt: r.createdAt.getTime() }));
-  }
-
-  async saveUnit(input: { id?: string; name?: string; kind?: string; factor?: number; baseUnit?: string; instanceId?: string }, owner: string) {
-    const name = String(input.name || '').trim().slice(0, 24);
-    if (!name) return { error: '单位名称不能为空' as string };
-    const instanceId = String(input.instanceId || '');
-    const existed = input.id
-      ? await prisma.regUnit.findFirst({ where: { id: String(input.id), owner } })
-      : await prisma.regUnit.findFirst({ where: { owner, instanceId, name } });
-    if (existed) {
-      const row = await prisma.regUnit.update({
-        where: { id: existed.id },
-        data: {
-          name,
-          kind: String(input.kind || existed.kind).slice(0, 24),
-          factor: num(input.factor, existed.factor),
-          baseUnit: String(input.baseUnit === undefined ? existed.baseUnit : input.baseUnit).slice(0, 24),
-        },
-      });
-      return { id: row.id };
-    }
-    const row = await prisma.regUnit.create({
-      data: {
-        owner,
-        instanceId,
-        name,
-        kind: String(input.kind || 'count').slice(0, 24),
-        factor: num(input.factor, 1),
-        baseUnit: String(input.baseUnit || '').slice(0, 24),
-      },
-    });
-    return { id: row.id };
-  }
-
-  async removeUnit(id: string, owner: string) {
-    const existed = await prisma.regUnit.findFirst({ where: { id: String(id || ''), owner } });
-    if (!existed) return { error: '单位不存在' as string };
-    await prisma.regUnit.delete({ where: { id: existed.id } });
-    return { id: existed.id };
-  }
-
   /* ── 候选值（地点 / 发生人 / 关联人 / 图例筛选项） ──────── */
 
   /**
@@ -1199,7 +1279,7 @@ export class RegService {
   async candidates(owner: string, instanceId: string) {
     const [rows, trackers] = await Promise.all([
       prisma.regEntry.findMany({
-        where: { owner: String(owner || ''), instanceId: String(instanceId || '') },
+        where: { owner: String(owner || ''), instanceId: String(instanceId || ''), deletedAt: null },
         select: { placeName: true, subjectName: true, relatedName: true },
         orderBy: { occurredAt: 'desc' },
         take: 500,
@@ -1250,7 +1330,7 @@ export class RegService {
   }) {
     const instanceId = String(q.instanceId || '');
     const axisX = this.axisField(q.axisX);
-    const where: Record<string, unknown> = { instanceId };
+    const where: Record<string, unknown> = { instanceId, deletedAt: null };
     if (String(q.scope || 'me') !== 'all') where.owner = String(q.owner || '');
     if (q.trackerId) where.trackerId = String(q.trackerId);
     else if (q.trackerName) where.tracker = { name: String(q.trackerName) };

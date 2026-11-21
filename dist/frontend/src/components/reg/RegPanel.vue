@@ -52,23 +52,15 @@
             <el-button size="small" :loading="loading" @click="reload(1)">
                 <font-awesome-icon icon="sync" />
             </el-button>
-            <el-button size="small" :loading="importing" @click="triggerImport">
-                <font-awesome-icon icon="upload" class="reg-add-icon" />{{ $t('reg.import') }}
+            <!-- v1.3.6：导入 / 下载模板移除，原位置改为导出当前实例的登记数据 -->
+            <el-button v-if="!trashMode" size="small" :loading="exporting" @click="exportCsv">
+                <font-awesome-icon icon="download" class="reg-add-icon" />{{ $t('reg.export') }}
             </el-button>
-            <!-- v1.3.5.9：导入模板下载（表头与导入解析用的列名一致） -->
-            <el-button size="small" @click="downloadTemplate">
-                <font-awesome-icon icon="download" class="reg-add-icon" />{{ $t('reg.templateDownload') }}
-            </el-button>
-            <input
-                ref="importInput"
-                type="file"
-                accept=".csv,text/csv"
-                class="reg-import-input"
-                @change="onImportFile"
-            />
-            <el-button size="small" type="primary" class="reg-add-btn" @click="openCreate">
-                <font-awesome-icon icon="plus" class="reg-add-icon" />{{ $t('reg.addEntry') }}
-            </el-button>
+        </div>
+
+        <div v-if="trashMode" class="reg-trash-banner" role="status">
+            <font-awesome-icon icon="trash-alt" class="reg-trash-icon" />
+            <span>{{ $t('reg.trashBanner') }}</span>
         </div>
 
         <div v-loading="loading" class="reg-list">
@@ -87,9 +79,17 @@
                     </div>
 
                     <!-- v1.3.5.10：条目挪到时间行的下一行，并带上「上次 … / … 天前」 -->
+                    <!-- v1.3.6：点条目前往 /reg?tracker=条目名（新标签页）；不加粗 -->
                     <div class="reg-item-sub">
-                        <span class="reg-item-marker">@{{ item.trackerName }}</span>
-                        <span v-if="item.prev" class="reg-item-prev">
+                        <a
+                            v-if="!trashMode"
+                            class="reg-item-marker"
+                            :href="regUrl(item)"
+                            target="_blank"
+                            rel="noopener"
+                        >@{{ item.trackerName }}</a>
+                        <span v-else class="reg-item-marker">@{{ item.trackerName }}</span>
+                        <span v-if="!trashMode && item.prev" class="reg-item-prev">
                             ({{ $t('reg.lastTime', { amount: fmtPrev(item), days: prevDays(item) }) }})
                         </span>
                     </div>
@@ -97,7 +97,11 @@
                     <p v-if="item.title" class="reg-item-title">{{ item.title }}</p>
 
                     <!-- 详情：超过高度显示「全文」，点开变「收起」（同瞬间内容区） -->
-                    <div v-if="item.event" class="reg-item-event-wrap">
+                    <div
+                        v-if="item.event"
+                        class="reg-item-event-wrap"
+                        :class="{ 'is-clamped': !expanded[item.id] && overflow[item.id] }"
+                    >
                         <p
                             :ref="'ev-' + item.id"
                             class="reg-item-event"
@@ -142,12 +146,18 @@
                         </button>
                     </div>
 
-                    <!-- 标签行：末尾「更多」菜单（编辑 / 删除） -->
+                    <!-- 标签行：复用瞬间的胶囊样式，点标签直接筛选；末尾「更多」菜单 -->
                     <div class="reg-item-meta">
                         <span v-if="item.subjectName">{{ $t('reg.fieldSubject') }}：{{ item.subjectName }}</span>
                         <span v-if="item.relatedName">{{ $t('reg.fieldRelated') }}：{{ item.relatedName }}</span>
                         <span v-if="item.tags && item.tags.length" class="reg-item-tags">
-                            <span v-for="t in item.tags" :key="t" class="reg-tag">#{{ t }}</span>
+                            <button
+                                v-for="t in item.tags"
+                                :key="t"
+                                type="button"
+                                class="reg-tag"
+                                @click.stop="filterByTag(t)"
+                            >#{{ t }}</button>
                         </span>
                         <el-dropdown
                             trigger="click"
@@ -160,12 +170,22 @@
                             </button>
                             <template #dropdown>
                                 <el-dropdown-menu>
-                                    <el-dropdown-item command="edit">
-                                        <font-awesome-icon icon="pen-to-square" class="reg-menu-icon" />{{ $t('notes.edit') }}
-                                    </el-dropdown-item>
-                                    <el-dropdown-item command="delete" divided>
-                                        <font-awesome-icon icon="trash" class="reg-menu-icon is-danger" />{{ $t('notes.delete') }}
-                                    </el-dropdown-item>
+                                    <template v-if="trashMode">
+                                        <el-dropdown-item command="restore">
+                                            <font-awesome-icon icon="undo" class="reg-menu-icon" />{{ $t('notes.restore') }}
+                                        </el-dropdown-item>
+                                        <el-dropdown-item command="purge" divided>
+                                            <font-awesome-icon icon="trash" class="reg-menu-icon is-danger" />{{ $t('notes.purge') }}
+                                        </el-dropdown-item>
+                                    </template>
+                                    <template v-else>
+                                        <el-dropdown-item command="edit">
+                                            <font-awesome-icon icon="pen-to-square" class="reg-menu-icon" />{{ $t('notes.edit') }}
+                                        </el-dropdown-item>
+                                        <el-dropdown-item command="delete" divided>
+                                            <font-awesome-icon icon="trash" class="reg-menu-icon is-danger" />{{ $t('notes.delete') }}
+                                        </el-dropdown-item>
+                                    </template>
                                 </el-dropdown-menu>
                             </template>
                         </el-dropdown>
@@ -227,6 +247,8 @@ export default {
     components: { RegEntryDialog, MediaPreviewOverlay, FileDetailDialog },
     props: {
         instanceId: { type: String, default: '' },
+        /* v1.3.6：回收站模式（只列已删除，操作改为恢复 / 彻底删除） */
+        trashMode: { type: Boolean, default: false },
     },
     emits: ['changed'],
     data() {
@@ -244,7 +266,7 @@ export default {
             keyword: '',
             dialogVisible: false,
             editing: null,
-            importing: false,
+            exporting: false,
             /* 一行最多几个附件：桌面 10 / 移动 6（尺寸不变，超出叠 +N） */
             narrow: false,
             /* 视频首帧：fileId → dataURL */
@@ -270,6 +292,7 @@ export default {
     },
     watch: {
         instanceId() { this.reload(1); this.loadTrackers(); this.loadTags(); },
+        trashMode() { this.reload(1); },
         filterTracker() { this.reload(1); },
         filterTag() { this.reload(1); },
         range() { this.reload(1); },
@@ -360,6 +383,7 @@ export default {
                     page: String(this.page),
                     pageSize: String(this.pageSize),
                 });
+                if (this.trashMode) qs.set('trash', '1');
                 if (this.filterTracker) qs.set('trackerName', this.filterTracker);
                 if (this.filterTag) qs.set('tag', this.filterTag);
                 if (this.keyword.trim()) qs.set('keyword', this.keyword.trim());
@@ -400,10 +424,6 @@ export default {
             this.expanded = { ...this.expanded, [item.id]: !this.expanded[item.id] };
             this.$nextTick(this.measureEvents);
         },
-        openCreate() {
-            this.editing = null;
-            this.dialogVisible = true;
-        },
         openEdit(item) {
             this.editing = item;
             this.dialogVisible = true;
@@ -411,10 +431,13 @@ export default {
         onCommand(cmd, item) {
             if (cmd === 'edit') this.openEdit(item);
             else if (cmd === 'delete') this.remove(item);
+            else if (cmd === 'restore') this.restore(item);
+            else if (cmd === 'purge') this.purge(item);
         },
+        /** v1.3.6：删除 = 移入回收站（软删除） */
         async remove(item) {
             try {
-                await this.$confirm(this.$t('reg.deleteConfirm'), this.$t('common.delete'), {
+                await this.$confirm(this.$t('reg.trashConfirm'), this.$t('common.delete'), {
                     type: 'warning',
                     confirmButtonText: this.$t('common.confirm'),
                     cancelButtonText: this.$t('common.cancel'),
@@ -426,13 +449,87 @@ export default {
                 const res = await fetchWithAuth(`/api/reg/entries/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
-                this.$message.success(this.$t('reg.deleteOk'));
+                this.$message.success(this.$t('reg.trashOk'));
                 this.reload(this.page);
                 this.loadTrackers();
                 this.$emit('changed');
             } catch (e) {
                 this.$message.error(e.message || this.$t('common.failed'));
             }
+        },
+        /** v1.3.6：从回收站恢复 */
+        async restore(item) {
+            try {
+                const res = await fetchWithAuth(`/api/reg/entries/${encodeURIComponent(item.id)}/restore`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
+                this.$message.success(this.$t('reg.restoreOk'));
+                this.reload(this.page);
+                this.$emit('changed');
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            }
+        },
+        /** v1.3.6：彻底删除（不可恢复） */
+        async purge(item) {
+            try {
+                await this.$confirm(this.$t('reg.purgeConfirm'), this.$t('notes.purge'), {
+                    type: 'warning',
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                });
+            } catch (e) {
+                return;
+            }
+            try {
+                const res = await fetchWithAuth(`/api/reg/entries/${encodeURIComponent(item.id)}/purge`, { method: 'DELETE' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
+                this.$message.success(this.$t('reg.purgeOk'));
+                this.reload(this.page);
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            }
+        },
+        /** v1.3.6：导出当前实例的登记数据（17 列 CSV） */
+        async exportCsv() {
+            this.exporting = true;
+            try {
+                const qs = new URLSearchParams({ instanceId: this.instanceId || '' });
+                const res = await fetchWithAuth(`/api/reg/export?${qs.toString()}`);
+                if (!res.ok) throw new Error(this.$t('common.failed'));
+                const text = await res.text();
+                const body = text.includes('\n') && text.indexOf('\n') > 2 ? text : `${text}\r\n`;
+                const blob = new Blob([body], { type: 'text/csv;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const d = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `登记数据-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 2000);
+            } catch (e) {
+                this.$message.error(e.message || this.$t('common.failed'));
+            } finally {
+                this.exporting = false;
+            }
+        },
+        /** 条目名 → /reg?tracker=名称（新标签页） */
+        regUrl(item) {
+            const name = String((item && item.trackerName) || '');
+            try {
+                return this.$router.resolve({ path: '/reg', query: { tracker: name } }).href;
+            } catch (e) {
+                return `/reg?tracker=${encodeURIComponent(name)}`;
+            }
+        },
+        /** 点标签 = 按标签筛选 */
+        filterByTag(tag) {
+            this.filterTag = String(tag || '');
+            this.reload(1);
         },
         /* ── 灯箱 / 文件详情（与瞬间内容区同口径） ── */
         openPreview(item, index) {
@@ -511,141 +608,6 @@ export default {
             } catch (e) {
                 this.$message.error(e.message || this.$t('common.failed'));
             }
-        },
-        triggerImport() {
-            const input = this.$refs.importInput;
-            if (!input) return;
-            input.value = '';
-            input.click();
-        },
-        /**
-         * v1.3.5.9：下载导入模板。
-         * 表头与 mapImportRow 认的列名一致，另存成 CSV（带 BOM，Excel 直接能开）。
-         */
-        downloadTemplate() {
-            const heads = ['条目', '发生时间', '登记数值', '份量', '单位', '分母', '标题', '详情', '发生人', '关联人', '地点'];
-            const csv = `${heads.join(',')}\r\n`;
-            const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = '登记导入模板.csv';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            setTimeout(() => URL.revokeObjectURL(url), 2000);
-            this.$message.success(this.$t('reg.templateSaved'));
-        },
-        /**
-         * v1.3.5.3：Excel / CSV 导入（P1）。
-         * Excel 另存为 CSV 后即可导入；第一行是表头，列名支持中英文别名。
-         * 逐行交给后端 /api/reg/import，失败行会回报行号，不整批回滚。
-         */
-        async onImportFile(e) {
-            const file = e && e.target && e.target.files ? e.target.files[0] : null;
-            if (!file) return;
-            this.importing = true;
-            try {
-                const text = await file.text();
-                const table = this.parseCsv(text);
-                this._importHeads = (table[0] || []).map((h) => String(h || '').trim());
-                const rows = table.slice(1).map((r) => this.mapImportRow(r)).filter(Boolean);
-                if (!rows.length) {
-                    this.$message.warning(this.$t('reg.importEmpty'));
-                    return;
-                }
-                const res = await fetchWithAuth('/api/reg/import', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ instanceId: this.instanceId || '', rows }),
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok || data.success === false) throw new Error(data.message || this.$t('common.failed'));
-                const ok = Number(data.ok) || 0;
-                const failed = Array.isArray(data.failed) ? data.failed.length : 0;
-                this.$message.success(this.$t('reg.importOk', { ok, failed }));
-                this.reload(1);
-                this.loadTrackers();
-                this.$emit('changed');
-            } catch (err) {
-                this.$message.error(err.message || this.$t('common.failed'));
-            } finally {
-                this.importing = false;
-                if (e && e.target) e.target.value = '';
-            }
-        },
-        /** 极简 CSV 解析：支持双引号包裹的字段与逗号转义（Excel 另存 CSV 的常见形态） */
-        parseCsv(text) {
-            const src = String(text || '').replace(/^\uFEFF/, '');
-            const rows = [];
-            let row = [];
-            let cell = '';
-            let quoted = false;
-            for (let i = 0; i < src.length; i += 1) {
-                const ch = src[i];
-                if (quoted) {
-                    if (ch === '"' && src[i + 1] === '"') {
-                        cell += '"';
-                        i += 1;
-                    } else if (ch === '"') {
-                        quoted = false;
-                    } else {
-                        cell += ch;
-                    }
-                    continue;
-                }
-                if (ch === '"') {
-                    quoted = true;
-                } else if (ch === ',') {
-                    row.push(cell);
-                    cell = '';
-                } else if (ch === '\n') {
-                    row.push(cell);
-                    rows.push(row);
-                    row = [];
-                    cell = '';
-                } else if (ch !== '\r') {
-                    cell += ch;
-                }
-            }
-            if (cell || row.length) {
-                row.push(cell);
-                rows.push(row);
-            }
-            return rows.filter((r) => r.some((c) => String(c || '').trim()));
-        },
-        mapImportRow(cells) {
-            const heads = this._importHeads;
-            const pick = (names) => {
-                for (const n of names) {
-                    const idx = heads.indexOf(n);
-                    if (idx >= 0) return String(cells[idx] || '').trim();
-                }
-                return '';
-            };
-            const markerName = pick(['条目', '条目名', '标记', '标记名', 'tracker', 'trackerName', 'marker', 'markerName']);
-            const dateRaw = pick(['时间', '发生时间', '日期', 'occurredAt', 'date']);
-            const amountRaw = pick(['登记数值', '数值', '金额', 'amount', 'value']);
-            if (!markerName || !dateRaw || amountRaw === '') return null;
-            const ms = Date.parse(dateRaw.replace(/\//g, '-'));
-            const amount = Number(String(amountRaw).replace(/[,\s]/g, ''));
-            if (!Number.isFinite(ms) || !Number.isFinite(amount)) return null;
-            const qtyRaw = pick(['数量', '份量', 'quantity']);
-            const quantity = qtyRaw === '' ? 1 : Number(String(qtyRaw).replace(/[,\s]/g, ''));
-            return {
-                markerName,
-                trackerName: markerName,
-                occurredAt: ms,
-                amount,
-                quantity: Number.isFinite(quantity) && quantity !== 0 ? quantity : 1,
-                unit: pick(['单位', 'unit']),
-                title: pick(['标题', 'title']),
-                event: pick(['详情', '事件', '登记事件', 'event']),
-                subjectName: pick(['发生人', 'subjectName']),
-                relatedName: pick(['关联人', 'relatedName']),
-                placeName: pick(['地点', 'placeName']),
-                portion: pick(['分母', 'portion']),
-            };
         },
         onSaved() {
             this.reload(this.page);
@@ -732,16 +694,25 @@ export default {
     opacity: 0.6;
 }
 
-.reg-add-btn {
-    margin-left: auto;
-}
-
 .reg-add-icon {
     margin-right: 5px;
 }
 
-.reg-import-input {
-    display: none;
+/* v1.3.6：回收站提示条（与发布中心回收站同一观感） */
+.reg-trash-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--el-color-danger-light-7, rgba(245, 108, 108, 0.35));
+    border-radius: 10px;
+    background: var(--el-color-danger-light-9, rgba(245, 108, 108, 0.08));
+    color: var(--el-color-danger);
+    font-size: 12.5px;
+}
+
+.reg-trash-icon {
+    font-size: 13px;
 }
 
 .reg-opt-name {
@@ -824,7 +795,8 @@ export default {
 }
 
 .reg-item-amount.is-plain {
-    color: var(--el-text-color-primary);
+    /* v1.3.6：既无 + 也无 - 的数值固定为 #646464，和红/绿都不撞色 */
+    color: #646464;
 }
 
 /* 条目行（时间行的下一行） */
@@ -841,7 +813,13 @@ export default {
 
 .reg-item-marker {
     color: var(--el-color-primary);
-    font-weight: 600;
+    /* v1.3.6：条目名称不加粗；可点击跳转 /reg?tracker=名称 */
+    font-weight: 400;
+    text-decoration: none;
+}
+
+a.reg-item-marker:hover {
+    text-decoration: underline;
 }
 
 .reg-item-prev {
@@ -875,6 +853,10 @@ export default {
     overflow: hidden;
 }
 
+/*
+ * v1.3.6：「全文」贴在最后一行内容的末尾（右下角）。
+ * 折叠态绝对定位并用渐变遮住背后的文字；展开后回到正文末尾、右对齐。
+ */
 .reg-full-toggle {
     margin-top: 2px;
     padding: 0 6px;
@@ -886,6 +868,22 @@ export default {
     font-family: inherit;
     line-height: 1.6;
     cursor: pointer;
+}
+
+.reg-item-event-wrap.is-clamped .reg-full-toggle {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    margin: 0;
+    padding-left: 22px;
+    border-radius: 0 0 6px 0;
+    background:
+        linear-gradient(90deg, transparent 0, var(--note-card-bg, var(--el-bg-color)) 22px);
+}
+
+.reg-item-event-wrap:not(.is-clamped) .reg-full-toggle {
+    display: block;
+    margin-left: auto;
 }
 
 .reg-full-toggle:hover {
@@ -975,7 +973,19 @@ export default {
     flex-wrap: wrap;
 }
 
+/* v1.3.6：标签复用瞬间的胶囊样式，可点击筛选 */
 .reg-tag {
+    padding: 1px 7px;
+    border: none;
+    border-radius: 999px;
+    background: var(--note-tag-bg, rgba(127, 127, 127, 0.12));
+    color: var(--note-tag-color, var(--el-text-color-regular));
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.reg-tag:hover {
     color: var(--el-color-primary);
 }
 

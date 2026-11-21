@@ -742,6 +742,20 @@ let NotesService = class NotesService {
             bucket.set(noteKind, (bucket.get(noteKind) || 0) + 1);
             byTag.set(l.tagId, bucket);
         }
+        if (String(kind || '') === 'register') {
+            const regLinks = await prisma_1.prisma.regEntryTag.findMany({
+                where: {
+                    tagId: { in: tags.map((t) => t.id) },
+                    entry: { owner: String(viewer || ''), instanceId: String(instanceId || ''), deletedAt: null },
+                },
+                select: { tagId: true },
+            });
+            for (const l of regLinks) {
+                const bucket = byTag.get(l.tagId) || new Map();
+                bucket.set('register', (bucket.get('register') || 0) + 1);
+                byTag.set(l.tagId, bucket);
+            }
+        }
         const out = tags.map((t) => {
             const bucket = byTag.get(t.id) || new Map();
             const kindCounts = {};

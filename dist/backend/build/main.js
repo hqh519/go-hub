@@ -253,7 +253,13 @@ async function bootstrap() {
                 res.setHeader('Content-Encoding', 'gzip');
                 res.setHeader('Vary', 'Accept-Encoding');
                 res.setHeader('Content-Length', String(body.length));
-                res.setHeader('Cache-Control', /[/\\]assets[/\\]/.test(full) ? 'public, max-age=31536000, immutable' : 'no-cache');
+                res.setHeader('Cache-Control', /[/\\]assets[/\\]/.test(full)
+                    ? 'public, max-age=31536000, immutable'
+                    : (ext === '.html' ? 'no-store, no-cache, must-revalidate' : 'no-cache'));
+                if (ext === '.html') {
+                    res.setHeader('Pragma', 'no-cache');
+                    res.setHeader('Expires', '0');
+                }
                 if (req.method === 'HEAD')
                     return res.status(200).end();
                 return res.status(200).end(body);
@@ -267,6 +273,11 @@ async function bootstrap() {
             setHeaders(res, filePath) {
                 if (/[/\\]assets[/\\]/.test(filePath)) {
                     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+                }
+                else if (/\.html?$/i.test(filePath)) {
+                    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+                    res.setHeader('Pragma', 'no-cache');
+                    res.setHeader('Expires', '0');
                 }
                 else {
                     res.setHeader('Cache-Control', 'no-cache');
@@ -286,7 +297,9 @@ async function bootstrap() {
             const accept = req.headers.accept || '';
             if (accept && !accept.includes('*/*') && !accept.includes('text/html'))
                 return next();
-            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
             return res.sendFile((0, path_1.join)(frontendDir, 'index.html'));
         });
     }

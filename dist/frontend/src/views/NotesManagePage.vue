@@ -80,7 +80,14 @@
                         最后是更多菜单。移动端这一组改成可以左右滑动（.nt-topbar-right 见样式），
                         不再换行／挤成两行。
                     -->
-                    <button type="button" class="nt-publish-btn" :title="publishLabel" @click="openPublish">
+                    <!-- v1.3.6：登记类目不再从发布页新增（添加登记按钮移除） -->
+                    <button
+                        v-if="kind !== 'register'"
+                        type="button"
+                        class="nt-publish-btn"
+                        :title="publishLabel"
+                        @click="openPublish"
+                    >
                         <font-awesome-icon icon="plus" class="nt-publish-icon" />
                         <span class="nt-publish-text">{{ publishLabel }}</span>
                     </button>
@@ -346,6 +353,7 @@
                 ref="regPanel"
                 v-if="isRegisterKind && !tagMode"
                 :instance-id="instanceId"
+                :trash-mode="trashMode"
                 @changed="reload"
             />
 
@@ -873,11 +881,16 @@ export default {
          * v1.1.9.4：广场也保留发布入口（点了先选类型），所以一并算「可发布」。
          */
         canPublishCurrent() {
-            return this.kind === '' || this.kind === 'square' || this.kind === 'moment' || this.kind === 'register';
+            /* v1.3.6：登记类目已移除新增入口，空状态也不再给「添加登记」 */
+            return this.kind === '' || this.kind === 'square' || this.kind === 'moment';
         },
-        /** v1.3.5.3：当前是否是「登记」类目（内容区换成 RegPanel） */
+        /**
+         * v1.3.5.3：当前是否是「登记」类目（内容区换成 RegPanel）。
+         * v1.3.6：回收站模式也走 RegPanel —— 登记删除后进自己的回收站，
+         * 不能落到瞬间那套列表里（那边没有登记数据，只会显示空）。
+         */
         isRegisterKind() {
-            return this.kind === 'register' && !this.trashMode;
+            return this.kind === 'register';
         },
         emptyIcon() {
             if (this.trashMode) return 'trash-alt';
