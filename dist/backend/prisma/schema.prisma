@@ -892,8 +892,7 @@ model RegTracker {
   portion    String   @default("")
   unitKind   String   @default("")
   precision  Int      @default(2)
-  /// 0 无方向 / 1 收入增加 / -1 支出减少
-  direction  Int      @default(0)
+  /// v1.3.5.9：性质已迁到 reg_entries.direction（每条登记各自的性质）
   note       String   @default("")
   archived   Boolean  @default(false)
   /// v1.3.5.4（P3）：预算额度（0 = 不设）；统计页按当前周期用量给出超支提醒
@@ -930,20 +929,17 @@ model RegEntry {
   placeName   String    @default("")
   /// 主要观测数值（可正负）
   amount      Float     @default(0)
-  /// 数量（留空默认 1）
+  /// v1.3.5.8：「份量」（原「数量」，留空按 1 提交）
   quantity    Float     @default(1)
-  unit        String    @default("")
-  /// v1.3.5.7：分母（复合单位 `/` 之后的部分），保存当时的取值
-  portion     String    @default("")
-  /// CNY | USD
-  currency    String    @default("CNY")
+  /// v1.3.5.8：'' 无 | CNY | USD
+  currency    String    @default("")
+  /// v1.3.5.9：性质 —— 0 无 / 1 收入（只能正数）/ -1 支出（只能负数）
+  /// 存这一条记录本身，不跟随条目（同一条目可以有收有支）
   direction   Int       @default(0)
-  note        String    @default("")
   /// JSON 数组：files.id
   attachments String    @default("[]")
   /// 挂载的笔记 id
   docNoteId   String    @default("")
-  status      String    @default("normal")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -953,6 +949,9 @@ model RegEntry {
   @@index([trackerId, occurredAt])
   @@index([owner, instanceId, occurredAt])
   @@index([owner, instanceId, dueAt])
+  /// v1.3.5.8：横轴可切到起始时间 / 登记时间，给这两条查询路径补索引
+  @@index([owner, instanceId, startAt])
+  @@index([owner, instanceId, createdAt])
   @@map("reg_entries")
 }
 

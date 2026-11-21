@@ -1,13 +1,14 @@
 <template>
     <!--
-        v1.3.5.7 登记提交表单
+        v1.3.5.8 登记提交表单
         ----------------------------------------------------------------------------
-        一套通用表单兼容各种登记，字段顺序按需求给的参考图排：
-          标题 / 详情 / 地点 / 条目 / 发生人·关联人 / 时间·类型 / 起始·截止 /
-          数值·数量 / 单位·分母·币种 / 标签 / 文件 / 文档
+        一套通用表单兼容各种登记，字段顺序按本轮需求给的参考图排：
+          标题 / 详情 / 地点 / 发生时间·起始时间·截止时间 / 条目 /
+          类型·性质 / 数值·份量 / 单位·分母·币种 / 发生人·关联人 / 标签
         · 「条目」是登记自己的身份表（reg_trackers），选中已有条目即锁定类型 / 单位 / 分母；
+        · 「性质」v1.3.5.9 起落每条登记自己的 reg_entries.direction（不随条目冻结）；
         · 「标签」走全站共用的 tags 表；
-        · 备注按本轮需求移除。
+        · 附件缩略图在按钮行上方（与瞬间编辑页同一套样式），`x 个附件` 放在底部「取消」左侧。
     -->
     <el-dialog
         v-model="visible"
@@ -15,6 +16,7 @@
         :width="dialogWidth"
         append-to-body
         class="reg-dialog"
+        @opened="scrollToTop"
         @closed="onClosed"
     >
         <!--
@@ -39,7 +41,7 @@
                     />
                 </div>
 
-                <!-- 详情：内容超出后自动增高，最高不超过视口 35% -->
+                <!-- 详情：内容超出后自动增高，最高不超过视口 30% -->
                 <div class="reg-cell reg-span-6">
                     <span class="reg-cell-label">{{ $t('reg.fieldDetail') }}</span>
                     <el-input
@@ -65,6 +67,45 @@
                     />
                 </div>
 
+                <!-- 发生时间 / 起始时间 / 截止时间 -->
+                <div class="reg-cell reg-span-2">
+                    <span class="reg-cell-label">{{ $t('reg.fieldTime') }} <em>*</em></span>
+                    <el-date-picker
+                        v-model="form.occurredAt"
+                        type="datetime"
+                        class="reg-plain reg-date"
+                        :popper-class="datePopperClass"
+                        :clearable="false"
+                        :placeholder="$t('reg.fieldTime')"
+                    />
+                    <!-- 登记时间：提交时落库，只读展示，任何入口都不允许改 -->
+                    <span v-if="isEdit" class="reg-cell-hint">
+                        {{ $t('reg.fieldCreatedAt') }} {{ fmtTime(form.createdAt) }}
+                    </span>
+                </div>
+                <div class="reg-cell reg-span-2">
+                    <span class="reg-cell-label">{{ $t('reg.fieldStartAt') }}</span>
+                    <el-date-picker
+                        v-model="form.startAt"
+                        type="datetime"
+                        class="reg-plain reg-date"
+                        :popper-class="datePopperClass"
+                        clearable
+                        :placeholder="$t('reg.fieldOptional')"
+                    />
+                </div>
+                <div class="reg-cell reg-span-2">
+                    <span class="reg-cell-label">{{ $t('reg.fieldDueAt') }}</span>
+                    <el-date-picker
+                        v-model="form.dueAt"
+                        type="datetime"
+                        class="reg-plain reg-date"
+                        :popper-class="datePopperClass"
+                        clearable
+                        :placeholder="$t('reg.fieldOptional')"
+                    />
+                </div>
+
                 <!-- 条目 -->
                 <div class="reg-cell reg-span-6">
                     <span class="reg-cell-label">{{ $t('reg.fieldItem') }} <em>*</em></span>
@@ -81,78 +122,22 @@
                     />
                 </div>
 
-                <!-- 发生人 / 关联人 -->
-                <div class="reg-cell reg-span-3">
-                    <span class="reg-cell-label">{{ $t('reg.fieldSubject') }}</span>
-                    <el-autocomplete
-                        v-model="form.subjectName"
-                        class="reg-plain"
-                        :fetch-suggestions="(q, cb) => suggestFrom('subjects', q, cb)"
-                        :placeholder="$t('reg.fieldSubjectPh')"
-                        clearable
-                        maxlength="40"
-                    />
-                </div>
-                <div class="reg-cell reg-span-3">
-                    <span class="reg-cell-label">{{ $t('reg.fieldRelated') }}</span>
-                    <el-autocomplete
-                        v-model="form.relatedName"
-                        class="reg-plain"
-                        :fetch-suggestions="(q, cb) => suggestFrom('related', q, cb)"
-                        :placeholder="$t('reg.fieldRelatedPh')"
-                        clearable
-                        maxlength="40"
-                    />
-                </div>
-
-                <!-- 时间 / 类型 -->
-                <div class="reg-cell reg-span-3">
-                    <span class="reg-cell-label">{{ $t('reg.fieldTime') }} <em>*</em></span>
-                    <el-date-picker
-                        v-model="form.occurredAt"
-                        type="datetime"
-                        class="reg-plain reg-date"
-                        :popper-class="datePopperClass"
-                        :clearable="false"
-                        :placeholder="$t('reg.fieldTime')"
-                    />
-                    <!-- 登记时间：提交时落库，只读展示，任何入口都不允许改 -->
-                    <span v-if="isEdit" class="reg-cell-hint">
-                        {{ $t('reg.fieldCreatedAt') }} {{ fmtTime(form.createdAt) }}
-                    </span>
-                </div>
+                <!-- 类型 / 性质 -->
                 <div class="reg-cell reg-span-3">
                     <span class="reg-cell-label">{{ $t('reg.fieldType') }}</span>
                     <el-select v-model="form.valueType" class="reg-plain reg-full" :disabled="locked">
                         <el-option v-for="t in valueTypes" :key="t.value" :label="$t(t.label)" :value="t.value" />
                     </el-select>
                 </div>
-
-                <!-- 起始时间 / 截止时间 -->
                 <div class="reg-cell reg-span-3">
-                    <span class="reg-cell-label">{{ $t('reg.fieldStartAt') }}</span>
-                    <el-date-picker
-                        v-model="form.startAt"
-                        type="datetime"
-                        class="reg-plain reg-date"
-                        :popper-class="datePopperClass"
-                        clearable
-                        :placeholder="$t('reg.fieldOptional')"
-                    />
-                </div>
-                <div class="reg-cell reg-span-3">
-                    <span class="reg-cell-label">{{ $t('reg.fieldDueAt') }}</span>
-                    <el-date-picker
-                        v-model="form.dueAt"
-                        type="datetime"
-                        class="reg-plain reg-date"
-                        :popper-class="datePopperClass"
-                        clearable
-                        :placeholder="$t('reg.fieldOptional')"
-                    />
+                    <span class="reg-cell-label">{{ $t('reg.fieldNature') }}</span>
+                    <!-- v1.3.5.9：性质属于这条登记，不跟条目冻结 -->
+                    <el-select v-model="form.direction" class="reg-plain reg-full">
+                        <el-option v-for="n in natures" :key="n.value" :label="$t(n.label)" :value="n.value" />
+                    </el-select>
                 </div>
 
-                <!-- 数值 / 数量 -->
+                <!-- 数值 / 份量 -->
                 <div class="reg-cell reg-span-3">
                     <span class="reg-cell-label">{{ $t('reg.fieldAmount') }} <em>*</em></span>
                     <el-input
@@ -160,12 +145,19 @@
                         class="reg-plain"
                         :placeholder="$t('reg.fieldAmountPh')"
                         inputmode="decimal"
+                        @input="onAmountInput"
                         @keydown.enter.prevent
                     />
                 </div>
                 <div class="reg-cell reg-span-3">
                     <span class="reg-cell-label">{{ $t('reg.fieldQuantity') }}</span>
-                    <el-input v-model="form.quantity" class="reg-plain" inputmode="decimal" @keydown.enter.prevent />
+                    <el-input
+                        v-model="form.quantity"
+                        class="reg-plain"
+                        inputmode="decimal"
+                        :placeholder="$t('reg.fieldQuantityPh')"
+                        @keydown.enter.prevent
+                    />
                 </div>
 
                 <!-- 单位 / 分母 / 币种 -->
@@ -196,9 +188,34 @@
                 <div class="reg-cell reg-span-2">
                     <span class="reg-cell-label">{{ $t('reg.fieldCurrency') }}</span>
                     <el-select v-model="form.currency" class="reg-plain reg-full">
+                        <el-option :label="$t('reg.currencyNone')" value="NONE" />
                         <el-option :label="$t('reg.currencyCny')" value="CNY" />
                         <el-option :label="$t('reg.currencyUsd')" value="USD" />
                     </el-select>
+                </div>
+
+                <!-- 发生人 / 关联人 -->
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldSubject') }}</span>
+                    <el-autocomplete
+                        v-model="form.subjectName"
+                        class="reg-plain"
+                        :fetch-suggestions="(q, cb) => suggestFrom('subjects', q, cb)"
+                        :placeholder="$t('reg.fieldSubjectPh')"
+                        clearable
+                        maxlength="40"
+                    />
+                </div>
+                <div class="reg-cell reg-span-3">
+                    <span class="reg-cell-label">{{ $t('reg.fieldRelated') }}</span>
+                    <el-autocomplete
+                        v-model="form.relatedName"
+                        class="reg-plain"
+                        :fetch-suggestions="(q, cb) => suggestFrom('related', q, cb)"
+                        :placeholder="$t('reg.fieldRelatedPh')"
+                        clearable
+                        maxlength="40"
+                    />
                 </div>
 
                 <!-- 标签：空格与回车都能确认 -->
@@ -218,47 +235,67 @@
                         <el-option v-for="t in tagOptions" :key="t" :label="t" :value="t" />
                     </el-select>
                 </div>
+            </div>
 
-                <!-- 文件 -->
-                <div class="reg-cell reg-span-6">
-                    <span class="reg-cell-label">{{ $t('reg.fieldAttachments') }}</span>
-                    <div class="reg-file-btns">
-                        <el-button size="small" @click="pickerVisible = true">
-                            <font-awesome-icon icon="images" class="reg-btn-icon" />{{ $t('reg.selectFile') }}
-                        </el-button>
-                        <el-button size="small" :loading="uploading" @click="pickLocalFile">
-                            <font-awesome-icon icon="upload" class="reg-btn-icon" />{{ $t('notes.uploadLocal') }}
-                        </el-button>
-                        <el-button size="small" :loading="uploading" @click="extractLink">
-                            <font-awesome-icon icon="link" class="reg-btn-icon" />{{ $t('notes.linkExtract') }}
-                        </el-button>
-                        <span class="reg-attach-count">{{ $t('reg.attachCount', { n: form.attachments.length }) }}</span>
-                        <input ref="fileInput" type="file" class="reg-file-input" multiple @change="onLocalFilesChosen" />
-                    </div>
-                    <div v-if="form.attachments.length" class="reg-attach-list">
-                        <span v-for="(a, i) in attachmentViews" :key="a.id + '-' + i" class="reg-attach-item">
-                            <span class="reg-attach-name">{{ a.name || a.id }}</span>
-                            <button type="button" class="reg-attach-del" @click="removeAttachment(i)">×</button>
-                        </span>
-                    </div>
+            <!--
+                v1.3.5.9：附件改成缩略图网格，放在按钮行【上方】。
+                加载方式与瞬间编辑页一致：后端给 url / thumbUrl / mediaKind，
+                图片直接显示缩略图，视频 / 音频 / 其它给图标 + 文件名。
+            -->
+            <div v-if="attachmentViews.length" class="reg-assets">
+                <div v-for="(a, i) in attachmentViews" :key="a.fileId + '-' + i" class="reg-asset">
+                    <el-image
+                        v-if="a.mediaKind === 'image' && (a.thumbUrl || a.url)"
+                        class="reg-asset-img"
+                        :src="a.thumbUrl || a.url"
+                        :preview-src-list="[a.url || a.thumbUrl]"
+                        fit="cover"
+                        preview-teleported
+                    />
+                    <span v-else class="reg-asset-cover">
+                        <font-awesome-icon :icon="a.mediaKind === 'video' ? 'film' : (a.mediaKind === 'audio' ? 'music' : 'file')" />
+                        <span class="reg-asset-name">{{ a.originalName || a.name || a.fileId }}</span>
+                    </span>
+                    <button type="button" class="reg-asset-del" :title="$t('common.delete')" @click.stop="removeAttachment(i)">
+                        <font-awesome-icon icon="times" />
+                    </button>
                 </div>
+            </div>
 
-                <!-- 挂载文档 -->
-                <div class="reg-cell reg-span-6">
-                    <span class="reg-cell-label">{{ $t('reg.fieldDoc') }}</span>
-                    <div class="reg-doc-row">
-                        <el-button size="small" @click="openDocPicker">
-                            <font-awesome-icon icon="file-lines" class="reg-btn-icon" />{{ $t('reg.addDoc') }}
-                        </el-button>
-                        <span v-if="docTitle" class="reg-doc-name">{{ docTitle }}</span>
-                        <button v-if="form.docNoteId" type="button" class="reg-doc-clear" @click="clearDoc">×</button>
-                    </div>
-                </div>
+            <!--
+                v1.3.5.8：附件四按钮移到表格外（需求：不要显示在边框内）。
+                移动端一行不换行，靠左右滑动查看（左右外边距收小）。
+            -->
+            <div class="reg-file-btns">
+                <el-button size="small" @click="pickerVisible = true">
+                    <font-awesome-icon icon="images" class="reg-btn-icon" />{{ $t('reg.selectFile') }}
+                </el-button>
+                <el-button size="small" :loading="uploading" @click="pickLocalFile">
+                    <font-awesome-icon icon="upload" class="reg-btn-icon" />{{ $t('notes.uploadLocal') }}
+                </el-button>
+                <el-button size="small" :loading="uploading" @click="extractLink">
+                    <font-awesome-icon icon="link" class="reg-btn-icon" />{{ $t('reg.btnLinkData') }}
+                </el-button>
+                <el-button size="small" @click="openDocPicker">
+                    <font-awesome-icon icon="file-lines" class="reg-btn-icon" />{{ $t('reg.btnMountDoc') }}
+                </el-button>
+                <input ref="fileInput" type="file" class="reg-file-input" multiple @change="onLocalFilesChosen" />
+            </div>
+            <div v-if="docTitle" class="reg-attach-list">
+                <span class="reg-attach-item">
+                    <font-awesome-icon icon="file-lines" class="reg-attach-icon" />
+                    <span class="reg-attach-name">{{ docTitle }}</span>
+                    <button type="button" class="reg-attach-del" @click="clearDoc">×</button>
+                </span>
             </div>
         </form>
 
         <template #footer>
             <div class="reg-footer">
+                <!-- v1.3.5.8：附件数量放在「取消」左侧，没有附件时不显示 -->
+                <span v-if="form.attachments.length" class="reg-attach-count">
+                    {{ $t('reg.attachCount', { n: form.attachments.length }) }}
+                </span>
                 <el-button size="small" @click="visible = false">{{ $t('common.cancel') }}</el-button>
                 <el-button size="small" type="primary" :loading="saving" @click="requestSubmit">{{ $t('common.save') }}</el-button>
             </div>
@@ -310,11 +347,22 @@ const VALUE_TYPES = [
     { value: 'price', label: 'reg.typePrice' },
 ];
 
+/** v1.3.5.8：性质（落 reg_trackers.direction） */
+const NATURES = [
+    { value: 0, label: 'reg.natureNone' },
+    { value: -1, label: 'reg.natureExpense' },
+    { value: 1, label: 'reg.natureIncome' },
+];
+
 const emptyForm = () => ({
     id: '',
     trackerId: '',
     trackerName: '',
+    /* v1.3.5.9：之前漏了这个键，编辑态还漏了回填，标题才会「填了却看不到」 */
+    title: '',
     valueType: 'flow',
+    /* 性质：0 无 / -1 减出 / 1 增进 */
+    direction: 0,
     event: '',
     occurredAt: Date.now(),
     startAt: null,
@@ -326,7 +374,8 @@ const emptyForm = () => ({
     quantity: '1',
     unit: '',
     portion: '',
-    currency: 'CNY',
+    /* v1.3.5.8：币种默认「无」（'NONE' 只是表单哨兵，落库写成空串） */
+    currency: 'NONE',
     tags: [],
     attachments: [],
     docNoteId: '',
@@ -355,20 +404,20 @@ export default {
         return {
             form: emptyForm(),
             valueTypes: VALUE_TYPES,
+            natures: NATURES,
             saving: false,
             uploading: false,
             locked: false,
-            /** 条目候选还没拉回来之前不联动，避免把编辑态的口径冲掉 */
-            ready: false,
             /** 条目候选还没拉回来之前不联动，避免把编辑态的口径冲掉 */
             ready: false,
             trackers: [],
             trackerCache: {},
             candidates: { places: [], subjects: [], related: [], units: [], portions: [], tags: [] },
             pickerVisible: false,
+            /** v1.3.5.9：附件视图（与瞬间编辑页同形：fileId / url / thumbUrl / mediaKind） */
             attachmentViews: [],
-            /** 附件 id → 名称（选文件 / 上传时缓存，避免额外请求） */
-            attachmentNames: {},
+            /** 附件 id → 视图，选文件 / 上传 / 编辑回填时缓存，避免重复请求 */
+            attachMap: {},
             targetVisible: false,
             uploadPrefill: {},
             uploadHint: '',
@@ -409,14 +458,21 @@ export default {
         'form.trackerName'() {
             if (this.ready) this.onTrackerInput();
         },
+        /**
+         * v1.3.5.9：性质决定数值符号。
+         *   1（收入）→ 只能正数；-1（支出）→ 只能负数；0（无）→ 想填什么填什么。
+         * 切性质时把已经输入的数值直接掰过来（需求点名的行为）。
+         */
+        'form.direction'() {
+            this.syncAmountSign();
+        },
     },
     methods: {
         async init() {
             this.form = emptyForm();
             this.locked = false;
             this.ready = false;
-            this.ready = false;
-            this.attachmentNames = {};
+            this.attachMap = {};
             this.attachmentViews = [];
             this.docTitle = '';
             this.pendingFiles = [];
@@ -429,6 +485,10 @@ export default {
                     trackerId: e.trackerId || (tracker ? tracker.id : '') || '',
                     trackerName: e.trackerName || (tracker ? tracker.name : '') || '',
                     valueType: e.valueType || (tracker ? tracker.valueType : '') || 'flow',
+                    /* v1.3.5.9：性质读这条记录自己的（老数据可能没给，回落 0） */
+                    direction: [-1, 0, 1].includes(Number(e.direction)) ? Number(e.direction) : 0,
+                    /* v1.3.5.9 修复：编辑态一直漏了 title，导致「填写了标题，点修改却是空的」 */
+                    title: e.title || '',
                     event: e.event || '',
                     occurredAt: e.occurredAt ? new Date(e.occurredAt) : new Date(),
                     startAt: e.startAt ? new Date(e.startAt) : null,
@@ -436,11 +496,11 @@ export default {
                     subjectName: e.subjectName || '',
                     relatedName: e.relatedName || '',
                     placeName: e.placeName || '',
-                    amount: e.amount === 0 || e.amount ? String(e.amount) : '',
+                    amount: e.amount === 0 || e.amount ? String(Math.round(Number(e.amount) * 10000) / 10000) : '',
                     quantity: e.quantity === 0 || e.quantity ? String(e.quantity) : '1',
-                    unit: e.unit || '',
-                    portion: e.portion || '',
-                    currency: e.currency || 'CNY',
+                    unit: e.unit || (tracker ? tracker.unit : '') || '',
+                    portion: e.portion || (tracker ? tracker.portion : '') || '',
+                    currency: e.currency ? String(e.currency) : 'NONE',
                     tags: Array.isArray(e.tags) ? e.tags.slice() : [],
                     attachments: Array.isArray(e.attachments) ? e.attachments.slice() : [],
                     docNoteId: e.docNoteId || '',
@@ -448,6 +508,10 @@ export default {
                 };
                 /* 编辑态：口径本来就是这一条条目的，直接锁住，但不用条目的值覆盖记录里的快照 */
                 this.locked = !!this.form.trackerId;
+                /* v1.3.5.9：列表接口已经把附件解析成视图（含缩略图），直接放进缓存 */
+                for (const a of Array.isArray(e.attachmentViews) ? e.attachmentViews : []) {
+                    if (a && a.fileId) this.attachMap[a.fileId] = a;
+                }
                 this.loadAttachmentViews();
                 if (e.docNoteId) this.docTitle = e.docTitle || e.docNoteId;
             } else {
@@ -460,6 +524,7 @@ export default {
             await Promise.all([this.loadTrackers(), this.loadCandidates()]);
             this.ready = true;
             if (!this.isEdit && this.form.trackerName) this.lockByTrackerName();
+            this.scrollToTop();
         },
         async loadTrackers() {
             try {
@@ -485,12 +550,43 @@ export default {
                 /* 候选失败不阻断表单 */
             }
         },
+        /**
+         * v1.3.5.9：把 attachments（files.id 数组）映射成可渲染的视图。
+         * 缓存里没有的（例如从旧列表进来的、只存了 id 的老数据）再向后端补一次；
+         * 拿不到也不报错 —— 退化成「第 n 个附件」的文件图标，不让表单崩。
+         */
         loadAttachmentViews() {
-            /* 名称在选文件 / 上传时缓存；编辑旧数据时显示序号即可 */
-            this.attachmentViews = (this.form.attachments || []).slice(0, 30).map((id, i) => ({
-                id,
-                name: this.attachmentNames[id] || this.$t('reg.attachFallback', { n: i + 1 }),
-            }));
+            const ids = (this.form.attachments || []).slice(0, 30);
+            this.attachmentViews = ids.map((id, i) => this.attachMap[id] || {
+                fileId: id,
+                url: '',
+                thumbUrl: '',
+                name: '',
+                originalName: this.$t('reg.attachFallback', { n: i + 1 }),
+                mediaKind: 'file',
+            });
+            const missing = ids.filter((id) => !this.attachMap[id]);
+            if (missing.length) this.fetchAttachmentViews(missing);
+        },
+        async fetchAttachmentViews(ids) {
+            try {
+                const qs = new URLSearchParams({ ids: ids.join(',') });
+                const res = await fetchWithAuth(`/api/reg/attachments?${qs.toString()}`);
+                const list = await res.json().catch(() => []);
+                for (const a of Array.isArray(list) ? list : []) {
+                    if (a && a.fileId) this.attachMap[a.fileId] = a;
+                }
+                const cur = (this.form.attachments || []).slice(0, 30);
+                this.attachmentViews = cur.map((id, i) => this.attachMap[id] || {
+                    fileId: id,
+                    url: '',
+                    thumbUrl: '',
+                    originalName: this.$t('reg.attachFallback', { n: i + 1 }),
+                    mediaKind: 'file',
+                });
+            } catch (e) {
+                /* 补图失败就保留占位 */
+            }
         },
         /* ── 条目 ─────────────────────────────────────────────── */
         /** 条目候选：登记自己的条目表（按最近使用排序，后端已排好） */
@@ -545,6 +641,7 @@ export default {
             this.form.trackerId = t.id || '';
             this.form.trackerName = t.name || this.form.trackerName;
             this.form.valueType = t.valueType || 'flow';
+            /* v1.3.5.9：性质不再跟随条目（它是每条登记自己的事） */
             this.form.unit = t.unit || '';
             this.form.portion = t.portion || '';
             this.locked = true;
@@ -560,12 +657,77 @@ export default {
             for (const f of files || []) {
                 const id = String(f.id || f.src || '');
                 if (!id) continue;
-                this.attachmentNames[id] = String(f.originalName || f.name || '');
+                this.cacheAttachment({
+                    fileId: id,
+                    url: String(f.url || f.src || ''),
+                    thumbUrl: String(f.thumbUrl || ''),
+                    name: String(f.name || ''),
+                    originalName: String(f.originalName || f.name || ''),
+                    mime: String(f.mime || ''),
+                    mediaKind: String(f.mediaKind || ''),
+                });
             }
             const ids = (files || []).map((f) => String(f.id || f.src || '')).filter(Boolean);
             const set = new Set([...(this.form.attachments || []), ...ids]);
             this.form.attachments = Array.from(set).slice(0, 30);
             this.loadAttachmentViews();
+        },
+        /** 缓存一条附件视图；mediaKind 缺失时按 mime 猜（后端没给就是本地选的旧数据） */
+        cacheAttachment(view) {
+            if (!view || !view.fileId) return;
+            const kind = view.mediaKind || this.kindOfMime(view.mime);
+            this.attachMap[view.fileId] = {
+                ...view,
+                mediaKind: kind,
+                thumbUrl: view.thumbUrl || (kind === 'image' ? view.url : ''),
+            };
+        },
+        kindOfMime(mime) {
+            const m = String(mime || '').toLowerCase();
+            if (!m) return 'file';
+            if (m.startsWith('image/')) return 'image';
+            if (m.startsWith('video/')) return 'video';
+            if (m.startsWith('audio/')) return 'audio';
+            return 'file';
+        },
+        /**
+         * v1.3.5.9：登记数值输入约束 —— 最多 4 位小数，并按性质限制正负。
+         * 直接写回 form.amount（el-input 的 @input 拿到的就是当前字符串）。
+         */
+        onAmountInput(v) {
+            let str = String(v === undefined || v === null ? '' : v);
+            const neg = str.trim().startsWith('-');
+            str = str.replace(/[^\d.]/g, '');
+            /* 只留第一个小数点，小数最多 4 位 */
+            const dot = str.indexOf('.');
+            if (dot >= 0) {
+                str = `${str.slice(0, dot)}.${str.slice(dot + 1).replace(/\./g, '').slice(0, 4)}`;
+            }
+            const dir = Number(this.form.direction) || 0;
+            let next = str;
+            if (dir === 1) next = str;
+            else if (dir === -1) next = str ? `-${str}` : (neg ? '-' : '');
+            else next = `${neg && str ? '-' : ''}${str}`;
+            if (next !== v) this.form.amount = next;
+        },
+        /** 切换性质时把已输入的数值掰到对应符号 */
+        syncAmountSign() {
+            const raw = String(this.form.amount === undefined || this.form.amount === null ? '' : this.form.amount).trim();
+            if (!raw || raw === '-' || raw === '+') return;
+            const n = Number(raw.replace(/[,\s]/g, ''));
+            if (!Number.isFinite(n)) return;
+            const dir = Number(this.form.direction) || 0;
+            if (dir === 1 && n < 0) this.form.amount = String(Math.abs(n));
+            else if (dir === -1 && n > 0) this.form.amount = `-${Math.abs(n)}`;
+        },
+        /** v1.3.5.9：每次打开都回到顶部（标题位置），别停在上次滚到的地方 */
+        scrollToTop() {
+            this.$nextTick(() => {
+                const f = this.$refs.regForm;
+                if (f && typeof f.scrollTop === 'number') f.scrollTop = 0;
+                const body = this.$el && this.$el.querySelector ? this.$el.querySelector('.reg-body') : null;
+                if (body) body.scrollTop = 0;
+            });
         },
         removeAttachment(i) {
             const list = this.form.attachments.slice();
@@ -661,7 +823,16 @@ export default {
         addAttachmentFromBed(hit) {
             const id = String((hit && (hit.fileId || hit.id)) || '');
             if (!id) return;
-            this.attachmentNames[id] = String(hit.originalName || hit.name || '');
+            const src = String((hit && (hit.src || hit.url)) || '');
+            this.cacheAttachment({
+                fileId: id,
+                url: src,
+                thumbUrl: String((hit && hit.thumbUrl) || ''),
+                name: String((hit && hit.name) || ''),
+                originalName: String((hit && hit.originalName) || (hit && hit.name) || ''),
+                mime: String((hit && (hit.mime || hit.type)) || ''),
+                mediaKind: String((hit && hit.mediaKind) || ''),
+            });
             const set = new Set([...(this.form.attachments || []), id]);
             this.form.attachments = Array.from(set).slice(0, 30);
             this.loadAttachmentViews();
@@ -721,16 +892,28 @@ export default {
             else this.submit();
         },
         async submit() {
+            /* v1.3.5.9：条目 / 发生时间 / 登记数值三项必填（数值可以填 0，但不能空着） */
             const trackerName = trimText(this.form.trackerName);
             if (!trackerName) {
                 this.$message.warning(this.$t('reg.itemRequired'));
                 return;
             }
-            const amount = Number(String(this.form.amount).replace(/[,\s]/g, ''));
-            if (!Number.isFinite(amount)) {
+            if (!this.form.occurredAt) {
+                this.$message.warning(this.$t('reg.timeRequired'));
+                return;
+            }
+            const amountRaw = trimText(this.form.amount);
+            if (amountRaw === '' || amountRaw === '-' || amountRaw === '+') {
+                this.$message.warning(this.$t('reg.amountRequired'));
+                return;
+            }
+            const amountNum = Number(amountRaw.replace(/[,\s]/g, ''));
+            if (!Number.isFinite(amountNum)) {
                 this.$message.warning(this.$t('reg.amountInvalid'));
                 return;
             }
+            /* v1.3.5.9：支持 4 位小数（多余的截掉，不让浮点尾巴进库） */
+            const amount = Math.round(amountNum * 10000) / 10000;
             const qtyRaw = trimText(this.form.quantity);
             const quantity = qtyRaw === '' ? 1 : Number(qtyRaw.replace(/[,\s]/g, ''));
             if (!Number.isFinite(quantity) || quantity === 0) {
@@ -743,6 +926,7 @@ export default {
                     trackerId: this.form.trackerId || '',
                     trackerName,
                     valueType: this.form.valueType,
+                    direction: Number(this.form.direction) || 0,
                     unit: trimText(this.form.unit),
                     portion: trimText(this.form.portion),
                     instanceId: this.instanceId || '',
@@ -756,7 +940,7 @@ export default {
                     placeName: trimText(this.form.placeName),
                     amount,
                     quantity,
-                    currency: this.form.currency,
+                    currency: this.form.currency === 'NONE' ? '' : (this.form.currency || ''),
                     tags: (this.form.tags || []).map((t) => trimText(t)).filter(Boolean),
                     attachments: this.form.attachments,
                     docNoteId: this.form.docNoteId,
@@ -798,6 +982,8 @@ export default {
 .reg-body {
     max-height: 68vh;
     overflow-y: auto;
+    /* v1.3.5.9：移动端只允许附件按钮行自己横向滑动，页面本身不许左右晃 */
+    overflow-x: hidden;
     text-align: left;
 }
 
@@ -884,7 +1070,7 @@ export default {
     color: var(--el-text-color-primary);
 }
 
-/* 详情：内容超出后自动增高，最高 35vh（超出部分内部滚动） */
+/* 详情：内容超出后自动增高，最高 30vh（超出部分内部滚动） */
 .reg-cell :deep(.el-textarea__inner) {
     padding: 0 2px;
     background: transparent;
@@ -892,16 +1078,17 @@ export default {
     resize: none;
     font-size: 13px;
     line-height: 1.6;
-    max-height: 35vh;
+    max-height: 30vh;
     overflow-y: auto;
 }
 
-.reg-file-btns,
-.reg-doc-row {
+/* v1.3.5.8：附件按钮在表格外，默认换行排列 */
+.reg-file-btns {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+    margin-top: 10px;
 }
 
 .reg-file-input {
@@ -910,6 +1097,10 @@ export default {
 
 .reg-btn-icon {
     margin-right: 5px;
+}
+
+.reg-attach-icon {
+    color: var(--el-color-primary);
 }
 
 .reg-attach-count,
@@ -921,11 +1112,85 @@ export default {
     white-space: nowrap;
 }
 
+/* v1.3.5.9：附件缩略图（复刻瞬间编辑页：88px 正方形、圆角 8、铺满裁切） */
+.reg-assets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+}
+
+.reg-asset {
+    position: relative;
+    width: 88px;
+    height: 88px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--note-cell-bg, rgba(127, 127, 127, 0.12));
+}
+
+.reg-asset-img {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.reg-asset-img :deep(img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.reg-asset-cover {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: 100%;
+    height: 100%;
+    padding: 6px;
+    box-sizing: border-box;
+    color: var(--el-text-color-secondary);
+    font-size: 16px;
+}
+
+.reg-asset-name {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    text-align: center;
+    word-break: break-all;
+    font-size: 10.5px;
+    line-height: 1.35;
+}
+
+.reg-asset-del {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 9px;
+    line-height: 1;
+    cursor: pointer;
+}
+
 .reg-attach-list {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-top: 6px;
+    margin-top: 8px;
 }
 
 .reg-attach-item {
@@ -959,8 +1224,14 @@ export default {
 
 .reg-footer {
     display: flex;
+    align-items: center;
     justify-content: flex-end;
     gap: 8px;
+}
+
+/* v1.3.5.8：附件数量靠左，按钮仍在右侧 */
+.reg-footer .reg-attach-count {
+    margin-right: auto;
 }
 
 .reg-doc-list {
@@ -1018,6 +1289,37 @@ export default {
 
     .reg-body {
         max-height: 72vh;
+    }
+
+    /*
+     * v1.3.5.8：附件按钮在移动端必须保持一行（选择文件 / 本地上传 / 链接数据 / 挂载文档），
+     * 不换行、可左右滑动；左右边距收小以多挤出一截可视宽度。
+     */
+    .reg-file-btns {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        gap: 6px;
+        margin-inline: -2px;
+        padding: 0 2px 2px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+
+    .reg-file-btns::-webkit-scrollbar {
+        display: none;
+    }
+
+    .reg-file-btns :deep(.el-button) {
+        flex: 0 0 auto;
+        margin-left: 0;
+        padding: 7px 10px;
+    }
+
+    /* 移动端缩略图略小，一行能放下 4 个 */
+    .reg-asset {
+        width: 72px;
+        height: 72px;
     }
 }
 </style>

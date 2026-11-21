@@ -350,6 +350,98 @@ async function main() {
       }
     }
 
+    // ------------------------------------------------------------
+    // 规则 5：登记 v1.3.5.8 —— reg_entries 去掉口径快照列
+    //
+    //   条目（reg_trackers）是名称 / 类型 / 单位 / 分母 / 性质的唯一真源，
+    //   记录上再存一份 unit / portion / direction 只是冗余快照。db push 会直接
+    //   DROP 掉这些列，所以必须在它之前把「条目上还空着、记录里有值」的补回去，
+    //   否则老数据会丢掉自己的单位。幂等：只补空值，重复跑无副作用。
+    // ------------------------------------------------------------
+    if ((await tableExists('reg_entries')) && (await tableExists('reg_trackers'))) {
+      const moves = [
+        { col: 'unit', label: '单位' },
+        { col: 'portion', label: '分母' },
+        { col: 'direction', label: '性质' },
+      ];
+      for (const m of moves) {
+        if (!(await columnExists('reg_entries', m.col))) continue;
+        const emptyCond = m.col === 'direction' ? `t.direction = 0` : `(t.${m.col} IS NULL OR t.${m.col} = '')`;
+        const pickCond = m.col === 'direction' ? `e.direction <> 0` : `(e.${m.col} IS NOT NULL AND e.${m.col} <> '')`;
+        const rows = await q(
+          `SELECT count(*)::int AS c
+             FROM reg_trackers t
+            WHERE ${emptyCond}
+              AND EXISTS (SELECT 1 FROM reg_entries e WHERE e."trackerId" = t.id AND ${pickCond})`,
+        );
+        const n = rows[0] ? rows[0].c : 0;
+        if (!n) {
+          log(`登记口径：条目${m.label}无需回填`);
+          continue;
+        }
+        log(`登记口径：${n} 个条目的${m.label}可从历史记录补齐${CHECK_ONLY ? '（--check 模式，不改数据）' : ''}`);
+        if (CHECK_ONLY) continue;
+        const updated = await prisma.$executeRawUnsafe(
+          `UPDATE reg_trackers t
+              SET ${m.col} = (
+                    SELECT e.${m.col} FROM reg_entries e
+                     WHERE e."trackerId" = t.id AND ${pickCond}
+                     ORDER BY e."occurredAt" DESC LIMIT 1
+                  )
+            WHERE ${emptyCond}
+              AND EXISTS (SELECT 1 FROM reg_entries e WHERE e."trackerId" = t.id AND ${pickCond})`,
+        );
+        log(`登记口径：${m.label}回填 ${updated} 个条目`);
+      }
+    }
+
+    // ------------------------------------------------------------
+    // 规则 6：登记 v1.3.5.9 —— 「性质」从条目迁到每一条记录
+    //
+    //   旧版把 direction 存在 reg_trackers 上（一个条目一个性质），新版改为
+    //   每条登记各自带性质。db push 会 DROP reg_trackers.direction，所以在它之前
+    //   必须先把条目上的性质复制到它名下每条记录的 direction 列。
+    //   列可能还不存在（老库）：先 ADD COLUMN IF NOT EXISTS，再回填。
+    //   幂等：只补 direction = 0 的记录，重复跑无副作用。
+    // ------------------------------------------------------------
+    if ((await tableExists('reg_entries')) && (await tableExists('reg_trackers'))) {
+      const hasTrackerDir = await columnExists('reg_trackers', 'direction');
+      const hasEntryDir = await columnExists('reg_entries', 'direction');
+      if (hasTrackerDir && !hasEntryDir) {
+        if (CHECK_ONLY) {
+          log('登记性质：需要把 reg_entries.direction 建出来并从条目回填（--check 模式，不改数据）');
+        } else {
+          await prisma.$executeRawUnsafe(
+            'ALTER TABLE reg_entries ADD COLUMN IF NOT EXISTS direction integer NOT NULL DEFAULT 0',
+          );
+          log('登记性质：已新增 reg_entries.direction 列');
+        }
+      }
+      if (hasTrackerDir) {
+        const rows = await q(
+          `SELECT count(*)::int AS c
+             FROM reg_entries e
+             JOIN reg_trackers t ON t.id = e."trackerId"
+            WHERE e.direction = 0 AND t.direction <> 0`,
+        );
+        const n = rows[0] ? rows[0].c : 0;
+        if (n > 0) {
+          log(`登记性质：${n} 条记录可从条目补齐${CHECK_ONLY ? '（--check 模式，不改数据）' : ''}`);
+          if (!CHECK_ONLY) {
+            const updated = await prisma.$executeRawUnsafe(
+              `UPDATE reg_entries e
+                  SET direction = t.direction
+                 FROM reg_trackers t
+                WHERE t.id = e."trackerId" AND e.direction = 0 AND t.direction <> 0`,
+            );
+            log(`登记性质：回填 ${updated} 条记录`);
+          }
+        } else {
+          log('登记性质：记录无需回填');
+        }
+      }
+    }
+
     if ((await tableExists('markers')) && (await tableExists('note_markers'))) {
       const own = await q(`SELECT count(*)::int AS c FROM markers WHERE type = 'register'`);
       const n = own[0] ? own[0].c : 0;

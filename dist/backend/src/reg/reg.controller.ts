@@ -68,6 +68,17 @@ export class RegController {
     return { success: true, ...(r as any) };
   }
 
+  /** v1.3.5.8：删除条目 —— 有关联记录时拒绝（请改用合并） */
+  @Delete('trackers/:id')
+  async removeTracker(@Req() req: Request, @Param('id') id: string) {
+    const { viewer } = this.ctx(req);
+    const r = await this.reg.removeTracker(id, viewer);
+    if ('error' in r && r.error) {
+      throw new HttpException({ success: false, message: r.error }, HttpStatus.BAD_REQUEST);
+    }
+    return { success: true, ...(r as any) };
+  }
+
   /* ── 记录 ── */
   @Get('entries')
   async entries(@Req() req: Request, @Query() q: Record<string, string>) {
@@ -116,6 +127,13 @@ export class RegController {
     return { success: true, ...(r as any) };
   }
 
+  /** v1.3.5.9：按 id 取附件视图（表单里的缩略图） */
+  @Get('attachments')
+  async attachments(@Req() req: Request, @Query('ids') ids?: string) {
+    const { viewer } = this.ctx(req);
+    return this.reg.attachmentViews(String(ids || '').split(','), viewer);
+  }
+
   /* ── 统计 ── */
   @Get('stats')
   async stats(@Req() req: Request, @Query() q: Record<string, string>) {
@@ -124,6 +142,7 @@ export class RegController {
       owner: viewer,
       instanceId: String(q.instanceId || ''),
       scope: q.scope || 'me',
+      type: q.type || '',
       trackerId: q.trackerId || '',
       trackerName: q.trackerName || '',
       tag: q.tag || '',
@@ -131,6 +150,26 @@ export class RegController {
       to: q.to || '',
       bucket: q.bucket || 'month',
       compare: q.compare || '',
+      /* v1.3.5.8：横轴 / 纵轴 / 图例（legends 是 JSON 字符串） */
+      axisX: q.axisX || '',
+      axisY: q.axisY || '',
+      legends: q.legends || '',
+    });
+  }
+
+  /** v1.3.5.8：图例筛选项 —— 某个条目在总范围内实际用过的地点 / 人 / 标签 */
+  @Get('legend-options')
+  async legendOptions(@Req() req: Request, @Query() q: Record<string, string>) {
+    const { viewer } = this.ctx(req);
+    return this.reg.legendOptions({
+      owner: viewer,
+      instanceId: String(q.instanceId || ''),
+      scope: q.scope || 'me',
+      trackerId: q.trackerId || '',
+      trackerName: q.trackerName || '',
+      axisX: q.axisX || '',
+      from: q.from || '',
+      to: q.to || '',
     });
   }
 

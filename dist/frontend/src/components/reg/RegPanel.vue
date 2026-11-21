@@ -41,6 +41,10 @@
             <el-button size="small" :loading="importing" @click="triggerImport">
                 <font-awesome-icon icon="upload" class="reg-add-icon" />{{ $t('reg.import') }}
             </el-button>
+            <!-- v1.3.5.9：导入模板下载（表头与导入解析用的列名一致） -->
+            <el-button size="small" @click="downloadTemplate">
+                <font-awesome-icon icon="download" class="reg-add-icon" />{{ $t('reg.templateDownload') }}
+            </el-button>
             <input
                 ref="importInput"
                 type="file"
@@ -62,20 +66,41 @@
                 <div class="reg-item-main">
                     <div class="reg-item-head">
                         <span class="reg-item-time">{{ fmtTime(item.occurredAt) }}</span>
-                        <span class="reg-item-marker">#{{ item.trackerName }}</span>
+                        <span class="reg-item-marker">@{{ item.trackerName }}</span>
                         <span v-if="item.placeName" class="reg-item-place">
                             <font-awesome-icon icon="location-dot" />{{ item.placeName }}
                         </span>
-                        <span class="reg-item-amount" :class="{ 'is-neg': Number(item.amount) < 0 }">
+                        <span class="reg-item-amount" :class="{ 'is-neg': isNegative(item) }">
                             {{ fmtAmount(item) }}
                         </span>
                     </div>
                     <p v-if="item.title" class="reg-item-title">{{ item.title }}</p>
                     <p v-if="item.event" class="reg-item-event">{{ item.event }}</p>
+                    <!-- v1.3.5.9：附件缩略图在详情下一行（标签行上方），只加载一行 -->
+                    <div v-if="visibleFiles(item).length" class="reg-item-files">
+                        <div
+                            v-for="(f, fi) in visibleFiles(item)"
+                            :key="f.fileId + '-' + fi"
+                            class="reg-item-file"
+                            :title="f.originalName || f.name || ''"
+                        >
+                            <el-image
+                                v-if="f.mediaKind === 'image' && (f.thumbUrl || f.url)"
+                                class="reg-item-file-img"
+                                :src="f.thumbUrl || f.url"
+                                :preview-src-list="[f.url || f.thumbUrl]"
+                                fit="cover"
+                                preview-teleported
+                            />
+                            <span v-else class="reg-item-file-cover">
+                                <font-awesome-icon :icon="fileIcon(f.mediaKind)" />
+                            </span>
+                        </div>
+                    </div>
                     <div class="reg-item-meta">
                         <span v-if="item.subjectName">{{ $t('reg.fieldSubject') }}：{{ item.subjectName }}</span>
                         <span v-if="item.relatedName">{{ $t('reg.fieldRelated') }}：{{ item.relatedName }}</span>
-                        <span v-if="item.attachments && item.attachments.length">
+                        <span v-if="(item.attachments || []).length > maxFiles">
                             <font-awesome-icon icon="paperclip" />{{ item.attachments.length }}
                         </span>
                         <span v-if="item.tags && item.tags.length" class="reg-item-tags">
@@ -85,7 +110,7 @@
                 </div>
                 <div class="reg-item-actions">
                     <button type="button" class="reg-act" :title="$t('common.edit')" @click="openEdit(item)">
-                        <font-awesome-icon icon="pen" />
+                        <font-awesome-icon icon="pen-to-square" />
                     </button>
                     <button type="button" class="reg-act is-danger" :title="$t('common.delete')" @click="remove(item)">
                         <font-awesome-icon icon="trash" />
@@ -134,6 +159,8 @@ export default {
             dialogVisible: false,
             editing: null,
             importing: false,
+            /* v1.3.5.9：一行最多几个附件缩略图（桌面 8 / 移动 4） */
+            narrow: false,
         };
     },
     watch: {
@@ -141,11 +168,52 @@ export default {
         filterTracker() { this.reload(1); },
         range() { this.reload(1); },
     },
+    computed: {
+        maxFiles() {
+            return this.narrow ? 4 : 8;
+        },
+    },
     mounted() {
+        this.syncNarrow();
+        window.addEventListener('resize', this.syncNarrow);
         this.reload(1);
         this.loadTrackers();
     },
+    beforeUnmount() {
+        window.removeEventListener('resize', this.syncNarrow);
+    },
     methods: {
+        syncNarrow() {
+            this.narrow = typeof window !== 'undefined' && window.innerWidth <= 768;
+        },
+        /** 只取一行：桌面 8 个、移动 4 个；尺寸固定，不随数量变化 */
+        visibleFiles(item) {
+            const list = (item && item.attachmentViews) || [];
+            return list.slice(0, this.maxFiles);
+        },
+        fileIcon(kind) {
+            if (kind === 'video') return 'film';
+            if (kind === 'audio') return 'music';
+            return 'file';
+        },
+        /**
+         * v1.3.5.9：下载导入模板。
+         * 表头与 mapImportRow 认的列名一致，另存成 CSV（带 BOM，Excel 直接能开）。
+         */
+        downloadTemplate() {
+            const heads = ['条目', '发生时间', '登记数值', '份量', '单位', '分母', '标题', '详情', '发生人', '关联人', '地点'];
+            const csv = `${heads.join(',')}\r\n`;
+            const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = '登记导入模板.csv';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 2000);
+            this.$message.success(this.$t('reg.templateSaved'));
+        },
         rangeQuery() {
             const now = new Date();
             if (this.range === 'month') {
@@ -348,12 +416,27 @@ export default {
             const pad = (n) => String(n).padStart(2, '0');
             return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
         },
+        /**
+         * v1.3.5.9：数值前的正负号由「性质」决定 ——
+         *   性质 1 → "+"，性质 -1 → "-"，性质 0 → 不加号（原样显示）。
+         * 数值本身已经按性质取了符号，这里取绝对值再拼号，避免出现 "--100"。
+         */
         fmtAmount(item) {
             const n = Number(item.amount) * (Number(item.quantity) || 1);
             const v = Number.isFinite(n) ? n : 0;
+            const dir = Number(item.direction) || 0;
+            const abs = Math.abs(v);
+            const sign = dir === 1 ? '+' : (dir === -1 ? '-' : '');
             /* v1.3.5.7：单位 + 分母一起显示（元/升） */
             const unit = item.unit ? ` ${item.unit}${item.portion ? `/${item.portion}` : ''}` : '';
-            return `${v >= 0 ? '+' : ''}${v}${unit}`;
+            return `${sign}${sign ? abs : v}${unit}`;
+        },
+        /** 负数着色也按性质判断（性质 0 时看数值本身） */
+        isNegative(item) {
+            const dir = Number(item.direction) || 0;
+            if (dir === 1) return false;
+            if (dir === -1) return true;
+            return Number(item.amount) < 0;
         },
     },
 };
@@ -500,6 +583,46 @@ export default {
     overflow-wrap: anywhere;
 }
 
+/* v1.3.5.9：附件缩略图画在详情下面一行（桌面 8 个 / 移动 4 个，尺寸固定 1:1） */
+.reg-item-files {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    overflow: hidden;
+}
+
+.reg-item-file {
+    flex: 0 0 auto;
+    width: 54px;
+    height: 54px;
+    border-radius: 7px;
+    overflow: hidden;
+    background: var(--note-cell-bg, rgba(127, 127, 127, 0.12));
+}
+
+.reg-item-file-img {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+.reg-item-file-img :deep(img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.reg-item-file-cover {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    color: var(--el-text-color-secondary);
+    font-size: 17px;
+}
+
 .reg-item-meta {
     display: flex;
     align-items: center;
@@ -564,6 +687,11 @@ export default {
 }
 
 @media (max-width: 768px) {
+    .reg-item-file {
+        width: 48px;
+        height: 48px;
+    }
+
     .reg-filter-marker,
     .reg-filter-kw {
         width: 100%;

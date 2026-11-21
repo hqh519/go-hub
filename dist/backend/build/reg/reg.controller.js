@@ -57,6 +57,14 @@ let RegController = class RegController {
         }
         return { success: true, ...r };
     }
+    async removeTracker(req, id) {
+        const { viewer } = this.ctx(req);
+        const r = await this.reg.removeTracker(id, viewer);
+        if ('error' in r && r.error) {
+            throw new common_1.HttpException({ success: false, message: r.error }, common_1.HttpStatus.BAD_REQUEST);
+        }
+        return { success: true, ...r };
+    }
     async entries(req, q) {
         const { viewer } = this.ctx(req);
         return this.reg.listEntries({
@@ -96,12 +104,17 @@ let RegController = class RegController {
         }
         return { success: true, ...r };
     }
+    async attachments(req, ids) {
+        const { viewer } = this.ctx(req);
+        return this.reg.attachmentViews(String(ids || '').split(','), viewer);
+    }
     async stats(req, q) {
         const { viewer } = this.ctx(req);
         return this.reg.stats({
             owner: viewer,
             instanceId: String(q.instanceId || ''),
             scope: q.scope || 'me',
+            type: q.type || '',
             trackerId: q.trackerId || '',
             trackerName: q.trackerName || '',
             tag: q.tag || '',
@@ -109,6 +122,22 @@ let RegController = class RegController {
             to: q.to || '',
             bucket: q.bucket || 'month',
             compare: q.compare || '',
+            axisX: q.axisX || '',
+            axisY: q.axisY || '',
+            legends: q.legends || '',
+        });
+    }
+    async legendOptions(req, q) {
+        const { viewer } = this.ctx(req);
+        return this.reg.legendOptions({
+            owner: viewer,
+            instanceId: String(q.instanceId || ''),
+            scope: q.scope || 'me',
+            trackerId: q.trackerId || '',
+            trackerName: q.trackerName || '',
+            axisX: q.axisX || '',
+            from: q.from || '',
+            to: q.to || '',
         });
     }
     async units(req, instanceId) {
@@ -202,6 +231,14 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], RegController.prototype, "mergeTrackers", null);
 __decorate([
+    (0, common_1.Delete)('trackers/:id'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "removeTracker", null);
+__decorate([
     (0, common_1.Get)('entries'),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Query)()),
@@ -235,6 +272,14 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], RegController.prototype, "removeEntry", null);
 __decorate([
+    (0, common_1.Get)('attachments'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('ids')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "attachments", null);
+__decorate([
     (0, common_1.Get)('stats'),
     __param(0, (0, common_1.Req)()),
     __param(1, (0, common_1.Query)()),
@@ -242,6 +287,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], RegController.prototype, "stats", null);
+__decorate([
+    (0, common_1.Get)('legend-options'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], RegController.prototype, "legendOptions", null);
 __decorate([
     (0, common_1.Get)('units'),
     __param(0, (0, common_1.Req)()),

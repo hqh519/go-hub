@@ -2,6 +2,8 @@ import { faTrash } from '@fortawesome/free-solid-svg-icons/faTrash';
 import { faTrashRestore } from '@fortawesome/free-solid-svg-icons/faTrashRestore';
 import { faFileLines } from '@fortawesome/free-solid-svg-icons/faFileLines';
 import { faPenToSquare } from '@fortawesome/free-solid-svg-icons/faPenToSquare';
+import { faPaperclip } from '@fortawesome/free-solid-svg-icons/faPaperclip';
+import { faLock } from '@fortawesome/free-solid-svg-icons/faLock';
 import { faHeading } from '@fortawesome/free-solid-svg-icons/faHeading';
 import { faBold } from '@fortawesome/free-solid-svg-icons/faBold';
 import { faItalic } from '@fortawesome/free-solid-svg-icons/faItalic';
@@ -202,6 +204,8 @@ export default [
     faTrashRestore,
     faFileLines,
     faPenToSquare,
+    faPaperclip,
+    faLock,
     faHeading,
     faBold,
     faItalic,

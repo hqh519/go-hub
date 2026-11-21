@@ -1070,6 +1070,44 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1359',
+      title: '七十、v1.3.5.9 更新要点',
+      intro: '这一版把「性质」从条目搬到每一条登记上，登记表单补上必填校验与 4 位小数，附件改成缩略图；发布页与统计页也按新口径重排。',
+      items: [
+        { t: '性质属于每条登记', d: '「性质」（无 / 支出 / 收入）不再跟着条目走，改为存在登记记录自己身上：同一条目可以有收有支。选择条目时只锁定类型、单位、分母，性质可以随时改。' },
+        { t: '数值随性质变号', d: '性质是「收入」时数值只能为正，是「支出」时只能为负，切换性质会把已经输入的数值直接掰到对应符号；「无」则想填正填负都行。' },
+        { t: '表单校验与精度', d: '条目 / 发生时间 / 登记数值三项必填（数值可以填 0，但不能留空）；数值支持 4 位小数，提示文案改为「支持 4 位小数」。' },
+        { t: '附件缩略图', d: '表单里的附件改成缩略图（与瞬间编辑页同一套加载方式和样式），显示在「选择文件 / 本地上传 / 链接数据 / 挂载文档」按钮行的上方，每张右上角可以直接移除。' },
+        { t: '打开就回到顶部', d: '每次打开登记表单都定位到标题位置，不会停在上次滚到的地方。' },
+        { t: '移动端滚动隔离', d: '手机上的登记表单只有下方那一行附件按钮可以左右滑动，页面本身不再左右晃动。' },
+        { t: '修复标题回填', d: '在发布页点「修改」时，登记表单里的标题会正确带出来（之前编辑态漏了回填，标题总是空的）。' },
+        { t: '发布页登记卡片', d: '条目改成「@条目」的写法；数值前的正负号由性质决定（收入 + / 支出 - / 无则不加号）；附件以 1:1 缩略图显示在详情下一行、标签行上方，桌面一行最多 8 个、手机 4 个，只显示一行。' },
+        { t: '导入模板', d: '发布页「导入」按钮旁新增「下载模板」，下载的表头与导入解析的列名一致。' },
+        { t: '统计总范围加条目', d: '「类型」不再有「全部」，默认第一项「流水」；后面新增「条目」选择框（留空表示全部条目），与类型、时间段、用户一起构成总范围，概览卡片按这个范围统计。' },
+        { t: '坐标设置独立成栏', d: '纵轴（数值 / 份量）与横轴（发生 / 起始 / 截止 / 登记时间）移到筛选栏下方的独立栏目，图表右上角不再放横轴切换。' },
+        { t: '卡片调整', d: '「条数」卡片改成「条数 / 份量」，同时给出条数与份量合计；「单价」卡片挪到「平均」后面。' },
+        { t: '图例细节', d: '图例 1 的候选由总范围的条目决定（单位 + 分母一致；没选条目时列出该类型的全部条目），图例 1 为默认项不可删除；图例 2~5 仍要求与图例 1 的单位、分母一致。地点选择框挪到关联人后面，四个选择框的默认文字改为「选择地点 / 选择发生人 / 选择关联人 / 选择标签」，手机上不再显示框前的字段名。' },
+        { t: '移动端适配', d: '登记设置页的条目列表可以横向滑动；统计页的日期选择面板居中显示，不会再跑到屏幕外。' }
+      ]
+    },
+    {
+      id: 'whatsnew-1358',
+      title: '六十九、v1.3.5.8 更新要点',
+      intro: '这一版把登记表单按新顺序重排、补上「性质」，并把统计图表改成「横轴管时间、纵轴管口径、图例 1~5 管筛选」的多系列图表。',
+      items: [
+        { t: '表单重排', d: '标题 / 详情 / 地点 / 发生时间·起始时间·截止时间 / 条目 / 类型·性质 / 数值·份量 / 单位·分母·币种 / 发生人·关联人 / 标签。选择文件、本地上传、链接数据、挂载文档四个按钮移到表格外；附件数量显示在「取消」左侧，没有附件时不占位。手机上四个按钮保持一行，可左右滑动。' },
+        { t: '字段调整', d: '「时间」改回「发生时间」，「数量」改名「份量」（留空按 1 提交）；币种新增「无」并作为默认。' },
+        { t: '新增性质', d: '无 / 减出 / 增进，随条目保存；在「登记设置 → 条目管理」里也能改。' },
+        { t: '详情框限高', d: '内容变多时输入框自己长高，最高到视口高度的 30%，再高就在框内滚动。' },
+        { t: '记录表瘦身', d: '单位、分母、性质、备注、状态这些冗余列从登记记录表里移除，口径只保留在条目上；旧的单位 / 分母 / 性质会先回填到条目再删列，升级不会丢数据。' },
+        { t: '条目增删改', d: '条目可以删除，但下面还有登记时会拒绝（改为合并）；合并前会校验类型 / 单位 / 分母是否一致，不一致先改到一致再合并。' },
+        { t: '统计图表', d: '横轴可选发生时间 / 起始时间 / 截止时间 / 登记时间，放在图表右上角一键切换；纵轴可选数值（金额×份量）或份量；周期只保留按日 / 按月 / 按年。选定的时间范围按横轴字段筛选。' },
+        { t: '多图例', d: '最多 5 条图例，每条 = 条目 + 地点 + 发生人 + 关联人 + 标签的组合筛选；第 2 条起只能选与第 1 条单位、分母一致的条目。柱形图生成多色柱，折线图生成多色曲线；tooltip 与图表下方都会写出完整条件。' },
+        { t: '卡片与图例分离', d: '顶部合计 / 条数 / 平均 / 极值只跟总范围（类型 + 时间 + 用户）走，改图例不会让卡片跳数；单位混用时卡片不挂单位，避免把「分」和「元」加在一起还标个单位。' },
+        { t: '移动端', d: '图表 X 轴可横向滑动查看（按日 60 天也不会挤成一团）；登记设置后面的报表下拉、保存报表、刷新按钮换行显示；图例设置面板默认收起。' }
+      ]
+    },
+    {
       id: 'whatsnew-1357',
       title: '六十八、v1.3.5.7 更新要点',
       intro: '这一版把「条目」收回登记自己的独立分类，登记表单按新的表格样式重排，设置页新增条目管理。',
@@ -2389,6 +2427,44 @@ const EN = {
         { t: 'Works with the file library', d: 'Pasting or dropping an image uploads it automatically (into the /notes/笔记 folder) and inserts it at the cursor; "insert from library" lets you pick an existing file. Notes store relative paths, so changing the domain or the storage channel later will not break images in old notes.' },
         { t: 'Two editors on one note will not overwrite each other', d: 'Saves carry a version check. If the note was changed in another tab, the later save reports a version conflict and lets you overwrite or reload - nothing is silently dropped. The editor also autosaves about 1.5 seconds after you stop typing, and Ctrl+S saves immediately.' },
         { t: 'Upgrade compatibility', d: 'This release only adds things: one new folder table and three new columns (title, content format, folder). Existing moments, files, tags and comments are untouched, and older data upgrades in place. Legacy notes keep an empty content format and are never re-parsed as markdown.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1359',
+      title: '70. What is new in v1.3.5.9',
+      intro: 'Nature moves from the item to each entry, the register form gains required checks and 4-decimal values, and attachments become thumbnails. The post page and statistics page follow the new rules.',
+      items: [
+        { t: 'Nature per entry', d: 'Nature (none / expense / income) is stored on each entry instead of the item, so one item can have both income and expense. Picking an item only locks type, unit and denominator.' },
+        { t: 'Sign follows nature', d: 'Income accepts positive values only and expense negative only; switching nature flips the value already typed. None accepts either sign.' },
+        { t: 'Validation and precision', d: 'Item, occurred time and value are required (0 is fine, blank is not); values support 4 decimals.' },
+        { t: 'Attachment thumbnails', d: 'Attachments show as thumbnails above the four attachment buttons, using the same loading path and styling as the moment editor, each removable from its corner.' },
+        { t: 'Opens at the top', d: 'The form always opens at the title instead of the previous scroll position.' },
+        { t: 'Mobile scrolling', d: 'On phones only the attachment button row scrolls sideways; the page itself no longer moves horizontally.' },
+        { t: 'Title fix', d: 'Editing an entry from the post page now fills the title correctly (it used to be blank).' },
+        { t: 'Post page entry card', d: 'Items are written as "@item"; the sign before the value follows the nature; attachments render as 1:1 thumbnails under the details, up to 8 on desktop and 4 on phones in a single row.' },
+        { t: 'Import template', d: 'A "Download template" button sits next to Import, with headers matching the importer.' },
+        { t: 'Item in the overall scope', d: 'The type filter has no "all" option and starts at flow; a new item selector (blank means all items) joins type, dates and user to drive the summary cards.' },
+        { t: 'Axis settings row', d: 'Y axis (value / portion) and X axis (occurred / start / due / created) move into their own row under the filters; the chart header no longer switches the X axis.' },
+        { t: 'Card changes', d: 'The entries card now shows "entries / portion" totals, and the unit price card moves right after the average card.' },
+        { t: 'Legend details', d: 'Row 1 lists items from the overall scope (same unit and denominator, or every item of the type when none is picked) and cannot be deleted; rows 2-5 still require the same unit and denominator as row 1. Place moves after related, and the four selects are labelled Pick a place / main person / related person / tags; phones hide the label above each select.' },
+        { t: 'Mobile polish', d: 'The item list in settings scrolls sideways, and the statistics date panel is centred on screen.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1358',
+      title: '69. What is new in v1.3.5.8',
+      intro: 'The register form is reordered with a new nature field, and the statistics chart becomes multi-series: X axis for time, Y axis for the metric, up to five legend rows for filters.',
+      items: [
+        { t: 'Form reordered', d: 'Title / details / place / occurred · start · due / item / type · nature / value · portion / unit · denominator · currency / subject · related / tags. The four attachment buttons moved outside the grid; the attachment count sits left of Cancel and hides when empty. On phones the four buttons stay on one scrollable row.' },
+        { t: 'Field tweaks', d: '"Time" is "Occurred at" again, "quantity" is "portion" (blank saves as 1), and currency gains a "none" default.' },
+        { t: 'Nature', d: 'None / expense / income, stored on the item and editable in Settings → Items.' },
+        { t: 'Details cap', d: 'The details box grows up to 30% of the viewport height, then scrolls.' },
+        { t: 'Leaner entry table', d: 'Unit, denominator, nature, note and status are gone from the entry table — the item is the only source. Old values are copied to the item before the columns are dropped.' },
+        { t: 'Item delete and merge', d: 'Items can be deleted only when no entry uses them; merging validates that type, unit and denominator match first.' },
+        { t: 'Statistics chart', d: 'X axis can be occurred / start / due / created, switched from the top-right of the chart; Y axis is value (amount × portion) or portion; periods are day, month and year. The date range filters on the chosen X field.' },
+        { t: 'Multiple legends', d: 'Up to five legend rows, each a filter set of item + place + subject + related + tags. Rows 2-5 only offer items whose unit and denominator match row 1. Bars and lines are drawn per row in different colours, and the full condition appears in the tooltip and under the chart.' },
+        { t: 'Cards vs legends', d: 'The summary cards follow the overall scope only (type + dates + user), so changing a legend never moves them. When units are mixed the cards omit the unit instead of summing incompatible numbers.' },
+        { t: 'Mobile', d: 'The chart scrolls horizontally on phones (60 daily buckets stay readable); report controls wrap to a second row in settings; the legend panel starts collapsed.' }
       ]
     },
     {
