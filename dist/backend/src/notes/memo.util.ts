@@ -109,6 +109,11 @@ export function withBlockIds(md: unknown): string {
       continue;
     }
     const bare = row.text.replace(BLOCK_ID_RE, '');
+    /* v1.3.7：表格尺寸注释是元数据，不是内容块，不注入块 ID */
+    if (/^<!--gh-table:/.test(bare.trim())) {
+      out.push(bare);
+      continue;
+    }
     if (tableRows.has(i) || !isBlockLine(bare)) {
       out.push(bare);
       continue;
@@ -168,8 +173,21 @@ export function plainTextOf(md: unknown): string {
       .replace(/\|/g, ' ');
     // 图片 ![alt](url) → alt；链接 [text](url) → text
     t = t
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+      /*
+       * v1.3.7（需求：摘要不要出现源码字符）：
+       *   · 图片尾部的 `{width=317}`、批注上标、<br> 等裸 HTML；
+       *   · `![[file:…|名称]]` 附件、`[[note:…]]` 引用、`((blk_…))` 块引用。
+       * 这些都不是正文，摘要里应当只留可读文字。
+       */
+      .replace(/<sup class="gh-ann"[^>]*>[\s\S]*?<\/sup>/gi, ' ')
+      .replace(/!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\](\{[^}]*\})?/g, '$2')
+      .replace(/!?\[\[note:[^\]]*\]\]/g, ' ')
+      .replace(/\(\(blk_[0-9a-f]{8}\)\)/g, ' ')
+      .replace(/!\[[^\]]*\]\([^)]*\)(\{[^}]*\})?/g, ' ')
+      .replace(/\[\]/g, ' ')
       .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/<br\s*\/?>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
       .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')
       .replace(/(\*\*|__)(.*?)\1/g, '$2')
       .replace(/(\*|_)(.*?)\1/g, '$2')
@@ -180,6 +198,7 @@ export function plainTextOf(md: unknown): string {
     .join('\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s+([。，、；：！？])/g, '$1')
     .trim();
 }
 

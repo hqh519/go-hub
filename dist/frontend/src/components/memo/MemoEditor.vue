@@ -17,7 +17,18 @@
             每一块各自按设置决定 position: sticky 还是普通跟随滚动。
             默认全部不吸附 —— 与需求「默认为关闭状态」一致。
         -->
-        <div ref="bodyEl" class="me-body" @contextmenu="onContextMenu" @click="onBodyClick" @scroll.passive="onBodyScroll">
+        <div
+            ref="bodyEl"
+            class="me-body"
+            @contextmenu="onContextMenu"
+            @click="onBodyClick"
+            @mouseover="onAnnHover"
+            @mouseout="onAnnOut"
+            @pointerdown="onTablePointerDown"
+            @pointermove="onTablePointerMove"
+            @touchstart="onTableTouchStart"
+            @scroll.passive="onBodyScroll"
+        >
             <!-- 工具栏：按设置里的行配置渲染，`|` 生成分隔线 -->
             <div
                 ref="toolbarWrap"
@@ -709,21 +720,22 @@
                 @mousedown.prevent
             >
                 <span class="me-tablebar-arrow" aria-hidden="true"></span>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblAddRowBefore')" @click="runTool('tableAddRowBefore')"><font-awesome-icon icon="arrow-up" /></button>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblAddRow')" @click="runTool('tableAddRow')"><font-awesome-icon icon="arrow-down" /></button>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblAddColBefore')" @click="runTool('tableAddColBefore')"><font-awesome-icon icon="arrow-left" /></button>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblAddCol')" @click="runTool('tableAddCol')"><font-awesome-icon icon="arrow-right" /></button>
+                <!-- v1.3.7：全部换成「网格 + 操作方向」的表格语义图标 -->
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblAddRowBefore')" @click="runTool('tableAddRowBefore')"><span class="me-svg-icon" v-html="svgOf('tableAddRowBefore')"></span></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblAddRow')" @click="runTool('tableAddRow')"><span class="me-svg-icon" v-html="svgOf('tableAddRow')"></span></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblAddColBefore')" @click="runTool('tableAddColBefore')"><span class="me-svg-icon" v-html="svgOf('tableAddColBefore')"></span></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblAddCol')" @click="runTool('tableAddCol')"><span class="me-svg-icon" v-html="svgOf('tableAddCol')"></span></button>
                 <span class="me-bub-sep"></span>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblDelRow')" @click="runTool('tableDelRow')"><font-awesome-icon icon="minus" /></button>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblDelCol')" @click="runTool('tableDelCol')"><font-awesome-icon icon="columns" /></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblDelRow')" @click="runTool('tableDelRow')"><span class="me-svg-icon" v-html="svgOf('tableDelRow')"></span></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblDelCol')" @click="runTool('tableDelCol')"><span class="me-svg-icon" v-html="svgOf('tableDelCol')"></span></button>
                 <span class="me-bub-sep"></span>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblMerge')" @click="runTool('tableMerge')"><font-awesome-icon icon="compress" /></button>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblSplit')" @click="runTool('tableSplit')"><font-awesome-icon icon="expand" /></button>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblDelete')" @click="runTool('tableDelete')"><font-awesome-icon icon="trash" /></button>
-                <!-- v1.3.5.2：表格 / 行列尺寸（编辑态生效） -->
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblMerge')" @click="runTool('tableMerge')"><span class="me-svg-icon" v-html="svgOf('tableMerge')"></span></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblSplit')" @click="runTool('tableSplit')"><span class="me-svg-icon" v-html="svgOf('tableSplit')"></span></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblDelete')" @click="runTool('tableDelete')"><span class="me-svg-icon" v-html="svgOf('tableDelete')"></span></button>
+                <!-- v1.3.5.2：表格 / 行列尺寸 -->
                 <span class="me-bub-sep"></span>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblSize')" @click="promptTableSize"><font-awesome-icon icon="expand" /></button>
-                <button type="button" class="me-bub-btn" :title="$t('memo.tblCellSize')" @click="promptCellSize"><font-awesome-icon icon="columns" /></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblSize')" @click="promptTableSize"><span class="me-svg-icon" v-html="svgTblSize"></span></button>
+                <button type="button" class="me-bub-btn" :title="$t('memo.tblCellSize')" @click="promptCellSize"><span class="me-svg-icon" v-html="svgTblCellSize"></span></button>
             </div>
 
             <!-- 右键 / 长按菜单（v1.3.1.2） -->
@@ -1269,6 +1281,20 @@
             show-detail 打开顶栏入口；items 里带上 recordId 后，
             移动端下拉手势会优先走「已落库文件详情」（见 MediaPreviewOverlay 的手势分支）。
         -->
+        <!-- v1.3.7：批注悬浮页（悬停 / 点击问号上标出现，点浮层改批注） -->
+        <div
+            v-if="annPop.visible"
+            class="me-ann-pop"
+            :style="{ left: annPop.left + 'px', top: annPop.top + 'px' }"
+            @mousedown.stop.prevent
+            @mouseenter="cancelAnnHide"
+            @mouseleave="hideAnnPopSoon"
+            @click.stop="editAnnPop"
+        >
+            <div class="me-ann-pop-text">{{ annPop.note || $t('memo.annotateEmpty') }}</div>
+            <div class="me-ann-pop-tip">{{ $t('memo.annotateClickEdit') }}</div>
+        </div>
+
         <MediaPreviewOverlay
             v-model="lightbox.open"
             :items="lightbox.items"
@@ -2174,6 +2200,29 @@ const NoteEmbed = Node.create({
     },
 });
 
+/**
+ * v1.3.7：批注上标（内联原子）
+ * ----------------------------------------------------------------------------
+ * 只存一条 note，渲染成一个问号上标；悬浮页与编辑都在组件层做（事件委托），
+ * 这样 NodeView 不需要拿到组件实例。md 侧格式见 utils/markdown.js。
+ */
+const Annotation = Node.create({
+    name: 'annotation',
+    group: 'inline',
+    inline: true,
+    atom: true,
+    selectable: true,
+    addAttributes() {
+        return { note: { default: '' } };
+    },
+    parseHTML() {
+        return [{ tag: 'sup.gh-ann' }];
+    },
+    renderHTML({ node }) {
+        return ['sup', { class: 'gh-ann', 'data-note': node.attrs.note || '' }, '?'];
+    },
+});
+
 const BlockRef = Node.create({
     name: 'blockRef',
     group: 'inline',
@@ -2718,6 +2767,55 @@ const alignAttribute = {
         renderHTML: (attrs) => (attrs.align ? { align: attrs.align } : {}),
     },
 };
+/**
+ * v1.3.7：表格 / 行尺寸属性。
+ *
+ * 之前 promptTableSize / promptCellSize 直接改 DOM 的 style：
+ *   · TipTap 下一次重绘就把 inline style 抹掉（保存后更是彻底丢）；
+ *   · 列宽真正生效的是 colgroup 的 col，改 td.style.width 在 fixed 布局里没用。
+ * 现在把尺寸落到节点属性上：tableSize 存 `宽x高`（可只写宽），
+ * rowHeight 存行高；列宽继续用官方 colwidth（每列一个数组）。
+ * 保存时由 markdown.js 写成表格后面的一行 HTML 注释，打开时再读回来。
+ */
+function tableSizeStyle(v) {
+    const m = /^\s*(\d+)?\s*x\s*(\d+)?\s*$/i.exec(String(v || ''));
+    if (!m) return '';
+    const bits = [];
+    if (m[1]) bits.push(`width:${m[1]}px`);
+    if (m[2]) bits.push(`height:${m[2]}px`);
+    return bits.join('; ');
+}
+const TableWithSize = Table.extend({
+    addAttributes() {
+        return {
+            ...this.parent?.(),
+            tableSize: {
+                default: null,
+                parseHTML: (el) => el.getAttribute('data-size') || null,
+                renderHTML: (attrs) => {
+                    if (!attrs.tableSize) return {};
+                    const style = tableSizeStyle(attrs.tableSize);
+                    return style ? { 'data-size': attrs.tableSize, style } : {};
+                },
+            },
+        };
+    },
+});
+const RowWithHeight = TableRow.extend({
+    addAttributes() {
+        return {
+            ...this.parent?.(),
+            rowHeight: {
+                default: null,
+                parseHTML: (el) => Number(el.getAttribute('data-row-height')) || null,
+                renderHTML: (attrs) => {
+                    const h = Number(attrs.rowHeight) || 0;
+                    return h > 0 ? { 'data-row-height': h, style: `height:${h}px` } : {};
+                },
+            },
+        };
+    },
+});
 const CellWithAlign = TableCell.extend({
     addAttributes() {
         return { ...this.parent?.(), ...alignAttribute };
@@ -3325,13 +3423,13 @@ const TOOLS = {
     paragraph: { icon: 'paragraph', label: 'memo.toolParagraph', run: (e) => e.chain().focus().setParagraph().unsetAllMarks().run() },
     linkExtract: { icon: 'cloud-arrow-down', label: 'memo.toolLinkExtract', run: null },
     /* 表格操作（需求：插入后要能加/删行列、合并拆分） */
-    tableAddRow: { icon: 'plus', label: 'memo.tblAddRow', run: (e) => e.chain().focus().addRowAfter().run() },
-    tableAddCol: { icon: 'plus', label: 'memo.tblAddCol', run: (e) => e.chain().focus().addColumnAfter().run() },
-    tableDelRow: { icon: 'minus', label: 'memo.tblDelRow', run: (e) => e.chain().focus().deleteRow().run() },
-    tableDelCol: { icon: 'minus', label: 'memo.tblDelCol', run: (e) => e.chain().focus().deleteColumn().run() },
-    tableMerge: { icon: 'compress-alt', label: 'memo.tblMerge', run: (e) => e.chain().focus().mergeCells().run() },
-    tableSplit: { icon: 'expand', label: 'memo.tblSplit', run: (e) => e.chain().focus().splitCell().run() },
-    tableDelete: { icon: 'trash', label: 'memo.tblDelete', run: (e) => e.chain().focus().deleteTable().run() },
+    tableAddRow: { svgKey: 'svgTblAddRow', icon: 'plus', label: 'memo.tblAddRow', run: (e) => e.chain().focus().addRowAfter().run() },
+    tableAddCol: { svgKey: 'svgTblAddCol', icon: 'plus', label: 'memo.tblAddCol', run: (e) => e.chain().focus().addColumnAfter().run() },
+    tableDelRow: { svgKey: 'svgTblDelRow', icon: 'minus', label: 'memo.tblDelRow', run: (e) => e.chain().focus().deleteRow().run() },
+    tableDelCol: { svgKey: 'svgTblDelCol', icon: 'minus', label: 'memo.tblDelCol', run: (e) => e.chain().focus().deleteColumn().run() },
+    tableMerge: { svgKey: 'svgTblMerge', icon: 'compress-alt', label: 'memo.tblMerge', run: (e) => e.chain().focus().mergeCells().run() },
+    tableSplit: { svgKey: 'svgTblSplit', icon: 'expand', label: 'memo.tblSplit', run: (e) => e.chain().focus().splitCell().run() },
+    tableDelete: { svgKey: 'svgTblDelete', icon: 'trash', label: 'memo.tblDelete', run: (e) => e.chain().focus().deleteTable().run() },
     file: { icon: 'folder-open', label: 'memo.toolFile', run: null },
     /*
      * v1.3.1 新增工具。
@@ -3340,8 +3438,8 @@ const TOOLS = {
      */
     /* v1.3.1.2：点「表格」先弹行列数量选择页（需求），不再固定插 3×3 */
     table: { icon: 'table', label: 'memo.toolTable', run: null },
-    tableAddRowBefore: { icon: 'arrow-up', label: 'memo.tblAddRowBefore', run: (e) => e.chain().focus().addRowBefore().run() },
-    tableAddColBefore: { icon: 'arrow-left', label: 'memo.tblAddColBefore', run: (e) => e.chain().focus().addColumnBefore().run() },
+    tableAddRowBefore: { svgKey: 'svgTblAddRowBefore', icon: 'arrow-up', label: 'memo.tblAddRowBefore', run: (e) => e.chain().focus().addRowBefore().run() },
+    tableAddColBefore: { svgKey: 'svgTblAddColBefore', icon: 'arrow-left', label: 'memo.tblAddColBefore', run: (e) => e.chain().focus().addColumnBefore().run() },
     callout: { icon: 'circle-info', label: 'memo.toolCallout', run: null },
     /* v1.3.5.1：数学公式块 / 页签块 —— 都要先问参数，run 留 null 走特判 */
     mathBlock: { icon: 'code', label: 'memo.toolMathBlock', run: null },
@@ -3572,6 +3670,69 @@ const SVG_SELECT_ALL =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5.6A1.6 1.6 0 0 1 5.6 4H7"/><path d="M10 4h1.6"/><path d="M14.4 4H16"/><path d="M19 7V5.6A1.6 1.6 0 0 0 17.4 4H17"/><path d="M20 10v1.4"/><path d="M20 14.6V16"/><path d="M17 20h1.4A1.6 1.6 0 0 0 20 18.4V18"/><path d="M13.6 20H12"/><path d="M9 20H7.6A1.6 1.6 0 0 1 6 18.4V18"/><path d="M4 15v-1.4"/><path d="M4 10.6V10"/><rect x="9" y="9" width="6.5" height="6.5" rx="1"/></svg>';
 const SVG_REDO =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>';
+/*
+ * v1.3.7（需求：表格工具图标换一批能看懂是「表格操作」的）
+ * ----------------------------------------------------------------------------
+ * FontAwesome 没有「在下方插一行」「合并单元格」这类语义图标，
+ * 上一版只能拿 plus / minus / 上下左右箭头凑数，放在工具栏里完全看不出
+ * 跟表格有关。这里统一画成「3×3 网格 + 操作符号」：
+ *   · 网格本身一眼是表格；
+ *   · 箭头 / 加减号的位置就是操作方向；
+ *   · 线宽 1.6~1.8，与既有内联图标一致，16px 下仍分得清。
+ */
+function tableGlyph(inner, grid = '<rect x="3" y="2" width="18" height="13" rx="2"/><path d="M3 6.5h18M3 10.5h18M9 2v13M15 2v13"/>') {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${grid}${inner}</svg>`;
+}
+const SVG_TBL_ADD_ROW = tableGlyph('<path d="M12 16.5v5"/><path d="m9.3 19 2.7 2.7 2.7-2.7"/>');
+const SVG_TBL_ADD_ROW_BEFORE = tableGlyph(
+    '<path d="M12 8V3"/><path d="m9.3 5.5 2.7-2.7 2.7 2.7"/>',
+    '<rect x="3" y="9" width="18" height="13" rx="2"/><path d="M3 13.5h18M3 17.5h18M9 9v13M15 9v13"/>',
+);
+const SVG_TBL_ADD_COL = tableGlyph(
+    '<path d="M16.5 12h5"/><path d="m19 9.3 2.7 2.7L19 14.7"/>',
+    '<rect x="2" y="4" width="13" height="16" rx="2"/><path d="M2 8.5h13M2 13h13M6.5 4v16M11 4v16"/>',
+);
+const SVG_TBL_ADD_COL_BEFORE = tableGlyph(
+    '<path d="M8 12H3"/><path d="m5.5 9.3-2.7 2.7 2.7 2.7"/>',
+    '<rect x="9" y="4" width="13" height="16" rx="2"/><path d="M9 8.5h13M9 13h13M13.5 4v16M18 4v16"/>',
+);
+const SVG_TBL_DEL_ROW = tableGlyph('<path d="M8.5 20h7"/>');
+const SVG_TBL_DEL_COL = tableGlyph(
+    '<path d="M19 20h3"/>',
+    '<rect x="2" y="3" width="17" height="16" rx="2"/><path d="M2 8h17M2 13h17M7 3v16M12 3v16"/>',
+);
+const SVG_TBL_MERGE = tableGlyph(
+    '<path d="M8 8.5h8M8 15.5h8"/><path d="m10 6.5-2 2 2 2"/><path d="m14 13.5 2 2-2 2"/>',
+    '<rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/>',
+);
+const SVG_TBL_SPLIT = tableGlyph(
+    '<path d="M12 9V5.5M12 15v3.5"/><path d="m9.8 7.3 2.2-2 2.2 2"/><path d="m9.8 16.7 2.2 2 2.2-2"/>',
+    '<rect x="5" y="5" width="14" height="14" rx="2"/><path d="M12 5v14"/>',
+);
+const SVG_TBL_DELETE = tableGlyph('<path d="m16.5 16.5 5 5M21.5 16.5l-5 5"/>');
+/* 整表尺寸：网格 + 右下角双向箭头；行列尺寸：网格 + 中间十字尺寸线 */
+const SVG_TBL_SIZE = tableGlyph(
+    '<path d="M14 20h6M20 20v-6"/><path d="m17 17 3 3"/><path d="m17 20 3-3"/>',
+    '<rect x="2" y="2" width="14" height="14" rx="2"/><path d="M2 6.5h14M2 11h14M7 2v14M11.5 2v14"/>',
+);
+const SVG_TBL_CELL_SIZE = tableGlyph(
+    '<path d="M8 20h8M8 20v-3.5M16 20v-3.5"/><path d="M9 17h6"/>',
+    '<rect x="3" y="2" width="18" height="12" rx="2"/><path d="M3 6h18M3 10h18M9 2v12M15 2v12"/><path d="M12 2v12"/>',
+);
+const SVG_TBL_ICONS = {
+    svgTblAddRow: SVG_TBL_ADD_ROW,
+    svgTblAddRowBefore: SVG_TBL_ADD_ROW_BEFORE,
+    svgTblAddCol: SVG_TBL_ADD_COL,
+    svgTblAddColBefore: SVG_TBL_ADD_COL_BEFORE,
+    svgTblDelRow: SVG_TBL_DEL_ROW,
+    svgTblDelCol: SVG_TBL_DEL_COL,
+    svgTblMerge: SVG_TBL_MERGE,
+    svgTblSplit: SVG_TBL_SPLIT,
+    svgTblDelete: SVG_TBL_DELETE,
+    svgTblSize: SVG_TBL_SIZE,
+    svgTblCellSize: SVG_TBL_CELL_SIZE,
+};
+
 
 function slashCmdOf(id) {
     return {
@@ -3782,6 +3943,8 @@ export default {
             svgAngle: SVG_ANGLE,
             svgHtml: SVG_HTML,
             svgSelectAll: SVG_SELECT_ALL,
+            /* v1.3.7：表格操作图标 */
+            ...SVG_TBL_ICONS,
             /* v1.3.1.2：左侧行级栏菜单 */
             gutterMenu: { open: false, x: 0, y: 0, pos: 0, type: '' },
             /** v1.3.3.2：左侧行号栏的每一行（按块矩形算出的绝对位置） */
@@ -3798,6 +3961,8 @@ export default {
             /* v1.3.1.2：浮层 / 右键菜单 / 表格 */
             TEXT_COLORS,
             tableBar: { open: false, above: true, style: {} },
+            /** v1.3.7：批注悬浮页（note / 位置 / 节点位置） */
+            annPop: { open: false, visible: false, note: '', left: 0, top: 0, pos: null },
             ctxMenu: { open: false, x: 0, y: 0, kind: 'text' },
             /** v1.3.2：桌面端每行工具栏的第一个溢出下标（li → ti） */
             toolbarOverflow: {},
@@ -4660,8 +4825,8 @@ export default {
                     Underline,
                     Highlight.configure({ multicolor: false }),
                     // 表格：单元格/表头各扩一个 align 属性，md 的 `:---:` 才能往返
-                    Table.configure({ resizable: true, allowTableNodeSelection: true, HTMLAttributes: { class: 'gh-table' } }),
-                    TableRow,
+                    TableWithSize.configure({ resizable: false, allowTableNodeSelection: true, HTMLAttributes: { class: 'gh-table' } }),
+                    RowWithHeight,
                     CellWithAlign,
                     HeaderWithAlign,
                     // v1.3.1 自定义块
@@ -4686,6 +4851,7 @@ export default {
                     NoteRef,
                     NoteEmbed,
                     BlockRef,
+                    Annotation,
                 ],
                 content: this.docOf(this.note?.content || ''),
                 editorProps: {
@@ -4941,7 +5107,99 @@ export default {
         },
 
         /** 点正文里的引用（noteRef / noteEmbed / blockRef）跳转 */
+        /** v1.3.7：鼠标移入批注上标 → 稍等再弹（避免划过一串时闪个不停） */
+        onAnnHover(ev) {
+            const el = ev.target?.closest?.('.gh-ann');
+            if (!el) return;
+            this.cancelAnnHide();
+            if (this._annShowTimer) clearTimeout(this._annShowTimer);
+            this._annShowTimer = setTimeout(() => {
+                this._annShowTimer = null;
+                this.showAnnPop(el);
+            }, 130);
+        },
+        /** 鼠标移出上标：给 220ms 缓冲，够移到悬浮页上 */
+        onAnnOut(ev) {
+            if (!ev.target?.closest?.('.gh-ann')) return;
+            if (this._annShowTimer) {
+                clearTimeout(this._annShowTimer);
+                this._annShowTimer = null;
+            }
+            this.hideAnnPopSoon();
+        },
+        cancelAnnHide() {
+            if (this._annHideTimer) {
+                clearTimeout(this._annHideTimer);
+                this._annHideTimer = null;
+            }
+        },
+        hideAnnPopSoon() {
+            this.cancelAnnHide();
+            this._annHideTimer = setTimeout(() => {
+                this._annHideTimer = null;
+                this.annPop = { ...this.annPop, visible: false };
+            }, 220);
+        },
+        /**
+         * 定位并显示批注悬浮页。
+         * 位置用 fixed：编辑区在滚动容器里，absolute 会跟着滚走；
+         * 下方空间不够就翻到上标上方。
+         */
+        showAnnPop(el) {
+            if (!this.editor || !el) return;
+            let pos = null;
+            try {
+                pos = this.editor.view.posAtDOM(el, 0);
+            } catch (e) {
+                pos = null;
+            }
+            const note = el.getAttribute('data-note') || '';
+            const r = el.getBoundingClientRect();
+            const width = 280;
+            const left = Math.max(8, Math.min(r.left - 8, window.innerWidth - width - 8));
+            const below = r.bottom + 8;
+            const estimated = Math.min(260, 60 + Math.ceil(note.length / 18) * 20);
+            const top = below + estimated > window.innerHeight - 8
+                ? Math.max(8, r.top - estimated - 8)
+                : below;
+            this.cancelAnnHide();
+            this.annPop = { open: true, visible: true, note, left, top, pos };
+        },
+        /** 点悬浮页 → 改批注内容（改完留在原处，不重新写一遍文档） */
+        async editAnnPop() {
+            const pos = this.annPop.pos;
+            if (!this.editor || typeof pos !== 'number') return;
+            const node = this.editor.state.doc.nodeAt(pos);
+            if (!node || node.type.name !== 'annotation') return;
+            let note = '';
+            try {
+                const r = await ElMessageBox.prompt(this.$t('memo.annotateTip'), this.$t('memo.toolAnnotate'), {
+                    inputType: 'textarea',
+                    inputValue: String(node.attrs.note || ''),
+                    inputPlaceholder: this.$t('memo.annotatePlaceholder'),
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                });
+                note = String(r?.value || '').trim();
+            } catch (e) {
+                return;
+            }
+            this.editor.chain().focus().command(({ tr }) => {
+                tr.setNodeMarkup(pos, undefined, { note });
+                return true;
+            }).run();
+            this.annPop = { ...this.annPop, note, visible: true };
+            this.onEditorUpdate();
+        },
+
         onBodyClick(ev) {
+            /* v1.3.7：点批注上标 → 弹悬浮页，不要顺带选中节点 / 触发其它菜单 */
+            const ann = ev.target?.closest?.('.gh-ann');
+            if (ann) {
+                ev.preventDefault?.();
+                this.showAnnPop(ann);
+                return;
+            }
             const el = ev.target?.closest?.('.gh-noteref, .gh-noteembed, .gh-blockref');
             if (!el) return;
             const noteId = el.getAttribute('data-note-id') || '';
@@ -6624,17 +6882,18 @@ export default {
         // ---------------- v1.3.1.2：批注 ----------------
 
         /**
-         * 给选中的内容加批注。
+         * 给选中的内容加批注（v1.3.7 重做）。
          *
-         * 实现方式是「在被批注的块后面插一个 comment 类型的提示块」，里面放原文摘录 + 批注：
-         * markdown 侧不需要任何新语法（复用 :::callout），别的 md 查看器也能读，
-         * 而且批注天然不会污染正文字符数。
+         * 旧做法是在块后插一个 comment 提示块，读起来像正文的一部分，
+         * 也没法一眼看出「哪句话被批注了」。现在改为在选区末尾插一个内联
+         * 问号上标（annotation 节点）：悬停 / 点击上标弹出批注内容，
+         * 点悬浮页可以继续改。md 里写成一段最小 HTML，预览与第三方查看器
+         * 至少还能看到一个「?」。
          */
         async annotateSelection() {
             const ed = this.editor;
             if (!ed) return;
-            const { from, to, empty } = ed.state.selection;
-            const quoted = empty ? '' : ed.state.doc.textBetween(from, to, ' ').trim().slice(0, 300);
+            const { to, empty } = ed.state.selection;
             let note = '';
             try {
                 const r = await ElMessageBox.prompt(this.$t('memo.annotateTip'), this.$t('memo.toolAnnotate'), {
@@ -6649,17 +6908,14 @@ export default {
             }
             if (!note) return;
             if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
-            const quoteMd = quoted ? `> ${quoted}\n\n` : '';
-            const node = {
-                type: 'callout',
-                attrs: { type: 'comment' },
-                content: [
-                    { type: 'paragraph', content: [{ type: 'text', text: quoteMd ? `批注对象：${quoted}` : '批注' }] },
-                    { type: 'paragraph', content: [{ type: 'text', text: note }] },
-                ],
-            };
-            ed.chain().focus().insertContentAt(to, [node, { type: 'paragraph' }]).run();
+            ed.chain().focus().insertContentAt(to, { type: 'annotation', attrs: { note } }).run();
             this.onEditorUpdate();
+            /* 刚插入就把悬浮页弹出来，省得用户再去找那个问号 */
+            this.$nextTick(() => {
+                const list = this.$el ? this.$el.querySelectorAll('.gh-ann') : [];
+                const el = list.length ? list[list.length - 1] : null;
+                if (el) this.showAnnPop(el);
+            });
         },
 
         async insertLink() {
@@ -6964,6 +7220,14 @@ export default {
             if (tag === 'input' || tag === 'textarea') return true;
             event.preventDefault();
             if (!this.editor || this.mode !== 'wysiwyg') return false;
+            /*
+             * v1.3.7（需求）：表格里右击 / 长按不弹右键菜单。
+             * 表格本身有列宽拖拽与单元格选中，再叠一层浮动菜单只会挡住操作。
+             */
+            if (event.target?.closest?.('table')) {
+                this.closeCtxMenu();
+                return false;
+            }
             const sel = this.editor.state.selection;
             /*
              * v1.3.3（需求）：只要选中有内容，右键 / 长按一律不弹「编辑菜单」，
@@ -7013,6 +7277,7 @@ export default {
             if (except !== 'table' && this.tableBar.open) this.tableBar = { ...this.tableBar, open: false };
             if (except !== 'picker' && this.tablePicker.open) this.tablePicker = { ...this.tablePicker, open: false };
             if (except !== 'hover' && this.hoverCard.open) this.hoverCard = { ...this.hoverCard, open: false };
+            if (except !== 'ann' && this.annPop.visible) this.annPop = { ...this.annPop, visible: false };
         },
         closeCtxMenu() {
             if (this.ctxMenu.open) this.ctxMenu = { ...this.ctxMenu, open: false };
@@ -7195,91 +7460,398 @@ export default {
                 this.tableBar = { open: false, style: {} };
             }
         },
-        /** v1.3.5.2：给当前表格挂右下角缩放手柄（同一个表格只挂一次） */
-        attachTableResizer(table) {
-            const host = table.parentElement;
-            if (!host) return;
-            if (host.querySelector(':scope > .gh-table-resizer')) return;
-            const handle = document.createElement('span');
-            handle.className = 'gh-table-resizer';
-            handle.title = '拖动调整表格宽度';
-            handle.addEventListener('pointerdown', (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                const startX = ev.clientX;
-                const startW = table.getBoundingClientRect().width;
-                const move = (e) => {
-                    const w = Math.max(160, Math.round(startW + (e.clientX - startX)));
-                    table.style.width = `${w}px`;
-                };
-                const up = () => {
-                    window.removeEventListener('pointermove', move);
-                    window.removeEventListener('pointerup', up);
-                    this.onEditorUpdate();
-                };
-                window.addEventListener('pointermove', move);
-                window.addEventListener('pointerup', up);
-            });
-            if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
-            host.appendChild(handle);
-        },
-        /** v1.3.5.2：表格整体宽高（编辑态生效；md 的管道表格本身不携带尺寸） */
-        async promptTableSize() {
+        /**
+         * v1.3.7：定位当前选区所在的表格（返回节点、文档位置与 DOM）。
+         * 没有选中表格时返回 null —— 所有尺寸操作都以「当前表格」为准，
+         * 不再像旧版那样 `querySelector('table')` 抓到页面第一个表格。
+         */
+        currentTableCtx() {
             const ed = this.editor;
-            if (!ed) return;
-            const table = ed.view.dom.querySelector('table');
-            if (!table) return;
-            const rect = table.getBoundingClientRect();
+            if (!ed) return null;
+            const { $from } = ed.state.selection;
+            for (let d = $from.depth; d > 0; d -= 1) {
+                if ($from.node(d).type.name === 'table') {
+                    const pos = $from.before(d);
+                    return {
+                        node: $from.node(d),
+                        pos,
+                        dom: ed.view.nodeDOM(pos),
+                        $from,
+                        depth: d,
+                    };
+                }
+            }
+            return null;
+        },
+        /** 从 DOM 单元格反查表格上下文（右键 / 拖拽时选区不一定在这张表里） */
+        tableCtxAtDom(el) {
+            const ed = this.editor;
+            if (!ed || !el) return null;
+            try {
+                const pos = ed.view.posAtDOM(el, 0);
+                const $pos = ed.state.doc.resolve(pos);
+                for (let d = $pos.depth; d > 0; d -= 1) {
+                    if ($pos.node(d).type.name === 'table') {
+                        const tablePos = $pos.before(d);
+                        return { node: $pos.node(d), pos: tablePos, dom: ed.view.nodeDOM(tablePos) };
+                    }
+                }
+            } catch (e) { /* 忽略 */ }
+            return null;
+        },
+        /**
+         * 设置整表尺寸（宽 / 高，单位 px；null 表示不改）。
+         *
+         * 宽度不能只写 tableSize：TipTap 的 TableView 每次重绘都会按 colgroup
+         * 的列宽重新算 table.style.width，直接写宽度会被它盖掉（实测 680 被改回 380）。
+         * 所以宽度按比例摊到每一列的 colwidth 上 —— 列宽之和就是表格宽度，
+         * TableView 怎么重算都一致；tableSize 只保留高度与元数据。
+         */
+        setTableSize(ctx, w, h) {
+            if (!ctx) return;
+            const cur = /^\s*(\d+)?\s*x\s*(\d+)?\s*$/.exec(String(ctx.node.attrs?.tableSize || ''));
+            const height = h === null ? (cur && cur[2] ? Number(cur[2]) : null) : h;
+            if (w !== null && w > 0) {
+                const firstRow = ctx.node.firstChild;
+                const cols = firstRow ? firstRow.childCount : 0;
+                const curWidths = [];
+                firstRow?.forEach((cell) => curWidths.push(Number(cell.attrs?.colwidth?.[0]) || 0));
+                const sum = curWidths.reduce((a, b) => a + b, 0);
+                const base = sum > 0 ? curWidths : new Array(cols).fill(1);
+                const unit = w / base.reduce((a, b) => a + b, 0);
+                const out = base.map((x) => Math.max(30, Math.round(x * unit)));
+                if (out.length) out[out.length - 1] += w - out.reduce((a, b) => a + b, 0);
+                this.editor.chain().focus().command(({ tr }) => {
+                    let rowOffset = 0;
+                    ctx.node.forEach((row) => {
+                        let cellOffset = 0;
+                        row.forEach((cell, ci) => {
+                            if (out[ci]) {
+                                tr.setNodeMarkup(ctx.pos + 1 + rowOffset + 1 + cellOffset, undefined, {
+                                    ...cell.attrs,
+                                    colwidth: [out[ci]],
+                                });
+                            }
+                            cellOffset += cell.nodeSize;
+                        });
+                        rowOffset += row.nodeSize;
+                    });
+                    return true;
+                }).run();
+            }
+            const widthMeta = w !== null ? w : (cur && cur[1] ? Number(cur[1]) : null);
+            const size = widthMeta || height ? `${widthMeta || ''}x${height || ''}` : null;
+            this.editor.chain().focus().command(({ tr }) => {
+                tr.setNodeMarkup(ctx.pos, undefined, { ...ctx.node.attrs, tableSize: size });
+                return true;
+            }).run();
+            this.onEditorUpdate();
+            this.$nextTick(() => this.attachTableResizer());
+        },
+        /** 设置某一列宽度：同列每个单元格都要写 colwidth，否则重绘只改一行 */
+        setColumnWidth(ctx, colIdx, w) {
+            if (!ctx || !(w > 0)) return;
+            this.editor.chain().focus().command(({ tr }) => {
+                let rowOffset = 0;
+                ctx.node.forEach((row) => {
+                    let cellOffset = 0;
+                    row.forEach((cell, ci) => {
+                        if (ci === colIdx) {
+                            tr.setNodeMarkup(ctx.pos + 1 + rowOffset + 1 + cellOffset, undefined, {
+                                ...cell.attrs,
+                                colwidth: [Math.round(w)],
+                            });
+                        }
+                        cellOffset += cell.nodeSize;
+                    });
+                    rowOffset += row.nodeSize;
+                });
+                return true;
+            }).run();
+            this.onEditorUpdate();
+        },
+        /** 设置某一行高度 */
+        setRowHeight(ctx, rowIdx, h) {
+            if (!ctx || !(h > 0)) return;
+            this.editor.chain().focus().command(({ tr }) => {
+                let offset = 0;
+                let idx = 0;
+                ctx.node.forEach((row) => {
+                    if (idx === rowIdx) {
+                        tr.setNodeMarkup(ctx.pos + 1 + offset, undefined, { ...row.attrs, rowHeight: Math.round(h) });
+                    }
+                    offset += row.nodeSize;
+                    idx += 1;
+                });
+                return true;
+            }).run();
+            this.onEditorUpdate();
+        },
+        /**
+         * v1.3.7：表格尺寸 / 行列尺寸。
+         * 改成写节点属性（见 TableWithSize / RowWithHeight），不再直接改 DOM style：
+         * 后者的结果就是「弹窗里改了，表格纹丝不动，保存后更是全丢」。
+         */
+        async promptTableSize() {
+            const ctx = this.currentTableCtx();
+            if (!ctx) return;
             let value = null;
             try {
-                const r = await ElMessageBox.prompt('宽度,高度（px）。留空表示自动，例如 680,320', '表格尺寸', {
+                const r = await ElMessageBox.prompt('宽度,高度（px）。留空表示不设，例如 680,320', '表格尺寸', {
                     confirmButtonText: this.$t('common.confirm'),
                     cancelButtonText: this.$t('common.cancel'),
-                    inputValue: `${Math.round(rect.width)},`,
+                    inputValue: (() => {
+                        const m = /^\s*(\d+)?\s*x\s*(\d+)?\s*$/.exec(String(ctx.node.attrs?.tableSize || '')) || [];
+                        return `${m[1] || ''},${m[2] || ''}`;
+                    })(),
                 });
                 value = r.value;
             } catch (e) {
                 return;
             }
             const [w, h] = String(value || '').split(/[,，]/).map((v) => String(v || '').trim());
-            if (w) table.style.width = /^\d+$/.test(w) ? `${w}px` : w;
-            if (h) table.style.height = /^\d+$/.test(h) ? `${h}px` : h;
-            this.onEditorUpdate();
+            const width = /^\d+$/.test(w) ? Number(w) : null;
+            const height = /^\d+$/.test(h) ? Number(h) : null;
+            this.setTableSize(ctx, width, height);
         },
-        /** v1.3.5.2：当前列宽 / 当前行高 */
         async promptCellSize() {
             const ed = this.editor;
             if (!ed) return;
-            const { from } = ed.state.selection;
-            const at = ed.view.domAtPos(from);
-            let el = at && at.node;
-            if (el && el.nodeType === 3) el = el.parentElement;
-            const cell = el && el.closest ? el.closest('td,th') : null;
-            if (!cell) return;
+            const { $from } = ed.state.selection;
+            let cellDepth = -1;
+            for (let d = $from.depth; d > 0; d -= 1) {
+                const name = $from.node(d).type.name;
+                if (name === 'tableCell' || name === 'tableHeader') { cellDepth = d; break; }
+            }
+            if (cellDepth < 0) return;
+            const tableCtx = this.currentTableCtx();
+            const cellNode = $from.node(cellDepth);
+            const cellEl = ed.view.nodeDOM($from.before(cellDepth));
+            if (!tableCtx || !cellEl) return;
+            const row = cellEl.parentElement;
+            const rowIdx = Array.prototype.indexOf.call(row.parentElement.children, row);
+            const colIdx = Array.prototype.indexOf.call(row.children, cellEl);
             let value = null;
             try {
-                const r = await ElMessageBox.prompt('列宽,行高（px）。留空表示不改', '行列尺寸', {
+                const r = await ElMessageBox.prompt('列宽,行高（px）。留空表示不改，例如 160,48', '行列尺寸', {
                     confirmButtonText: this.$t('common.confirm'),
                     cancelButtonText: this.$t('common.cancel'),
-                    inputValue: `${Math.round(cell.getBoundingClientRect().width)},`,
+                    inputValue: `${Math.round(cellEl.getBoundingClientRect().width)},${Math.round(row.getBoundingClientRect().height)}`,
                 });
                 value = r.value;
             } catch (e) {
                 return;
             }
             const [w, h] = String(value || '').split(/[,，]/).map((v) => String(v || '').trim());
-            const row = cell.parentElement;
-            if (w && /^\d+$/.test(w)) {
-                const table = cell.closest('table');
-                if (table) {
-                    Array.prototype.forEach.call(table.rows, (tr) => {
-                        const c = tr.children[Array.prototype.indexOf.call(row.children, cell)];
-                        if (c) c.style.width = `${w}px`;
-                    });
-                }
+            if (/^\d+$/.test(w)) this.setColumnWidth(tableCtx, colIdx, Number(w));
+            if (/^\d+$/.test(h)) this.setRowHeight(tableCtx, rowIdx, Number(h));
+            this.$nextTick(() => this.attachTableResizer());
+        },
+        /**
+         * v1.3.7：表格右下角拖拽手柄（重写）。
+         *
+         * 旧手柄挂在 .tableWrapper 的右下角，而 wrapper 是整行宽：
+         * 用户看到的方块离表格很远，拖完表格变宽、方块却不动。
+         * 现在按表格自身的 offset 定位，拖动同时改宽高，松手写回节点属性。
+         */
+        attachTableResizer() {
+            if (!this.editor) return;
+            const ctx = this.currentTableCtx();
+            const table = ctx && ctx.dom && (ctx.dom.tagName === 'TABLE' ? ctx.dom : ctx.dom.querySelector?.('table'));
+            if (!table) return;
+            const host = table.parentElement;
+            if (!host) return;
+            if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+            let handle = host.querySelector(':scope > .gh-table-resizer');
+            if (!handle) {
+                handle = document.createElement('span');
+                handle.className = 'gh-table-resizer';
+                handle.title = '拖动调整表格大小';
+                handle.innerHTML = '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><path d="M8 2 2 8M8 5.5 5.5 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>';
+                handle.addEventListener('pointerdown', (ev) => this.startTableResize(ev, table, ctx));
+                host.appendChild(handle);
             }
-            if (h && /^\d+$/.test(h) && row) row.style.height = `${h}px`;
-            this.onEditorUpdate();
+            const place = () => {
+                handle.style.left = `${table.offsetLeft + table.offsetWidth - 6}px`;
+                handle.style.top = `${table.offsetTop + table.offsetHeight - 6}px`;
+            };
+            place();
+            handle._place = place;
+            this._tableResizer = handle;
+        },
+        startTableResize(ev, table, ctx) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const startX = ev.clientX;
+            const startY = ev.clientY;
+            const startW = table.getBoundingClientRect().width;
+            const startH = table.getBoundingClientRect().height;
+            const handle = ev.currentTarget;
+            const move = (e) => {
+                const w = Math.max(160, Math.round(startW + (e.clientX - startX)));
+                const h = Math.max(80, Math.round(startH + (e.clientY - startY)));
+                table.style.width = `${w}px`;
+                table.style.height = `${h}px`;
+                if (handle && handle._place) handle._place();
+            };
+            const up = (e) => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                window.removeEventListener('pointercancel', up);
+                const w = Math.max(160, Math.round(startW + (e.clientX - startX)));
+                const h = Math.max(80, Math.round(startH + (e.clientY - startY)));
+                this.setTableSize(ctx, w, h);
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+            window.addEventListener('pointercancel', up);
+        },
+        /**
+         * v1.3.7：列 / 行拖拽（指针事件，桌面与移动端共用）。
+         *
+         * 关闭了 TipTap 自带的 columnResizing：它只监听鼠标，手机上根本拖不动；
+         * 这里统一用 pointerdown/move/up，手指按在分隔线附近就能拖。
+         */
+        onTablePointerDown(ev) {
+            if (!this.editor || this.mode !== 'wysiwyg') return;
+            if (ev.button !== undefined && ev.button !== 0) return;
+            const cell = ev.target?.closest?.('td, th');
+            if (!cell) return;
+            if (ev.target.closest?.('.gh-table-resizer')) return;
+            const ctx = this.tableCtxAtDom(cell);
+            if (!ctx) return;
+            const rect = cell.getBoundingClientRect();
+            const tol = ev.pointerType === 'touch' ? 14 : 7;
+            const nearRight = Math.abs(ev.clientX - rect.right) <= tol;
+            const nearBottom = Math.abs(ev.clientY - rect.bottom) <= tol;
+            if (!nearRight && !nearBottom) return;
+            ev.preventDefault();
+            ev.stopPropagation();
+            const rowEl = cell.parentElement;
+            const tableEl = cell.closest('table');
+            const rowIdx = Array.prototype.indexOf.call(rowEl.parentElement.children, rowEl);
+            const colIdx = Array.prototype.indexOf.call(rowEl.children, cell);
+            if (nearRight) this.startColDrag(ev, tableEl, ctx, colIdx, rect.width);
+            else this.startRowDrag(ev, rowEl, ctx, rowIdx, rect.height);
+        },
+        /**
+         * v1.3.7：移动端列宽拖拽的触摸兜底。
+         *
+         * 只靠 pointerdown 时，部分移动浏览器会把横向手势判给滚动容器，
+         * 直接发 pointercancel，手指拖半天列宽不动。这里在「离右边界 16px 内」
+         * 主动接管 touchmove（passive:false + preventDefault），松手再提交 colwidth。
+         */
+        onTableTouchStart(ev) {
+            if (!this.editor || this.mode !== 'wysiwyg') return;
+            if (ev.touches && ev.touches.length > 1) return;
+            const touch = (ev.touches && ev.touches[0]) || null;
+            const cell = ev.target?.closest?.('td, th');
+            if (!touch || !cell) return;
+            const rect = cell.getBoundingClientRect();
+            if (Math.abs(touch.clientX - rect.right) > 16) return;
+            const tableEl = cell.closest('table');
+            const ctx = this.tableCtxAtDom(cell);
+            if (!tableEl || !ctx) return;
+            ev.preventDefault();
+            const row = cell.parentElement;
+            const colIdx = Array.prototype.indexOf.call(row.children, cell);
+            const startX = touch.clientX;
+            const startW = rect.width;
+            const totalW = tableEl.getBoundingClientRect().width;
+            const move = (e) => {
+                e.preventDefault();
+                const t = e.touches && e.touches[0];
+                if (!t) return;
+                const w = Math.max(40, Math.round(startW + (t.clientX - startX)));
+                const col = tableEl.querySelectorAll('colgroup col')[colIdx];
+                if (col) col.style.width = `${w}px`;
+                tableEl.style.width = `${Math.max(totalW, w)}px`;
+                if (this._tableResizer) this._tableResizer._place?.();
+            };
+            const end = (e) => {
+                window.removeEventListener('touchmove', move);
+                window.removeEventListener('touchend', end);
+                window.removeEventListener('touchcancel', end);
+                const t = (e.changedTouches && e.changedTouches[0]) || null;
+                const w = t ? Math.max(40, Math.round(startW + (t.clientX - startX))) : startW;
+                this.setColumnWidth(ctx, colIdx, w);
+                this.$nextTick(() => this.attachTableResizer());
+            };
+            window.addEventListener('touchmove', move, { passive: false });
+            window.addEventListener('touchend', end);
+            window.addEventListener('touchcancel', end);
+        },
+        startColDrag(ev, tableEl, ctx, colIdx, startW) {
+            const startX = ev.clientX;
+            const totalW = tableEl.getBoundingClientRect().width;
+            this.clearTableCursor();
+            document.body.style.cursor = 'col-resize';
+            const move = (e) => {
+                const w = Math.max(40, Math.round(startW + (e.clientX - startX)));
+                const col = tableEl.querySelectorAll('colgroup col')[colIdx];
+                if (col) col.style.width = `${w}px`;
+                tableEl.style.width = `${Math.max(totalW, w)}px`;
+                if (this._tableResizer) this._tableResizer._place?.();
+            };
+            const up = (e) => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                window.removeEventListener('pointercancel', up);
+                document.body.style.cursor = '';
+                const w = Math.max(40, Math.round(startW + (e.clientX - startX)));
+                this.setColumnWidth(ctx, colIdx, w);
+                this.$nextTick(() => this.attachTableResizer());
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+            window.addEventListener('pointercancel', up);
+        },
+        startRowDrag(ev, rowEl, ctx, rowIdx, startH) {
+            const startY = ev.clientY;
+            this.clearTableCursor();
+            document.body.style.cursor = 'row-resize';
+            const move = (e) => {
+                rowEl.style.height = `${Math.max(32, Math.round(startH + (e.clientY - startY)))}px`;
+            };
+            const up = (e) => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                window.removeEventListener('pointercancel', up);
+                document.body.style.cursor = '';
+                this.setRowHeight(ctx, rowIdx, Math.max(32, Math.round(startH + (e.clientY - startY))));
+            };
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+            window.addEventListener('pointercancel', up);
+        },
+        /** 悬停在分隔线附近时显示拖动光标（触屏不做 hover） */
+        onTablePointerMove(ev) {
+            if (!this.editor || this.mode !== 'wysiwyg' || ev.pointerType === 'touch') return;
+            const cell = ev.target?.closest?.('td, th');
+            if (!cell) {
+                this.clearTableCursor();
+                return;
+            }
+            const rect = cell.getBoundingClientRect();
+            const nearRight = Math.abs(ev.clientX - rect.right) <= 7;
+            const nearBottom = Math.abs(ev.clientY - rect.bottom) <= 7;
+            if (nearRight) this.setTableCursor(cell, 'col-resize');
+            else if (nearBottom) this.setTableCursor(cell, 'row-resize');
+            else this.clearTableCursor();
+        },
+        setTableCursor(cell, cursor) {
+            if (this._cursorCell === cell && this._cursorKind === cursor) return;
+            this.clearTableCursor();
+            this._cursorCell = cell;
+            this._cursorKind = cursor;
+            cell.style.cursor = cursor;
+        },
+        clearTableCursor() {
+            if (this._cursorCell) {
+                this._cursorCell.style.cursor = '';
+                this._cursorCell = null;
+                this._cursorKind = '';
+            }
         },
         insertTableAt(pos) {
             const rows = Math.max(1, Math.min(10, Number(pos?.r) || 3));
@@ -11735,17 +12307,34 @@ export default {
 .me-wysiwyg :deep(.gh-editor-content .resize-cursor) {
     cursor: col-resize;
 }
+/* v1.3.7：右下角缩放手柄按表格自身定位（不再是 wrapper 的右下角） */
 .me-wysiwyg :deep(.gh-editor-content .gh-table-resizer) {
     position: absolute;
-    right: -5px;
-    bottom: -5px;
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--el-color-primary);
-    border-radius: 3px;
-    background: var(--el-bg-color, #fff);
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    background: var(--el-color-primary);
+    color: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
     cursor: nwse-resize;
+    touch-action: none;
+    user-select: none;
     z-index: 3;
+    opacity: 0.85;
+}
+
+.me-wysiwyg :deep(.gh-editor-content .gh-table-resizer:hover) {
+    opacity: 1;
+}
+
+/* 手机上横向拖动列宽时不要被页面滚动抢走；纵向仍可正常滚动 */
+@media (max-width: 900px) {
+    .me-wysiwyg :deep(.gh-editor-content table) {
+        touch-action: pan-y;
+    }
 }
 
 /* 占位提示 */
@@ -12422,4 +13011,63 @@ export default {
         max-height: 98vh !important;
     }
 }
+/* ── v1.3.7：批注上标与悬浮页 ───────────────────────────────── */
+.gh-ann {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 13px;
+    height: 13px;
+    padding: 0 2px;
+    margin-left: 2px;
+    border-radius: 4px;
+    background: var(--el-color-primary-light-8, rgba(64, 158, 255, 0.18));
+    color: var(--el-color-primary, #409eff);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    vertical-align: super;
+    cursor: pointer;
+    user-select: none;
+}
+
+.gh-ann:hover {
+    background: var(--el-color-primary, #409eff);
+    color: #fff;
+}
+
+.me-ann-pop {
+    position: fixed;
+    z-index: 4200;
+    width: 280px;
+    max-height: 260px;
+    overflow: auto;
+    padding: 10px 12px 8px;
+    border: 1px solid var(--el-border-color, rgba(127, 127, 127, 0.3));
+    border-radius: 10px;
+    background: var(--el-bg-color-overlay, #fff);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+    color: var(--el-text-color-primary, #303133);
+    font-size: 13px;
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+    text-align: left;
+    cursor: pointer;
+}
+
+.me-ann-pop-text {
+    min-height: 20px;
+    text-align: left;
+}
+
+.me-ann-pop-tip {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--el-border-color-lighter, rgba(127, 127, 127, 0.22));
+    color: var(--el-text-color-placeholder, #a8abb2);
+    font-size: 11.5px;
+    text-align: right;
+}
+
 </style>

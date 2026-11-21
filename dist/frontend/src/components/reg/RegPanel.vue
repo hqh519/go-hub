@@ -49,9 +49,7 @@
             >
                 <template #prefix><font-awesome-icon icon="search" class="reg-kw-icon" /></template>
             </el-input>
-            <el-button size="small" :loading="loading" @click="reload(1)">
-                <font-awesome-icon icon="sync" />
-            </el-button>
+            <!-- v1.3.7：刷新按钮移除（顶栏已有刷新，避免重复） -->
             <!-- v1.3.6：导入 / 下载模板移除，原位置改为导出当前实例的登记数据 -->
             <el-button v-if="!trashMode" size="small" :loading="exporting" @click="exportCsv">
                 <font-awesome-icon icon="download" class="reg-add-icon" />{{ $t('reg.export') }}

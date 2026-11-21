@@ -1118,6 +1118,24 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-137',
+      title: '七十三、v1.3.7 更新要点',
+      intro: '这一版把批注改成问号上标＋悬浮查看，重做表格的图标、尺寸与拖拽；笔记摘要不再混入源码字符，工具栏配置取消长度限制并换上新出厂默认。',
+      items: [
+        { t: '批注上标', d: '在选中文字后添加批注，正文末尾会出现一个问号上标；鼠标悬停或点击上标弹出批注内容，点击悬浮页即可继续修改。批注内容随笔记保存，源码里是一段最小 HTML，预览与第三方查看器至少还能看到问号。' },
+        { t: '表格图标', d: '表格浮动栏的 11 个按钮换成「网格 + 操作方向」的图标：上加行 / 下行 / 左加列 / 右加列、删行 / 删列、合并 / 拆分、删除表格、整表尺寸、行列尺寸，一眼能看出是表格操作。' },
+        { t: '表格交互', d: '在表格里右击或长按不再弹右键菜单；鼠标移到行列分隔线会变成拖动光标，桌面与手机都能拖动改变列宽 / 行高；右下角手柄按表格自身定位，拖动即可同时改宽高。' },
+        { t: '尺寸真正生效', d: '整表、列、行尺寸改为写入节点属性：列宽写进 colgroup，表格宽度按列宽之和计算，行高写到对应行；保存时在表格后附一行不可见注释，重新打开仍保持尺寸。之前直接改 DOM 样式，重绘一次就被抹掉。' },
+        { t: '摘要过滤源码', d: '笔记列表摘要会清掉图片地址与宽度属性、`<br>`、`<sup>`、块引用 `((blk_…))`、附件 / 笔记引用以及多余括号，只保留可读文字；旧笔记在列表加载时按正文现算一次，不写库。' },
+        { t: '工具栏配置不限长', d: '取消工具栏配置 400 字 / 4 行的限制，长配置保存后刷新不再被截断；被旧上限截断的默认配置会自动换回新的两行默认。' },
+        { t: '新的出厂默认', d: '工具栏、光标工具栏、标题与正文样式、滚动吸附都换成新的出厂默认：工具栏两行（含折叠、插入、粘贴、表格、时间、工具等工具组），光标栏默认一组标题 + 常用工具，标题样式内置六行 CSS；吸附默认 PC 两行都开、手机只开标题栏。' },
+        { t: '发布页调整', d: '恢复登记类目顶栏的「添加登记」；广场的「发布笔记」弹窗里「登记」可直接点击并打开登记表单，图标与首页一致；登记内容区不再重复放刷新按钮。' },
+        { t: '文件预览修复', d: '「选择文件」弹窗里的小眼睛恢复点击 / 悬停预览，发布瞬间与添加登记两个表单共用同一套修复。' },
+        { t: '零线与页面名', d: '统计图 0 值虚线改细到 0.8px；网站标题的 `{pagename}` 增加「登记管理」，访问 /reg 时标题会带上页面名。' },
+        { t: '升级兼容', d: '移除 v1.3.5.4 之后为登记表搬迁数据、删字段而写的兼容脚本，升级时不再尝试回填已删除的旧列；笔记与登记数据结构本身不变。' }
+      ]
+    },
+    {
       id: 'whatsnew-1359',
       title: '七十、v1.3.5.9 更新要点',
       intro: '这一版把「性质」从条目搬到每一条登记上，登记表单补上必填校验与 4 位小数，附件改成缩略图；发布页与统计页也按新口径重排。',
@@ -2523,6 +2541,24 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-137',
+      title: '73. What is new in v1.3.7',
+      intro: 'Annotations become question-mark superscripts with a hover card, table tools get new icons plus working size controls, note excerpts stop leaking source characters, and toolbar configuration loses its length limit.',
+      items: [
+        { t: 'Annotation superscript', d: 'Adding an annotation inserts a question-mark superscript at the end of the selection. Hover or click it to read the note; click the floating card to edit it. The note is saved with the document as minimal HTML, so previews and third-party viewers still show a question mark.' },
+        { t: 'Table icons', d: 'The 11 table buttons now use grid-plus-direction icons for insert row above/below, insert column left/right, delete row/column, merge, split, delete table, table size and cell size.' },
+        { t: 'Table interaction', d: 'Right-click and long-press inside a table no longer open the context menu. Moving the pointer near a row or column divider shows a resize cursor, and columns and rows can be dragged on desktop and phones. The bottom-right handle is positioned against the table itself and resizes width and height together.' },
+        { t: 'Sizes that stick', d: 'Table, column and row sizes are stored as node attributes: column widths in the colgroup, table width as the sum of columns, row heights on each row. A hidden comment after the table preserves them across saves. The old code wrote inline styles that the next redraw erased.' },
+        { t: 'Cleaner excerpts', d: 'Note list excerpts strip image URLs and width attributes, <br>, <sup>, block references, file and note references and empty brackets. Older notes are recomputed from their body when the list loads, without writing to the database.' },
+        { t: 'No toolbar length limit', d: 'The 400-character / 4-line limit on toolbar configuration is gone, so long configurations survive a refresh. Configurations truncated by the old limit are replaced with the new two-line default.' },
+        { t: 'New factory defaults', d: 'Toolbar, cursor toolbar, heading/body styles and scroll sticky all get new factory defaults: two toolbar lines with fold, insert, paste, table, date and utility groups; a cursor toolbar with a heading group and common tools; six lines of heading CSS; sticky on for both PC rows and only the title bar on phones.' },
+        { t: 'Post page', d: 'The Add entry button is back in the register header. In the square publish dialog, Register is clickable and opens the register form with the same icon as the home publish menu. The duplicate refresh button in the register content area is gone.' },
+        { t: 'File preview fix', d: 'The eye button in the file picker previews on click and hover again, for both the moment editor and the register form.' },
+        { t: 'Zero line and page name', d: 'The zero line in charts is thinner (0.8px). The {pagename} placeholder now includes Register admin, so /reg shows that page name in the title.' },
+        { t: 'Upgrade compatibility', d: 'The compatibility scripts added after v1.3.5.4 to migrate register data and drop old columns are removed. Note and register data structures are unchanged.' }
       ]
     },
     {

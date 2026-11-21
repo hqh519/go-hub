@@ -35,6 +35,8 @@ const PAGE_NAMES = {
     '/post': '发布中心',
     // v1.3.2（需求）：笔记管理页（/memo）也纳入 {pagename}
     '/memo': '笔记管理',
+    /* v1.3.7（需求）：登记管理页也纳入 {pagename} */
+    '/reg': '登记管理',
     '/customerConfig': '用户管理',
     '/systemConfig': '系统管理',
     '/manage/history': '历史记录'

@@ -321,7 +321,7 @@ import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue';
 import MemoTree from '@/components/memo/MemoTree.vue';
 import MemoList from '@/components/memo/MemoList.vue';
 import MemoEditor from '@/components/memo/MemoEditor.vue';
-import { DEFAULT_TOOLBAR_LINES, TOOLBAR_TOKENS } from '@/utils/memoEditorConfig';
+import { DEFAULT_TOOLBAR_LINES, TOOLBAR_TOKENS, DEFAULT_INPUT_TOOLS, DEFAULT_CUSTOM_CSS, DEFAULT_STICKY } from '@/utils/memoEditorConfig';
 import { setMemoInstance, fetchNote, createNote as apiCreateNote, memoError } from '@/utils/memoApi';
 import { excerptOf } from '@/utils/markdown';
 import { ensureInstanceUnlocked, revokeInstanceUnlock } from '@/utils/instanceSwitch';
@@ -350,16 +350,13 @@ export default {
                 blockIds: false,
                 // v1.3.1.1：配色 / 输入工具 / 斜杠菜单 / 历史间隔（与后端 normalizeEditorSettings 同结构）
                 theme: 'auto',
-                inputLines: [],
+                inputLines: [DEFAULT_INPUT_TOOLS],
                 slashLines: [],
                 historyInterval: 3,
-                // v1.3.1.2：样式与吸附默认值
-                styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75 },
+                // v1.3.1.2：样式与吸附默认值；v1.3.7 换新出厂值
+                styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: DEFAULT_CUSTOM_CSS },
                 // v1.3.3.2：辅助栏吸附已移除，只剩工具栏 / 标题栏
-                sticky: {
-                    pc: { toolbar: false, title: false },
-                    m: { toolbar: false, title: false },
-                },
+                sticky: JSON.parse(JSON.stringify(DEFAULT_STICKY)),
             },
             settingsDraft: {
                 toolbar: '',
@@ -371,15 +368,12 @@ export default {
                 selectionTools: '',
                 historyInterval: 3,
                 /* v1.3.1.2：标题与正文样式 */
-                styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '' },
+                styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: DEFAULT_CUSTOM_CSS },
                 /* v1.3.2：自定义 CSS（草稿层单独放一份，确认后才写回 styles.customCss） */
                 customCss: '',
-                /* v1.3.1.2：PC / 移动端各自的吸附开关，默认全关 */
+                /* v1.3.1.2：PC / 移动端各自的吸附开关；v1.3.7 换新出厂值 */
                 // v1.3.3.2：辅助栏吸附已移除，只剩工具栏 / 标题栏
-                sticky: {
-                    pc: { toolbar: false, title: false },
-                    m: { toolbar: false, title: false },
-                },
+                sticky: JSON.parse(JSON.stringify(DEFAULT_STICKY)),
             },
             /** 吸附表格的行定义（两行 × 两列终端；v1.3.3.2 移除「辅助栏」） */
             stickyRows: [
@@ -864,7 +858,9 @@ export default {
                     toolbarLines: lines,
                     blockIds: editor.blockIds === true,
                     theme: editor.theme === 'light' || editor.theme === 'dark' ? editor.theme : 'auto',
-                    inputLines: Array.isArray(editor.inputLines) ? editor.inputLines.map((x) => String(x || '')) : [],
+                    inputLines: Array.isArray(editor.inputLines) && editor.inputLines.length
+                        ? editor.inputLines.map((x) => String(x || ''))
+                        : [DEFAULT_INPUT_TOOLS],
                     slashLines: Array.isArray(editor.slashLines) ? editor.slashLines.map((x) => String(x || '')) : [],
                     rightClickLines: Array.isArray(editor.rightClickLines) ? editor.rightClickLines.map((x) => String(x || '')) : [],
                     selectionLines: Array.isArray(editor.selectionLines) ? editor.selectionLines.map((x) => String(x || '')) : [],
@@ -882,7 +878,7 @@ export default {
                         h5: Number(editor?.styles?.h5) || 1,
                         h6: Number(editor?.styles?.h6) || 0.94,
                         lineHeight: Number(editor?.styles?.lineHeight) || 1.75,
-                        customCss: String(editor?.styles?.customCss || ''),
+                        customCss: String(editor?.styles?.customCss || DEFAULT_CUSTOM_CSS),
                     },
                     // v1.3.1.2：吸附配置（后端已归一并保证结构完整，这里再兜一层）
                     sticky: {
@@ -902,7 +898,7 @@ export default {
                     toolbarLines: DEFAULT_TOOLBAR_LINES.slice(),
                     blockIds: false,
                     theme: 'auto',
-                    inputLines: [],
+                    inputLines: [DEFAULT_INPUT_TOOLS],
                     slashLines: [],
                     rightClickLines: [],
                     selectionLines: [],
@@ -911,7 +907,7 @@ export default {
                     selectAudioLines: [],
                     selectFileLines: [],
                     historyInterval: 3,
-                    styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '' },
+                    styles: { h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: DEFAULT_CUSTOM_CSS },
                     sticky: {
                         pc: { toolbar: false, title: false },
                         m: { toolbar: false, title: false },
@@ -991,13 +987,10 @@ export default {
                 historyInterval: this.editorSettings.historyInterval || 3,
                 customCss: String(this.editorSettings.styles?.customCss || ''),
                 styles: JSON.parse(JSON.stringify(this.editorSettings.styles || {
-                    h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '',
+                    h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: DEFAULT_CUSTOM_CSS,
                 })),
                 // 深拷贝：弹窗里改开关不能立刻影响编辑器，点「确定」才生效
-                sticky: JSON.parse(JSON.stringify(this.editorSettings.sticky || {
-                    pc: { toolbar: false, title: false },
-                    m: { toolbar: false, title: false },
-                })),
+                sticky: JSON.parse(JSON.stringify(this.editorSettings.sticky || DEFAULT_STICKY)),
             };
             this.settingsVisible = true;
         },
@@ -1063,11 +1056,11 @@ export default {
             }
         },
         async saveSettings() {
+            /* v1.3.7：不再截断行数（后端也已取消限制） */
             const lines = String(this.settingsDraft.toolbar || '')
                 .split('\n')
                 .map((l) => l.trim())
-                .filter(Boolean)
-                .slice(0, 4);
+                .filter(Boolean);
             this.settingsSaving = true;
             const splitLines = (v) => String(v || '').split('\n').map((x) => x.trim()).filter(Boolean);
             const editor = {
@@ -1084,7 +1077,7 @@ export default {
                         h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '',
                     })),
                     // v1.3.2：CSS 在草稿里是顶层字段，落库要挂回 styles 下
-                    customCss: String(this.settingsDraft.customCss || '').slice(0, 4000),
+                    customCss: String(this.settingsDraft.customCss || ''),
                 },
                 sticky: JSON.parse(JSON.stringify(this.settingsDraft.sticky || {
                     pc: { toolbar: false, title: false },

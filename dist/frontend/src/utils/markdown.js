@@ -32,6 +32,32 @@ function unescapeMd(text) {
  * 用「扫描 + 递归」而不是一次性正则替换：递归才能正确处理嵌套（`**粗 *斜* 粗**`），
  * 一次性替换在这种场景下要么漏、要么把标记切坏。
  */
+/**
+ * v1.3.7：批注上标
+ * ----------------------------------------------------------------------------
+ * md 里写成一段最小 HTML：`<sup class="gh-ann" data-note="...">?</sup>`。
+ * 选它而不是自定义 `{{ann:…}}` 的原因：
+ *   · 预览走 marked，原生就认识 HTML，不用再教 marked 一套语法；
+ *   · DOMPurify 白名单本来就放行 sup 与 data-*；
+ *   · 第三方 md 查看器即使不认批注，也只是多一个「?」上标，不会露出源码。
+ */
+function decodeAnnNote(v) {
+  return String(v || '')
+    .replace(/&#10;/g, '\n')
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+function encodeAnnNote(v) {
+  return String(v || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '&#10;');
+}
+
 function parseInline(src, marks = []) {
   const out = [];
   let buf = '';
@@ -60,6 +86,12 @@ function parseInline(src, marks = []) {
     if ((m = /^<br\s*\/?>/i.exec(rest))) {
       flush();
       out.push({ type: 'hardBreak' });
+      i += m[0].length;
+      continue;
+    }
+    if ((m = /^<sup class="gh-ann" data-note="([^"]*)">\?<\/sup>/i.exec(rest))) {
+      flush();
+      out.push({ type: 'annotation', attrs: { note: decodeAnnNote(m[1]) } });
       i += m[0].length;
       continue;
     }
@@ -879,7 +911,49 @@ export function mdToDoc(md) {
         rows.push({ type: 'tableRow', content: cells });
         i += 1;
       }
-      content.push({ type: 'table', content: rows });
+      /*
+       * v1.3.7：表格尺寸元数据
+       * 管道表格语法本身没有宽度 / 行高，改尺寸只能在表格后附一行 HTML 注释：
+       *   <!--gh-table:{"w":680,"h":320,"cols":[120,200],"rows":[40,null]}-->
+       * 注释在预览里不可见，也不影响第三方 md 查看器。
+       */
+      const tableNode = { type: 'table', content: rows };
+      const metaLine = String(lines[i] || '').trim();
+      const metaMatch = /^<!--gh-table:(\{.*\})-->(?:\s+\^blk_[0-9a-f]{8})?$/.exec(metaLine);
+      if (metaMatch) {
+        try {
+          const meta = JSON.parse(metaMatch[1]);
+          const w = Number(meta.w) || 0;
+          const h = Number(meta.h) || 0;
+          if (w || h) tableNode.attrs = { tableSize: `${w || ''}x${h || ''}` };
+          if (Array.isArray(meta.rows)) {
+            rows.forEach((row, idx) => {
+              const rh = Number(meta.rows[idx]) || 0;
+              if (rh > 0) row.attrs = { ...(row.attrs || {}), rowHeight: rh };
+            });
+          }
+          if (Array.isArray(meta.cols) || w) {
+            /* 宽度以列宽之和为准：按 meta.w 等比缩放，Table 重绘时才不会被改回去 */
+            const nCols = Math.max(1, (rows[0].content || []).length);
+            const raw = Array.from({ length: nCols }, (_, idx) => Number(meta.cols?.[idx]) || 0);
+            const sum = raw.reduce((a, b) => a + b, 0);
+            let widths = raw;
+            if (w > 0) {
+              const base = sum > 0 ? raw : new Array(nCols).fill(1);
+              const unit = w / base.reduce((a, b) => a + b, 0);
+              widths = base.map((x) => Math.max(30, Math.round(x * unit)));
+              widths[widths.length - 1] += w - widths.reduce((a, b) => a + b, 0);
+            }
+            rows.forEach((row) => {
+              (row.content || []).forEach((cell, idx) => {
+                if (widths[idx] > 0) cell.attrs = { ...(cell.attrs || {}), colwidth: [widths[idx]] };
+              });
+            });
+          }
+        } catch (e) { /* 元数据坏了就当没有，不影响正文 */ }
+        i += 1;
+      }
+      content.push(tableNode);
       continue;
     }
     if (TASK_RE.test(line)) {
@@ -927,6 +1001,10 @@ function inlineToMd(nodes = []) {
     if (n.type === 'hardBreak') {
       // v1.3.1.2：写成实体 <br>，预览与第三方查看器都稳定识别
       out.push('<br>');
+      continue;
+    }
+    if (n.type === 'annotation') {
+      out.push(`<sup class="gh-ann" data-note="${encodeAnnNote(n.attrs?.note || '')}">?</sup>`);
       continue;
     }
     if (n.type === 'image') {
@@ -1176,7 +1254,23 @@ function blockToMd(node, depth = 0) {
         return a === 'center' ? ':---:' : a === 'right' ? '---:' : a === 'left' ? ':---' : '---';
       });
       lines.splice(1, 0, `| ${sep.join(' | ')} |`);
-      return lines.join('\n');
+      const md = lines.join('\n');
+      /* v1.3.7：把表格 / 行 / 列尺寸写进一行注释，重新打开还能还原 */
+      const meta = {};
+      const size = /^\s*(\d+)?\s*x\s*(\d+)?\s*$/.exec(String(node.attrs?.tableSize || ''));
+      const colWidths = (rows[0].content || []).map((c) => Number(c.attrs?.colwidth?.[0]) || 0);
+      const colSum = colWidths.reduce((a, b) => a + b, 0);
+      if (size && (size[1] || size[2])) {
+        if (size[1]) meta.w = Number(size[1]);
+        if (size[2]) meta.h = Number(size[2]);
+      }
+      if (colSum > 0) {
+        meta.w = colSum;
+        meta.cols = colWidths.map((n) => n || null);
+      }
+      const rowHeights = rows.map((r) => Number(r.attrs?.rowHeight) || 0);
+      if (rowHeights.some(Boolean)) meta.rows = rowHeights.map((n) => n || null);
+      return Object.keys(meta).length ? `${md}\n<!--gh-table:${JSON.stringify(meta)}-->` : md;
     }
     case 'hardBreak':
       return '';
@@ -1464,7 +1558,15 @@ export function plainTextOf(md) {
     .replace(/```[\s\S]*?```/g, ' ')
     // v1.3.1.2：HTML 块 / 网页嵌入不是正文，摘要里不出现
     .replace(/^:::\s*(?:html|iframe)[\s\S]*?^:::\s*$/gm, ' ')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    // v1.3.7：批注上标、图片尺寸、附件/笔记引用、块引用、裸 HTML 都不是正文
+    .replace(/<sup class="gh-ann"[^>]*>[\s\S]*?<\/sup>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\](\{[^}]*\})?/g, '$2')
+    .replace(/!?\[\[note:[^\]]*\]\]/g, ' ')
+    .replace(/\(\(blk_[0-9a-f]{8}\)\)/g, ' ')
+    .replace(/!\[[^\]]*\]\([^)]*\)(\{[^}]*\})?/g, ' ')
+    .replace(/\[\]/g, ' ')
     .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^\s{0,3}#{1,6}\s*/gm, '')
     .replace(/^\s{0,3}>\s?/gm, '')
@@ -1477,6 +1579,7 @@ export function plainTextOf(md) {
     .replace(/(\*|_)(.*?)\1/g, '$2')
     .replace(/~~(.*?)~~/g, '$1')
     .replace(/\s+/g, ' ')
+    .replace(/\s+([。，、；：！？])/g, '$1')
     .trim();
 }
 

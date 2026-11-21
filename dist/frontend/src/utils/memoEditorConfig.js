@@ -15,14 +15,29 @@
  * 工具再多也靠横滑（移动端）/ 溢出（桌面端）消化，不往上堆行数。
  */
 export const DEFAULT_TOOLBAR_LINES = [
-    'h1 h2 h3 | bold italic strike underline code highlight | bulletList orderedList taskList | blockquote codeBlock hr',
-    /*
-     * v1.3.1.1（需求）：一行放不下就横滑。
-     * 新增：对齐三件套、缩进、换行、段落、上传、链接提取、表格操作组。
-     * 表格操作做成工具组 `[...]`，平时只占一个下箭头的位置。
-     */
-    'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout mathBlock tabsBlock | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
+    'foldAll h1 h2 h3 h4 h5 h6 | paragraph bold italic underline strike fontSize textColor highlight [对齐 alignLeft alignCenter alignRight] | taskList bulletList orderedList listConvert indent outdent | file upload linkExtract [浏览 image video audio]',
+    'outline undo redo selectLine selectAll deleteNode clear | [插入 link whiteboard blockquote callout tabsBlock code codeBlock htmlBlock iframe annotate mathBlock subDoc] [粘贴 paste pasteKeep pastePlain pasteEscaped] [表格 table tableAddRow tableAddRowBefore tableAddCol tableAddColBefore tableDelRow tableDelCol tableMerge tableSplit tableDelete] [时间 dateYmd dateSlash dateDash dateCn timeHms] [工具 imgSizeCycle mediaPreview mediaDetail stats publish htmlMd] | emoji symbol findReplace insertLineBelow hardBreak hr',
 ];
+
+/** v1.3.7：光标工具栏出厂默认（`[组名 …]` 是一组下拉） */
+export const DEFAULT_INPUT_TOOLS =
+    '[标题 h1 h2 h3 h4 h5 h6] code codeBlock file upload linkExtract emoji symbol table hardBreak hr';
+
+/** v1.3.7：标题与正文样式出厂默认 CSS */
+export const DEFAULT_CUSTOM_CSS = [
+    'h2 { font-size:1.8em; color:#CCFFFF; background-color: #64AA36; text-align: center; }',
+    'h3 { font-size:1.8em; color:#FF9966; }',
+    'h4 { font-size:1.6em; color:#0099FF; }',
+    'h5 { font-size:1.4em; color:#CC0066; }',
+    'h6 { font-size:1.2em; color:#006666; }',
+    'p { line-height:1.8em; }',
+].join('\n');
+
+/** v1.3.7：滚动吸附出厂默认 —— PC 两行都吸，移动端只吸标题栏 */
+export const DEFAULT_STICKY = {
+    pc: { toolbar: true, title: true },
+    m: { toolbar: false, title: true },
+};
 
 /**
  * 可在工具栏里使用的工具名（设置页展示用）

@@ -837,8 +837,9 @@ export default {
                     if (!Number.isFinite(px)) return;
                     const ctx = chart.ctx;
                     ctx.save();
-                    ctx.setLineDash([5, 4]);
-                    ctx.lineWidth = 1;
+                    /* v1.3.7：再细一点（0.8px），虚线间隔略缩短 */
+                    ctx.setLineDash([4, 4]);
+                    ctx.lineWidth = 0.8;
                     ctx.strokeStyle = color;
                     ctx.beginPath();
                     if (horizontal) {

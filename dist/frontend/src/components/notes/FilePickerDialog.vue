@@ -287,8 +287,10 @@
                         class="np-eye no-hswipe-guard"
                         role="button"
                         :aria-label="$t('notes.pickPreviewHold')"
-                        @click.stop.prevent
+                        @click.stop.prevent="eyeClick(f, $event)"
                         @mousedown.stop.prevent
+                        @mouseenter="eyeHover(f, $event)"
+                        @mouseleave="eyeLeave"
                         @touchstart.stop.prevent="eyeTouchStart(f, $event)"
                         @touchmove.stop="eyeTouchMove"
                         @touchend.stop.prevent="eyeTouchEnd"
@@ -339,7 +341,14 @@
 
         <!-- 预览浮层：teleport 到 body，按文件比例 + 四周余量自动选方位 -->
         <teleport to="body">
-            <div v-if="preview.visible" class="np-preview" :style="previewStyle" aria-hidden="true">
+            <div
+                v-if="preview.visible"
+                class="np-preview"
+                :style="previewStyle"
+                aria-hidden="true"
+                @mouseenter="cancelEyeClose"
+                @mouseleave="scheduleEyeClose"
+            >
                 <div class="np-preview-head" :title="preview.name">
                     <span class="np-preview-name">{{ preview.name }}</span>
                 </div>
@@ -1342,8 +1351,43 @@ export default {
             if (!this.preview.visible) return;
             this.preview = { ...this.preview, visible: false };
         },
+        /**
+         * v1.3.7：桌面端点小眼睛 / 悬停都要能预览。
+         * 之前只绑了 touchstart（长按），鼠标用户点上去毫无反应 ——
+         * 发布瞬间与登记表单共用这个弹窗，所以两处一起修好。
+         */
+        eyeClick(f, e) {
+            if (Date.now() - (this._eyeTouchedAt || 0) < 600) return;
+            if (this.preview.visible) {
+                this.closePreview();
+                return;
+            }
+            this.openPreview(f, e);
+        },
+        eyeHover(f, e) {
+            if (this._eyeTouchedAt && Date.now() - this._eyeTouchedAt < 600) return;
+            this.cancelEyeClose();
+            this.openPreview(f, e);
+        },
+        eyeLeave() {
+            this.scheduleEyeClose();
+        },
+        cancelEyeClose() {
+            if (this._eyeCloseTimer) {
+                clearTimeout(this._eyeCloseTimer);
+                this._eyeCloseTimer = null;
+            }
+        },
+        scheduleEyeClose() {
+            this.cancelEyeClose();
+            this._eyeCloseTimer = setTimeout(() => {
+                this._eyeCloseTimer = null;
+                this.closePreview();
+            }, 180);
+        },
         eyeTouchStart(f, e) {
             this.clearEyeTimer();
+            this._eyeTouchedAt = Date.now();
             const touch = (e.touches && e.touches[0]) || e;
             this._eyeX = touch.clientX || 0;
             this._eyeY = touch.clientY || 0;

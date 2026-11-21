@@ -80,14 +80,7 @@
                         最后是更多菜单。移动端这一组改成可以左右滑动（.nt-topbar-right 见样式），
                         不再换行／挤成两行。
                     -->
-                    <!-- v1.3.6：登记类目不再从发布页新增（添加登记按钮移除） -->
-                    <button
-                        v-if="kind !== 'register'"
-                        type="button"
-                        class="nt-publish-btn"
-                        :title="publishLabel"
-                        @click="openPublish"
-                    >
+                    <button type="button" class="nt-publish-btn" :title="publishLabel" @click="openPublish">
                         <font-awesome-icon icon="plus" class="nt-publish-icon" />
                         <span class="nt-publish-text">{{ publishLabel }}</span>
                     </button>
@@ -465,12 +458,12 @@
                     :key="'pt-' + t.value"
                     type="button"
                     class="npt-item"
-                    :class="{ 'is-disabled': t.value !== 'moment' }"
+                    :class="{ 'is-disabled': t.value !== 'moment' && t.value !== 'register' }"
                     @click="choosePublishKind(t.value)"
                 >
                     <font-awesome-icon :icon="publishKindIcon(t.value)" class="npt-icon" />
                     <span class="npt-name">{{ $t(t.label) }}</span>
-                    <span v-if="t.value !== 'moment'" class="npt-soon">{{ $t('notes.typeNotReady') }}</span>
+                    <span v-if="t.value !== 'moment' && t.value !== 'register'" class="npt-soon">{{ $t('notes.typeNotReady') }}</span>
                 </button>
             </div>
         </el-dialog>
@@ -881,8 +874,7 @@ export default {
          * v1.1.9.4：广场也保留发布入口（点了先选类型），所以一并算「可发布」。
          */
         canPublishCurrent() {
-            /* v1.3.6：登记类目已移除新增入口，空状态也不再给「添加登记」 */
-            return this.kind === '' || this.kind === 'square' || this.kind === 'moment';
+            return this.kind === '' || this.kind === 'square' || this.kind === 'moment' || this.kind === 'register';
         },
         /**
          * v1.3.5.3：当前是否是「登记」类目（内容区换成 RegPanel）。
@@ -1541,6 +1533,8 @@ export default {
         publishKindIcon(kind) {
             const map = {
                 moment: 'bolt',
+                /* v1.3.7：与首页「发布」模式里的登记图标保持一致 */
+                register: 'clipboard-list',
                 todo: 'list',
                 nav: 'compass',
                 article: 'file-alt',
@@ -1552,6 +1546,11 @@ export default {
         /** 从「发布笔记」类型选择页里选中一类 */
         choosePublishKind(k) {
             this.publishTypeVisible = false;
+            /* v1.3.7：广场里选「登记」直接打开登记表单 */
+            if (k === 'register') {
+                this.regDialogVisible = true;
+                return;
+            }
             if (k !== 'moment') {
                 this.$message.warning(this.$t('notes.typeNotReadyTip'));
                 return;

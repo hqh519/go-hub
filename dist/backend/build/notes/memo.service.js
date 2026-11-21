@@ -215,16 +215,22 @@ let MemoService = class MemoService {
                 select: this.LIST_SELECT,
             }),
         ]);
-        const needWord = rows
-            .filter((r) => (0, notes_util_1.safeParse)(r.metas, {}).wordCount == null)
+        const dirtyExcerpt = (v) => /[{<]|\[\[|\]\]|\(\(blk_|\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|webm|mp3|wav)\b/i.test(String(v || ''));
+        const needFullIds = rows
+            .filter((r) => {
+            const m = (0, notes_util_1.safeParse)(r.metas, {});
+            return m.wordCount == null || dirtyExcerpt(m.excerpt);
+        })
             .map((r) => String(r.id));
         let wordMap = null;
-        if (needWord.length) {
+        let excerptMap = null;
+        if (needFullIds.length) {
             const full = await prisma_1.prisma.note.findMany({
-                where: { id: { in: needWord } },
+                where: { id: { in: needFullIds } },
                 select: { id: true, content: true },
             });
             wordMap = new Map(full.map((f) => [String(f.id), (0, memo_util_1.countMemoWords)(f.content)]));
+            excerptMap = new Map(full.map((f) => [String(f.id), (0, memo_util_1.excerptOf)(f.content)]));
         }
         const list = rows.map((r) => {
             const metas = (0, notes_util_1.safeParse)(r.metas, {});
@@ -232,7 +238,7 @@ let MemoService = class MemoService {
             return {
                 id,
                 title: String(r.title || ''),
-                excerpt: String(metas.excerpt || ''),
+                excerpt: excerptMap && excerptMap.has(id) ? excerptMap.get(id) : String(metas.excerpt || ''),
                 folderId: String(r.folderId || ''),
                 charCount: asInt(metas.charCount),
                 wordCount: metas.wordCount != null

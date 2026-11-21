@@ -71,6 +71,10 @@ function withBlockIds(md) {
             continue;
         }
         const bare = row.text.replace(BLOCK_ID_RE, '');
+        if (/^<!--gh-table:/.test(bare.trim())) {
+            out.push(bare);
+            continue;
+        }
         if (tableRows.has(i) || !isBlockLine(bare)) {
             out.push(bare);
             continue;
@@ -114,8 +118,15 @@ function plainTextOf(md) {
             .replace(/\|\s*$/, '')
             .replace(/\|/g, ' ');
         t = t
-            .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+            .replace(/<sup class="gh-ann"[^>]*>[\s\S]*?<\/sup>/gi, ' ')
+            .replace(/!\[\[file:([^|\]]+)(?:\|([^\]]*))?\]\](\{[^}]*\})?/g, '$2')
+            .replace(/!?\[\[note:[^\]]*\]\]/g, ' ')
+            .replace(/\(\(blk_[0-9a-f]{8}\)\)/g, ' ')
+            .replace(/!\[[^\]]*\]\([^)]*\)(\{[^}]*\})?/g, ' ')
+            .replace(/\[\]/g, ' ')
             .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+            .replace(/<br\s*\/?>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
             .replace(/`{1,3}([^`]*)`{1,3}/g, '$1')
             .replace(/(\*\*|__)(.*?)\1/g, '$2')
             .replace(/(\*|_)(.*?)\1/g, '$2')
@@ -126,6 +137,7 @@ function plainTextOf(md) {
         .join('\n')
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n{3,}/g, '\n\n')
+        .replace(/\s+([。，、；：！？])/g, '$1')
         .trim();
 }
 function excerptOf(md, max = 140) {

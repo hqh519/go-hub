@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEFAULT_EDITOR_TOOLBAR_LINES = exports.DEFAULT_EDITOR_STYLES = exports.DEFAULT_HISTORY_INTERVAL = exports.HISTORY_INTERVAL_MAX = exports.HISTORY_INTERVAL_MIN = exports.EDITOR_THEMES = exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = exports.EDITOR_TOOLBAR_MAX_LINES = exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_CONTENT_FORMATS = exports.NOTE_KINDS = void 0;
+exports.DEFAULT_INPUT_TOOLS = exports.DEFAULT_EDITOR_TOOLBAR_LINES = exports.DEFAULT_EDITOR_STYLES = exports.DEFAULT_EDITOR_STICKY = exports.DEFAULT_EDITOR_CUSTOM_CSS = exports.DEFAULT_HISTORY_INTERVAL = exports.HISTORY_INTERVAL_MAX = exports.HISTORY_INTERVAL_MIN = exports.EDITOR_THEMES = exports.NOTE_PAGE_BG_MAX_URL_LENGTH = exports.NOTE_PAGE_BG_MAX_ITEMS = exports.NOTE_FONT_SIZE_MAX = exports.NOTE_FONT_SIZE_MIN = exports.DEFAULT_NOTE_FONT_SIZE = exports.DEFAULT_NOTE_PAGE_LOAD = exports.NOTE_PAGE_LOAD_MODES = exports.MOMENT_ATTACH_SINGLE_FACTOR = exports.MOMENT_ATTACH_RATIO_MAX = exports.MOMENT_ATTACH_RATIO_MIN = exports.DEFAULT_MOMENT_ATTACH_RATIO = exports.MOMENT_ATTACH_ROWS = exports.MOMENT_LAYOUT_STYLES = exports.MOMENT_ATTACH_ALIGNS = exports.MOMENT_ATTACH_SIZES = exports.NOTE_VISIBILITIES = exports.MAX_TAGS_PER_NOTE = exports.MAX_TAG_NAME_LENGTH = exports.MAX_ASSETS_PER_NOTE = exports.MAX_COMMENT_CHARS = exports.DEFAULT_MOMENT_MAX_CHARS = exports.MOMENT_MEDIA_KINDS = exports.NOTE_CONTENT_FORMATS = exports.NOTE_KINDS = void 0;
 exports.normalizeNoteKind = normalizeNoteKind;
 exports.attachHeightFactorOf = attachHeightFactorOf;
 exports.normalizeEditorStyles = normalizeEditorStyles;
@@ -68,12 +68,22 @@ exports.NOTE_FONT_SIZE_MIN = 12;
 exports.NOTE_FONT_SIZE_MAX = 22;
 exports.NOTE_PAGE_BG_MAX_ITEMS = 20;
 exports.NOTE_PAGE_BG_MAX_URL_LENGTH = 2000;
-exports.EDITOR_TOOLBAR_MAX_LINES = 4;
-exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH = 400;
 exports.EDITOR_THEMES = ['auto', 'light', 'dark'];
 exports.HISTORY_INTERVAL_MIN = 1;
 exports.HISTORY_INTERVAL_MAX = 120;
 exports.DEFAULT_HISTORY_INTERVAL = 3;
+exports.DEFAULT_EDITOR_CUSTOM_CSS = [
+    'h2 { font-size:1.8em; color:#CCFFFF; background-color: #64AA36; text-align: center; }',
+    'h3 { font-size:1.8em; color:#FF9966; }',
+    'h4 { font-size:1.6em; color:#0099FF; }',
+    'h5 { font-size:1.4em; color:#CC0066; }',
+    'h6 { font-size:1.2em; color:#006666; }',
+    'p { line-height:1.8em; }',
+].join('\n');
+exports.DEFAULT_EDITOR_STICKY = {
+    pc: { toolbar: true, title: true },
+    m: { toolbar: false, title: true },
+};
 exports.DEFAULT_EDITOR_STYLES = {
     h1: 1.75,
     h2: 1.45,
@@ -82,7 +92,7 @@ exports.DEFAULT_EDITOR_STYLES = {
     h5: 1,
     h6: 0.94,
     lineHeight: 1.75,
-    customCss: '',
+    customCss: exports.DEFAULT_EDITOR_CUSTOM_CSS,
 };
 function normalizeEditorStyles(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
@@ -100,31 +110,39 @@ function normalizeEditorStyles(raw) {
         h5: num(o.h5, 0.8, 1.8, exports.DEFAULT_EDITOR_STYLES.h5),
         h6: num(o.h6, 0.75, 1.6, exports.DEFAULT_EDITOR_STYLES.h6),
         lineHeight: num(o.lineHeight, 1.2, 2.4, exports.DEFAULT_EDITOR_STYLES.lineHeight),
-        customCss: String(o.customCss || '').slice(0, 4000),
+        customCss: o.customCss === undefined || o.customCss === null
+            ? exports.DEFAULT_EDITOR_CUSTOM_CSS
+            : String(o.customCss),
     };
 }
 function normalizeSticky(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
-    const one = (v) => {
+    const one = (v, dflt) => {
         const x = (v && typeof v === 'object' ? v : {});
-        return { toolbar: x.toolbar === true, title: x.title === true };
+        return {
+            toolbar: x.toolbar === undefined ? dflt.toolbar : x.toolbar === true,
+            title: x.title === undefined ? dflt.title : x.title === true,
+        };
     };
-    return { pc: one(o.pc), m: one(o.m) };
+    return { pc: one(o.pc, exports.DEFAULT_EDITOR_STICKY.pc), m: one(o.m, exports.DEFAULT_EDITOR_STICKY.m) };
 }
 exports.DEFAULT_EDITOR_TOOLBAR_LINES = [
-    'h1 h2 h3 | bold italic strike underline code highlight | bulletList orderedList taskList | blockquote codeBlock hr',
-    'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
+    'foldAll h1 h2 h3 h4 h5 h6 | paragraph bold italic underline strike fontSize textColor highlight [对齐 alignLeft alignCenter alignRight] | taskList bulletList orderedList listConvert indent outdent | file upload linkExtract [浏览 image video audio]',
+    'outline undo redo selectLine selectAll deleteNode clear | [插入 link whiteboard blockquote callout tabsBlock code codeBlock htmlBlock iframe annotate mathBlock subDoc] [粘贴 paste pasteKeep pastePlain pasteEscaped] [表格 table tableAddRow tableAddRowBefore tableAddCol tableAddColBefore tableDelRow tableDelCol tableMerge tableSplit tableDelete] [时间 dateYmd dateSlash dateDash dateCn timeHms] [工具 imgSizeCycle mediaPreview mediaDetail stats publish htmlMd] | emoji symbol findReplace insertLineBelow hardBreak hr',
 ];
+exports.DEFAULT_INPUT_TOOLS = '[标题 h1 h2 h3 h4 h5 h6] code codeBlock file upload linkExtract emoji symbol table hardBreak hr';
 function normalizeToolbarLines(raw) {
     let lines = [];
     if (Array.isArray(raw))
         lines = raw;
     else if (typeof raw === 'string')
         lines = raw.split(/\r?\n/);
+    const truncated = lines.some((l) => String(l ?? '').length === 400);
+    if (truncated)
+        return exports.DEFAULT_EDITOR_TOOLBAR_LINES.slice();
     const out = lines
-        .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim().slice(0, exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH))
-        .filter(Boolean)
-        .slice(0, exports.EDITOR_TOOLBAR_MAX_LINES);
+        .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim())
+        .filter(Boolean);
     return out.length ? out : exports.DEFAULT_EDITOR_TOOLBAR_LINES.slice();
 }
 function normalizeEditorSettings(raw) {
@@ -135,7 +153,9 @@ function normalizeEditorSettings(raw) {
         toolbarLines: normalizeToolbarLines(o.toolbarLines),
         blockIds: o.blockIds === true,
         theme: themeRaw === 'light' || themeRaw === 'dark' ? themeRaw : 'auto',
-        inputLines: normalizeToolLines(o.inputLines, 8),
+        inputLines: o.inputLines === undefined || o.inputLines === null
+            ? [exports.DEFAULT_INPUT_TOOLS]
+            : normalizeToolLines(o.inputLines, 8),
         slashLines: normalizeToolLines(o.slashLines, 12),
         rightClickLines: normalizeToolLines(o.rightClickLines, 12),
         selectionLines: normalizeToolLines(o.selectionLines, 12),
@@ -157,7 +177,7 @@ function normalizeToolLines(raw, maxLines) {
     else if (typeof raw === 'string')
         lines = raw.split(/\r?\n/);
     return lines
-        .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim().slice(0, exports.EDITOR_TOOLBAR_MAX_LINE_LENGTH))
+        .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim())
         .filter(Boolean)
         .slice(0, maxLines);
 }

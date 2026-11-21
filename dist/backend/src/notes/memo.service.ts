@@ -319,16 +319,27 @@ export class MemoService {
      * 所以这里只对本页「缺 wordCount」的少量旧笔记补查一次 content 现算，
      * 不写库、不改旧数据 —— 等用户下次保存，metas 里自然就有 wordCount 了。
      */
-    const needWord = (rows as any[])
-      .filter((r) => safeParse(r.metas, {}).wordCount == null)
+    /*
+     * v1.3.7：旧笔记的摘要里混着源码字符（图片 width、<br>、((blk_…))、文件名）。
+     * 摘要只在保存时算一次，老数据不会自己变干净，所以列表对「看起来脏」的
+     * 少量笔记补查一次正文现算 —— 与下面的 wordCount 共用同一次查询，不写库。
+     */
+    const dirtyExcerpt = (v: unknown) => /[{<]|\[\[|\]\]|\(\(blk_|\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|webm|mp3|wav)\b/i.test(String(v || ''));
+    const needFullIds = (rows as any[])
+      .filter((r) => {
+        const m = safeParse(r.metas, {});
+        return m.wordCount == null || dirtyExcerpt(m.excerpt);
+      })
       .map((r) => String(r.id));
     let wordMap: Map<string, number> | null = null;
-    if (needWord.length) {
+    let excerptMap: Map<string, string> | null = null;
+    if (needFullIds.length) {
       const full = await prisma.note.findMany({
-        where: { id: { in: needWord } },
+        where: { id: { in: needFullIds } },
         select: { id: true, content: true },
       });
       wordMap = new Map(full.map((f) => [String(f.id), countMemoWords(f.content)]));
+      excerptMap = new Map(full.map((f) => [String(f.id), excerptOf(f.content)]));
     }
     const list: MemoListItem[] = (rows as any[]).map((r) => {
       const metas = safeParse(r.metas, {});
@@ -336,7 +347,7 @@ export class MemoService {
       return {
         id,
         title: String(r.title || ''),
-        excerpt: String(metas.excerpt || ''),
+        excerpt: excerptMap && excerptMap.has(id) ? excerptMap.get(id)! : String(metas.excerpt || ''),
         folderId: String(r.folderId || ''),
         charCount: asInt(metas.charCount),
         wordCount:

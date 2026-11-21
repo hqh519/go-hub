@@ -180,8 +180,11 @@ export interface GeneralSettings {
  *   用户改的是文本，存文本最直观；解析（split）放在渲染时做。
  * blockIds：保存时是否给内容块写 `^blk_` 行尾标记（默认关闭，见 memo.util.ts 说明）。
  */
-export const EDITOR_TOOLBAR_MAX_LINES = 4;
-export const EDITOR_TOOLBAR_MAX_LINE_LENGTH = 400;
+/*
+ * v1.3.7（需求）：工具栏配置不再限制长度 / 行数。
+ * 上一版单行封顶 400 字，新的出厂默认第二行就超过 400 字，
+ * 保存后刷新被截断，用户看到的就是「内容少了一部分」。
+ */
 
 /** 配色模式：跟随全局 / 白天 / 黑夜（v1.3.1.1） */
 export const EDITOR_THEMES = ['auto', 'light', 'dark'] as const;
@@ -237,6 +240,24 @@ export interface EditorStyleSettings {
   customCss: string;
 }
 
+/** v1.3.7：标题与正文样式出厂默认 CSS */
+export const DEFAULT_EDITOR_CUSTOM_CSS = [
+  'h2 { font-size:1.8em; color:#CCFFFF; background-color: #64AA36; text-align: center; }',
+  'h3 { font-size:1.8em; color:#FF9966; }',
+  'h4 { font-size:1.6em; color:#0099FF; }',
+  'h5 { font-size:1.4em; color:#CC0066; }',
+  'h6 { font-size:1.2em; color:#006666; }',
+  'p { line-height:1.8em; }',
+].join('\n');
+
+/**
+ * v1.3.7：滚动吸附出厂默认 —— PC 两行都吸，移动端只吸标题栏（工具栏关闭）。
+ */
+export const DEFAULT_EDITOR_STICKY: EditorStickySettings = {
+  pc: { toolbar: true, title: true },
+  m: { toolbar: false, title: true },
+};
+
 export const DEFAULT_EDITOR_STYLES: EditorStyleSettings = {
   h1: 1.75,
   h2: 1.45,
@@ -245,7 +266,7 @@ export const DEFAULT_EDITOR_STYLES: EditorStyleSettings = {
   h5: 1,
   h6: 0.94,
   lineHeight: 1.75,
-  customCss: '',
+  customCss: DEFAULT_EDITOR_CUSTOM_CSS,
 };
 
 /** 样式归一：数值夹在合理区间，防止「字号 0」这种把正文弄没的配置 */
@@ -264,8 +285,13 @@ export function normalizeEditorStyles(raw: unknown): EditorStyleSettings {
     h5: num(o.h5, 0.8, 1.8, DEFAULT_EDITOR_STYLES.h5),
     h6: num(o.h6, 0.75, 1.6, DEFAULT_EDITOR_STYLES.h6),
     lineHeight: num(o.lineHeight, 1.2, 2.4, DEFAULT_EDITOR_STYLES.lineHeight),
-    // v1.3.2：自定义 CSS，长度封顶 4000 字，避免把整张设置行撑爆
-    customCss: String(o.customCss || '').slice(0, 4000),
+    /*
+     * v1.3.7：不再截断（用户要求取消长度限制）。
+     * 空值视为「没配置过」，回落到出厂 CSS —— 设置页打开就能看到一份可用样板。
+     */
+    customCss: o.customCss === undefined || o.customCss === null
+      ? DEFAULT_EDITOR_CUSTOM_CSS
+      : String(o.customCss),
   };
 }
 
@@ -287,20 +313,28 @@ export interface EditorStickySettings {
 }
 
 /** 吸附配置归一：非对象 / 缺字段一律按 false，不信任前端传值 */
+/** 吸附配置归一：字段缺失按出厂默认，显式 false 保留（用户关掉就是关掉） */
 export function normalizeSticky(raw: unknown): EditorStickySettings {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
-  const one = (v: unknown): StickyFlags => {
+  const one = (v: unknown, dflt: StickyFlags): StickyFlags => {
     const x = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
-    return { toolbar: x.toolbar === true, title: x.title === true };
+    return {
+      toolbar: x.toolbar === undefined ? dflt.toolbar : x.toolbar === true,
+      title: x.title === undefined ? dflt.title : x.title === true,
+    };
   };
-  return { pc: one(o.pc), m: one(o.m) };
+  return { pc: one(o.pc, DEFAULT_EDITOR_STICKY.pc), m: one(o.m, DEFAULT_EDITOR_STICKY.m) };
 }
 
 /** 出厂默认工具栏（前端 utils/memoEditorConfig.js 同值，改这里要同步改那边） */
 export const DEFAULT_EDITOR_TOOLBAR_LINES = [
-  'h1 h2 h3 | bold italic strike underline code highlight | bulletList orderedList taskList | blockquote codeBlock hr',
-  'alignLeft alignCenter alignRight | indent outdent | hardBreak paragraph | table [tableAddRow tableAddCol tableDelRow tableDelCol tableMerge tableSplit tableDelete] callout | image upload file video audio link linkExtract | outline foldAll | clear | undo redo',
+  'foldAll h1 h2 h3 h4 h5 h6 | paragraph bold italic underline strike fontSize textColor highlight [对齐 alignLeft alignCenter alignRight] | taskList bulletList orderedList listConvert indent outdent | file upload linkExtract [浏览 image video audio]',
+  'outline undo redo selectLine selectAll deleteNode clear | [插入 link whiteboard blockquote callout tabsBlock code codeBlock htmlBlock iframe annotate mathBlock subDoc] [粘贴 paste pasteKeep pastePlain pasteEscaped] [表格 table tableAddRow tableAddRowBefore tableAddCol tableAddColBefore tableDelRow tableDelCol tableMerge tableSplit tableDelete] [时间 dateYmd dateSlash dateDash dateCn timeHms] [工具 imgSizeCycle mediaPreview mediaDetail stats publish htmlMd] | emoji symbol findReplace insertLineBelow hardBreak hr',
 ];
+
+/** v1.3.7：光标工具栏出厂默认（`[组名 …]` 是一组下拉） */
+export const DEFAULT_INPUT_TOOLS =
+  '[标题 h1 h2 h3 h4 h5 h6] code codeBlock file upload linkExtract emoji symbol table hardBreak hr';
 
 /**
  * 工具栏行归一：去空行、压空白、限长限量。
@@ -311,10 +345,20 @@ export function normalizeToolbarLines(raw: unknown): string[] {
   let lines: unknown[] = [];
   if (Array.isArray(raw)) lines = raw;
   else if (typeof raw === 'string') lines = raw.split(/\r?\n/);
+  /*
+   * 旧版把每行截断到 400 字，出厂默认第二行正好被切在 400：
+   * 用户没有改过配置，打开却看到「内容少了一截」。这种「恰好 400 且以旧默认开头」
+   * 的值只可能是被截断的出厂值，直接换回新的两行默认。
+   */
+  /*
+   * 旧版上限恰好 400：任何一行正好 400 字，几乎一定是被截断的旧配置
+   * （新默认第二行 506 字，正常手写也很少卡在 400 整）。
+   */
+  const truncated = lines.some((l) => String(l ?? '').length === 400);
+  if (truncated) return DEFAULT_EDITOR_TOOLBAR_LINES.slice();
   const out = lines
-    .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim().slice(0, EDITOR_TOOLBAR_MAX_LINE_LENGTH))
-    .filter(Boolean)
-    .slice(0, EDITOR_TOOLBAR_MAX_LINES);
+    .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim())
+    .filter(Boolean);
   return out.length ? out : DEFAULT_EDITOR_TOOLBAR_LINES.slice();
 }
 
@@ -330,7 +374,10 @@ export function normalizeEditorSettings(raw: unknown): EditorSettings {
      * 输入工具 / 斜杠菜单没有「出厂默认」概念（前端各自有内置列表），
      * 空数组表示「没配置过 → 用内置默认」，所以这里不做非空兜底。
      */
-    inputLines: normalizeToolLines(o.inputLines, 8),
+    /* v1.3.7：没配置过才给默认组；显式传空数组表示「不要光标工具栏」 */
+    inputLines: o.inputLines === undefined || o.inputLines === null
+      ? [DEFAULT_INPUT_TOOLS]
+      : normalizeToolLines(o.inputLines, 8),
     slashLines: normalizeToolLines(o.slashLines, 12),
     rightClickLines: normalizeToolLines(o.rightClickLines, 12),
     selectionLines: normalizeToolLines(o.selectionLines, 12),
@@ -356,7 +403,7 @@ export function normalizeToolLines(raw: unknown, maxLines: number): string[] {
   if (Array.isArray(raw)) lines = raw;
   else if (typeof raw === 'string') lines = raw.split(/\r?\n/);
   return lines
-    .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim().slice(0, EDITOR_TOOLBAR_MAX_LINE_LENGTH))
+    .map((l) => String(l ?? '').replace(/[\t ]+/g, ' ').trim())
     .filter(Boolean)
     .slice(0, maxLines);
 }
