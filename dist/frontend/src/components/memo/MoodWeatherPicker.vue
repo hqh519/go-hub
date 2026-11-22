@@ -128,6 +128,21 @@ export default {
             this.$emit('change', { field, value: opt.value, name: this.$t(opt.label) });
         },
     },
+    /*
+     * v1.3.9.2（需求）：弹出页打开时，只要页面发生滚动就自动关闭。
+     * 滚动事件不冒泡，但用捕获阶段挂在 window 上可以收到任意滚动容器
+     * （编辑区 .me-body、外层页面、移动端惯性滚动）的事件。
+     */
+    mounted() {
+        this._onAnyScroll = () => {
+            if (this.moodPop) this.moodPop = false;
+            if (this.weatherPop) this.weatherPop = false;
+        };
+        window.addEventListener('scroll', this._onAnyScroll, true);
+    },
+    beforeUnmount() {
+        if (this._onAnyScroll) window.removeEventListener('scroll', this._onAnyScroll, true);
+    },
 };
 </script>
 

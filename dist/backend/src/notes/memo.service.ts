@@ -94,11 +94,16 @@ const ROOT_DOC_TYPE: Record<string, MemoNodeType> = {
 };
 
 /** 节点设置（行高 / 关系线 / 图标）的默认值 */
+/**
+ * v1.3.9.2：初始默认值按需求参考图落定 —— 行高 30、显示关系线、
+ * 目录节点 book-bookmark，各类型页 file-lines / heart / feather-pointed / lightbulb，
+ * 模板留空走默认图标。前端 utils/memoNodeSettings.js 保持逐字段一致。
+ */
 const DEFAULT_NODE_SETTINGS = {
-  rowHeight: 32,
+  rowHeight: 30,
   showLines: true,
-  folderIcon: '',
-  typeIcons: { note: '', diary: '', journal: '', inspiration: '', template: '' } as Record<string, string>,
+  folderIcon: 'book-bookmark',
+  typeIcons: { note: 'file-lines', diary: 'heart', journal: 'feather-pointed', inspiration: 'lightbulb', template: '' } as Record<string, string>,
 };
 
 /** 旧版 4 个固定节点的标题（迁移时补「模板」用） */

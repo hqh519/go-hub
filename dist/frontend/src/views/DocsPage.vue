@@ -1118,6 +1118,30 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1392',
+      title: '七十七、v1.3.9.2 更新要点',
+      intro: '这一版把节点树的关系线收敛成一条对齐三角按钮的竖线，移动端侧滑按「编辑中 / 节点树」分层处理，节点设置默认值按参考图落定；编辑器把「编辑 / 源码 / 预览」与大纲收到反向链接行末尾，重做了预览版式，创建子页改为存到当前页下级，上下标进入选中文本的默认工具条；「选择文件」的小眼睛改成按住才预览并支持一次插入多个文件；表情与符号面板按新的分类与布局重建。',
+      items: [
+        { t: '关系线只留竖线', d: '去掉每个子节点前的横向短线，只保留竖向虚线，位置正对父节点前面的三角按钮中心；子级缩进改由行内左内边距补回，层级深度与上一版一致，不会因为去掉横线而变浅。' },
+        { t: '移动端侧滑分层', d: '正在编辑时从屏幕左边缘右滑，回到节点树（只退编辑态，不离开页面）；已经在节点树时不再做页面内处理，直接交给浏览器回退，等同于返回上一页。' },
+        { t: '节点设置默认值', d: '初始部署的默认值为：行高 30、显示关系线、目录节点图标 bookmark、笔记 / 日记 / 札记 / 灵感分别用 file-lines / heart / feather-pointed / lightbulb、模板图标留空。用户显式选择「默认图标」也会被保留，不会被默认值覆盖。' },
+        { t: '大纲按钮进反向链接行', d: '「反向链接」这一行的末尾新增「大纲」工具按钮，与「显示模式」下拉一起靠右排列，正文区末端不再单独占一行。' },
+        { t: '上滚隐藏反向链接行', d: '正文往下滚动时，反向链接行自动收起（高度过渡到 0、可按需再展开）；往上回滚时重新出现，长文档阅读时视野更干净。' },
+        { t: '模式切换位置', d: '「编辑 / 源码 / 预览」下拉从工具栏末尾移到反向链接行末尾、大纲按钮左侧，工具栏只留编辑类工具。' },
+        { t: '预览版式', d: '预览模式不再渲染工具栏整行，标题栏直接顶到工具栏原来的位置（去掉那条空行）；行号栏 / 行级栏也不占位，正文左侧留白收窄并与编辑态对齐。' },
+        { t: '创建子页存到下级', d: '「创建子页并引用」新建的页面改为存到当前页面下级（原来落在同级目录），引用仍插在当前光标处；创建完成后只刷新节点树，不再重载当前页，避免刚插入的引用被旧正文覆盖。' },
+        { t: '上下标进默认工具条', d: '选中文本后弹出的默认工具条里直接给出「设为上标」「设为下标」，两者互斥，不必先去设置里配置。' },
+        { t: '小眼睛长按预览', d: '「选择文件」里每个文件左下角的小眼睛改为按住才显示预览、松手即关闭；预览浮层压在选择文件弹窗之上，不再被弹窗遮住。' },
+        { t: '一次插入多个文件', d: '选择文件支持多选，确认后按所选顺序一次插入多个：图片逐个插入，视频 / 音频 / 其它附件按块插入。' },
+        { t: '到底不再弹工具栏', d: '滚到页面最底部时，不再因为触底回弹的细微抖动把已经收起的吸附工具栏顶出来；往上回滚时工具栏仍会正常吸住。' },
+        { t: '全选图标换新', d: '「全选」换成四角取景框加对勾的图标，语义更直观。' },
+        { t: '弹层随滚动关闭', d: '心情 / 天气选择弹层打开时，滚动页面会自动关闭，不会浮在正文上挡住内容。' },
+        { t: '表情面板重建', d: '表情工具并入表情键盘的全部表情，去重后共 23 个分类、922 个表情；分类名统一为两个字（原「动物和自然」拆成「动物」「自然」），左栏分类收窄、右侧网格加宽，每屏能看到更多。' },
+        { t: '符号面板重建', d: '符号工具并入符号键盘的全部符号，去重整理后共 21 个分类、1094 个符号（英文、中文、数学、货币、语法、特殊、单位、序号、列表、箭头、角标、制表、拼音、花体、希腊、俄语、拉丁、韩文、假名、表情、部件），分类名同样统一为两个字，左栏收窄。' },
+        { t: '升级兼容', d: '本版没有数据结构变更，直接覆盖升级即可，旧数据与旧版本回滚都不受影响。' }
+      ]
+    },
+    {
       id: 'whatsnew-1391',
       title: '七十六、v1.3.9.1 更新要点',
       intro: '这一版把记事树升级为可配置的节点树：一键收起 / 展开、节点设置、移动与升级、模板复用都补齐了；编辑器新增类型图标、心情天气、上下标与导入模板，预览模式与编辑模式共用同一套样式，首页和「我的发布」的「笔记」入口也统一到创建记事类型页。',
@@ -2597,6 +2621,30 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1392',
+      title: '77. What is new in v1.3.9.2',
+      intro: 'This release narrows the node tree guide to a single vertical line aligned with the disclosure arrow, splits the mobile edge swipe into editor and tree behaviour, and locks the node settings defaults to the reference design. The editor moves the Edit / Source / Preview switch and the outline button to the end of the backlinks row, reworks preview layout, files new subpages under the current page, and puts superscript / subscript into the default selection toolbar. The file picker previews on press-and-hold and inserts several files at once, and the emoji and symbol panels are rebuilt with new categories and layout.',
+      items: [
+        { t: 'Vertical guide only', d: 'The short horizontal tick before each child row is gone; a single dashed vertical line remains and sits exactly on the parent disclosure arrow centre. Child indentation is now provided by the row padding, so nesting depth is unchanged.' },
+        { t: 'Layered mobile swipe', d: 'Swiping in from the left edge while editing returns to the node tree without leaving the page; when the tree is already showing the gesture is no longer intercepted, so the browser performs a normal back navigation.' },
+        { t: 'Node settings defaults', d: 'A fresh install defaults to row height 30, guides on, folder icon bookmark, and file-lines / heart / feather-pointed / lightbulb for note / diary / journal / inspiration, with the template icon left empty. An explicitly chosen default icon is preserved instead of being overwritten.' },
+        { t: 'Outline button', d: 'The backlinks row gains an outline button at its end, grouped with the display-mode dropdown and right-aligned, so the end of the body no longer needs its own row.' },
+        { t: 'Backlinks row hides on scroll', d: 'Scrolling down collapses the backlinks row with a height transition; scrolling back up brings it in again, keeping long documents clean.' },
+        { t: 'Mode switch moved', d: 'The Edit / Source / Preview dropdown moves from the toolbar end to the end of the backlinks row, left of the outline button, leaving only editing tools in the toolbar.' },
+        { t: 'Preview layout', d: 'Preview no longer renders the toolbar row at all: the title bar takes over its position, removing the empty band. The gutter and line bar no longer reserve space, and the body left padding is tightened to match editing.' },
+        { t: 'Subpages under the current page', d: '"Create subpage and reference" now files the new page under the current page instead of the same folder, still inserting the reference at the caret. Only the tree refreshes afterwards, so the reference is never overwritten by a stale copy of the body.' },
+        { t: 'Superscript and subscript', d: 'The default selection toolbar now includes Superscript and Subscript; the two are mutually exclusive and need no configuration.' },
+        { t: 'Press-and-hold preview', d: 'In the file picker the eye icon now previews only while held and closes on release, and the preview layer sits above the picker dialog instead of behind it.' },
+        { t: 'Insert several files', d: 'The picker supports multi-select and inserts every chosen file in order: images one by one, video / audio / other attachments as blocks.' },
+        { t: 'No pop-up at the bottom', d: 'Reaching the very bottom no longer pops the collapsed sticky toolbar back into view because of bounce jitter; scrolling back up still pins it as before.' },
+        { t: 'New select-all icon', d: 'Select all uses a corner-frame with a check mark, which reads more clearly than the old glyph.' },
+        { t: 'Popovers close on scroll', d: 'The mood and weather popovers close as soon as the page scrolls, so they no longer float over the text.' },
+        { t: 'Emoji panel rebuilt', d: 'The emoji tool absorbs the whole emoji keyboard: 23 categories and 922 emoji after de-duplication. Every category name is two characters (the old "animals and nature" splits into "animals" and "nature"), the category column is narrower and the grid wider.' },
+        { t: 'Symbol panel rebuilt', d: 'The symbol tool absorbs the whole symbol keyboard: 21 categories and 1094 symbols (English, Chinese, maths, currency, syntax, special, units, numbers, lists, arrows, superscript, box drawing, pinyin, script, Greek, Russian, Latin, Hangul, kana, emoji, components), also with two-character names and a narrower category column.' },
+        { t: 'Upgrade compatibility', d: 'No data model changes in this release: overwrite-upgrade in place, and rolling back to the previous version is safe.' }
       ]
     },
     {

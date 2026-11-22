@@ -797,29 +797,22 @@ export default {
     margin-left: 8px;
     position: relative;
 }
-/* 竖虚线：挂在每个直接子节点上（el-tree-node 高度含其子树） */
+/* 竖虚线：挂在每个直接子节点上（el-tree-node 高度含其子树）
+ * v1.3.9.2（需求）：去掉横向短线，只保留竖线，并把竖线摆到「父节点三角按钮的正下方」。
+ * 子级容器比父行左移 8px，父行三角中心在父行左边缘 +8.5px，
+ * 所以相对子级容器 left 取 0.5px 正好落在三角中心线上。 */
 .mt-tree.show-lines :deep(.el-tree-node__children > .el-tree-node)::before {
     content: '';
     position: absolute;
-    left: 4px;
+    left: 0.5px;
     top: 0;
     height: 100%;
     border-left: 1px dashed var(--el-border-color);
     pointer-events: none;
 }
-/* 最后一个直接子节点：竖线只画到它第一行的中心（转角终点） */
-.mt-tree.show-lines :deep(.el-tree-node__children > .el-tree-node:last-child)::before {
-    height: calc(var(--mt-row-h, 32px) / 2);
-}
-/* 水平短虚线：从竖线位置接到行首（跨过竖线，自然衔接成直角折线） */
-.mt-tree.show-lines :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content)::before {
-    content: '';
-    flex: 0 0 auto;
-    width: 8px;
-    margin-left: 1px;
-    margin-right: 2px;
-    border-top: 1px dashed var(--el-border-color);
-    pointer-events: none;
+/* 子级行左侧留出原「横向短线」占的 11px，去掉横线后层级缩进保持不变 */
+.mt-tree :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content) {
+    padding-left: 11px;
 }
 .mt-node {
     display: flex;

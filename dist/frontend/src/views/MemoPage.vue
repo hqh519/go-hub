@@ -166,6 +166,7 @@
                         @saved="onSaved"
                         @publish-moment="onPublishMoment"
                         @reload="reloadNote"
+                        @tree-refresh="refreshTree"
                         @open-note="openNote"
                     />
                     <div v-else class="memo-blank">
@@ -501,13 +502,13 @@ export default {
          * v1.3.1 起：移动端笔记编辑页禁止「屏幕边缘横滑 → 退出页面」。
          * v1.3.5.1（需求）：把「键盘是否弹出」也纳入判定。
          *
-         * edgeSwipeGuard 把边缘横滑判成返回手势后，会先关浮层栈；栈里没有层时
-         * 走这里的兜底。现在分三种情况：
-         *   · 编辑中 + 软键盘未弹出 → 回到笔记列表栏（backToList）；
-         *   · 编辑中 + 软键盘正弹出 → 不回列表，只把这次返回吃掉，
-         *     等用户自己收键盘（否则输入法还开着，列表却已经切走了）；
-         *   · 已在列表栏 → 什么也不做，且禁止页面继续回退（return true 消费）。
-         * 返回 true 表示「这次返回已被消费」，页面不会真的退出去。
+         * v1.3.9.2（需求）：改成两级行为 ——
+         *   · 编辑中（软键盘未弹出）→ 回到节点树，页面不退出；
+         *   · 编辑中 + 软键盘正弹出 → 只吃掉这次返回，等用户自己收键盘；
+         *   · 已在节点树里 → 不拦截，直接走浏览器默认回退（history.back()）。
+         * 边缘手势本身已被 edgeSwipeGuard preventDefault 吃掉，所以「交给浏览器」
+         * 必须由这里显式调 history.back() 补上，否则会变成「滑了没反应」。
+         * 返回 true 表示「这次返回已被消费」。
          */
         setEmptyStackBackHandler(() => {
             if (!this.isMobile) return true;
@@ -517,6 +518,12 @@ export default {
             if (this.editingId) {
                 this.backToTree();
                 return true;
+            }
+            // 已在节点树：不做任何页面内处理，交给浏览器回退
+            try {
+                window.history.back();
+            } catch (e) {
+                /* 历史里没有上一页时什么都不做，保持页面不动 */
             }
             return true;
         });
@@ -664,6 +671,16 @@ export default {
             if (!id) return;
             const note = await fetchNote(id).catch(() => null);
             if (note) this.currentNote = note;
+        },
+        /**
+         * v1.3.9.2（修「创建子页并引用后引用消失」）：
+         * 新建子页只改了「树」和「编辑区里的引用」，当前这篇的正文并没有变。
+         * 之前这里调的是 reloadNote(当前 id)，会把 currentNote 换成服务端的旧正文，
+         * 编辑器 applyNote 一触发就 setContent 把刚插入的引用冲掉了（随后自动保存
+         * 又把这份没有引用的正文写回库里）。所以只单独刷新文档树。
+         */
+        async refreshTree() {
+            await this.$refs.tree?.reload?.();
         },
         /**
          * v1.3.5（需求：编辑页顶部栏「编辑页设置」左侧的重新加载按钮）

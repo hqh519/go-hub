@@ -36,14 +36,17 @@ export const DEFAULT_TYPE_ICON = {
     template: 'clone',
 };
 
-/** 节点设置默认值（与后端 DEFAULT_NODE_SETTINGS 逐字段对齐） */
+/** 节点设置默认值（与后端 DEFAULT_NODE_SETTINGS 逐字段对齐）
+ * v1.3.9.2（需求）：初始默认值按参考图落定 —— 行高 30、显示关系线、
+ * 目录节点用 book-bookmark，各类型页依次 file-lines / heart / feather-pointed / lightbulb，
+ * 模板留空走默认图标。 */
 export const DEFAULT_NODE_SETTINGS = {
-    rowHeight: 32,
+    rowHeight: 30,
     showLines: true,
     /** 目录节点（含下级）的图标；空串 = 用默认文件夹 */
-    folderIcon: '',
+    folderIcon: 'book-bookmark',
     /** 各类型「页」的图标；空串 = 用 DEFAULT_TYPE_ICON 对应值 */
-    typeIcons: { note: '', diary: '', journal: '', inspiration: '', template: '' },
+    typeIcons: { note: 'file-lines', diary: 'heart', journal: 'feather-pointed', inspiration: 'lightbulb', template: '' },
 };
 
 /**
@@ -76,13 +79,14 @@ export function normalizeNodeSettings(raw) {
     const typeIcons = {};
     for (const d of DOC_TYPES) {
         const v = ti[d.key];
-        typeIcons[d.key] = typeof v === 'string' && ICON_CHOICES.includes(v) ? v : '';
+        // v1.3.9.2：缺项时才落新默认值；用户显式选了「默认图标」（空串）要保留
+        typeIcons[d.key] = typeof v === 'string' && ICON_CHOICES.includes(v) ? v : DEFAULT_NODE_SETTINGS.typeIcons[d.key] || '';
     }
     const rowHeight = Number(s.rowHeight);
     return {
         rowHeight: Number.isFinite(rowHeight) && rowHeight >= 22 && rowHeight <= 64 ? Math.round(rowHeight) : DEFAULT_NODE_SETTINGS.rowHeight,
         showLines: typeof s.showLines === 'boolean' ? s.showLines : DEFAULT_NODE_SETTINGS.showLines,
-        folderIcon: typeof s.folderIcon === 'string' && ICON_CHOICES.includes(s.folderIcon) ? s.folderIcon : '',
+        folderIcon: typeof s.folderIcon === 'string' && ICON_CHOICES.includes(s.folderIcon) ? s.folderIcon : DEFAULT_NODE_SETTINGS.folderIcon,
         typeIcons,
     };
 }

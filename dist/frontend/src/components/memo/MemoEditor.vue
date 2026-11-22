@@ -33,9 +33,11 @@
             <!--
                 工具栏：按设置里的行配置渲染，`|` 生成分隔线。
                 v1.3.9.1（需求）：预览模式不显示工具栏（共用编辑器视图，仅不可编辑）。
+                v1.3.9.2（需求）：预览时**不加载**工具栏行（v-if 而不是 v-show），
+                否则虽然看不见，仍会占掉一行高度，标题栏上方留一条空白。
             -->
             <div
-                v-show="mode !== 'preview'"
+                v-if="mode !== 'preview'"
                 ref="toolbarWrap"
                 class="me-toolbar-wrap"
                 :class="{ 'is-sticky': isStickyNow('toolbar') }"
@@ -174,39 +176,8 @@
                             </el-dropdown-menu>
                         </template>
                     </el-dropdown>
-                    <!-- 每行末尾都跟一组固定的「视图 / 保存」，它不属于可配置工具 -->
+                    <!-- 每行末尾的弹性占位（v1.3.9.2：模式切换已移到下方「反向链接」行末尾） -->
                     <span class="me-grow"></span>
-                    <template v-if="li === toolbarLines.length - 1">
-                        <!--
-                            v1.3.4（需求）：移动端把「编辑/源码/预览」钉在行末，横滑时不动。
-                            sticky 在横向滚动容器里就是干这个的：正常位置在末尾，
-                            滑到左边时它仍贴在可视区右边缘。保存按钮已移到顶部栏。
-                        -->
-                        <span class="me-mode-tail">
-                        <!-- v1.3.2（需求）：三个模式按钮合并成一个文字下拉框 -->
-                        <!-- v1.3.3.3（需求）：鼠标移到按钮上就展开下拉 -->
-                        <el-dropdown
-                            :trigger="isTouchUi ? 'click' : 'hover'"
-                            :show-timeout="60"
-                            :hide-timeout="120"
-                            placement="bottom-end"
-                            popper-class="me-tb-popper"
-                            @command="setMode"
-                        >
-                            <button type="button" class="me-btn me-mode-btn" :title="$t('memo.modeLabel')" @mousedown.prevent>
-                                <span class="me-mode-text">{{ modeLabel }}</span>
-                                <font-awesome-icon icon="caret-down" class="me-mode-caret" />
-                            </button>
-                            <template #dropdown>
-                                <el-dropdown-menu>
-                                    <el-dropdown-item command="wysiwyg" :class="{ 'is-active': mode === 'wysiwyg' }">{{ $t('memo.modeLive') }}</el-dropdown-item>
-                                    <el-dropdown-item command="source" :class="{ 'is-active': mode === 'source' }">{{ $t('memo.modeSource') }}</el-dropdown-item>
-                                    <el-dropdown-item command="preview" :class="{ 'is-active': mode === 'preview' }">{{ $t('memo.modePreview') }}</el-dropdown-item>
-                                </el-dropdown-menu>
-                            </template>
-                        </el-dropdown>
-                        </span>
-                    </template>
                 </div>
             </div>
 
@@ -427,13 +398,54 @@
         </div>
 
         <!-- 反向链接（v1.5.0）：哪些笔记引用了本篇 -->
-        <div class="me-backlinks" :class="{ 'is-open': backlinksOpen, 'is-kb-hidden': kbOpen }">
-            <button type="button" class="me-bl-head" @click="backlinksOpen = !backlinksOpen">
-                <font-awesome-icon icon="link" class="me-bl-icon" />
-                <span class="me-bl-title">{{ $t('memo.backlinks') }}</span>
-                <span class="me-bl-count">{{ backlinks.length }}</span>
-                <font-awesome-icon :icon="backlinksOpen ? 'chevron-up' : 'chevron-down'" class="me-bl-caret" />
-            </button>
+        <div
+            class="me-backlinks"
+            :class="{ 'is-open': backlinksOpen, 'is-kb-hidden': kbOpen, 'is-scroll-hidden': blHide }"
+        >
+            <div class="me-bl-bar">
+                <button type="button" class="me-bl-head" @click="backlinksOpen = !backlinksOpen">
+                    <font-awesome-icon icon="link" class="me-bl-icon" />
+                    <span class="me-bl-title">{{ $t('memo.backlinks') }}</span>
+                    <span class="me-bl-count">{{ backlinks.length }}</span>
+                    <font-awesome-icon :icon="backlinksOpen ? 'chevron-up' : 'chevron-down'" class="me-bl-caret" />
+                </button>
+                <!--
+                    v1.3.9.2（需求）：
+                      · 「编辑 / 源码 / 预览」切换从工具栏末尾移到这里，放在大纲工具左侧；
+                      · 新增大纲工具按钮；
+                      · 两者统一靠右对齐（me-bl-actions 用 margin-left:auto 顶到行末）。
+                -->
+                <div class="me-bl-actions">
+                    <el-dropdown
+                        :trigger="isTouchUi ? 'click' : 'hover'"
+                        :show-timeout="60"
+                        :hide-timeout="120"
+                        placement="top-end"
+                        popper-class="me-tb-popper"
+                        @command="setMode"
+                    >
+                        <button type="button" class="me-bl-btn me-mode-btn" :title="$t('memo.modeLabel')" @mousedown.prevent>
+                            <span class="me-mode-text">{{ modeLabel }}</span>
+                            <font-awesome-icon icon="caret-down" class="me-mode-caret" />
+                        </button>
+                        <template #dropdown>
+                            <el-dropdown-menu>
+                                <el-dropdown-item command="wysiwyg" :class="{ 'is-active': mode === 'wysiwyg' }">{{ $t('memo.modeLive') }}</el-dropdown-item>
+                                <el-dropdown-item command="source" :class="{ 'is-active': mode === 'source' }">{{ $t('memo.modeSource') }}</el-dropdown-item>
+                                <el-dropdown-item command="preview" :class="{ 'is-active': mode === 'preview' }">{{ $t('memo.modePreview') }}</el-dropdown-item>
+                            </el-dropdown-menu>
+                        </template>
+                    </el-dropdown>
+                    <button
+                        type="button"
+                        class="me-bl-btn"
+                        :title="$t('memo.outline')"
+                        @click="openOutline"
+                    >
+                        <font-awesome-icon icon="list" />
+                    </button>
+                </div>
+            </div>
             <div v-if="backlinksOpen" class="me-bl-list">
                 <button
                     v-for="(b, i) in backlinks"
@@ -1097,7 +1109,7 @@
         <el-dialog
             v-model="insertPanelVisible"
             :title="insertPanelTab === 'emoji' ? $t('memo.emojiTitle') : $t('memo.symbolTitle')"
-            width="560px"
+            width="640px"
             append-to-body
             class="me-glyph-dialog"
         >
@@ -1436,7 +1448,7 @@ import { loadFileDetail } from '@/utils/fileDetailLoader';
 import { docToMd, mdToDoc, renderMarkdownSafe, plainTextOf } from '@/utils/markdown';
 import {
     saveNote,
-    createNote as apiCreateNote,
+    createNode as apiCreateNode,
     memoError,
     fetchNotes,
     fetchNote,
@@ -1452,6 +1464,8 @@ import {
     pushNoteHistory,
     fetchTemplates,
 } from '@/utils/memoApi';
+// v1.3.9.2：表情 / 符号面板数据（由 dev-tools/build-glyph-data.cjs 从 lua 生成）
+import { EMOJI_GROUPS, SYMBOL_GROUPS } from '@/utils/glyphData';
 import { uploadOne, defaultUploadFolder, importUrlToBed } from '@/utils/uploadTarget';
 /* v1.3.5.2：白板工具复用现有的图片处理组件（涂鸦 / 文字 / 形状 / 马赛克） */
 import ImageCropDialog from '@/components/upload/ImageCropDialog.vue';
@@ -3109,7 +3123,8 @@ function parseGroupToken(token) {
 
 const SEL_DEFAULT = [
     'heading', 'align', '|', 'bold', 'strike', 'italic', 'underline', 'link', 'code',
-    '|', 'fontSize', 'textColor', '|', 'annotate', 'publish'
+    // v1.3.9.2（需求）：选中文本的默认工具条里直接给出上标 / 下标
+    '|', 'fontSize', 'textColor', 'superscript', 'subscript', '|', 'annotate', 'publish'
 ];
 
 const CTX_DEFAULT = {
@@ -3740,38 +3755,14 @@ const TOOL_HINTS = {
     findReplace: 'Ctrl+F',
 };
 
-/**
- * 表情面板的数据（v1.3.1.2）。
- *
- * 分组的写法照搬飞书那套分类（符号 / 人类 / 自然 / 食物 / 活动 / 地点 / 物件 / 旗帜），
- * 但只放「常用 + 一看就懂」的那几十个 —— 塞几百个进去，面板要滚很久反而更难找。
- * 全部是纯文本字符，插入后就是正文的一部分，不依赖任何图片资源。
+/*
+ * 表情 / 符号面板的数据（v1.3.9.2）
+ * ----------------------------------------------------------------------------
+ * 改成从 utils/glyphData.js 引入：那里的数据由参考资料的两份 lua 键盘定义
+ * （表情键盘.lua / 符号键盘.lua）抽取、与旧面板条目合并去重后生成，
+ * 分类名统一两字，分类数量也从 8 / 6 组扩到 23 / 21 组。
+ * 生成脚本：dev-tools/build-glyph-data.cjs（要改数据就改脚本再跑一次）。
  */
-const EMOJI_GROUPS = [
-    { key: 'symbol', label: 'memo.emojiSymbol', items: ['❤️', '💔', '💯', '✅', '❌', '⚠️', '❗', '❓', '➕', '➖', '⭐', '🔥', '💡', '🎉', '🎊', '🔔', '🔒', '🔑', '📌', '🏷️', '♻️', '⏰', '💤', '💬'] },
-    { key: 'people', label: 'memo.emojiPeople', items: ['😀', '😄', '😁', '😆', '😅', '😂', '🙂', '😉', '😊', '😍', '😘', '😜', '🤔', '🤨', '😐', '😴', '😪', '😷', '🤒', '🤕', '😎', '🥳', '😭', '😤', '😡', '🥺', '😱', '🤯', '🙏', '👍', '👎', '👏', '🙌', '💪', '🤝', '👀'] },
-    { key: 'nature', label: 'memo.emojiNature', items: ['🌱', '🌿', '🍀', '🌵', '🌴', '🌳', '🌲', '🍁', '🍂', '🌷', '🌹', '🌺', '🌸', '🌻', '🌼', '🌙', '⭐', '🌟', '☀️', '⛅', '☁️', '🌧️', '⛈️', '❄️', '🌈', '🌊', '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯'] },
-    { key: 'food', label: 'memo.emojiFood', items: ['🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🥑', '🥦', '🌽', '🥕', '🍞', '🧀', '🍗', '🍔', '🍟', '🍕', '🍜', '🍚', '🍣', '🍰', '🍪', '🍫', '☕', '🍵', '🥤', '🍺'] },
-    { key: 'activity', label: 'memo.emojiActivity', items: ['⚽', '🏀', '🏈', '⚾', '🎾', '🏐', '🏓', '🏸', '🥊', '🎯', '🎮', '🎲', '🎸', '🎹', '🎤', '🎧', '🎬', '📷', '✈️', '🚗', '🚲', '🏃', '🧘', '🏆'] },
-    { key: 'place', label: 'memo.emojiPlace', items: ['🏠', '🏢', '🏫', '🏥', '🏦', '🏨', '🏪', '🏭', '🗼', '🏰', '⛪', '🕌', '🌉', '🗻', '🏖️', '🏕️', '🚉', '🚇', '🗺️', '🧭'] },
-    { key: 'object', label: 'memo.emojiObject', items: ['💻', '🖥️', '⌨️', '🖱️', '📱', '☎️', '📞', '📠', '📺', '📻', '💾', '💿', '📀', '🎥', '📖', '📚', '📝', '✏️', '🖊️', '📎', '📐', '📏', '✂️', '🗑️', '🔧', '🔨', '⚙️', '🧰', '💰', '💳', '🎁', '📦'] },
-    { key: 'flag', label: 'memo.emojiFlag', items: ['🏳️', '🏴', '🏁', '🚩', '🎌', '🏳️‍🌈'] },
-];
-
-/**
- * 符号面板的数据（v1.3.1.2）。
- * 与表情面板同一套 UI，只是内容换成「写文档真正会用到」的符号：
- * 箭头、数学、标点、货币、图形、序号。
- */
-const SYMBOL_GROUPS = [
-    { key: 'arrow', label: 'memo.symArrow', items: ['←', '→', '↑', '↓', '↔', '↕', '⇐', '⇒', '⇑', '⇓', '⇔', '↩', '↪', '⟵', '⟶', '⤴', '⤵', '⇢', '⇠'] },
-    { key: 'math', label: 'memo.symMath', items: ['±', '×', '÷', '≈', '≠', '≤', '≥', '∞', '√', '∑', '∏', '∫', '∂', '∆', '∈', '∉', '⊂', '⊃', '∪', '∩', '∴', '∵', '°', '′', '″', '‰', '%', '‱'] },
-    { key: 'punct', label: 'memo.symPunct', items: ['·', '•', '…', '、', '。', '，', '；', '：', '？', '！', '“', '”', '‘', '’', '「', '」', '『', '』', '《', '》', '〈', '〉', '【', '】', '〔', '〕', '—', '–', '~', '‖', '§', '¶'] },
-    { key: 'currency', label: 'memo.symCurrency', items: ['¥', '$', '€', '£', '₩', '₽', '₹', '฿', '¢', '₿'] },
-    { key: 'shape', label: 'memo.symShape', items: ['■', '□', '▪', '▫', '▲', '△', '▼', '▽', '◆', '◇', '○', '●', '◎', '★', '☆', '✓', '✔', '✗', '✘', '☑', '☐', '☒', '⌘', '⚑', '⚐'] },
-    { key: 'number', label: 'memo.symNumber', items: ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', 'Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ'] },
-];
-
 /** 文字颜色预设（v1.3.1.2）：与 markdown.js 的 gh-c-* 类一一对应 */
 const TEXT_COLORS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray'];
 
@@ -3827,7 +3818,7 @@ const SVG_CODE =
  *   · SVG_BRACES     代码块   `{}`
  *   · SVG_ANGLE      行内代码 `< >`
  *   · SVG_HTML       HTML块   页面轮廓 + `</>`
- *   · SVG_SELECT_ALL 全选     虚线选择框 + 实心方块
+ *   · SVG_SELECT_ALL 全选     四角取景框 + 对勾（v1.3.9.2 换新）
  */
 const SVG_BRACES =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5c-1.7 0-2.6.9-2.6 2.6v2.3c0 1.3-.6 2-1.9 2.1v.9c1.3.1 1.9.8 1.9 2.1v2.4c0 1.7.9 2.6 2.6 2.6"/><path d="M15 4.5c1.7 0 2.6.9 2.6 2.6v2.3c0 1.3.6 2 1.9 2.1v.9c-1.3.1-1.9.8-1.9 2.1v2.4c0 1.7-.9 2.6-2.6 2.6"/></svg>';
@@ -3835,8 +3826,14 @@ const SVG_ANGLE =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 7-5 5 5 5"/><path d="m15 7 5 5-5 5"/></svg>';
 const SVG_HTML =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m10.5 12-1.6 2 1.6 2"/><path d="m14 12 1.6 2-1.6 2"/></svg>';
+/*
+ * v1.3.9.2（需求：全选图标换个更好看、也更像「全选」的）
+ * 原来是一个虚线框里套实心小方块，缩到 14px 时糊成一团、也读不出「全选」。
+ * 现在改成「四角取景框 + 中间对勾」：取景框表示选中范围，对勾表示「全部选中」，
+ * 线宽与其它内联图标一致（1.7），小尺寸下依然清楚。
+ */
 const SVG_SELECT_ALL =
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5.6A1.6 1.6 0 0 1 5.6 4H7"/><path d="M10 4h1.6"/><path d="M14.4 4H16"/><path d="M19 7V5.6A1.6 1.6 0 0 0 17.4 4H17"/><path d="M20 10v1.4"/><path d="M20 14.6V16"/><path d="M17 20h1.4A1.6 1.6 0 0 0 20 18.4V18"/><path d="M13.6 20H12"/><path d="M9 20H7.6A1.6 1.6 0 0 1 6 18.4V18"/><path d="M4 15v-1.4"/><path d="M4 10.6V10"/><rect x="9" y="9" width="6.5" height="6.5" rx="1"/></svg>';
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.2H6.2A2 2 0 0 0 4.2 6.2V9"/><path d="M15 4.2h2.8a2 2 0 0 1 2 2V9"/><path d="M19.8 15v2.8a2 2 0 0 1-2 2H15"/><path d="M9 19.8H6.2a2 2 0 0 1-2-2V15"/><path d="m8.6 12.1 2.3 2.3 4.5-4.6"/></svg>';
 const SVG_REDO =
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>';
 /*
@@ -4035,7 +4032,7 @@ export default {
          */
         topbarHidden: { type: Boolean, default: false },
     },
-    emits: ['saved', 'dirty', 'request-settings', 'open-note', 'publish-moment'],
+    emits: ['saved', 'dirty', 'request-settings', 'open-note', 'publish-moment', 'reload', 'tree-refresh'],
     data() {
         return {
             editor: null,
@@ -4082,6 +4079,8 @@ export default {
             /** 反向链接面板（v1.5.0）：默认收起，避免把正文顶下去 */
             backlinks: [],
             backlinksOpen: false,
+            /** v1.3.9.2（需求）：页面往下滚（内容上移）时把「反向链接」行收起，回滚时再显示 */
+            blHide: false,
             /** v1.3.2：移动端软键盘是否弹起（用于收起反向链接栏） */
             kbOpen: false,
             /** 图片缩放手柄浮层（v1.4.0） */
@@ -5755,8 +5754,10 @@ export default {
         },
         stickyTop(which) {
             // 标题栏永远贴在「工具栏最后一行下方」；工具栏不吸时从 0 起算
+            // v1.3.9.2：预览模式没有工具栏行，标题栏直接从 0 起算（顶上取代它）
             if (which === 'title') {
-                return this.isStickyNow('toolbar') ? `${this.stickyHeight('toolbar')}px` : '0px';
+                const hasToolbar = this.mode !== 'preview';
+                return hasToolbar && this.isStickyNow('toolbar') ? `${this.stickyHeight('toolbar')}px` : '0px';
             }
             return '0px';
         },
@@ -5837,6 +5838,20 @@ export default {
                 // 已经在顶部：不存在「回滚吸附」的意义，直接复位
                 this._stkAcc = 0;
                 if (this.reverseSticky) this.reverseSticky = false;
+                if (this.blHide) this.blHide = false;
+                return;
+            }
+            /*
+             * v1.3.9.2（需求）：滚动到底部时不再误触发「回滚」。
+             * 到底时容器仍有 1~2px 的回弹 / 布局补偿，累计几帧就会把 reverseSticky
+             * 翻成 true，看起来就是「已经收起的工具栏又自己冒出来了」。
+             * 到底缓冲区内只允许「切回正滚」，不允许反向累计。
+             */
+            const maxTop = Math.max(0, (el.scrollHeight || 0) - (el.clientHeight || 0));
+            if (maxTop - top <= 24) {
+                this._stkAcc = 0;
+                if (delta > 0 && this.reverseSticky) this.reverseSticky = false;
+                if (delta > 0 && this.blHide) this.blHide = false;
                 return;
             }
             const acc = this._stkAcc || 0;
@@ -5849,6 +5864,9 @@ export default {
                 this._stkAcc = 0;
                 if (this.reverseSticky) this.reverseSticky = false;
             }
+            // v1.3.9.2：往下滚（非回滚态）且已离开顶部时收起反向链接行
+            const shouldHide = !this.reverseSticky && top > 40;
+            if (this.blHide !== shouldHide) this.blHide = shouldHide;
         },
         /** v1.3.2：该工具是否被折叠进行末下拉 */
         isTbHidden(li, ti) {
@@ -7160,7 +7178,12 @@ export default {
             }
             this.subDoc = { visible: true, title: '', content: '', busy: false, pos, blockStart, offset };
         },
-        /** 创建子文档 → 在当前笔记同目录下建一篇 → 把引用插到刚才的光标处 */
+        /**
+         * v1.3.9.2（需求）：「创建子页并引用」——新建的页面必须落在**当前页面**的下级，
+         * 而不是像原来那样按 folderId 落到同级目录里。
+         * 服务端 createNote 在显式给了 parentId 时会继承父节点的 docType（子页同类型），
+         * 所以这里只需要把 note.id 传成 parentId。
+         */
         async createSubDoc() {
             if (this.subDoc.busy) return;
             const title = String(this.subDoc.title || '').trim();
@@ -7170,8 +7193,8 @@ export default {
             }
             this.subDoc.busy = true;
             try {
-                const folderId = String(this.note?.folderId || '');
-                const r = await apiCreateNote({ title, content: String(this.subDoc.content || ''), folderId });
+                const parentId = String(this.note?.id || '');
+                const r = await apiCreateNode({ type: 'note', parentId, title, content: String(this.subDoc.content || '') });
                 if (!r?.id) throw new Error('create failed');
                 const ed = this.editor;
                 const max = ed.state.doc.content.size;
@@ -7215,8 +7238,13 @@ export default {
                 this.onEditorUpdate();
                 this.subDoc = { visible: false, title: '', content: '', busy: false, pos: 0, blockStart: -1, offset: 0 };
                 ElMessage.success(this.$t('memo.subDocDone'));
-                // 让父页面刷新目录/列表（新笔记要出现在列表里）
-                this.$emit('reload', this.note?.id || '');
+                /*
+                 * v1.3.9.2（修「刚插入的引用立刻消失」）：
+                 * 原来这里发 reload(本篇 id)，页面会重新 fetch 本篇 —— 此时还没自动保存，
+                 * 服务端正文里没有刚插入的引用，applyNote 一 setContent 就把它冲掉了。
+                 * 新建子页只影响「文档树」，所以只刷新树。
+                 */
+                this.$emit('tree-refresh');
             } catch (e) {
                 this.subDoc.busy = false;
                 ElMessage.error(memoError(e).message || this.$t('memo.saveFail'));
@@ -10682,20 +10710,25 @@ export default {
 /* ── 表情 / 符号面板（v1.3.1.2） ───────────────────────────── */
 .me-glyph {
     display: flex;
-    gap: 12px;
-    height: 340px;
+    gap: 10px;
+    /* v1.3.9.2：分类变多（表情 23 组 / 符号 21 组），面板整体加高一点 */
+    height: 380px;
 }
+/*
+ * v1.3.9.2（需求）：左侧分类栏收窄，把宽度让给右侧的表情 / 符号网格。
+ * 分类名统一为两个字，68px 刚好放得下，再宽就是纯浪费。
+ */
 .me-glyph-side {
-    flex: 0 0 104px;
+    flex: 0 0 68px;
     display: flex;
     flex-direction: column;
     gap: 2px;
     overflow-y: auto;
     border-right: 1px solid var(--el-border-color-lighter);
-    padding-right: 8px;
+    padding-right: 6px;
 }
 .me-glyph-cat {
-    padding: 6px 8px;
+    padding: 6px 6px;
     border: none;
     border-radius: 6px;
     background: transparent;
@@ -10738,7 +10771,7 @@ export default {
     min-height: 0;
     overflow-y: auto;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
     gap: 4px;
     align-content: start;
 }
@@ -12119,6 +12152,18 @@ export default {
         padding-left: 40px;
     }
 }
+/*
+ * v1.3.9.2（需求）：预览模式没有行号 / 行级栏，正文不要再为它留出左侧空位，
+ * 直接贴到正常边距，看起来才是「左侧对齐」。
+ */
+.me-wysiwyg.is-readonly :deep(.gh-editor-content) {
+    padding-left: 18px;
+}
+@media (max-width: 900px) {
+    .me-wysiwyg.is-readonly :deep(.gh-editor-content) {
+        padding-left: 14px;
+    }
+}
 
 .me-wysiwyg :deep(.gh-editor-content) > * + *,
 .me-preview > * + * {
@@ -13465,18 +13510,64 @@ export default {
     flex: 0 0 auto;
     border-top: 1px solid var(--el-border-color-lighter);
     background: var(--el-fill-color-blank);
+    /* v1.3.9.2：往下滚时整行收起（高度过渡，不留空位），回滚再展开 */
+    max-height: 280px;
+    overflow: hidden;
+    transition: max-height 0.22s ease, opacity 0.18s ease, border-top-color 0.18s ease;
+}
+.me-backlinks.is-scroll-hidden {
+    max-height: 0;
+    opacity: 0;
+    /* 边框也要收掉，否则 max-height:0 时仍会留下 1px 的分隔线 */
+    border-top-width: 0;
+    pointer-events: none;
+}
+/* v1.3.9.2：标题 + 右侧操作区（模式切换 / 大纲）同一行，操作区靠右 */
+.me-bl-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-right: 8px;
 }
 .me-bl-head {
     display: flex;
     align-items: center;
     gap: 6px;
-    width: 100%;
+    flex: 0 1 auto;
+    min-width: 0;
     padding: 6px 10px;
     border: 0;
     background: transparent;
     color: var(--el-text-color-regular);
     font-size: 12px;
     cursor: pointer;
+}
+.me-bl-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+.me-bl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+    background: var(--el-bg-color);
+    color: var(--el-text-color-regular);
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+.me-bl-btn:hover {
+    color: var(--el-color-primary);
+    border-color: var(--el-color-primary-light-5);
+    background: var(--el-color-primary-light-9);
 }
 .me-bl-head:hover {
     background: var(--el-fill-color-light);
@@ -13498,7 +13589,7 @@ export default {
     background: var(--el-color-primary-light-9);
 }
 .me-bl-caret {
-    margin-left: auto;
+    margin-left: 2px;
     font-size: 11px;
     opacity: 0.6;
 }

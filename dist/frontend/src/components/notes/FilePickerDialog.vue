@@ -281,16 +281,16 @@
                         <font-awesome-icon icon="play" />
                     </span>
 
-                    <!-- 小眼睛：按住 / 悬停预览（图片、视频、音频都有） -->
+                    <!-- 小眼睛：长按才预览（图片、视频、音频都有）—— v1.3.9.2 需求 -->
                     <span
                         v-if="previewable(f)"
                         class="np-eye no-hswipe-guard"
                         role="button"
                         :aria-label="$t('notes.pickPreviewHold')"
-                        @click.stop.prevent="eyeClick(f, $event)"
-                        @mousedown.stop.prevent
-                        @mouseenter="eyeHover(f, $event)"
-                        @mouseleave="eyeLeave"
+                        @click.stop.prevent
+                        @mousedown.stop.prevent="eyeDown(f, $event)"
+                        @mouseup.stop="eyeUp"
+                        @mouseleave="eyeUp"
                         @touchstart.stop.prevent="eyeTouchStart(f, $event)"
                         @touchmove.stop="eyeTouchMove"
                         @touchend.stop.prevent="eyeTouchEnd"
@@ -346,8 +346,6 @@
                 class="np-preview"
                 :style="previewStyle"
                 aria-hidden="true"
-                @mouseenter="cancelEyeClose"
-                @mouseleave="scheduleEyeClose"
             >
                 <div class="np-preview-head" :title="preview.name">
                     <span class="np-preview-name">{{ preview.name }}</span>
@@ -1379,48 +1377,19 @@ export default {
             this.preview = { ...this.preview, visible: false };
         },
         /**
-         * v1.3.7：桌面端点小眼睛 / 悬停都要能预览。
-         * v1.3.8（需求：点击时就要出预览，且要大）：
-         *   · 触屏「轻点」= 打开并保持（原来的实现 touchend 无条件关闭，轻点等于没反应）；
-         *   · 触屏「按住」= 只在该次按住期间显示，松手关闭；
-         *   · 鼠标 = 点击开关，悬停同样预览。
+         * v1.3.9.2（需求）：小眼睛改成「长按才预览」，
+         * 原来的「点击开关 / 悬停即显示」两条入口一并撤掉，
+         * 具体实现在 eyeDown / eyeUp（鼠标）与 eyeTouchStart / eyeTouchEnd（触屏）。
          */
-        eyeClick(f, e) {
-            // 长按结束后的合成 click：不再重新打开
-            if (Date.now() - (this._eyeTouchedAt || 0) < 600) return;
-            if (this.preview.visible) {
-                // 触屏轻点时浏览器会补一个 mouseenter 先把预览打开，这里保持打开而不是立刻关掉
-                if (Date.now() - (this._eyeHoverAt || 0) < 500) return;
-                this.closePreview();
-                return;
-            }
-            this.openPreview(f, e);
-        },
-        eyeHover(f, e) {
-            if (this._eyeTouchedAt && Date.now() - this._eyeTouchedAt < 600) return;
-            this._eyeHoverAt = Date.now();
-            this.cancelEyeClose();
-            this.openPreview(f, e);
-        },
-        eyeLeave() {
-            this.scheduleEyeClose();
-        },
         cancelEyeClose() {
             if (this._eyeCloseTimer) {
                 clearTimeout(this._eyeCloseTimer);
                 this._eyeCloseTimer = null;
             }
         },
-        scheduleEyeClose() {
-            this.cancelEyeClose();
-            this._eyeCloseTimer = setTimeout(() => {
-                this._eyeCloseTimer = null;
-                this.closePreview();
-            }, 180);
-        },
         eyeTouchStart(f, e) {
             this.clearEyeTimer();
-            // 只有真的按住到 300ms 才记「这次是长按」；轻点在 touchend 打开并保持
+            // 按住到 300ms 才出预览；轻点在 touchend 不再做任何事（v1.3.9.2）
             this._eyePressOpened = false;
             this._eyeMoved = false;
             const touch = (e.touches && e.touches[0]) || e;
@@ -1453,11 +1422,10 @@ export default {
         eyeTouchEnd() {
             this.clearEyeTimer();
             /*
-             * v1.3.8：`touchstart` 上做了 preventDefault，部分浏览器不会再补发 click，
-             * 所以轻点必须在 touchend 里自己处理：
+             * v1.3.9.2（需求）：改成「只有长按住小眼睛才显示预览」——
              *   · 长按松手 → 关闭；
              *   · 滑动取消 → 什么都不做；
-             *   · 其它（轻点）→ 打开；已经开着就关掉。
+             *   · 轻点 → 什么都不做（不再打开并保持）。
              */
             this._eyeTouchedAt = Date.now();
             if (this._eyePressOpened) {
@@ -1469,14 +1437,30 @@ export default {
                 this._eyeMoved = false;
                 return;
             }
-            const file = this._eyeFile;
+        },
+        /**
+         * 桌面端同样改成「按住才预览」（v1.3.9.2 需求）。
+         * 按下后等到长按阈值才出预览，松手 / 移出即关闭；
+         * 单击不再切换预览的开关状态。
+         */
+        eyeDown(f, e) {
+            this.clearEyeTimer();
+            this._eyePressOpened = false;
+            this._eyeFile = f;
+            this._eyeRect = e && e.currentTarget ? e.currentTarget.getBoundingClientRect() : null;
             const rect = this._eyeRect;
-            if (!file) return;
-            if (this.preview.visible) {
+            this._eyeTimer = setTimeout(() => {
+                this._eyeTimer = null;
+                this._eyePressOpened = true;
+                this.openPreview(f, { currentTarget: { getBoundingClientRect: () => rect } });
+            }, EYE_PRESS_MS);
+        },
+        eyeUp() {
+            this.clearEyeTimer();
+            if (this._eyePressOpened || this.preview.visible) {
+                this._eyePressOpened = false;
                 this.closePreview();
-                return;
             }
-            this.openPreview(file, { currentTarget: { getBoundingClientRect: () => rect } });
         },
         clearEyeTimer() {
             if (this._eyeTimer) {
@@ -2015,8 +1999,12 @@ export default {
      * 稳定盖在 z-index 3200 的文件灯箱之上）。本组件自身就是 EP 弹窗、叠加在「发布瞬间」
      * 弹窗之上，实际层级已经是 4000 + 累积值 —— 预览浮层若还写死 4000，就会被**自己的
      * 弹窗**盖住，鼠标悬停缩略图时看不到预览。这里固定压在 EP 弹窗之上。
+     *
+     * v1.3.9.2（需求：预览图要显示在选择文件弹窗的上层）：
+     * 4600 与本组件弹窗同值 —— 同值时后插入 DOM 的弹窗反而盖住浮层，
+     * 于是「长按小眼睛看不到图」。拉到 5600，稳定压在所有 EP 弹窗（4000+）之上。
      */
-    z-index: 4600;
+    z-index: 5600;
     display: flex;
     flex-direction: column;
     padding: 6px;

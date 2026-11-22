@@ -24,10 +24,10 @@ const ROOT_DOC_TYPE = {
     模板: 'template',
 };
 const DEFAULT_NODE_SETTINGS = {
-    rowHeight: 32,
+    rowHeight: 30,
     showLines: true,
-    folderIcon: '',
-    typeIcons: { note: '', diary: '', journal: '', inspiration: '', template: '' },
+    folderIcon: 'book-bookmark',
+    typeIcons: { note: 'file-lines', diary: 'heart', journal: 'feather-pointed', inspiration: 'lightbulb', template: '' },
 };
 const LEGACY_SYSTEM_TITLES = ['笔记', '日记', '札记', '灵感'];
 function migratedKey(instanceId, viewer) {
