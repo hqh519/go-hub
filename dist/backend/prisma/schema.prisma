@@ -574,7 +574,15 @@ model Note {
   /// 只在保存时升级、打开时绝不改写 —— 老数据原样可读，不会被误当 md 重新解析。
   contentFormat String    @default("")
   /// v1.3.0：所属目录（memo_folders.id；空 = 未归档，落在「全部笔记」下）
+  /// v1.3.9：目录模型退役，改用下面的 parentId（保留本列只为旧版本平稳衔接）
   folderId      String    @default("")
+  /// v1.3.9：父节点（另一篇笔记的 id；空 = 根级）。
+  /// 文档节点模型：每篇笔记既可写正文，又可作为目录无限嵌套子笔记。
+  parentId      String    @default("")
+  /// v1.3.9：同级排序（值小的在前；相同按 createdAt 兜底）
+  sort          Int       @default(0)
+  /// v1.3.9：系统固定一级节点（笔记 / 日记 / 札记 / 灵感）——不可删除、改名、移动
+  isSystem      Boolean   @default(false)
   /// v1.3.0：标题（memo / 以后的 article 用）。
   /// 瞬间的标题仍走 `note_moments.title` —— 那边已有独立列与迁移回填逻辑，
   /// 不动它是为了「瞬间列表按标题排序 / 筛选」这条既有路径零改动。
@@ -620,10 +628,16 @@ model Note {
   @@index([instanceId, status, deletedAt, createdAt])
   /// v1.3.0：笔记管理页「按目录取列表」——最热的一条路径，单独建索引
   @@index([instanceId, author, kind, folderId, status])
+  /// v1.3.9：文档节点树（按 parentId 取子节点 / 计数）
+  @@index([instanceId, author, kind, parentId, status])
   @@map("notes")
 }
 
 /// 笔记目录（v1.3.0）
+///
+/// **v1.3.9 起退役**：目录风格改成「文档节点」——每个节点本身就是一篇笔记，
+/// 层级关系记在 `notes.parentId` 上。本表保留只为了迁移时把旧目录转成
+/// 空正文的目录页节点（见 MemoService.ensureTreeMigrated），新代码不再读写它。
 ///
 /// 无限层级靠 parentId 自引用，**不建外键**：目录删除时子目录与笔记都要上浮，
 /// 用外键级联反而不好控制顺序，这里的父子关系由服务层维护（与 NoteAsset 同一思路）。

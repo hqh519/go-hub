@@ -83,6 +83,11 @@ let MemoController = class MemoController {
         });
         return { success: true, data };
     }
+    async tree(req, instanceId) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.listTree(viewer, instanceId || '');
+        return { success: true, data };
+    }
     async resolveBlock(req, q) {
         const { viewer } = this.ctx(req);
         const bid = String(q.blockId || '');
@@ -182,13 +187,26 @@ let MemoController = class MemoController {
     }
     async create(req, body) {
         const { viewer } = this.ctx(req);
-        const r = await this.memo.createNote(viewer, String(body.instanceId ?? ''), {
+        const r = await this.memo.createNode(viewer, String(body.instanceId ?? ''), {
+            type: body.type,
+            parentId: body.parentId,
             title: body.title,
             content: body.content,
-            folderId: body.folderId,
         });
         if ('error' in r && r.error)
-            this.fail(r.error);
+            this.fail(String(r.error));
+        return { success: true, data: r };
+    }
+    async reorder(req, body) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.reorderNodes(viewer, String(body.instanceId ?? ''), String(body.parentId ?? ''), body.ids);
+        return { success: true, data };
+    }
+    async rename(req, id, body) {
+        const { viewer } = this.ctx(req);
+        const r = await this.memo.renameNode(viewer, String(body.instanceId ?? ''), id, body.title);
+        if ('error' in r && r.error)
+            this.fail(String(r.error));
         return { success: true, data: r };
     }
     async save(req, id, body) {
@@ -208,24 +226,29 @@ let MemoController = class MemoController {
     }
     async move(req, id, body) {
         const { viewer } = this.ctx(req);
-        const r = await this.memo.moveNote(viewer, String(body.instanceId ?? ''), id, body.folderId);
+        const r = body.parentId !== undefined || body.sort !== undefined
+            ? await this.memo.moveNode(viewer, String(body.instanceId ?? ''), id, {
+                parentId: body.parentId,
+                sort: body.sort,
+            })
+            : await this.memo.moveNote(viewer, String(body.instanceId ?? ''), id, body.folderId);
         if ('error' in r && r.error)
-            this.fail(r.error);
+            this.fail(String(r.error));
         return { success: true, data: r };
     }
     async trash(req, id, instanceId) {
         const { viewer } = this.ctx(req);
-        const r = await this.memo.trash(viewer, instanceId || '', id);
+        const r = await this.memo.trashTree(viewer, instanceId || '', id);
         if ('error' in r && r.error)
-            this.fail(r.error);
-        return { success: true };
+            this.fail(String(r.error));
+        return { success: true, data: r };
     }
     async restore(req, id, body) {
         const { viewer } = this.ctx(req);
-        const r = await this.memo.restore(viewer, String(body.instanceId ?? ''), id);
+        const r = await this.memo.restoreTree(viewer, String(body.instanceId ?? ''), id);
         if ('error' in r && r.error)
-            this.fail(r.error);
-        return { success: true };
+            this.fail(String(r.error));
+        return { success: true, data: r };
     }
     async purge(req, id, instanceId) {
         const { viewer } = this.ctx(req);
@@ -286,6 +309,14 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], MemoController.prototype, "list", null);
+__decorate([
+    (0, common_1.Get)('tree'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "tree", null);
 __decorate([
     (0, common_1.Get)('blocks/resolve'),
     __param(0, (0, common_1.Req)()),
@@ -410,6 +441,23 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], MemoController.prototype, "create", null);
+__decorate([
+    (0, common_1.Post)('reorder'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "reorder", null);
+__decorate([
+    (0, common_1.Put)(':id/rename'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "rename", null);
 __decorate([
     (0, common_1.Put)(':id'),
     __param(0, (0, common_1.Req)()),

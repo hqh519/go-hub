@@ -61,10 +61,50 @@ function inst() {
   }
 }
 
-// -------- 目录 --------
+// -------- 目录（v1.3.0，v1.3.9 起仅回收站/旧接口兼容不再使用） --------
 
 export async function fetchFolders() {
   const res = await axios.get('/api/memo/folders', { params: { instanceId: inst() } });
+  return unwrap(res);
+}
+
+/* ── v1.3.9：文档节点树 ─────────────────────────────────────── */
+
+/** 节点树（一次拉全；nodes 是扁平数组，前端按 parentId 组树） */
+export async function fetchTree() {
+  const res = await axios.get('/api/memo/tree', { params: { instanceId: inst() } });
+  return unwrap(res);
+}
+
+/**
+ * 按类型创建节点。
+ * type: note | diary | journal | inspiration
+ * parentId 显式给了就挂到该节点下，否则按类型的默认目录落点。
+ */
+export async function createNode({ type = 'note', parentId = '', title = '', content = '' } = {}) {
+  const res = await axios.post('/api/memo', { type, parentId, title, content, instanceId: inst() });
+  return unwrap(res);
+}
+
+/** 改名（固定一级节点会被服务端拒绝） */
+export async function renameNode(id, title) {
+  const res = await axios.put(`/api/memo/${encodeURIComponent(id)}/rename`, { title, instanceId: inst() });
+  return unwrap(res);
+}
+
+/** 拖拽换父级 / 同级排序（v1.3.9 新口径） */
+export async function moveNode(id, { parentId = '', sort } = {}) {
+  const res = await axios.post(`/api/memo/${encodeURIComponent(id)}/move`, {
+    parentId,
+    sort,
+    instanceId: inst(),
+  });
+  return unwrap(res);
+}
+
+/** 同级重排（拖拽落位后提交该层级的新顺序） */
+export async function reorderNodes(parentId, ids) {
+  const res = await axios.post('/api/memo/reorder', { parentId, ids, instanceId: inst() });
   return unwrap(res);
 }
 

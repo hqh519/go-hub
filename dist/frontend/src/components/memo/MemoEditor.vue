@@ -216,8 +216,11 @@
                     <input
                         v-model="title"
                         class="me-title"
+                        :class="{ 'is-locked': note && note.isSystem }"
                         :placeholder="$t('memo.untitled')"
                         maxlength="200"
+                        :readonly="!!(note && note.isSystem)"
+                        :title="note && note.isSystem ? $t('memo.systemNodeLocked') : ''"
                         @input="onTitleInput"
                     />
                     <!--
@@ -10736,6 +10739,11 @@ export default {
 .me-title::placeholder {
     color: var(--el-text-color-placeholder);
     font-weight: 500;
+}
+/* v1.3.9：系统固定一级节点（笔记 / 日记 / 札记 / 灵感）标题只读 */
+.me-title.is-locked {
+    cursor: default;
+    color: var(--el-text-color-regular);
 }
 .me-status {
     display: flex;

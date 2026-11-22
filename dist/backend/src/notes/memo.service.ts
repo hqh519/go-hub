@@ -53,6 +53,40 @@ export interface MemoFolderView {
   updatedAt: number;
 }
 
+/**
+ * v1.3.9：文档节点树的一个节点。
+ *
+ * 与旧目录最大的区别：节点**本身就是一篇笔记**（有正文、有标题、有版本），
+ * 同时可以挂子节点。所以这里不再区分「目录」与「笔记」，只保留一个 `isSystem`
+ * 标记 4 个不可删改移动的一级固定节点。
+ */
+export interface MemoTreeNode {
+  id: string;
+  title: string;
+  parentId: string;
+  sort: number;
+  /** 系统固定一级节点（笔记 / 日记 / 札记 / 灵感） */
+  isSystem: boolean;
+  status: string;
+  charCount: number;
+  wordCount: number | null;
+  /** 直属子笔记数 */
+  directCount: number;
+  /** 含所有子孙的笔记数 */
+  totalCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 4 个固定一级节点的定义（顺序即 sort） */
+const SYSTEM_ROOT_TITLES = ['笔记', '日记', '札记', '灵感'] as const;
+type MemoNodeType = 'note' | 'diary' | 'journal' | 'inspiration';
+
+/** 迁移标记按「用户 + 实例」分开记：不同用户的数据互不影响，谁先访问谁先迁 */
+function migratedKey(instanceId: string, viewer: string): string {
+  return `memoTreeMigrated:${instanceId || '_'}:${viewer}`;
+}
+
 const MAX_TITLE = 200;
 /** 每篇内容最多保留多少条历史快照（需求原文：100 条，超出删旧） */
 const MAX_HISTORY = 100;
@@ -82,7 +116,532 @@ function timeOf(v: unknown): number {
 @Injectable()
 export class MemoService {
   // ============================================================
-  //  目录
+  //  v1.3.9：文档节点树
+  //
+  //  旧模型是「目录（memo_folders）+ 笔记（notes.folderId）」两套东西；
+  //  新模型里每个节点本身就是一篇笔记（notes.parentId 自引用），
+  //  既可以写正文，也可以无限嵌套子笔记 —— 与 Typora / Notion 的目录树一致。
+  //
+  //  旧目录不删除：首次访问时按「父先子后」转成空正文的目录页节点，
+  //  并把原目录下的笔记 parentId 指过去。迁移标记按「用户 + 实例」分开，
+  //  多用户/多实例各自迁移，互不影响。
+  // ============================================================
+
+  /** 4 个固定一级节点：缺哪个补哪个（按作者 + 实例各一份） */
+  private async ensureSystemRoots(viewer: string, instanceId: string): Promise<Map<string, string>> {
+    const rows = await prisma.note.findMany({
+      where: {
+        author: viewer,
+        instanceId,
+        kind: 'memo',
+        isSystem: true,
+        parentId: '',
+        status: { not: 'deleted' },
+      },
+      select: { id: true, title: true },
+    });
+    const byTitle = new Map<string, string>();
+    for (const r of rows as any[]) byTitle.set(String(r.title || ''), String(r.id));
+    for (let i = 0; i < SYSTEM_ROOT_TITLES.length; i += 1) {
+      const title = SYSTEM_ROOT_TITLES[i];
+      if (byTitle.has(title)) continue;
+      const row = await prisma.note.create({
+        data: {
+          kind: 'memo',
+          title,
+          content: '',
+          contentFormat: 'markdown',
+          parentId: '',
+          sort: i,
+          isSystem: true,
+          author: viewer,
+          instanceId,
+          visibility: 'private',
+          status: 'published',
+          publishedAt: new Date(),
+          firstPublishedAt: new Date(),
+          metas: JSON.stringify({ excerpt: '', charCount: 0, wordCount: 0 }),
+        },
+        select: { id: true },
+      });
+      byTitle.set(title, String(row.id));
+      appLog.info('memo', `创建固定节点「${title}」（${viewer}@${instanceId || 'default'}）`);
+    }
+    return byTitle;
+  }
+
+  /**
+   * 旧目录 → 文档节点（幂等）。
+   *
+   * 只处理当前 `viewer + instanceId` 的数据：迁移标记也是这个粒度，
+   * 否则 A 用户先访问触发了全局标记，B 用户的目录就永远不会被转过来。
+   */
+  private async ensureTreeMigrated(viewer: string, instanceId: string): Promise<Map<string, string>> {
+    const key = migratedKey(instanceId, viewer);
+    const flag = await prisma.setting.findUnique({ where: { key } });
+    if (String(flag?.value || '') !== '1') {
+      const folders = await prisma.memoFolder.findMany({
+        where: { author: viewer, instanceId },
+        orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+      });
+      if (folders.length) {
+        const map = new Map<string, string>();
+        const remaining = folders.slice();
+        let guard = 0;
+        // 父节点必须先落库：旧目录允许任意顺序，这里按「父已建」反复扫一遍
+        while (remaining.length && guard < MAX_FOLDER_DEPTH * 4) {
+          guard += 1;
+          for (let i = remaining.length - 1; i >= 0; i -= 1) {
+            const f = remaining[i] as any;
+            const pid = String(f.parentId || '');
+            if (pid && !map.has(pid)) continue;
+            const parentNote = pid ? map.get(pid)! : '';
+            const row = await prisma.note.create({
+              data: {
+                kind: 'memo',
+                title: String(f.name || '未命名目录').slice(0, MAX_TITLE),
+                content: '',
+                contentFormat: 'markdown',
+                parentId: parentNote,
+                sort: asInt(f.sort),
+                isSystem: false,
+                author: viewer,
+                instanceId,
+                visibility: 'private',
+                status: 'published',
+                publishedAt: new Date(),
+                firstPublishedAt: new Date(),
+                // 留一个来源标记：排查「这个空节点哪来的」时能直接对上旧目录
+                metas: JSON.stringify({
+                  excerpt: '',
+                  charCount: 0,
+                  wordCount: 0,
+                  migratedFromFolder: String(f.id),
+                }),
+              },
+              select: { id: true },
+            });
+            map.set(String(f.id), String(row.id));
+            remaining.splice(i, 1);
+          }
+        }
+        const notes = await prisma.note.findMany({
+          where: { author: viewer, instanceId, kind: 'memo', parentId: '', folderId: { not: '' } },
+          select: { id: true, folderId: true },
+        });
+        for (const n of notes as any[]) {
+          const pid = map.get(String(n.folderId || ''));
+          if (pid) await prisma.note.update({ where: { id: String(n.id) }, data: { parentId: pid } });
+        }
+        appLog.info(
+          'memo',
+          `旧目录迁移完成：${folders.length} 个目录 → 文档节点（${viewer}@${instanceId || 'default'}）`,
+        );
+      }
+      await prisma.setting.upsert({ where: { key }, create: { key, value: '1' }, update: { value: '1' } });
+    }
+    return this.ensureSystemRoots(viewer, instanceId);
+  }
+
+  /**
+   * 树（一次拉全）：笔记数量按人头是「几百篇」级别，扁平数组 + 前端组树最省事，
+   * 逐层懒加载会让「展开到第 5 层」变成 5 次请求，拖拽跨层移动还要额外刷新。
+   */
+  async listTree(viewer: string, instanceId: string) {
+    await this.ensureTreeMigrated(viewer, instanceId);
+    const rows = await prisma.note.findMany({
+      where: { author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },
+      select: {
+        id: true,
+        title: true,
+        parentId: true,
+        sort: true,
+        isSystem: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+        metas: true,
+      },
+      orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+    });
+    const nodes: MemoTreeNode[] = (rows as any[]).map((r) => {
+      const metas = safeParse(r.metas, {});
+      return {
+        id: String(r.id),
+        title: String(r.title || ''),
+        parentId: String(r.parentId || ''),
+        sort: asInt(r.sort),
+        isSystem: !!r.isSystem,
+        status: String(r.status || ''),
+        charCount: asInt(metas.charCount),
+        wordCount: metas.wordCount != null ? asInt(metas.wordCount) : null,
+        directCount: 0,
+        totalCount: 0,
+        createdAt: timeOf(r.createdAt),
+        updatedAt: timeOf(r.updatedAt),
+      };
+    });
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    for (const n of nodes) {
+      if (n.parentId && byId.has(n.parentId)) byId.get(n.parentId)!.directCount += 1;
+    }
+    // 子孙总数：每个节点给它的所有祖先 +1
+    for (const n of nodes) {
+      let pid = n.parentId;
+      let guard = 0;
+      while (pid && byId.has(pid) && guard < MAX_FOLDER_DEPTH) {
+        byId.get(pid)!.totalCount += 1;
+        pid = byId.get(pid)!.parentId;
+        guard += 1;
+      }
+    }
+    return {
+      nodes,
+      roots: SYSTEM_ROOT_TITLES.map((t) => {
+        const hit = nodes.find((n) => n.isSystem && n.title === t);
+        return { title: t, id: hit ? hit.id : '' };
+      }),
+    };
+  }
+
+  /** 在指定父节点下找同名子节点，没有就建一个空正文的目录页 */
+  private async ensureChildNode(
+    viewer: string,
+    instanceId: string,
+    parentId: string,
+    title: string,
+    sortHint = 0,
+  ): Promise<string> {
+    const hit = await prisma.note.findFirst({
+      where: {
+        author: viewer,
+        instanceId,
+        kind: 'memo',
+        parentId,
+        title,
+        status: { not: 'deleted' },
+      },
+      select: { id: true },
+    });
+    if (hit) return String(hit.id);
+    const last = await prisma.note.findFirst({
+      where: { author: viewer, instanceId, kind: 'memo', parentId, status: { not: 'deleted' } },
+      orderBy: { sort: 'desc' },
+      select: { sort: true },
+    });
+    const row = await prisma.note.create({
+      data: {
+        kind: 'memo',
+        title,
+        content: '',
+        contentFormat: 'markdown',
+        parentId,
+        sort: Math.max(asInt(last?.sort) + 1, sortHint),
+        author: viewer,
+        instanceId,
+        visibility: 'private',
+        status: 'published',
+        publishedAt: new Date(),
+        firstPublishedAt: new Date(),
+        metas: JSON.stringify({ excerpt: '', charCount: 0, wordCount: 0, autoFolder: true }),
+      },
+      select: { id: true },
+    });
+    return String(row.id);
+  }
+
+  /**
+   * 默认标题的下一个序号：`未命名笔记1`、`未命名笔记2`……
+   *
+   * 只看「同一父节点下」的兄弟，不数全库 —— 用户把 A 目录里的未命名笔记删了，
+   * B 目录里的编号不该跟着变。
+   */
+  private async nextUntitledIndex(viewer: string, instanceId: string, parentId: string, prefix: string): Promise<number> {
+    const rows = await prisma.note.findMany({
+      where: { author: viewer, instanceId, kind: 'memo', parentId, title: { startsWith: prefix } },
+      select: { title: true },
+    });
+    let max = 0;
+    for (const r of rows as any[]) {
+      const m = new RegExp(`^${prefix}(\\d+)$`).exec(String(r.title || ''));
+      if (m) max = Math.max(max, asInt(m[1]));
+    }
+    return max + 1;
+  }
+
+  private static pad2(n: number): string {
+    return String(n).padStart(2, '0');
+  }
+
+  /**
+   * 按类型创建节点。
+   *
+   * - `parentId` 显式给了（在某个节点上「新建子笔记」）→ 直接挂到它下面，
+   *   不再套 `/日记/YYYY/MM` 那套默认路径 —— 用户已经指明了位置，再套一层就是反直觉。
+   * - 没给 → 按类型落到默认的一级固定目录下。
+   */
+  async createNode(
+    viewer: string,
+    instanceId: string,
+    input: { type?: unknown; parentId?: unknown; title?: unknown; content?: unknown },
+  ) {
+    const rawType = String(input.type ?? 'note');
+    const type: MemoNodeType =
+      rawType === 'diary' || rawType === 'journal' || rawType === 'inspiration' ? rawType : 'note';
+    const roots = await this.ensureTreeMigrated(viewer, instanceId);
+    const now = new Date();
+    const YYYY = String(now.getFullYear());
+    const MM = MemoService.pad2(now.getMonth() + 1);
+    const DD = MemoService.pad2(now.getDate());
+    const hh = MemoService.pad2(now.getHours());
+    const mi = MemoService.pad2(now.getMinutes());
+    const ss = MemoService.pad2(now.getSeconds());
+
+    const explicitParent = String(input.parentId ?? '');
+    let parentId = '';
+    let title = String(input.title ?? '').trim();
+
+    if (explicitParent) {
+      const ok = await prisma.note.findFirst({
+        where: {
+          id: explicitParent,
+          author: viewer,
+          instanceId,
+          kind: 'memo',
+          status: { not: 'deleted' },
+        },
+        select: { id: true },
+      });
+      if (!ok) return { error: '上级节点不存在' };
+      parentId = explicitParent;
+    }
+
+    if (!parentId) {
+      const rootNote = roots.get(SYSTEM_ROOT_TITLES[0]) || roots.get('笔记') || '';
+      if (type === 'diary') {
+        const root = roots.get('日记') || '';
+        const year = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+        parentId = await this.ensureChildNode(viewer, instanceId, year, MM, 2);
+      } else if (type === 'journal') {
+        const root = roots.get('札记') || '';
+        parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+      } else if (type === 'inspiration') {
+        const root = roots.get('灵感') || '';
+        parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+      } else {
+        parentId = rootNote;
+      }
+    }
+
+    if (!title) {
+      if (type === 'diary') title = `${YYYY}${MM}${DD}-${hh}${mi}`;
+      else if (type === 'inspiration') title = `灵感:${YYYY}${MM}${DD}-${hh}${mi}${ss}`;
+      else {
+        const prefix = type === 'journal' ? '未命名札记' : '未命名笔记';
+        title = `${prefix}${await this.nextUntitledIndex(viewer, instanceId, parentId, prefix)}`;
+      }
+    }
+    title = title.slice(0, MAX_TITLE);
+
+    const md = String(input.content ?? '');
+    const useIds = await this.blockIdsEnabled(instanceId, viewer);
+    const content = useIds ? withBlockIds(md) : md;
+    const last = await prisma.note.findFirst({
+      where: { author: viewer, instanceId, kind: 'memo', parentId, status: { not: 'deleted' } },
+      orderBy: { sort: 'desc' },
+      select: { sort: true },
+    });
+    const row = await prisma.note.create({
+      data: {
+        kind: 'memo',
+        title,
+        content,
+        contentFormat: 'markdown',
+        parentId,
+        sort: asInt(last?.sort) + 1,
+        isSystem: false,
+        author: viewer,
+        instanceId,
+        visibility: 'private',
+        status: 'published',
+        publishedAt: new Date(),
+        firstPublishedAt: new Date(),
+        metas: JSON.stringify({
+          excerpt: excerptOf(content),
+          charCount: countMemoChars(content),
+          wordCount: countMemoWords(content),
+        }),
+      },
+    });
+    await this.rebuildNoteIndex(row.id, content, viewer, instanceId);
+    return {
+      id: row.id,
+      title,
+      parentId,
+      type,
+      version: asInt(row.version, 1),
+      createdAt: timeOf(row.createdAt),
+    };
+  }
+
+  /** 移动 / 同级排序（拖拽）；系统固定节点不可移动 */
+  async moveNode(
+    viewer: string,
+    instanceId: string,
+    id: string,
+    input: { parentId?: unknown; sort?: unknown },
+  ) {
+    const row = await prisma.note.findFirst({
+      where: { id, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, isSystem: true, parentId: true },
+    });
+    if (!row) return { error: '笔记不存在' };
+    if (row.isSystem) return { error: '固定一级目录不能移动' };
+    const target = String(input.parentId ?? '');
+    if (target) {
+      if (target === id) return { error: '不能移动到自身下面' };
+      const ok = await prisma.note.findFirst({
+        where: { id: target, author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },
+        select: { id: true },
+      });
+      if (!ok) return { error: '目标节点不存在' };
+      let cur = target;
+      let guard = 0;
+      while (cur && guard < MAX_FOLDER_DEPTH) {
+        if (cur === id) return { error: '不能移动到自己的子节点下' };
+        const p = await prisma.note.findFirst({
+          where: { id: cur, author: viewer, instanceId, kind: 'memo' },
+          select: { parentId: true },
+        });
+        cur = String(p?.parentId || '');
+        guard += 1;
+      }
+    }
+    const data: Record<string, unknown> = { parentId: target };
+    if (input.sort !== undefined) data.sort = asInt(input.sort);
+    else {
+      const last = await prisma.note.findFirst({
+        where: { author: viewer, instanceId, kind: 'memo', parentId: target, status: { not: 'deleted' } },
+        orderBy: { sort: 'desc' },
+        select: { sort: true },
+      });
+      data.sort = asInt(last?.sort) + 1;
+    }
+    await prisma.note.update({ where: { id }, data: data as any });
+    return { ok: true, parentId: target };
+  }
+
+  /** 同级重排（拖拽落位后一次提交；系统固定节点不参与） */
+  async reorderNodes(viewer: string, instanceId: string, parentId: string, ids: unknown) {
+    const list = Array.isArray(ids) ? ids.map((x) => String(x)) : [];
+    if (!list.length) return { ok: true, count: 0 };
+    const rows = await prisma.note.findMany({
+      where: { id: { in: list }, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, isSystem: true },
+    });
+    const allowed = new Set((rows as any[]).filter((r) => !r.isSystem).map((r) => String(r.id)));
+    let i = 0;
+    for (const id of list) {
+      if (!allowed.has(id)) continue;
+      await prisma.note.update({ where: { id }, data: { parentId, sort: i } });
+      i += 1;
+    }
+    return { ok: true, count: i };
+  }
+
+  /** 改名（系统固定节点拒绝；正文与名称是两件事，改名不动 version） */
+  async renameNode(viewer: string, instanceId: string, id: string, title: unknown) {
+    const row = await prisma.note.findFirst({
+      where: { id, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, isSystem: true },
+    });
+    if (!row) return { error: '笔记不存在' };
+    if (row.isSystem) return { error: '固定一级目录不能修改名称' };
+    const name = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE);
+    if (!name) return { error: '名称不能为空' };
+    await prisma.note.update({ where: { id }, data: { title: name } });
+    return { ok: true, title: name };
+  }
+
+  /** 子树 id（含自身），不限状态 —— 恢复时要连已删除的子孙一起捞出来 */
+  private async subtreeIds(viewer: string, instanceId: string, id: string): Promise<string[]> {
+    const out: string[] = [];
+    let layer = [String(id)];
+    const seen = new Set<string>();
+    let guard = 0;
+    while (layer.length && guard < MAX_FOLDER_DEPTH * 4) {
+      guard += 1;
+      for (const cur of layer) if (!seen.has(cur)) seen.add(cur);
+      const rows = await prisma.note.findMany({
+        where: { author: viewer, instanceId, kind: 'memo', parentId: { in: layer } },
+        select: { id: true },
+      });
+      const next: string[] = [];
+      for (const r of rows as any[]) {
+        const nid = String(r.id);
+        if (!seen.has(nid)) {
+          seen.add(nid);
+          next.push(nid);
+        }
+      }
+      out.push(...layer.filter((x) => !out.includes(x)));
+      layer = next;
+    }
+    return out;
+  }
+
+  /**
+   * 删除节点 = 整棵子树进回收站。
+   *
+   * 单独删一篇会让它的子节点变成「父不存在」的孤儿（树里直接消失），
+   * 所以这里必须递归。系统固定节点拒绝。
+   */
+  async trashTree(viewer: string, instanceId: string, id: string) {
+    const row = await prisma.note.findFirst({
+      where: { id, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, isSystem: true, status: true },
+    });
+    if (!row) return { error: '笔记不存在' };
+    if (row.isSystem) return { error: '固定一级目录不能删除' };
+    const ids = await this.subtreeIds(viewer, instanceId, id);
+    const r = await prisma.note.updateMany({
+      where: { id: { in: ids }, status: { not: 'deleted' } },
+      data: { status: 'deleted', deletedAt: new Date() },
+    });
+    appLog.info('memo', `节点进回收站：${id}（含子孙共 ${r.count} 篇）`);
+    return { ok: true, count: r.count };
+  }
+
+  /** 恢复：自身 + 子孙 + 已删除的祖先链（否则恢复完在树里看不见） */
+  async restoreTree(viewer: string, instanceId: string, id: string) {
+    const row = await prisma.note.findFirst({
+      where: { id, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, parentId: true, status: true },
+    });
+    if (!row) return { error: '笔记不存在' };
+    const ids = await this.subtreeIds(viewer, instanceId, id);
+    const ancestors: string[] = [];
+    let cur = String(row.parentId || '');
+    let guard = 0;
+    while (cur && guard < MAX_FOLDER_DEPTH) {
+      const p: any = await prisma.note.findFirst({
+        where: { id: cur, author: viewer, instanceId, kind: 'memo' },
+        select: { id: true, parentId: true, status: true },
+      });
+      if (!p) break;
+      if (String(p.status || '') === 'deleted') ancestors.push(String(p.id));
+      cur = String(p.parentId || '');
+      guard += 1;
+    }
+    await prisma.note.updateMany({
+      where: { id: { in: [...ids, ...ancestors] } },
+      data: { status: 'published', deletedAt: null },
+    });
+    return { ok: true, count: ids.length + ancestors.length };
+  }
+
+  // ============================================================
+  //  目录（v1.3.0，v1.3.9 起仅保留接口兼容；前端已不再使用）
   // ============================================================
 
   /**
@@ -377,6 +936,10 @@ export class MemoService {
       content: String(row.content || ''),
       contentFormat: String(row.contentFormat || ''),
       folderId: String(row.folderId || ''),
+      // v1.3.9：文档节点树需要父级 / 排序 / 系统标记
+      parentId: String((row as any).parentId || ''),
+      sort: asInt((row as any).sort),
+      isSystem: !!(row as any).isSystem,
       version: asInt(row.version, 1),
       status: String(row.status || ''),
       createdAt: timeOf(row.createdAt),
@@ -417,7 +980,7 @@ export class MemoService {
   async createNote(
     viewer: string,
     instanceId: string,
-    input: { title?: unknown; content?: unknown; folderId?: unknown },
+    input: { title?: unknown; content?: unknown; folderId?: unknown; parentId?: unknown },
   ) {
     const md = String(input.content ?? '');
     const useIds = await this.blockIdsEnabled(instanceId, viewer);
@@ -429,6 +992,22 @@ export class MemoService {
       const ok = await prisma.memoFolder.findFirst({ where: { id: folderId, author: viewer, instanceId }, select: { id: true } });
       if (!ok) return { error: '目录不存在' };
     }
+    // v1.3.9：新前端按 parentId 建节点；folderId 只为旧调用方保留
+    const parentId = String(input.parentId ?? '');
+    if (parentId) {
+      const ok = await prisma.note.findFirst({
+        where: { id: parentId, author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },
+        select: { id: true },
+      });
+      if (!ok) return { error: '上级节点不存在' };
+    }
+    const last = parentId
+      ? await prisma.note.findFirst({
+          where: { author: viewer, instanceId, kind: 'memo', parentId, status: { not: 'deleted' } },
+          orderBy: { sort: 'desc' },
+          select: { sort: true },
+        })
+      : null;
     const row = await prisma.note.create({
       data: {
         kind: 'memo',
@@ -437,6 +1016,8 @@ export class MemoService {
         // 新内容一律 markdown；空正文也算 markdown（格式由编辑器决定，与内容长短无关）
         contentFormat: 'markdown',
         folderId,
+        parentId,
+        sort: asInt(last?.sort) + 1,
         author: viewer,
         instanceId,
         visibility: 'private',
@@ -466,9 +1047,16 @@ export class MemoService {
   ) {
     const row = await prisma.note.findFirst({
       where: { id, author: viewer, instanceId, kind: 'memo' },
-      select: { id: true, version: true, content: true, folderId: true, title: true },
+      select: { id: true, version: true, content: true, folderId: true, title: true, isSystem: true },
     });
     if (!row) return { error: '笔记不存在' };
+    /*
+     * v1.3.9：4 个固定一级节点可以写正文（它们也是笔记），但名称不能改 ——
+     * 「笔记 / 日记 / 札记 / 灵感」是新建规则的落点，改名会让规则失效。
+     */
+    if ((row as any).isSystem && input.title !== undefined && String(input.title ?? '').trim() !== String(row.title || '').trim()) {
+      return { error: '固定一级目录不能修改名称' };
+    }
     const expect = asInt(input.version, 0);
     if (expect && expect !== asInt(row.version, 1)) {
       // 冲突要留痕：排查「内容莫名变回去」时，先看有没有被另一端盖过
@@ -541,13 +1129,24 @@ export class MemoService {
 
   /** 彻底删除：只删笔记行，图床文件保持不动（可能是别的笔记也在引用的图） */
   async purge(viewer: string, instanceId: string, id: string) {
-    const row = await prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true, status: true } });
+    const row = await prisma.note.findFirst({
+      where: { id, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, status: true, parentId: true, isSystem: true },
+    });
     if (!row) return { error: '笔记不存在' };
+    if ((row as any).isSystem) return { error: '固定一级目录不能删除' };
     /*
      * v1.3.5（需求：删除先进回收站、从回收站再彻底删除）
      * 必须先软删（status='deleted'）才允许 purge，防止调用方绕过回收站把笔记直接抹掉。
      */
     if (String(row.status || '') !== 'deleted') return { error: '只能从回收站彻底删除' };
+    /*
+     * v1.3.9：彻底删除父节点前把直接子节点上浮到它的父级。
+     * 否则子节点的 parentId 指向一条不存在的记录，树里会整支消失（数据还在，但找不到）。
+     */
+    await prisma.note
+      .updateMany({ where: { parentId: id, author: viewer, instanceId, kind: 'memo' }, data: { parentId: String(row.parentId || '') } })
+      .catch(() => undefined);
     await prisma.note.delete({ where: { id } });
     // 物理删除，不可恢复 —— 必须留一条可追溯的记录
     appLog.info('memo', `彻底删除笔记 ${id}`);

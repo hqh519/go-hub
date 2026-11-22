@@ -59,12 +59,9 @@
                     type="button"
                     class="memo-icon-btn"
                     :title="$t('common.back')"
-                    @click="backToList"
+                    @click="backToTree"
                 >
                     <font-awesome-icon icon="chevron-left" />
-                </button>
-                <button v-if="isMobile" type="button" class="memo-icon-btn" :title="$t('memo.folders')" @click="treeDrawer = true">
-                    <font-awesome-icon icon="folder-tree" />
                 </button>
                 <!--
                     v1.3.5（需求）：编辑器设置左侧增加「重新加载」，
@@ -81,86 +78,105 @@
         </div>
 
         <div class="memo-cols">
-            <!-- 左：目录 -->
+            <!--
+                左：记事树（v1.3.9）
+                目录与笔记合并成「文档节点」：每个节点本身就是一篇笔记，
+                点节点 = 打开这篇笔记，同时可以在它下面继续挂子笔记。
+            -->
             <aside
-                v-if="!isMobile"
+                v-show="!isMobile || (!editingId && activeFolder !== '__trash')"
                 class="memo-col memo-col-tree"
-                :style="{ flexBasis: `${treeWidth}px`, maxWidth: `${treeWidth}px` }"
+                :style="isMobile ? null : { flexBasis: `${treeWidth}px`, maxWidth: `${treeWidth}px` }"
                 @contextmenu.prevent
             >
-                <MemoTree v-model:active="activeFolder" :instance-id="instanceId" @loaded="onTreeLoaded" />
+                <MemoTree
+                    ref="tree"
+                    :active="activeFolder"
+                    :instance-id="instanceId"
+                    @select="onPickNode"
+                    @create="openCreateDialog()"
+                    @create-child="openCreateDialog"
+                    @changed="onTreeChanged"
+                    @trash="openTrash"
+                    @loaded="onTreeLoaded"
+                />
                 <!--
-                    v1.3.3（需求）：桌面端目录栏可以拖边框改宽度。
+                    v1.3.3（需求）：桌面端树栏可以拖边框改宽度。
                     宽度存 localStorage，下次进来还是上次的宽度。
                 -->
                 <span
+                    v-if="!isMobile"
                     class="memo-tree-resizer"
                     :title="$t('memo.treeResize')"
                     @pointerdown.prevent="startTreeResize"
                 ></span>
             </aside>
 
-            <!-- 中：列表 -->
-            <section
-                v-show="!isMobile || !editingId"
-                class="memo-col memo-col-list"
-                :style="isMobile ? null : { flexBasis: `${listWidth}px`, maxWidth: `${listWidth}px` }"
-                @contextmenu.prevent
+            <!-- 右：回收站 / 编辑器（两栏，v1.3.9 去掉中间列表栏） -->
+            <main
+                v-show="!isMobile || editingId || activeFolder === '__trash'"
+                class="memo-col memo-col-editor"
             >
+                <!-- 回收站：仍用列表形态（它没有树结构，逐条恢复 / 彻底删除最直接） -->
                 <MemoList
-                    ref="list"
-                    :folder-id="activeFolder"
-                    :active-id="selectedId"
-                    :folders="folders"
-                    @select="openNote"
-                    @create="createNote"
-                    @changed="onListChanged"
+                    v-if="activeFolder === '__trash'"
+                    ref="trashList"
+                    folder-id="__trash"
+                    :active-id="''"
+                    :folders="[]"
+                    @changed="onTrashChanged"
                 />
-                <!--
-                    v1.3.3.2（需求）：桌面端列表栏也能拖边框改宽度。
-                    与目录栏同一套实现：宽度存 localStorage，下次进来还是上次的宽度。
-                -->
-                <span
-                    v-if="!isMobile"
-                    class="memo-list-resizer"
-                    :title="$t('memo.listResize')"
-                    @pointerdown.prevent="startListResize"
-                ></span>
-            </section>
-
-            <!-- 右：编辑器 -->
-            <main v-show="!isMobile || editingId" class="memo-col memo-col-editor">
-                <!-- v1.3.1.1（需求）：移动端这里原来有一条「返回 + 标题」的横条，已移除 -->
-                <MemoEditor
-                    v-if="currentNote"
-                    ref="editor"
-                    :note="currentNote"
-                    :instance-id="instanceId"
-                    :toolbar-config="editorSettings.toolbarLines"
-                    :editor-config="editorSettings"
-                    :topbar-hidden="topbarHidden"
-                    @saved="onSaved"
-                    @publish-moment="onPublishMoment"
-                    @reload="reloadNote"
-                    @open-note="openNote"
-                />
-                <div v-else class="memo-blank">
-                    <font-awesome-icon icon="file-lines" class="memo-blank-icon" />
-                    <p class="memo-blank-title">{{ $t('memo.pickOrCreate') }}</p>
-                    <button type="button" class="memo-blank-btn" @click="createNote">
-                        {{ $t('memo.newNote') }}
-                    </button>
-                </div>
+                <template v-else>
+                    <MemoEditor
+                        v-if="currentNote"
+                        ref="editor"
+                        :note="currentNote"
+                        :instance-id="instanceId"
+                        :toolbar-config="editorSettings.toolbarLines"
+                        :editor-config="editorSettings"
+                        :topbar-hidden="topbarHidden"
+                        @saved="onSaved"
+                        @publish-moment="onPublishMoment"
+                        @reload="reloadNote"
+                        @open-note="openNote"
+                    />
+                    <div v-else class="memo-blank">
+                        <font-awesome-icon icon="file-lines" class="memo-blank-icon" />
+                        <p class="memo-blank-title">{{ $t('memo.pickOrCreate') }}</p>
+                        <button type="button" class="memo-blank-btn" @click="openCreateDialog()">
+                            {{ $t('memo.newNote') }}
+                        </button>
+                    </div>
+                </template>
             </main>
         </div>
 
-        <!-- 移动端目录抽屉（v1.3.1：78% → 90%，目录名长了也能看全） -->
-        <el-drawer v-if="isMobile" v-model="treeDrawer" direction="ltr" size="90%" :with-header="false">
-            <!-- v1.3.3.3（需求）：移动端抽屉里的目录栏同样屏蔽原生右键（长按）菜单 -->
-            <div class="memo-tree-drawer-body" @contextmenu.prevent>
-                <MemoTree v-model:active="activeFolderDrawer" :instance-id="instanceId" @loaded="onTreeLoaded" />
+        <!--
+            v1.3.9（需求）：新建按钮先选类型。
+            4 种类型各有默认标题与默认落点：
+              笔记 → 未命名笔记x，落在 /笔记
+              日记 → YYYYMMDD-HHMM，落在 /日记/YYYY/MM
+              札记 → 未命名札记x，落在 /札记/YYYY
+              灵感 → 灵感:YYYYMMDD-HHMMSS，落在 /灵感/YYYY
+        -->
+        <el-dialog v-model="createDlgVisible" :title="$t('memo.createTitle')" width="440px" append-to-body class="memo-create-dialog">
+            <p class="memo-create-tip">{{ createParentId ? $t('memo.createChildTip') : $t('memo.createTip') }}</p>
+            <div class="memo-create-list">
+                <button
+                    v-for="t in createTypes"
+                    :key="t.key"
+                    type="button"
+                    class="memo-create-item"
+                    @click="doCreate(t.key)"
+                >
+                    <font-awesome-icon :icon="t.icon" class="memo-create-icon" />
+                    <span class="memo-create-body">
+                        <span class="memo-create-name">{{ $t(t.label) }}</span>
+                        <span class="memo-create-desc">{{ $t(t.desc) }}</span>
+                    </span>
+                </button>
             </div>
-        </el-drawer>
+        </el-dialog>
 
         <!--
             v1.3.1.2（需求：选中文字「发布到瞬间」）——
@@ -322,7 +338,7 @@ import MemoTree from '@/components/memo/MemoTree.vue';
 import MemoList from '@/components/memo/MemoList.vue';
 import MemoEditor from '@/components/memo/MemoEditor.vue';
 import { DEFAULT_TOOLBAR_LINES, TOOLBAR_TOKENS, DEFAULT_INPUT_TOOLS, DEFAULT_CUSTOM_CSS, DEFAULT_STICKY } from '@/utils/memoEditorConfig';
-import { setMemoInstance, fetchNote, createNote as apiCreateNote, memoError } from '@/utils/memoApi';
+import { setMemoInstance, fetchNote, createNode as apiCreateNode, memoError } from '@/utils/memoApi';
 import { excerptOf } from '@/utils/markdown';
 import { ensureInstanceUnlocked, revokeInstanceUnlock } from '@/utils/instanceSwitch';
 import { setEmptyStackBackHandler } from '@/utils/layerStack';
@@ -335,11 +351,22 @@ export default {
             isMobile: false,
             /** 当前实例（'' = 默认实例），口径同其它后台页 */
             instance: '',
-            /** '' 全部 / '__root' 未归档 / '__trash' 回收站 / 目录 id */
+            /** '' 未选 / '__trash' 回收站 / 笔记节点 id */
             activeFolder: '',
+            /** 树节点（v1.3.9：扁平数组，组件内部组树；这里保留一份供「被删节点是否在当前链上」判断） */
             folders: [],
             selectedId: '',
             currentNote: null,
+            /** v1.3.9：新建类型选择弹窗 */
+            createDlgVisible: false,
+            /** 非空 = 在该节点下新建子笔记（不再套默认目录） */
+            createParentId: '',
+            createTypes: [
+                { key: 'note', icon: 'book', label: 'memo.typeNote', desc: 'memo.typeNoteDesc' },
+                { key: 'diary', icon: 'calendar', label: 'memo.typeDiary', desc: 'memo.typeDiaryDesc' },
+                { key: 'journal', icon: 'edit', label: 'memo.typeJournal', desc: 'memo.typeJournalDesc' },
+                { key: 'inspiration', icon: 'bolt', label: 'memo.typeInspiration', desc: 'memo.typeInspirationDesc' },
+            ],
             treeDrawer: false,
             settingsVisible: false,
             /** v1.3.2：刚复制的工具名（显示在可用工具列表最下方） */
@@ -388,10 +415,8 @@ export default {
             instances: [],
             topbarHidden: false,
             lastScrollTop: 0,
-            /** v1.3.3：左侧目录栏宽度（桌面端可拖拽） */
+            /** v1.3.3：左侧树栏宽度（桌面端可拖拽） */
             treeWidth: 210,
-            /** v1.3.3.2：中间列表栏宽度（桌面端可拖拽） */
-            listWidth: 280,
         };
     },
     computed: {
@@ -415,16 +440,6 @@ export default {
              * 这里额外读一次 localStorage 是为了跨标签页切换实例后刷新生效。
              */
             return this.instance || '';
-        },
-        /** 抽屉里选目录 = 直接改同一个 activeFolder（避免两份状态不同步） */
-        activeFolderDrawer: {
-            get() {
-                return this.activeFolder;
-            },
-            set(v) {
-                this.activeFolder = v;
-                this.treeDrawer = false;
-            },
         },
         editingId() {
             return this.currentNote?.id || '';
@@ -462,15 +477,13 @@ export default {
         },
     },
     watch: {
-        activeFolder() {
-            // 换目录时把编辑器清空：否则右栏显示的还是上一个目录里的笔记
-            this.currentNote = null;
-            this.selectedId = '';
-        },
+        /*
+         * v1.3.9：不再在这里清空编辑器 —— 选节点与打开笔记是同一个动作（onPickNode），
+         * watch 的异步执行会在 openNote 的 await 之后把刚设进去的 currentNote 清掉。
+         */
     },
     async mounted() {
-        this.restoreTreeWidth();
-        this.restoreListWidth();
+        this.        restoreTreeWidth();
         this.syncViewport();
         window.addEventListener('resize', this.syncViewport);
         /*
@@ -491,7 +504,7 @@ export default {
             // MemoEditor 用 visualViewport 跌幅维护 kbOpen（v1.3.2 同一口径）
             if (ed && ed.kbOpen) return true;
             if (this.editingId) {
-                this.backToList();
+                this.backToTree();
                 return true;
             }
             return true;
@@ -598,11 +611,14 @@ export default {
             this._themeWasDark = undefined;
         },
         onTreeLoaded(payload) {
-            this.folders = payload?.folders || [];
+            // v1.3.9：树返回扁平节点数组（旧版是 folders + unfiled）
+            this.folders = Array.isArray(payload?.nodes) ? payload.nodes : [];
         },
         async openNote(id) {
             if (!id) return;
             this.selectedId = id;
+            // 深链 / 编辑器内跳转时同步树高亮
+            if (this.activeFolder !== '__trash') this.activeFolder = id;
             try {
                 const note = await fetchNote(id);
                 // 详情里的 contentFormat 老数据是 ''（瞬间纯文本），笔记一律 markdown
@@ -644,9 +660,11 @@ export default {
             const ed = this.$refs.editor;
             if (ed && typeof ed.saveNow === 'function') ed.saveNow();
         },
-        backToList() {
+        /** v1.3.9：移动端从编辑器回到记事树 */
+        backToTree() {
             this.currentNote = null;
             this.selectedId = '';
+            this.activeFolder = '';
             if (this.$route?.query?.id) {
                 const q = { ...this.$route.query };
                 delete q.id;
@@ -801,34 +819,65 @@ export default {
         },
 
         async createNote() {
+            // v1.3.9：旧入口保留，统一走类型选择弹窗
+            this.openCreateDialog();
+        },
+        /** 树节点点击 = 打开这篇笔记（节点本身就是文档） */
+        async onPickNode(id) {
+            if (!id) return;
+            this.activeFolder = id;
+            if (id !== this.selectedId) this.currentNote = null;
+            await this.openNote(id);
+        },
+        openTrash() {
+            this.activeFolder = '__trash';
+            this.currentNote = null;
+            this.selectedId = '';
+        },
+        /** 打开新建类型弹窗；parentId 非空 = 在该节点下建子笔记 */
+        openCreateDialog(parentId) {
+            this.createParentId = typeof parentId === 'string' && parentId && !parentId.startsWith('__') ? parentId : '';
+            this.createDlgVisible = true;
+        },
+        async doCreate(type) {
+            if (this._creating) return;
+            this._creating = true;
             try {
-                const folderId = this.activeFolder && !this.activeFolder.startsWith('__') ? this.activeFolder : '';
-                const r = await apiCreateNote({ title: '', content: '', folderId });
+                const r = await apiCreateNode({ type, parentId: this.createParentId });
                 if (!r?.id) throw new Error(this.$t('memo.saveFail'));
-                // 立刻把新笔记塞进列表顶部，再打开它 —— 不重拉整页，体感是「点了就出现」
-                this.$refs.list?.prependItem({
-                    id: r.id,
-                    title: '',
-                    excerpt: '',
-                    folderId,
-                    charCount: 0,
-                    version: r.version || 1,
-                    status: 'published',
-                    createdAt: Date.now(),
-                    updatedAt: Date.now(),
-                });
+                this.createDlgVisible = false;
+                await this.$refs.tree?.reload?.();
+                this.$refs.tree?.revealNode?.(r.id);
                 await this.openNote(r.id);
+                ElMessage.success(this.$t('memo.created'));
             } catch (e) {
                 ElMessage.error(memoError(e).message || this.$t('memo.saveFail'));
+            } finally {
+                this._creating = false;
             }
         },
+        /**
+         * 树发生变化（改名 / 拖拽 / 删除）：
+         * 只要「当前打开的笔记已经不在树上」，就把编辑器清掉 —— 覆盖三种情况：
+         * 删的是它自己、删的是它的祖先、它被拖到别的分支后重新加载失败。
+         * 继续编辑一篇已经进回收站的笔记，下一次自动保存会写回一条 deleted 记录。
+         */
+        onTreeChanged() {
+            if (!this.selectedId) return;
+            const ids = new Set((this.folders || []).map((n) => n.id));
+            if (!ids.has(this.selectedId)) this.backToTree();
+        },
+        onTrashChanged() {
+            this.$refs.tree?.reload?.();
+        },
         onSaved(patch) {
-            this.$refs.list?.patchItem(patch);
             if (this.currentNote) {
                 this.currentNote.title = patch.title;
                 // 保存成功后同步 version，避免下一次自动保存又被判成冲突
                 this.currentNote.version = patch.version;
             }
+            // v1.3.9：标题 / 字数变了，树上要跟着更新
+            this.$refs.tree?.reload?.();
         },
         onListChanged(payload) {
             if (payload?.removed && payload.removed === this.selectedId) {
@@ -940,41 +989,9 @@ export default {
             document.addEventListener('pointerup', up, true);
         },
         /**
-         * v1.3.3.2（需求）：列表栏也可以拖边框改宽度。
-         *
-         * 与目录栏用同一套 pointer 捕获实现：拖动期间给 body 挂 is-col-resizing
-         * （统一 col-resize 光标 + 禁选），松手写 localStorage。
-         * 范围 220~520：窄到 220 以下标题会整行截断，宽到 520 以上编辑区就没了。
+         * v1.3.9：中间列表栏已移除，原来的列宽拖动一并去掉。
+         * 现在只剩「树 + 编辑器」两栏，树宽沿用 v1.3.3 的 save/restore。
          */
-        restoreListWidth() {
-            try {
-                const raw = Number(localStorage.getItem('gohub_memo_list_width'));
-                if (raw && raw >= 220 && raw <= 520) this.listWidth = Math.round(raw);
-            } catch (e) {
-                /* 忽略 */
-            }
-        },
-        startListResize(e) {
-            const startX = e.clientX || 0;
-            const startW = this.listWidth;
-            const move = (ev) => {
-                const dx = (ev.clientX || 0) - startX;
-                this.listWidth = Math.round(Math.min(520, Math.max(220, startW + dx)));
-            };
-            const up = () => {
-                document.removeEventListener('pointermove', move, true);
-                document.removeEventListener('pointerup', up, true);
-                document.body.classList.remove('is-col-resizing');
-                try {
-                    localStorage.setItem('gohub_memo_list_width', String(this.listWidth));
-                } catch (err) {
-                    /* 隐私模式忽略 */
-                }
-            };
-            document.body.classList.add('is-col-resizing');
-            document.addEventListener('pointermove', move, true);
-            document.addEventListener('pointerup', up, true);
-        },
         openSettings() {
             this.settingsDraft = {
                 toolbar: this.editorSettings.toolbarLines.join('\n'),
@@ -1329,12 +1346,61 @@ export default {
     font-size: 13px;
     cursor: pointer;
 }
+/* v1.3.9：新建节点类型选择（笔记 / 日记 / 札记 / 灵感） */
+.memo-create-tip {
+    margin: 0 0 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary);
+}
+.memo-create-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.memo-create-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 8px;
+    background: var(--el-bg-color);
+    cursor: pointer;
+    text-align: left;
+}
+.memo-create-item:hover {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+}
+.memo-create-icon {
+    flex: 0 0 auto;
+    width: 18px;
+    font-size: 15px;
+    color: var(--el-color-primary);
+    text-align: center;
+}
+.memo-create-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.memo-create-name {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+}
+.memo-create-desc {
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
+}
 
-/* 移动端：列表与编辑器互斥铺满 */
+/* 移动端：树与编辑器互斥铺满（v1.3.9：中间列表栏已移除，树改成主视图） */
 .memo-page.is-mobile .memo-cols {
     display: block;
 }
-.memo-page.is-mobile .memo-col-list,
+.memo-page.is-mobile .memo-col-tree,
 .memo-page.is-mobile .memo-col-editor {
     max-width: none;
     width: 100%;

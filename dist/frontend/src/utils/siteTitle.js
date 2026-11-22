@@ -34,7 +34,8 @@ const PAGE_NAMES = {
     // v1.1.9.4：笔记管理改名「发布中心」，路径 /notes → /post（旧路径保留重定向，见 router）
     '/post': '发布中心',
     // v1.3.2（需求）：笔记管理页（/memo）也纳入 {pagename}
-    '/memo': '笔记管理',
+    // v1.3.9（需求）：页面更名为「记事管理」
+    '/memo': '记事管理',
     /* v1.3.7（需求）：登记管理页也纳入 {pagename} */
     '/reg': '登记管理',
     '/customerConfig': '用户管理',

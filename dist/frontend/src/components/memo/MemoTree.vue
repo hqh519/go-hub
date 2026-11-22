@@ -1,48 +1,33 @@
 <template>
     <!--
-        目录栏（v1.3.0）
+        记事树（v1.3.9，原「目录栏」）
         ----------------------------------------------------------------------------
-        无限层级靠 `memo_folders.parentId` 自引用，这里用 el-tree 渲染 ——
-        拖拽换层级、展开折叠、键盘导航都是它自带的，自己写一棵树要重做一遍还不稳。
-        「全部笔记 / 未归档」是两个伪节点，不参与拖拽，只作为筛选入口。
+        模型从「目录 + 笔记」合并成「文档节点」：每个节点本身就是一篇笔记，
+        同时可以无限嵌套子笔记。树是一次拉全的扁平数组，前端按 parentId 组树 ——
+        逐层懒加载会让「展开到第 5 层」变成 5 次请求，拖拽跨层移动还得额外刷新。
+
+        4 个一级节点（笔记 / 日记 / 札记 / 灵感）由服务端保证存在，
+        这里只负责展示与打标：不可拖拽、不可改名、不可删除。
     -->
     <div class="mt-root">
         <div class="mt-head">
-            <span class="mt-title">{{ $t('memo.folders') }}</span>
-            <button type="button" class="mt-add" :title="$t('memo.newFolder')" @click="createFolder('')">
+            <span class="mt-title">{{ $t('memo.treeTitle') }}</span>
+            <button type="button" class="mt-add" :title="$t('memo.newNote')" @click="$emit('create')">
                 <font-awesome-icon icon="plus" />
             </button>
         </div>
 
-        <div class="mt-pseudo">
-            <button
-                type="button"
-                class="mt-pseudo-item"
-                :class="{ 'is-active': active === '' }"
-                @click="pick('')"
-            >
-                <font-awesome-icon icon="book" />
-                <span class="mt-name">{{ $t('memo.allNotes') }}</span>
-                <span class="mt-count">{{ total }}</span>
-            </button>
-            <button
-                type="button"
-                class="mt-pseudo-item"
-                :class="{ 'is-active': active === '__root' }"
-                @click="pick('__root')"
-            >
-                <font-awesome-icon icon="inbox" />
-                <span class="mt-name">{{ $t('memo.unfiled') }}</span>
-                <span class="mt-count">{{ unfiled }}</span>
-            </button>
-            <button
-                type="button"
-                class="mt-pseudo-item"
-                :class="{ 'is-active': active === '__trash' }"
-                @click="pick('__trash')"
-            >
-                <font-awesome-icon icon="trash" />
-                <span class="mt-name">{{ $t('memo.trash') }}</span>
+        <div class="mt-search">
+            <font-awesome-icon icon="search" class="mt-search-icon" />
+            <input
+                v-model="search"
+                class="mt-search-input"
+                type="text"
+                :placeholder="$t('memo.searchPlaceholder')"
+                @input="applyFilter"
+            />
+            <button v-if="search" type="button" class="mt-search-clear" @click="clearSearch">
+                <font-awesome-icon icon="times" />
             </button>
         </div>
 
@@ -51,36 +36,47 @@
                 ref="tree"
                 :data="treeData"
                 node-key="id"
-                :indent="0"
-                :props="{ label: 'name', children: 'children' }"
+                :indent="14"
+                :props="{ label: 'title', children: 'children' }"
                 :expand-on-click-node="false"
+                :default-expanded-keys="expandedKeys"
                 :current-node-key="currentKey"
                 highlight-current
                 draggable
+                :allow-drag="allowDrag"
                 :allow-drop="allowDrop"
-                :empty-text="$t('memo.noFolder')"
+                :empty-text="$t('memo.empty')"
                 @node-click="onNodeClick"
                 @node-drop="onNodeDrop"
+                @node-expand="onExpand"
+                @node-collapse="onCollapse"
             >
                 <template #default="{ data }">
-                    <div class="mt-node" :class="{ 'is-current': data.id === active }">
-                        <!-- v1.3.2：选中底色只包住「图标 + 名称」，不再铺满整行（三角形不染色） -->
+                    <div class="mt-node" :class="{ 'is-current': data.id === active, 'is-system': data.isSystem }">
                         <span class="mt-node-main">
-                            <font-awesome-icon :icon="data.children && data.children.length ? 'folder-open' : 'folder'" class="mt-node-icon" />
-                            <span class="mt-name" :title="data.name">{{ data.name }}</span>
+                            <font-awesome-icon :icon="iconOf(data)" class="mt-node-icon" />
+                            <span class="mt-name" :title="data.title">{{ data.title || $t('memo.untitled') }}</span>
                         </span>
-                        <!-- v1.3.2（需求）：自身笔记数 / 含所有子目录的总数 -->
-                        <span class="mt-count">{{ data.count }}/{{ data.total }}</span>
-                        <el-dropdown trigger="click" class="mt-node-more" @command="(cmd) => onCommand(cmd, data)" @click.stop>
-                            <!-- v1.3.4.2（需求）：目录后面的「更多」改成竖三点 -->
+                        <!-- 子孙总数：空节点不显示，避免一排 0 抢注意力 -->
+                        <span v-if="data.totalCount" class="mt-count">{{ data.totalCount }}</span>
+                        <el-dropdown
+                            trigger="click"
+                            class="mt-node-more"
+                            @command="(cmd) => onCommand(cmd, data)"
+                            @click.stop
+                        >
                             <button type="button" class="mt-more-btn" @click.stop>
                                 <font-awesome-icon icon="ellipsis-v" />
                             </button>
                             <template #dropdown>
                                 <el-dropdown-menu>
-                                    <el-dropdown-item command="child">{{ $t('memo.newChildFolder') }}</el-dropdown-item>
-                                    <el-dropdown-item command="rename">{{ $t('memo.rename') }}</el-dropdown-item>
-                                    <el-dropdown-item command="delete" divided>{{ $t('memo.deleteFolder') }}</el-dropdown-item>
+                                    <el-dropdown-item command="child">{{ $t('memo.newChildNote') }}</el-dropdown-item>
+                                    <el-dropdown-item command="rename" :disabled="data.isSystem">
+                                        {{ $t('memo.rename') }}
+                                    </el-dropdown-item>
+                                    <el-dropdown-item command="delete" divided :disabled="data.isSystem">
+                                        {{ $t('memo.deleteNode') }}
+                                    </el-dropdown-item>
                                 </el-dropdown-menu>
                             </template>
                         </el-dropdown>
@@ -88,134 +84,253 @@
                 </template>
             </el-tree>
         </div>
+
+        <div class="mt-foot">
+            <button
+                type="button"
+                class="mt-pseudo-item"
+                :class="{ 'is-active': active === '__trash' }"
+                @click="$emit('trash')"
+            >
+                <font-awesome-icon icon="trash" />
+                <span class="mt-name">{{ $t('memo.trash') }}</span>
+            </button>
+        </div>
     </div>
 </template>
 
 <script>
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { fetchFolders, createFolder, updateFolder, deleteFolder } from '@/utils/memoApi';
-import { buildTree } from '@/utils/memoTree';
+import { fetchTree, renameNode, moveNode, reorderNodes, trashNote } from '@/utils/memoApi';
+
+/** 系统一级节点的图标（按标题；标题由服务端固定，不会漂移） */
+const SYSTEM_ICON = {
+    笔记: 'book',
+    日记: 'calendar',
+    札记: 'edit',
+    灵感: 'bolt',
+};
 
 export default {
     name: 'MemoTree',
     props: {
-        /** 当前选中的筛选键：'' 全部 / '__root' 未归档 / '__trash' 回收站 / 目录 id */
+        /** 当前选中的节点 id；'__trash' 表示回收站 */
         active: { type: String, default: '' },
         instanceId: { type: String, default: '' },
     },
-    emits: ['update:active', 'loaded'],
+    emits: ['select', 'create', 'create-child', 'changed', 'trash', 'loaded'],
     data() {
         return {
-            folders: [],
-            unfiled: 0,
-            total: 0,
+            nodes: [],
+            roots: [],
+            search: '',
+            /** 默认展开 4 个系统一级节点，进来就能看到各类下的结构 */
+            expandedKeys: [],
+            /** v1.3.9：记住用户手动展开的层级，reload 后不会被收回 */
+            openKeys: [],
+            treeInited: false,
         };
     },
     computed: {
-        treeData() {
-            return buildTree(this.folders);
-        },
         currentKey() {
-            return this.active && !this.active.startsWith('__') ? this.active : undefined;
+            return this.active && this.active !== '__trash' ? this.active : undefined;
+        },
+        /** 搜索时只保留「命中的节点 + 它的祖先链」 */
+        treeData() {
+            const keyword = this.search.trim().toLowerCase();
+            if (!keyword) return this.buildTree();
+            const hit = new Set();
+            for (const n of this.nodes) {
+                if (String(n.title || '').toLowerCase().includes(keyword)) hit.add(n.id);
+            }
+            const keep = new Set(hit);
+            const byId = new Map(this.nodes.map((n) => [n.id, n]));
+            for (const id of hit) {
+                let p = byId.get(id)?.parentId || '';
+                let guard = 0;
+                while (p && !keep.has(p) && byId.has(p) && guard < 500) {
+                    keep.add(p);
+                    p = byId.get(p).parentId || '';
+                    guard += 1;
+                }
+            }
+            return this.buildTree(this.nodes.filter((n) => keep.has(n.id)));
+        },
+    },
+    watch: {
+        instanceId() {
+            this.reload();
         },
     },
     mounted() {
-        this.load();
+        this.reload();
     },
     methods: {
-        async load() {
+        /** 节点图标：系统节点各有专属图标，普通节点按「有没有子节点」区分文档 / 目录 */
+        iconOf(n) {
+            if (n.isSystem) return SYSTEM_ICON[n.title] || 'book';
+            return n.children && n.children.length ? 'folder-open' : 'file-lines';
+        },
+        buildTree(source) {
+            const list = (source || this.nodes).slice();
+            const byParent = new Map();
+            for (const n of list) {
+                const key = n.parentId || '';
+                if (!byParent.has(key)) byParent.set(key, []);
+                byParent.get(key).push(n);
+            }
+            const sortFn = (a, b) => (a.sort || 0) - (b.sort || 0) || (a.createdAt || 0) - (b.createdAt || 0);
+            const make = (parentId, depth) => {
+                const rows = (byParent.get(parentId) || []).slice().sort(sortFn);
+                return rows.map((n) => ({
+                    ...n,
+                    children: depth < 60 ? make(n.id, depth + 1) : [],
+                }));
+            };
+            const roots = make('', 0);
+            // 系统节点按 笔记/日记/札记/灵感 的固定顺序排，其余按 sort
+            const order = { 笔记: 0, 日记: 1, 札记: 2, 灵感: 3 };
+            roots.sort((a, b) => {
+                const ai = a.isSystem ? order[a.title] ?? 9 : 99;
+                const bi = b.isSystem ? order[b.title] ?? 9 : 99;
+                if (ai !== bi) return ai - bi;
+                return sortFn(a, b);
+            });
+            return roots;
+        },
+        async reload() {
             try {
-                const r = await fetchFolders();
-                this.folders = r?.folders || [];
-                this.unfiled = Number(r?.unfiled) || 0;
-                this.total = this.folders.reduce((s, f) => s + (Number(f.count) || 0), 0) + this.unfiled;
-                this.$emit('loaded', { folders: this.folders, unfiled: this.unfiled, total: this.total });
+                const r = await fetchTree();
+                this.nodes = Array.isArray(r?.nodes) ? r.nodes : [];
+                this.roots = Array.isArray(r?.roots) ? r.roots : [];
+                if (!this.treeInited) {
+                    this.treeInited = true;
+                    this.openKeys = this.roots.map((x) => x.id).filter(Boolean);
+                }
+                this.expandedKeys = this.openKeys.slice();
+                this.$emit('loaded', { nodes: this.nodes, roots: this.roots });
             } catch (e) {
                 ElMessage.error(e?.message || this.$t('memo.loadFail'));
             }
         },
-        pick(key) {
-            this.$emit('update:active', key);
+        onExpand(data) {
+            if (data?.id && !this.openKeys.includes(data.id)) this.openKeys.push(data.id);
+            this.expandedKeys = this.openKeys.slice();
+        },
+        onCollapse(data) {
+            this.openKeys = this.openKeys.filter((id) => id !== data?.id);
+            this.expandedKeys = this.openKeys.slice();
+        },
+        /** 新建 / 跳转后把目标节点的祖先链展开，否则它藏在收起的层级里看不见 */
+        revealNode(id) {
+            const byId = new Map(this.nodes.map((n) => [n.id, n]));
+            let cur = byId.get(id)?.parentId || '';
+            let guard = 0;
+            while (cur && guard < 500) {
+                if (!this.openKeys.includes(cur)) this.openKeys.push(cur);
+                cur = byId.get(cur)?.parentId || '';
+                guard += 1;
+            }
+            this.expandedKeys = this.openKeys.slice();
+        },
+        applyFilter() {
+            // 过滤在 computed 里做，这里只需要让当前选中项保持高亮
+            this.$nextTick(() => {
+                const el = this.$refs.tree;
+                if (el && el.setCurrentKey) el.setCurrentKey(this.currentKey);
+            });
+        },
+        clearSearch() {
+            this.search = '';
         },
         onNodeClick(data) {
-            this.pick(data.id);
+            this.$emit('select', data.id);
         },
-        /** 只允许拖到目录内部（改父子），不允许「插到两项之间」——同级顺序本版不做拖拽排序 */
+        allowDrag(node) {
+            // 4 个固定一级节点不可拖动（服务端也会拒绝，这里只是别让用户白拖）
+            return !node.data.isSystem;
+        },
         allowDrop(dragNode, dropNode, type) {
-            return type === 'inner' && dragNode.data.id !== dropNode.data.id;
+            if (!dragNode || !dropNode) return false;
+            // 不能拖到自己的子孙下（后端也有环检测，这里先挡一层）
+            let p = dropNode;
+            while (p) {
+                if (p.data && p.data.id === dragNode.data.id) return false;
+                p = p.parent;
+            }
+            // 系统节点只能作为「容器」接收子节点，不能把别的节点排到它前面/后面
+            if (dropNode.data.isSystem && type !== 'inner') return false;
+            return true;
         },
-        async onNodeDrop(dragNode, dropNode) {
+        async onNodeDrop(dragNode, dropNode, type) {
+            const dragId = dragNode?.data?.id;
+            if (!dragId) return;
+            const parentId = type === 'inner' ? dropNode.data.id : (dropNode.parent?.data?.id || '');
             try {
-                await updateFolder(dragNode.data.id, { parentId: dropNode.data.id });
-                await this.load();
-            } catch (e) {
-                ElMessage.error(e?.message || this.$t('memo.saveFail'));
-                await this.load();
-            }
-        },
-        async createFolder(parentId) {
-            let name = '';
-            try {
-                const r = await ElMessageBox.prompt(this.$t('memo.folderNameTip'), this.$t('memo.newFolder'), {
-                    inputPlaceholder: this.$t('memo.folderNamePlaceholder'),
-                    confirmButtonText: this.$t('common.confirm'),
-                    cancelButtonText: this.$t('common.cancel'),
-                    inputValidator: (v) => (String(v || '').trim() ? true : this.$t('memo.folderNameRequired')),
-                });
-                name = String(r.value || '').trim();
-            } catch (e) {
-                return;
-            }
-            try {
-                const folder = await createFolder({ name, parentId });
-                await this.load();
-                if (folder?.id) this.pick(folder.id);
-            } catch (e) {
-                ElMessage.error(e?.message || this.$t('memo.saveFail'));
-            }
-        },
-        async onCommand(cmd, data) {
-            if (cmd === 'child') return this.createFolder(data.id);
-            if (cmd === 'rename') return this.rename(data);
-            if (cmd === 'delete') return this.remove(data);
-        },
-        async rename(data) {
-            let name = '';
-            try {
-                const r = await ElMessageBox.prompt(this.$t('memo.folderNameTip'), this.$t('memo.rename'), {
-                    inputValue: data.name,
-                    confirmButtonText: this.$t('common.confirm'),
-                    cancelButtonText: this.$t('common.cancel'),
-                });
-                name = String(r.value || '').trim();
-            } catch (e) {
-                return;
-            }
-            if (!name || name === data.name) return;
-            try {
-                await updateFolder(data.id, { name });
-                await this.load();
-            } catch (e) {
-                ElMessage.error(e?.message || this.$t('memo.saveFail'));
-            }
-        },
-        async remove(data) {
-            try {
-                await ElMessageBox.confirm(this.$t('memo.deleteFolderTip', { name: data.name }), this.$t('memo.deleteFolder'), {
-                    type: 'warning',
-                    confirmButtonText: this.$t('common.confirm'),
-                    cancelButtonText: this.$t('common.cancel'),
-                });
-            } catch (e) {
-                return;
-            }
-            try {
-                const r = await deleteFolder(data.id);
-                if (this.active === data.id) this.pick('');
-                await this.load();
-                if (r && (r.movedNotes || r.movedFolders)) {
-                    ElMessage.success(this.$t('memo.deleteFolderMoved', { notes: r.movedNotes || 0 }));
+                if (String(dragNode.data.parentId || '') !== String(parentId || '') || type === 'inner') {
+                    await moveNode(dragId, { parentId });
                 }
+                /*
+                 * 落位后把该层级的新顺序整体提交一次：只改 parentId 的话，
+                 * 服务端会把节点排到末尾 —— 用户拖到中间却看到它跳到最下面。
+                 */
+                const container = type === 'inner' ? dropNode : dropNode.parent;
+                const siblings = (container && container.childNodes ? container.childNodes : [])
+                    .map((x) => x.data && x.data.id)
+                    .filter(Boolean);
+                if (siblings.length) await reorderNodes(parentId, siblings);
+                await this.reload();
+                this.$emit('changed');
+            } catch (e) {
+                ElMessage.error(e?.message || this.$t('memo.saveFail'));
+                await this.reload();
+            }
+        },
+        onCommand(cmd, data) {
+            if (cmd === 'child') return this.$emit('create-child', data.id);
+            if (cmd === 'rename') return this.doRename(data);
+            if (cmd === 'delete') return this.doDelete(data);
+        },
+        async doRename(node) {
+            let value = '';
+            try {
+                const r = await ElMessageBox.prompt(this.$t('memo.renameTip'), this.$t('memo.rename'), {
+                    inputValue: node.title || '',
+                    confirmButtonText: this.$t('common.confirm'),
+                    cancelButtonText: this.$t('common.cancel'),
+                    inputValidator: (v) => (String(v || '').trim() ? true : this.$t('memo.nameRequired')),
+                });
+                value = String(r?.value || '').trim();
+            } catch (e) {
+                return;
+            }
+            if (!value || value === node.title) return;
+            try {
+                await renameNode(node.id, value);
+                await this.reload();
+                this.$emit('changed');
+            } catch (e) {
+                ElMessage.error(e?.message || this.$t('memo.saveFail'));
+            }
+        },
+        async doDelete(node) {
+            try {
+                await ElMessageBox.confirm(
+                    this.$t('memo.deleteNodeTip', { title: node.title || this.$t('memo.untitled') }),
+                    this.$t('memo.deleteNode'),
+                    {
+                        type: 'warning',
+                        confirmButtonText: this.$t('common.confirm'),
+                        cancelButtonText: this.$t('common.cancel'),
+                    },
+                );
+            } catch (e) {
+                return;
+            }
+            try {
+                await trashNote(node.id);
+                await this.reload();
+                this.$emit('changed', { removed: node.id });
             } catch (e) {
                 ElMessage.error(e?.message || this.$t('memo.saveFail'));
             }
@@ -230,36 +345,132 @@ export default {
     flex-direction: column;
     height: 100%;
     min-height: 0;
+    text-align: left;
 }
 .mt-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 12px 6px;
+    padding: 8px 10px 6px;
     font-size: 12px;
     color: var(--el-text-color-secondary);
 }
 .mt-title {
     font-weight: 600;
-    letter-spacing: 0.5px;
 }
 .mt-add {
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 5px;
+    background: var(--el-fill-color);
+    color: var(--el-text-color-regular);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+}
+.mt-add:hover {
+    background: var(--el-color-primary);
+    color: #fff;
+}
+.mt-search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 8px 6px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: var(--el-fill-color-light);
+}
+.mt-search-icon {
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+}
+.mt-search-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 12.5px;
+    color: var(--el-text-color-primary);
+}
+.mt-search-clear {
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    font-size: 10px;
+    color: var(--el-text-color-secondary);
+}
+.mt-tree {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior-y: contain;
+    padding: 0 4px 12px;
+}
+.mt-node {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+    padding-right: 2px;
+    font-size: 13px;
+}
+.mt-node-main {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    flex: 0 1 auto;
+}
+.mt-node-icon {
+    flex: 0 0 auto;
+    font-size: 11px;
+    color: var(--el-text-color-secondary);
+}
+.mt-node.is-system .mt-node-icon {
+    color: var(--el-color-primary);
+}
+.mt-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.mt-node.is-current .mt-name {
+    font-weight: 600;
+}
+.mt-count {
+    flex: 0 0 auto;
+    margin-left: 2px;
+    font-size: 10.5px;
+    color: var(--el-text-color-placeholder);
+}
+.mt-node-more {
+    flex: 0 0 auto;
+    margin-left: auto;
+    opacity: 0;
+}
+.mt-node:hover .mt-node-more,
+.mt-node.is-current .mt-node-more {
+    opacity: 1;
+}
+.mt-more-btn {
     border: none;
     background: transparent;
     cursor: pointer;
+    padding: 1px 3px;
+    font-size: 11px;
     color: var(--el-text-color-secondary);
-    padding: 2px 4px;
-    border-radius: 4px;
 }
-.mt-add:hover {
-    color: var(--el-color-primary);
-    background: var(--el-fill-color);
-}
-.mt-pseudo {
-    padding: 0 6px 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
+.mt-foot {
+    flex: 0 0 auto;
+    padding: 6px 8px 10px;
+    border-top: 1px solid var(--el-border-color-lighter);
 }
 .mt-pseudo-item {
     display: flex;
@@ -268,10 +479,10 @@ export default {
     width: 100%;
     padding: 6px 8px;
     border: none;
+    border-radius: 6px;
     background: transparent;
-    border-radius: 5px;
-    font-size: 13px;
     color: var(--el-text-color-regular);
+    font-size: 13px;
     cursor: pointer;
     text-align: left;
 }
@@ -282,134 +493,10 @@ export default {
     background: var(--el-color-primary-light-9);
     color: var(--el-color-primary);
 }
-.mt-name {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.mt-count {
-    flex: 0 0 auto;
-    /* v1.3.3.2：计数与「更多」一起靠右成一列，目录名再长也不会把按钮挤到中间 */
-    margin-left: auto;
-    font-size: 11px;
-    font-variant-numeric: tabular-nums;
-    opacity: 0.6;
-}
-.mt-tree {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow: auto;
-    padding: 0 6px 12px;
-    /* v1.3.1.2（需求）：目录名称一律靠左 —— 显式声明，避免被上层 text-align 带偏 */
-    text-align: left;
-}
-.mt-tree :deep(.el-tree-node__content) {
-    text-align: left;
-    justify-content: flex-start;
-}
-.mt-tree :deep(.el-tree-node__label) {
-    text-align: left;
-    width: 100%;
-}
-/*
- * ── v1.3.1.1（需求）：目录缩进减半 + 关系线 ─────────────────────────
- *
- * 缩进从 el-tree 自带的 16px 改成 **8px**，并且不再用它的 padding-left，
- * 而是给每一层「子节点容器」加 8px 左内边距 —— 好处是 DOM 的嵌套本身就累积出
- * 层级缩进，CSS 不需要知道「当前是第几级」，也就能把竖线画在固定位置：
- *   · 竖线 = 子容器左内边距的中线（left: 4px），从父项中心往下一路延伸；
- *   · 横枝 = 每个子项左侧 8px 的一小段，指向自己的图标。
- * 如果用 el-tree 的 padding-left 实现，缩进落在 content 上、容器仍在 0，
- * 竖线的位置就得按层级算，纯 CSS 做不到。
- */
-.mt-tree :deep(.el-tree-node__children) {
-    position: relative;
-    /*
-     * v1.3.3.3（需求：上下级缩进减少一半，关系线落在三角按钮正下方）
-     *
-     * 实测：el-tree 的三角是 24px 宽（12px 图标 + 左右各 6px padding），
-     * 相对行首中心在 12px 处。上一版缩进 20px，子项离父项太远、层级一多就吃不消。
-     * 现在缩进收到 10px（正好一半），竖线也放到 10px ——
-     * 与三角中心只差 2px，视觉上就是「从三角正下方垂下来」，
-     * 并且与子项内容左缘对齐，不再需要一段横向小枝。
-     */
-    padding-left: 10px;
-}
-.mt-tree :deep(.el-tree-node__children)::before {
-    content: '';
-    position: absolute;
-    left: 10px;
-    top: 0;
-    /* 最后一项的下半行不需要竖线，留出行高的一半 */
-    bottom: 13px;
-    width: 1px;
-    background: var(--el-border-color-lighter, #e4e7ed);
-}
-
-.mt-node {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 6px;
-    width: 100%;
-    padding-right: 4px;
-    font-size: 13px;
-    text-align: left;
-}
-/* v1.3.2：选中底色只作用于「图标 + 名称」这一小段 */
-.mt-node-main {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    padding: 2px 6px;
-    margin-left: -6px;
-    border-radius: 6px;
-}
-.mt-node.is-current .mt-node-main {
-    background: var(--el-color-primary-light-9, rgba(64, 158, 255, 0.12));
-}
-/* el-tree 自带的 highlight-current 会把整行（含三角形）染色，这里关掉 */
-.mt-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
-    background: transparent;
-}
-.mt-node-icon {
-    flex: 0 0 auto;
-    width: 12px;
-    opacity: 0.7;
-}
-/* v1.3.3.2（需求）：更多按钮排在目录名右侧、整体靠右对齐 */
-.mt-node-more {
-    flex: 0 0 auto;
-    opacity: 0;
-    transition: opacity 0.15s;
-}
-.mt-node:hover .mt-node-more {
-    opacity: 1;
-}
-/*
- * v1.3.1：移动端常显「…」按钮。
- * 触屏没有 hover，原来靠 :hover 才出现的菜单按钮在手机上永远不会显示 ——
- * 表现就是「每个目录上没法再建子目录」。这里在窄屏/触屏下让它常驻。
- */
-@media (max-width: 900px), (hover: none) {
+/* 移动端：更多按钮常显（没有 hover） */
+@media (hover: none) {
     .mt-node-more {
         opacity: 1;
     }
-}
-.mt-more-btn {
-    border: none;
-    background: transparent;
-    cursor: pointer;
-    color: var(--el-text-color-secondary);
-    padding: 0 2px;
-    font-size: 12px;
-}
-/* el-tree 的默认行高偏大，这里压紧一点，一屏能多放几个目录 */
-:deep(.el-tree-node__content) {
-    height: 30px;
-    border-radius: 5px;
 }
 </style>

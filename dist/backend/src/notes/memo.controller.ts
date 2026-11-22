@@ -124,6 +124,18 @@ export class MemoController {
     return { success: true, data };
   }
 
+  /**
+   * v1.3.9：文档节点树。
+   *
+   * 必须排在 `@Get(':id')` 之前 —— 否则 `tree` 会被当成「id 叫 tree 的笔记」。
+   */
+  @Get('tree')
+  async tree(@Req() req: Request, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.listTree(viewer, instanceId || '');
+    return { success: true, data };
+  }
+
   /*
    * ── 块索引与引用（v1.3.1 落地 · v1.5.0 计划） ──
    * 注意路由顺序：这些静态段必须排在 `@Get(':id')` **之前**，
@@ -266,12 +278,36 @@ export class MemoController {
   @Post()
   async create(@Req() req: Request, @Body() body: Record<string, unknown>) {
     const { viewer } = this.ctx(req);
-    const r = await this.memo.createNote(viewer, String(body.instanceId ?? ''), {
+    // v1.3.9：按类型创建（笔记 / 日记 / 札记 / 灵感），默认标题与落点由服务端算
+    const r = await this.memo.createNode(viewer, String(body.instanceId ?? ''), {
+      type: body.type,
+      parentId: body.parentId,
       title: body.title,
       content: body.content,
-      folderId: body.folderId,
     });
-    if ('error' in r && r.error) this.fail(r.error);
+    if ('error' in r && r.error) this.fail(String(r.error));
+    return { success: true, data: r };
+  }
+
+  /** v1.3.9：同级重排（拖拽落位后一次提交） */
+  @Post('reorder')
+  async reorder(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.reorderNodes(
+      viewer,
+      String(body.instanceId ?? ''),
+      String(body.parentId ?? ''),
+      body.ids,
+    );
+    return { success: true, data };
+  }
+
+  /** v1.3.9：改名（系统固定节点拒绝） */
+  @Put(':id/rename')
+  async rename(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.renameNode(viewer, String(body.instanceId ?? ''), id, body.title);
+    if ('error' in r && r.error) this.fail(String(r.error));
     return { success: true, data: r };
   }
 
@@ -298,25 +334,34 @@ export class MemoController {
   @Post(':id/move')
   async move(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
     const { viewer } = this.ctx(req);
-    const r = await this.memo.moveNote(viewer, String(body.instanceId ?? ''), id, body.folderId);
-    if ('error' in r && r.error) this.fail(r.error);
+    // v1.3.9：新前端用 parentId 拖拽换父级 / 同级排序；folderId 保留给旧调用方
+    const r =
+      body.parentId !== undefined || body.sort !== undefined
+        ? await this.memo.moveNode(viewer, String(body.instanceId ?? ''), id, {
+            parentId: body.parentId,
+            sort: body.sort,
+          })
+        : await this.memo.moveNote(viewer, String(body.instanceId ?? ''), id, body.folderId);
+    if ('error' in r && r.error) this.fail(String(r.error));
     return { success: true, data: r };
   }
 
   @Delete(':id')
   async trash(@Req() req: Request, @Param('id') id: string, @Query('instanceId') instanceId?: string) {
     const { viewer } = this.ctx(req);
-    const r = await this.memo.trash(viewer, instanceId || '', id);
-    if ('error' in r && r.error) this.fail(r.error);
-    return { success: true };
+    // v1.3.9：删除节点 = 整棵子树进回收站
+    const r = await this.memo.trashTree(viewer, instanceId || '', id);
+    if ('error' in r && r.error) this.fail(String(r.error));
+    return { success: true, data: r };
   }
 
   @Post(':id/restore')
   async restore(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
     const { viewer } = this.ctx(req);
-    const r = await this.memo.restore(viewer, String(body.instanceId ?? ''), id);
-    if ('error' in r && r.error) this.fail(r.error);
-    return { success: true };
+    // v1.3.9：恢复节点 = 自身 + 子孙 + 已删除的祖先链
+    const r = await this.memo.restoreTree(viewer, String(body.instanceId ?? ''), id);
+    if ('error' in r && r.error) this.fail(String(r.error));
+    return { success: true, data: r };
   }
 
   @Delete(':id/purge')

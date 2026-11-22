@@ -5,6 +5,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
+var MemoService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MemoService = void 0;
 const common_1 = require("@nestjs/common");
@@ -14,6 +15,10 @@ const notes_util_1 = require("./notes.util");
 const tags_1 = require("../common/tags");
 const memo_util_1 = require("./memo.util");
 const memo_block_util_1 = require("./memo-block.util");
+const SYSTEM_ROOT_TITLES = ['笔记', '日记', '札记', '灵感'];
+function migratedKey(instanceId, viewer) {
+    return `memoTreeMigrated:${instanceId || '_'}:${viewer}`;
+}
 const MAX_TITLE = 200;
 const MAX_HISTORY = 100;
 const MAX_FOLDER_NAME = 60;
@@ -28,7 +33,475 @@ function timeOf(v) {
     const t = new Date(v).getTime();
     return Number.isFinite(t) ? t : 0;
 }
-let MemoService = class MemoService {
+let MemoService = MemoService_1 = class MemoService {
+    async ensureSystemRoots(viewer, instanceId) {
+        const rows = await prisma_1.prisma.note.findMany({
+            where: {
+                author: viewer,
+                instanceId,
+                kind: 'memo',
+                isSystem: true,
+                parentId: '',
+                status: { not: 'deleted' },
+            },
+            select: { id: true, title: true },
+        });
+        const byTitle = new Map();
+        for (const r of rows)
+            byTitle.set(String(r.title || ''), String(r.id));
+        for (let i = 0; i < SYSTEM_ROOT_TITLES.length; i += 1) {
+            const title = SYSTEM_ROOT_TITLES[i];
+            if (byTitle.has(title))
+                continue;
+            const row = await prisma_1.prisma.note.create({
+                data: {
+                    kind: 'memo',
+                    title,
+                    content: '',
+                    contentFormat: 'markdown',
+                    parentId: '',
+                    sort: i,
+                    isSystem: true,
+                    author: viewer,
+                    instanceId,
+                    visibility: 'private',
+                    status: 'published',
+                    publishedAt: new Date(),
+                    firstPublishedAt: new Date(),
+                    metas: JSON.stringify({ excerpt: '', charCount: 0, wordCount: 0 }),
+                },
+                select: { id: true },
+            });
+            byTitle.set(title, String(row.id));
+            app_log_1.appLog.info('memo', `创建固定节点「${title}」（${viewer}@${instanceId || 'default'}）`);
+        }
+        return byTitle;
+    }
+    async ensureTreeMigrated(viewer, instanceId) {
+        const key = migratedKey(instanceId, viewer);
+        const flag = await prisma_1.prisma.setting.findUnique({ where: { key } });
+        if (String(flag?.value || '') !== '1') {
+            const folders = await prisma_1.prisma.memoFolder.findMany({
+                where: { author: viewer, instanceId },
+                orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+            });
+            if (folders.length) {
+                const map = new Map();
+                const remaining = folders.slice();
+                let guard = 0;
+                while (remaining.length && guard < MAX_FOLDER_DEPTH * 4) {
+                    guard += 1;
+                    for (let i = remaining.length - 1; i >= 0; i -= 1) {
+                        const f = remaining[i];
+                        const pid = String(f.parentId || '');
+                        if (pid && !map.has(pid))
+                            continue;
+                        const parentNote = pid ? map.get(pid) : '';
+                        const row = await prisma_1.prisma.note.create({
+                            data: {
+                                kind: 'memo',
+                                title: String(f.name || '未命名目录').slice(0, MAX_TITLE),
+                                content: '',
+                                contentFormat: 'markdown',
+                                parentId: parentNote,
+                                sort: asInt(f.sort),
+                                isSystem: false,
+                                author: viewer,
+                                instanceId,
+                                visibility: 'private',
+                                status: 'published',
+                                publishedAt: new Date(),
+                                firstPublishedAt: new Date(),
+                                metas: JSON.stringify({
+                                    excerpt: '',
+                                    charCount: 0,
+                                    wordCount: 0,
+                                    migratedFromFolder: String(f.id),
+                                }),
+                            },
+                            select: { id: true },
+                        });
+                        map.set(String(f.id), String(row.id));
+                        remaining.splice(i, 1);
+                    }
+                }
+                const notes = await prisma_1.prisma.note.findMany({
+                    where: { author: viewer, instanceId, kind: 'memo', parentId: '', folderId: { not: '' } },
+                    select: { id: true, folderId: true },
+                });
+                for (const n of notes) {
+                    const pid = map.get(String(n.folderId || ''));
+                    if (pid)
+                        await prisma_1.prisma.note.update({ where: { id: String(n.id) }, data: { parentId: pid } });
+                }
+                app_log_1.appLog.info('memo', `旧目录迁移完成：${folders.length} 个目录 → 文档节点（${viewer}@${instanceId || 'default'}）`);
+            }
+            await prisma_1.prisma.setting.upsert({ where: { key }, create: { key, value: '1' }, update: { value: '1' } });
+        }
+        return this.ensureSystemRoots(viewer, instanceId);
+    }
+    async listTree(viewer, instanceId) {
+        await this.ensureTreeMigrated(viewer, instanceId);
+        const rows = await prisma_1.prisma.note.findMany({
+            where: { author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },
+            select: {
+                id: true,
+                title: true,
+                parentId: true,
+                sort: true,
+                isSystem: true,
+                status: true,
+                createdAt: true,
+                updatedAt: true,
+                metas: true,
+            },
+            orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+        });
+        const nodes = rows.map((r) => {
+            const metas = (0, notes_util_1.safeParse)(r.metas, {});
+            return {
+                id: String(r.id),
+                title: String(r.title || ''),
+                parentId: String(r.parentId || ''),
+                sort: asInt(r.sort),
+                isSystem: !!r.isSystem,
+                status: String(r.status || ''),
+                charCount: asInt(metas.charCount),
+                wordCount: metas.wordCount != null ? asInt(metas.wordCount) : null,
+                directCount: 0,
+                totalCount: 0,
+                createdAt: timeOf(r.createdAt),
+                updatedAt: timeOf(r.updatedAt),
+            };
+        });
+        const byId = new Map(nodes.map((n) => [n.id, n]));
+        for (const n of nodes) {
+            if (n.parentId && byId.has(n.parentId))
+                byId.get(n.parentId).directCount += 1;
+        }
+        for (const n of nodes) {
+            let pid = n.parentId;
+            let guard = 0;
+            while (pid && byId.has(pid) && guard < MAX_FOLDER_DEPTH) {
+                byId.get(pid).totalCount += 1;
+                pid = byId.get(pid).parentId;
+                guard += 1;
+            }
+        }
+        return {
+            nodes,
+            roots: SYSTEM_ROOT_TITLES.map((t) => {
+                const hit = nodes.find((n) => n.isSystem && n.title === t);
+                return { title: t, id: hit ? hit.id : '' };
+            }),
+        };
+    }
+    async ensureChildNode(viewer, instanceId, parentId, title, sortHint = 0) {
+        const hit = await prisma_1.prisma.note.findFirst({
+            where: {
+                author: viewer,
+                instanceId,
+                kind: 'memo',
+                parentId,
+                title,
+                status: { not: 'deleted' },
+            },
+            select: { id: true },
+        });
+        if (hit)
+            return String(hit.id);
+        const last = await prisma_1.prisma.note.findFirst({
+            where: { author: viewer, instanceId, kind: 'memo', parentId, status: { not: 'deleted' } },
+            orderBy: { sort: 'desc' },
+            select: { sort: true },
+        });
+        const row = await prisma_1.prisma.note.create({
+            data: {
+                kind: 'memo',
+                title,
+                content: '',
+                contentFormat: 'markdown',
+                parentId,
+                sort: Math.max(asInt(last?.sort) + 1, sortHint),
+                author: viewer,
+                instanceId,
+                visibility: 'private',
+                status: 'published',
+                publishedAt: new Date(),
+                firstPublishedAt: new Date(),
+                metas: JSON.stringify({ excerpt: '', charCount: 0, wordCount: 0, autoFolder: true }),
+            },
+            select: { id: true },
+        });
+        return String(row.id);
+    }
+    async nextUntitledIndex(viewer, instanceId, parentId, prefix) {
+        const rows = await prisma_1.prisma.note.findMany({
+            where: { author: viewer, instanceId, kind: 'memo', parentId, title: { startsWith: prefix } },
+            select: { title: true },
+        });
+        let max = 0;
+        for (const r of rows) {
+            const m = new RegExp(`^${prefix}(\\d+)$`).exec(String(r.title || ''));
+            if (m)
+                max = Math.max(max, asInt(m[1]));
+        }
+        return max + 1;
+    }
+    static pad2(n) {
+        return String(n).padStart(2, '0');
+    }
+    async createNode(viewer, instanceId, input) {
+        const rawType = String(input.type ?? 'note');
+        const type = rawType === 'diary' || rawType === 'journal' || rawType === 'inspiration' ? rawType : 'note';
+        const roots = await this.ensureTreeMigrated(viewer, instanceId);
+        const now = new Date();
+        const YYYY = String(now.getFullYear());
+        const MM = MemoService_1.pad2(now.getMonth() + 1);
+        const DD = MemoService_1.pad2(now.getDate());
+        const hh = MemoService_1.pad2(now.getHours());
+        const mi = MemoService_1.pad2(now.getMinutes());
+        const ss = MemoService_1.pad2(now.getSeconds());
+        const explicitParent = String(input.parentId ?? '');
+        let parentId = '';
+        let title = String(input.title ?? '').trim();
+        if (explicitParent) {
+            const ok = await prisma_1.prisma.note.findFirst({
+                where: {
+                    id: explicitParent,
+                    author: viewer,
+                    instanceId,
+                    kind: 'memo',
+                    status: { not: 'deleted' },
+                },
+                select: { id: true },
+            });
+            if (!ok)
+                return { error: '上级节点不存在' };
+            parentId = explicitParent;
+        }
+        if (!parentId) {
+            const rootNote = roots.get(SYSTEM_ROOT_TITLES[0]) || roots.get('笔记') || '';
+            if (type === 'diary') {
+                const root = roots.get('日记') || '';
+                const year = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+                parentId = await this.ensureChildNode(viewer, instanceId, year, MM, 2);
+            }
+            else if (type === 'journal') {
+                const root = roots.get('札记') || '';
+                parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+            }
+            else if (type === 'inspiration') {
+                const root = roots.get('灵感') || '';
+                parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+            }
+            else {
+                parentId = rootNote;
+            }
+        }
+        if (!title) {
+            if (type === 'diary')
+                title = `${YYYY}${MM}${DD}-${hh}${mi}`;
+            else if (type === 'inspiration')
+                title = `灵感:${YYYY}${MM}${DD}-${hh}${mi}${ss}`;
+            else {
+                const prefix = type === 'journal' ? '未命名札记' : '未命名笔记';
+                title = `${prefix}${await this.nextUntitledIndex(viewer, instanceId, parentId, prefix)}`;
+            }
+        }
+        title = title.slice(0, MAX_TITLE);
+        const md = String(input.content ?? '');
+        const useIds = await this.blockIdsEnabled(instanceId, viewer);
+        const content = useIds ? (0, memo_util_1.withBlockIds)(md) : md;
+        const last = await prisma_1.prisma.note.findFirst({
+            where: { author: viewer, instanceId, kind: 'memo', parentId, status: { not: 'deleted' } },
+            orderBy: { sort: 'desc' },
+            select: { sort: true },
+        });
+        const row = await prisma_1.prisma.note.create({
+            data: {
+                kind: 'memo',
+                title,
+                content,
+                contentFormat: 'markdown',
+                parentId,
+                sort: asInt(last?.sort) + 1,
+                isSystem: false,
+                author: viewer,
+                instanceId,
+                visibility: 'private',
+                status: 'published',
+                publishedAt: new Date(),
+                firstPublishedAt: new Date(),
+                metas: JSON.stringify({
+                    excerpt: (0, memo_util_1.excerptOf)(content),
+                    charCount: (0, memo_util_1.countMemoChars)(content),
+                    wordCount: (0, memo_util_1.countMemoWords)(content),
+                }),
+            },
+        });
+        await this.rebuildNoteIndex(row.id, content, viewer, instanceId);
+        return {
+            id: row.id,
+            title,
+            parentId,
+            type,
+            version: asInt(row.version, 1),
+            createdAt: timeOf(row.createdAt),
+        };
+    }
+    async moveNode(viewer, instanceId, id, input) {
+        const row = await prisma_1.prisma.note.findFirst({
+            where: { id, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, isSystem: true, parentId: true },
+        });
+        if (!row)
+            return { error: '笔记不存在' };
+        if (row.isSystem)
+            return { error: '固定一级目录不能移动' };
+        const target = String(input.parentId ?? '');
+        if (target) {
+            if (target === id)
+                return { error: '不能移动到自身下面' };
+            const ok = await prisma_1.prisma.note.findFirst({
+                where: { id: target, author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },
+                select: { id: true },
+            });
+            if (!ok)
+                return { error: '目标节点不存在' };
+            let cur = target;
+            let guard = 0;
+            while (cur && guard < MAX_FOLDER_DEPTH) {
+                if (cur === id)
+                    return { error: '不能移动到自己的子节点下' };
+                const p = await prisma_1.prisma.note.findFirst({
+                    where: { id: cur, author: viewer, instanceId, kind: 'memo' },
+                    select: { parentId: true },
+                });
+                cur = String(p?.parentId || '');
+                guard += 1;
+            }
+        }
+        const data = { parentId: target };
+        if (input.sort !== undefined)
+            data.sort = asInt(input.sort);
+        else {
+            const last = await prisma_1.prisma.note.findFirst({
+                where: { author: viewer, instanceId, kind: 'memo', parentId: target, status: { not: 'deleted' } },
+                orderBy: { sort: 'desc' },
+                select: { sort: true },
+            });
+            data.sort = asInt(last?.sort) + 1;
+        }
+        await prisma_1.prisma.note.update({ where: { id }, data: data });
+        return { ok: true, parentId: target };
+    }
+    async reorderNodes(viewer, instanceId, parentId, ids) {
+        const list = Array.isArray(ids) ? ids.map((x) => String(x)) : [];
+        if (!list.length)
+            return { ok: true, count: 0 };
+        const rows = await prisma_1.prisma.note.findMany({
+            where: { id: { in: list }, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, isSystem: true },
+        });
+        const allowed = new Set(rows.filter((r) => !r.isSystem).map((r) => String(r.id)));
+        let i = 0;
+        for (const id of list) {
+            if (!allowed.has(id))
+                continue;
+            await prisma_1.prisma.note.update({ where: { id }, data: { parentId, sort: i } });
+            i += 1;
+        }
+        return { ok: true, count: i };
+    }
+    async renameNode(viewer, instanceId, id, title) {
+        const row = await prisma_1.prisma.note.findFirst({
+            where: { id, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, isSystem: true },
+        });
+        if (!row)
+            return { error: '笔记不存在' };
+        if (row.isSystem)
+            return { error: '固定一级目录不能修改名称' };
+        const name = String(title ?? '').replace(/\s+/g, ' ').trim().slice(0, MAX_TITLE);
+        if (!name)
+            return { error: '名称不能为空' };
+        await prisma_1.prisma.note.update({ where: { id }, data: { title: name } });
+        return { ok: true, title: name };
+    }
+    async subtreeIds(viewer, instanceId, id) {
+        const out = [];
+        let layer = [String(id)];
+        const seen = new Set();
+        let guard = 0;
+        while (layer.length && guard < MAX_FOLDER_DEPTH * 4) {
+            guard += 1;
+            for (const cur of layer)
+                if (!seen.has(cur))
+                    seen.add(cur);
+            const rows = await prisma_1.prisma.note.findMany({
+                where: { author: viewer, instanceId, kind: 'memo', parentId: { in: layer } },
+                select: { id: true },
+            });
+            const next = [];
+            for (const r of rows) {
+                const nid = String(r.id);
+                if (!seen.has(nid)) {
+                    seen.add(nid);
+                    next.push(nid);
+                }
+            }
+            out.push(...layer.filter((x) => !out.includes(x)));
+            layer = next;
+        }
+        return out;
+    }
+    async trashTree(viewer, instanceId, id) {
+        const row = await prisma_1.prisma.note.findFirst({
+            where: { id, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, isSystem: true, status: true },
+        });
+        if (!row)
+            return { error: '笔记不存在' };
+        if (row.isSystem)
+            return { error: '固定一级目录不能删除' };
+        const ids = await this.subtreeIds(viewer, instanceId, id);
+        const r = await prisma_1.prisma.note.updateMany({
+            where: { id: { in: ids }, status: { not: 'deleted' } },
+            data: { status: 'deleted', deletedAt: new Date() },
+        });
+        app_log_1.appLog.info('memo', `节点进回收站：${id}（含子孙共 ${r.count} 篇）`);
+        return { ok: true, count: r.count };
+    }
+    async restoreTree(viewer, instanceId, id) {
+        const row = await prisma_1.prisma.note.findFirst({
+            where: { id, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, parentId: true, status: true },
+        });
+        if (!row)
+            return { error: '笔记不存在' };
+        const ids = await this.subtreeIds(viewer, instanceId, id);
+        const ancestors = [];
+        let cur = String(row.parentId || '');
+        let guard = 0;
+        while (cur && guard < MAX_FOLDER_DEPTH) {
+            const p = await prisma_1.prisma.note.findFirst({
+                where: { id: cur, author: viewer, instanceId, kind: 'memo' },
+                select: { id: true, parentId: true, status: true },
+            });
+            if (!p)
+                break;
+            if (String(p.status || '') === 'deleted')
+                ancestors.push(String(p.id));
+            cur = String(p.parentId || '');
+            guard += 1;
+        }
+        await prisma_1.prisma.note.updateMany({
+            where: { id: { in: [...ids, ...ancestors] } },
+            data: { status: 'published', deletedAt: null },
+        });
+        return { ok: true, count: ids.length + ancestors.length };
+    }
     async listFolders(viewer, instanceId) {
         const where = { author: viewer, instanceId };
         const [folders, counts] = await Promise.all([
@@ -266,6 +739,9 @@ let MemoService = class MemoService {
             content: String(row.content || ''),
             contentFormat: String(row.contentFormat || ''),
             folderId: String(row.folderId || ''),
+            parentId: String(row.parentId || ''),
+            sort: asInt(row.sort),
+            isSystem: !!row.isSystem,
             version: asInt(row.version, 1),
             status: String(row.status || ''),
             createdAt: timeOf(row.createdAt),
@@ -300,6 +776,22 @@ let MemoService = class MemoService {
             if (!ok)
                 return { error: '目录不存在' };
         }
+        const parentId = String(input.parentId ?? '');
+        if (parentId) {
+            const ok = await prisma_1.prisma.note.findFirst({
+                where: { id: parentId, author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },
+                select: { id: true },
+            });
+            if (!ok)
+                return { error: '上级节点不存在' };
+        }
+        const last = parentId
+            ? await prisma_1.prisma.note.findFirst({
+                where: { author: viewer, instanceId, kind: 'memo', parentId, status: { not: 'deleted' } },
+                orderBy: { sort: 'desc' },
+                select: { sort: true },
+            })
+            : null;
         const row = await prisma_1.prisma.note.create({
             data: {
                 kind: 'memo',
@@ -307,6 +799,8 @@ let MemoService = class MemoService {
                 content,
                 contentFormat: 'markdown',
                 folderId,
+                parentId,
+                sort: asInt(last?.sort) + 1,
                 author: viewer,
                 instanceId,
                 visibility: 'private',
@@ -322,10 +816,13 @@ let MemoService = class MemoService {
     async saveNote(viewer, instanceId, id, input) {
         const row = await prisma_1.prisma.note.findFirst({
             where: { id, author: viewer, instanceId, kind: 'memo' },
-            select: { id: true, version: true, content: true, folderId: true, title: true },
+            select: { id: true, version: true, content: true, folderId: true, title: true, isSystem: true },
         });
         if (!row)
             return { error: '笔记不存在' };
+        if (row.isSystem && input.title !== undefined && String(input.title ?? '').trim() !== String(row.title || '').trim()) {
+            return { error: '固定一级目录不能修改名称' };
+        }
         const expect = asInt(input.version, 0);
         if (expect && expect !== asInt(row.version, 1)) {
             app_log_1.appLog.warn('memo', `保存冲突：笔记 ${id} 期望版本 ${expect}，库内 ${row.version}`);
@@ -390,11 +887,19 @@ let MemoService = class MemoService {
         return { ok: true };
     }
     async purge(viewer, instanceId, id) {
-        const row = await prisma_1.prisma.note.findFirst({ where: { id, author: viewer, instanceId, kind: 'memo' }, select: { id: true, status: true } });
+        const row = await prisma_1.prisma.note.findFirst({
+            where: { id, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, status: true, parentId: true, isSystem: true },
+        });
         if (!row)
             return { error: '笔记不存在' };
+        if (row.isSystem)
+            return { error: '固定一级目录不能删除' };
         if (String(row.status || '') !== 'deleted')
             return { error: '只能从回收站彻底删除' };
+        await prisma_1.prisma.note
+            .updateMany({ where: { parentId: id, author: viewer, instanceId, kind: 'memo' }, data: { parentId: String(row.parentId || '') } })
+            .catch(() => undefined);
         await prisma_1.prisma.note.delete({ where: { id } });
         app_log_1.appLog.info('memo', `彻底删除笔记 ${id}`);
         await prisma_1.prisma.noteBlock.deleteMany({ where: { noteId: id } }).catch(() => undefined);
@@ -735,6 +1240,6 @@ let MemoService = class MemoService {
     }
 };
 exports.MemoService = MemoService;
-exports.MemoService = MemoService = __decorate([
+exports.MemoService = MemoService = MemoService_1 = __decorate([
     (0, common_1.Injectable)()
 ], MemoService);

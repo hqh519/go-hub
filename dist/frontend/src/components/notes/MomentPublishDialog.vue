@@ -150,18 +150,9 @@
                     v-for="(a, i) in assets"
                     :key="a.fileId + '-' + i"
                     class="mp-asset"
-                    :class="{ 'is-dragging': dragIndex === i, 'is-pressable': longPressDragging, 'is-previewing': isAssetPreviewing(a) }"
+                    :class="{ 'is-previewing': isAssetPreviewing(a) }"
                     :data-asset-index="i"
-                    draggable="true"
                     @contextmenu.prevent
-                    @dragstart="onDragStart(i, $event)"
-                    @dragover.prevent="onDragOver(i)"
-                    @dragend="onDragEnd"
-                    @drop.prevent="onDrop(i)"
-                    @pointerdown="onAssetPointerDown(i, $event)"
-                    @pointermove="onAssetPointerMove($event)"
-                    @pointerup="onAssetPointerUp"
-                    @pointercancel="onAssetPointerUp"
                 >
                     <img v-if="a.mediaKind === 'image'" :src="a.thumbUrl || a.url" class="mp-asset-img" alt="" />
                     <!--
@@ -213,10 +204,6 @@
                         <button type="button" :disabled="i === assets.length - 1" :title="$t('notes.moveRight')" @click.stop="moveAsset(i, 1)">▶</button>
                     </span>
                     <span v-if="i === 0 && assets.length > 1" class="mp-asset-cover-tag">{{ $t('notes.coverBadge') }}</span>
-                    <!-- v1.1.3：触屏用户可以长按任意附件拖动换位（桌面端直接拖） -->
-                    <span v-if="longPressDragging && dragIndex === i" class="mp-asset-drag-hint">
-                        <font-awesome-icon icon="arrows-alt" />
-                    </span>
                 </div>
             </div>
 
@@ -565,11 +552,8 @@ export default {
             pendingFiles: [],
             /** 待转存的链接（与 pendingFiles 二选一） */
             pendingLink: '',
-            dragIndex: -1,
             moodOptions: MOOD_OPTIONS,
             weatherOptions: WEATHER_OPTIONS,
-            // v1.1.3：触屏长按拖动排序
-            longPressDragging: false,
             /** 当前浮出名称的图标：「mood:happy」 */
             tipKey: '',
             /** v1.1.6：鼠标悬停中的图标（桌面端悬停即显示名称，移走即收起） */
@@ -1169,7 +1153,6 @@ export default {
             this.skipDraftSave = false;
             this.pendingFiles = [];
             this.pendingLink = '';
-            this.dragIndex = -1;
             this.clearNameTip();
         },
         reset() {
@@ -1528,84 +1511,13 @@ export default {
             list.splice(j, 0, item);
             this.assets = list;
         },
-        onDragStart(i, e) {
-            this.dragIndex = i;
-            try {
-                e.dataTransfer.effectAllowed = 'move';
-                // Firefox 需要设置数据才会真正开始拖拽
-                e.dataTransfer.setData('text/plain', String(i));
-            } catch (err) {
-                /* 忽略 */
-            }
-        },
-        onDragOver(i) {
-            if (this.dragIndex < 0 || this.dragIndex === i) return;
-            this.moveAsset(this.dragIndex, i - this.dragIndex);
-            this.dragIndex = i;
-        },
-        onDrop() {
-            this.dragIndex = -1;
-        },
-        onDragEnd() {
-            this.dragIndex = -1;
-        },
-
-        /* ── 触屏长按拖动排序（v1.1.3） ─────────────────────────
-         * 桌面端用原生 HTML5 拖拽（上面那三个方法）；
-         * 触屏没有 dragstart，改成「按住 320ms → 跟随手指 → 经过谁就换到谁的位置」。
-         * 移动超过 8px 视为「用户在滚动」，立刻取消计时，不会误触。
+        /*
+         * v1.3.9（需求：移除附件拖动排序）
+         *
+         * 桌面端的 HTML5 拖拽与触屏的长按拖拽都撤掉了 —— 触屏长按 320ms 的判定
+         * 会和「按住小眼睛预览」抢同一个手势，表现为预览图刚出来就被拖动逻辑接管。
+         * 排序改用每个附件右下角的 ◀ / ▶ 微调按钮（moveAsset），功能不丢。
          */
-        onAssetPointerDown(i, e) {
-            // 鼠标走原生拖拽，不重复处理
-            if (e.pointerType === 'mouse') return;
-            const el = e.currentTarget;
-            this._pressStart = { x: e.clientX, y: e.clientY };
-            this._pressTarget = el;
-            this._pressTimer = window.setTimeout(() => {
-                this._pressTimer = null;
-                this.longPressDragging = true;
-                this.dragIndex = i;
-                // 轻微振动反馈（支持才震，iOS 不支持就静默）
-                if (navigator.vibrate) navigator.vibrate(8);
-                try {
-                    el.setPointerCapture(e.pointerId);
-                } catch (err) {
-                    /* 老浏览器忽略 */
-                }
-                // 长按之后要阻止页面跟着滚
-                if (el.style) el.style.touchAction = 'none';
-            }, 320);
-        },
-        onAssetPointerMove(e) {
-            if (this._pressTimer && this._pressStart) {
-                const dx = Math.abs(e.clientX - this._pressStart.x);
-                const dy = Math.abs(e.clientY - this._pressStart.y);
-                if (dx > 8 || dy > 8) {
-                    window.clearTimeout(this._pressTimer);
-                    this._pressTimer = null;
-                }
-            }
-            if (!this.longPressDragging || this.dragIndex < 0) return;
-            // 手指下的元素 → 是哪一个附件格
-            const hit = document.elementFromPoint(e.clientX, e.clientY);
-            const target = hit && hit.closest ? hit.closest('.mp-asset') : null;
-            if (!target) return;
-            const to = Number(target.getAttribute('data-asset-index'));
-            if (!Number.isFinite(to) || to === this.dragIndex) return;
-            this.moveAsset(this.dragIndex, to - this.dragIndex);
-            this.dragIndex = to;
-        },
-        onAssetPointerUp() {
-            if (this._pressTimer) {
-                window.clearTimeout(this._pressTimer);
-                this._pressTimer = null;
-            }
-            if (this._pressTarget && this._pressTarget.style) this._pressTarget.style.touchAction = '';
-            this._pressTarget = null;
-            this.longPressDragging = false;
-            this.dragIndex = -1;
-        },
-
         /* ── 上传目标（通用弹窗） ───────────────────────────────── */
         /** 打开前重算默认目录：/瞬间/2026/11 */
         prepareTarget() {
@@ -2046,7 +1958,8 @@ export default {
     border-radius: 8px;
     overflow: hidden;
     background: var(--note-cell-bg, rgba(127, 127, 127, 0.12));
-    cursor: grab;
+    /* v1.3.9：不再支持拖动排序（避免与长按预览抢手势），光标回到普通指针 */
+    cursor: default;
     -webkit-touch-callout: none;
 }
 
@@ -2060,10 +1973,6 @@ export default {
     .mp-asset.is-previewing .mp-asset-img {
         visibility: hidden;
     }
-}
-
-.mp-asset.is-dragging {
-    opacity: 0.5;
 }
 
 .mp-asset-img {
@@ -2380,25 +2289,7 @@ export default {
 
 /* ── 心情 / 天气（v1.1.6 起全终端统一为图标直选，手机版下拉已移除） ── */
 
-/* 长按拖动时的「抓手」角标 */
-.mp-asset-drag-hint {
-    position: absolute;
-    inset: auto 0 0 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 16px;
-    border-radius: 0 0 8px 8px;
-    background: rgba(0, 0, 0, 0.45);
-    color: #fff;
-    font-size: 10px;
-    pointer-events: none;
-}
-
-.mp-asset.is-pressable {
-    /* 长按后不再让浏览器滚动页面，手指才能稳定拖动 */
-    touch-action: none;
-}
+/* v1.3.9：附件拖动排序已移除（改为 ◀ / ▶ 微调），抓手角标与 pressable 样式一并删除 */
 
 @media (max-width: 767.98px) {
     /*

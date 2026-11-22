@@ -573,7 +573,7 @@
     "localFiles": "挂载管理",
     "switchTitle": "切换页面",
     "notesManagement": "我的发布",
-    "memoManagement": "笔记管理",
+    "memoManagement": "记事管理",
     "regManagement": "登记管理"
   },
   "fileDetail": {
@@ -2730,7 +2730,6 @@
     "bucketDay": "按日",
     "bucketWeek": "按周",
     "bucketQuarter": "按季",
-    "bucketWeek": "按周",
     "bucketMonth": "按月",
     "bucketYear": "按年",
     "scopeMe": "仅统计我",
@@ -3263,7 +3262,7 @@
     "reload": "重新加载",
     "reloadTip": "重新加载会丢弃当前未保存的修改，确定继续吗？",
     "settingsSaved": "设置已保存",
-    "pickOrCreate": "从中间选一篇笔记，或新建一篇",
+    "pickOrCreate": "从左侧选择一篇笔记，或新建一篇",
     "conflictTitle": "版本冲突",
     "conflictTip": "这篇笔记已在别处被修改。选「覆盖」会用当前内容覆盖对方的改动；选「重新加载」会丢弃本页未保存的内容。",
     "conflictOverwrite": "覆盖",
@@ -3531,6 +3530,25 @@
     "toolConvertTo": "转换为",
     "htmlBlockLabel": "HTML 块",
     "htmlBlockEdit": "编辑",
-    "listFold": "折叠下级"
+    "listFold": "折叠下级",
+    "treeTitle": "记事树",
+    "newChildNote": "新建子笔记",
+    "deleteNode": "删除节点",
+    "deleteNodeTip": "删除「{title}」？它下面的所有子笔记会一起进入回收站。",
+    "nameRequired": "名称不能为空",
+    "renameTip": "输入新的名称",
+    "createTitle": "新建",
+    "createTip": "选择要创建的节点类型；创建后会放到该类型的默认位置。",
+    "createChildTip": "将在当前节点下创建子笔记。",
+    "created": "已创建",
+    "typeNote": "笔记",
+    "typeNoteDesc": "普通文档，落在「笔记」目录下",
+    "typeDiary": "日记",
+    "typeDiaryDesc": "标题为当前时间，落在「日记 / 年 / 月」下",
+    "typeJournal": "札记",
+    "typeJournalDesc": "随记随写，落在「札记 / 年」下",
+    "typeInspiration": "灵感",
+    "typeInspirationDesc": "记录一闪而过的想法，落在「灵感 / 年」下",
+    "systemNodeLocked": "固定一级目录，名称不可修改"
   }
 }

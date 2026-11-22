@@ -1118,6 +1118,21 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-139',
+      title: '七十五、v1.3.9 更新要点',
+      intro: '这一版把笔记管理改成「文档节点 + 两栏」：每个节点本身就是一篇笔记，也可以无限嵌套子笔记；新建时先选笔记 / 日记 / 札记 / 灵感，标题与落点自动生成。同时移除了发布瞬间的附件拖动排序。',
+      items: [
+        { t: '笔记管理改名', d: '后台左上角页面切换、网站标题里的页面名都从「笔记管理」改为「记事管理」，路径 /memo 不变。' },
+        { t: '文档节点树', d: '目录与笔记合并成同一种节点：每个节点既是一篇有正文的笔记，又能作为目录无限嵌套子笔记。点击节点即在右侧打开它，节点后的数字是它下面的子笔记总数。' },
+        { t: '两栏布局', d: '原来的「目录 + 列表 + 编辑器」三栏收成两栏：左侧记事树、右侧编辑器，树的宽度仍可拖动并记住；手机上树与编辑器互斥铺满，顶栏返回键回到树。' },
+        { t: '四种新建类型', d: '点「＋」先选类型：笔记（未命名笔记x，落在「笔记」下）、日记（YYYYMMDD-HHMM，落在「日记 / 年 / 月」下）、札记（未命名札记x，落在「札记 / 年」下）、灵感（灵感:YYYYMMDD-HHMMSS，落在「灵感 / 年」下）。在某个节点上「新建子笔记」则直接挂在该节点下。' },
+        { t: '固定一级目录', d: '「笔记 / 日记 / 札记 / 灵感」是固定一级节点，不能删除、改名或拖动，标题栏为只读；节点里的正文仍可正常编辑。' },
+        { t: '删除与恢复', d: '删除节点时整棵子树一起进回收站；从回收站恢复时，它的子孙以及已删除的上级节点会一并恢复，不会出现「恢复了却看不见」。' },
+        { t: '旧目录自动迁移', d: '升级后首次打开记事管理，旧目录会转成「空正文的目录页节点」，原来目录里的笔记挂到对应节点下；旧数据不删除，迁移按用户与实例分别进行。' },
+        { t: '发布瞬间附件排序', d: '移除移动端发布瞬间编辑页的附件拖动排序（它会和按住小眼睛预览抢同一个长按手势），改用每个附件右下角的 ◀ / ▶ 微调顺序。' }
+      ]
+    },
+    {
       id: 'whatsnew-138',
       title: '七十四、v1.3.8 更新要点',
       intro: '这一版把小眼睛预览放大并保证不挡按钮，表格的列宽 / 尺寸拖动真正稳住，工具组补齐图标；批注在手机上居中、输入框自动增高，移动端信息行也与标题栏对齐。',
@@ -2558,6 +2573,21 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-139',
+      title: '75. What is new in v1.3.9',
+      intro: 'Notes management becomes a document-node tree in two panes: every node is itself a note and can hold child notes at any depth. Creating a note starts with a type picker (note, diary, journal, inspiration) that fills the title and location automatically.',
+      items: [
+        { t: 'Renamed to Records', d: 'The page switcher label and the {pagename} title mapping change from "Notes management" to "Records"; the /memo route is unchanged.' },
+        { t: 'Document nodes', d: 'Folders and notes merge into one kind of node: each node has its own content and can contain child notes without a depth limit. Clicking a node opens it on the right; the number after the title counts all descendants.' },
+        { t: 'Two-pane layout', d: 'The old folder / list / editor layout becomes tree plus editor. The tree width is still draggable and remembered. On phones the tree and editor take turns filling the screen, and the back button returns to the tree.' },
+        { t: 'Four note types', d: 'The plus button asks for a type: Note (Untitled note N under "Notes"), Diary (YYYYMMDD-HHMM under "Diary / year / month"), Journal (Untitled journal N under "Journal / year") and Inspiration (Inspiration:YYYYMMDD-HHMMSS under "Inspiration / year"). "New child note" on a node creates directly under it.' },
+        { t: 'Fixed top-level nodes', d: '"Notes", "Diary", "Journal" and "Inspiration" cannot be deleted, renamed or dragged; their title field is read-only while the body stays editable.' },
+        { t: 'Delete and restore', d: 'Deleting a node moves its whole subtree to trash. Restoring brings back its descendants and any deleted ancestors, so a restored node never ends up invisible.' },
+        { t: 'Legacy folders migrate', d: 'On the first visit after upgrading, old folders become empty "folder page" nodes and the notes inside them are re-parented under those nodes. Old rows are kept, and migration runs per user and per instance.' },
+        { t: 'Moment attachments', d: 'Drag-to-reorder on the moment editor is removed because it competed with the long-press eye preview; use the ◀ / ▶ buttons on each attachment instead.' }
       ]
     },
     {

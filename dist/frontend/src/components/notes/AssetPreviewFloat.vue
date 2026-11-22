@@ -50,6 +50,8 @@
 const PREVIEW_MAX = 760;
 const PREVIEW_VIEWPORT = 0.9;
 const PREVIEW_MIN = 120;
+/** v1.3.9：竖长图的最小框宽（内容仍是 contain，只补两侧留白，避免细长条） */
+const PREVIEW_MIN_BOX_W = 300;
 const PREVIEW_MARGIN = 8;
 const PREVIEW_GAP = 8;
 const PREVIEW_HEAD_H = 26;
@@ -101,6 +103,7 @@ export default {
             if (v) {
                 // 每次重新打开都重新等一次定位：沿用上一次的坐标会先闪一下旧位置
                 this.positioned = false;
+                if (this._ratioSrc !== this.src) this._ratio = 0;
                 this.scheduleLayout();
             } else {
                 this.positioned = false;
@@ -109,6 +112,12 @@ export default {
             }
         },
         src() {
+            /*
+             * v1.3.9（需求：按住小眼睛先是大图、闪一下变成小图）
+             * 换了预览对象时必须丢掉上一个文件的比例，否则会先用旧比例算一次、
+             * 等新元数据回来再算一次 —— 又是一次可见的尺寸跳变。
+             */
+            if (this._ratioSrc !== this.src) this._ratio = 0;
             if (this.visible) this.scheduleLayout();
         }
     },
@@ -116,6 +125,18 @@ export default {
         if (this.visible) this.scheduleLayout();
     },
     methods: {
+        /**
+         * v1.3.9：是否触摸为主（手机 / 平板）。
+         * 触摸端长按预览时用手指按着小眼睛，浮层盖住按钮完全不影响操作，
+         * 所以优先保证「大」，不再为了避让按钮而缩小。
+         */
+        coarsePointer() {
+            try {
+                return window.matchMedia('(hover: none), (pointer: coarse)').matches;
+            } catch (e) {
+                return false;
+            }
+        },
         /**
          * v1.3.5：visible / src / anchor 常常在同一批更新里一起变化，
          * 逐个 watch 各跑一次 layout 会算两遍并让浮层跳两次；合到一次 nextTick。
@@ -200,9 +221,25 @@ export default {
              */
             const maxW = Math.max(200, Math.round(Math.min(vw * PREVIEW_VIEWPORT, PREVIEW_MAX)));
             const maxH = Math.max(140, Math.round(vh * PREVIEW_VIEWPORT) - PREVIEW_HEAD_H);
+            const isMedia = this.type === 'image' || this.type === 'video';
+            /*
+             * v1.3.9（需求：按住小眼睛先大图、闪一下变成小图）
+             *
+             * 根因：比例未知时先按正方形大框显形，probeRatio() 拿到真实比例后
+             * 又按比例重算 —— 横图高度会从 520 骤减到 200 左右，看起来就是
+             * 「闪一下变成小预览图」。
+             *
+             * 触摸端改为固定大框：宽 = 90% 视口，高 = 52% 视口（有上下限），
+             * 比例只决定图片在框内 contain 后的留白。首次显形与元数据回来后
+             * 尺寸完全一致，不会再有任何收缩。
+             */
+            const coarse = this.coarsePointer();
             let w;
             let h;
-            if (ratio && Number.isFinite(ratio) && ratio > 0) {
+            if (coarse && isMedia) {
+                w = maxW;
+                h = Math.min(maxH, Math.max(300, Math.round(vh * 0.52)));
+            } else if (ratio && Number.isFinite(ratio) && ratio > 0) {
                 h = maxH;
                 w = Math.round(h * ratio);
                 if (w > maxW) {
@@ -218,6 +255,8 @@ export default {
                     h = PREVIEW_MIN;
                     w = Math.max(PREVIEW_MIN, Math.round(h * ratio));
                 }
+                // v1.3.9：竖长图（手机截图）宽度兜底，避免框中图只剩一条细线
+                if (w < PREVIEW_MIN_BOX_W) w = Math.min(maxW, PREVIEW_MIN_BOX_W);
             } else if (this.type === 'audio') {
                 w = Math.min(420, maxW);
                 h = 96;
@@ -232,9 +271,10 @@ export default {
             w = Math.min(w, maxW);
             h = Math.min(h, maxH);
 
+            // 触摸端不贴着眼睛摆：空间不足会把框压小，直接居中给最大的观感
             let left = (vw - w) / 2;
             let top = (vh - h - PREVIEW_HEAD_H) / 2;
-            if (anchor) {
+            if (anchor && !coarse) {
                 /*
                  * 贴着眼睛四向择大（与旧版 anchoredStyle 一致）：
                  * 先选空间最大的一侧，再把浮层缩进该侧可用区域，保证不覆盖小眼睛、
@@ -262,20 +302,26 @@ export default {
                     ? Math.max(80, space[side])
                     : Math.max(80, vh - PREVIEW_MARGIN * 2);
                 const scale = Math.min(1, availW / Math.max(1, w), availH / Math.max(1, h + PREVIEW_HEAD_H));
-                w = Math.round(w * scale);
-                h = Math.round(h * scale);
-                if (side === 'right') {
-                    left = anchor.right + PREVIEW_GAP;
-                    top = anchor.top + anchor.height / 2 - (h + PREVIEW_HEAD_H) / 2;
-                } else if (side === 'left') {
-                    left = anchor.left - PREVIEW_GAP - w;
-                    top = anchor.top + anchor.height / 2 - (h + PREVIEW_HEAD_H) / 2;
-                } else if (side === 'bottom') {
-                    top = anchor.bottom + PREVIEW_GAP;
-                    left = anchor.left + anchor.width / 2 - w / 2;
-                } else {
-                    top = anchor.top - PREVIEW_GAP - (h + PREVIEW_HEAD_H);
-                    left = anchor.left + anchor.width / 2 - w / 2;
+                /*
+                 * v1.3.9：四向都挤时不再缩成小框（附件区靠边 / 小屏窗口最容易触发）。
+                 * 缩放比低于 0.8 就放弃贴边，保留上面算好的居中大框。
+                 */
+                if (scale >= 0.8) {
+                    w = Math.round(w * scale);
+                    h = Math.round(h * scale);
+                    if (side === 'right') {
+                        left = anchor.right + PREVIEW_GAP;
+                        top = anchor.top + anchor.height / 2 - (h + PREVIEW_HEAD_H) / 2;
+                    } else if (side === 'left') {
+                        left = anchor.left - PREVIEW_GAP - w;
+                        top = anchor.top + anchor.height / 2 - (h + PREVIEW_HEAD_H) / 2;
+                    } else if (side === 'bottom') {
+                        top = anchor.bottom + PREVIEW_GAP;
+                        left = anchor.left + anchor.width / 2 - w / 2;
+                    } else {
+                        top = anchor.top - PREVIEW_GAP - (h + PREVIEW_HEAD_H);
+                        left = anchor.left + anchor.width / 2 - w / 2;
+                    }
                 }
             }
             const boxH = h + PREVIEW_HEAD_H;
@@ -300,6 +346,7 @@ export default {
             if (!ratio) {
                 const real = await this.probeRatio();
                 if (!this.visible || seq !== this._layoutSeq) return;
+                this._ratioSrc = this.src;
                 if (real && Math.abs(real - ratio) > 0.01) {
                     this._ratio = real;
                     this.layout();
