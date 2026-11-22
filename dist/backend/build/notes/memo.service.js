@@ -950,6 +950,32 @@ let MemoService = MemoService_1 = class MemoService {
         createdAt: true,
         updatedAt: true,
     };
+    async collectSubtreeIds(viewer, instanceId, rootId) {
+        const rows = await prisma_1.prisma.note.findMany({
+            where: { author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },
+            select: { id: true, parentId: true },
+        });
+        const childrenOf = new Map();
+        for (const r of rows) {
+            const p = String(r.parentId || '');
+            if (!childrenOf.has(p))
+                childrenOf.set(p, []);
+            childrenOf.get(p).push(String(r.id));
+        }
+        const out = [];
+        const seen = new Set();
+        const queue = [rootId];
+        while (queue.length) {
+            const id = queue.shift();
+            if (!id || seen.has(id))
+                continue;
+            seen.add(id);
+            out.push(id);
+            for (const c of childrenOf.get(id) || [])
+                queue.push(c);
+        }
+        return out;
+    }
     async listNotes(input) {
         const { viewer, instanceId } = input;
         const page = Math.max(1, asInt(input.page, 1));
@@ -962,6 +988,10 @@ let MemoService = MemoService_1 = class MemoService {
             where.folderId = '';
         else if (folderId)
             where.folderId = folderId;
+        const parentId = String(input.parentId ?? '');
+        if (parentId) {
+            where.parentId = input.deep ? { in: await this.collectSubtreeIds(viewer, instanceId, parentId) } : parentId;
+        }
         const status = String(input.status ?? '');
         where.status = status === 'deleted' ? 'deleted' : { not: 'deleted' };
         const search = String(input.search ?? '').trim();

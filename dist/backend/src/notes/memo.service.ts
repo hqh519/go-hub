@@ -1180,11 +1180,48 @@ export class MemoService {
     updatedAt: true,
   } as const;
 
+  /**
+   * v1.3.9.3：收集某节点及其全部子孙的 id（用于「查看节点」一次列出整棵子树的文档）。
+   * 返回值包含根节点本身 —— 放进 `folderId IN (...)` 时它只代表「根的直接子级」，
+   * 不会把根节点自己查出来（根节点的 parentId 指向的是它的上级）。
+   */
+  private async collectSubtreeIds(viewer: string, instanceId: string, rootId: string) {
+    const rows = await prisma.note.findMany({
+      where: { author: viewer, instanceId, kind: 'memo', status: { not: 'deleted' } },
+      select: { id: true, parentId: true },
+    });
+    const childrenOf = new Map<string, string[]>();
+    for (const r of rows as any[]) {
+      const p = String(r.parentId || '');
+      if (!childrenOf.has(p)) childrenOf.set(p, []);
+      childrenOf.get(p)!.push(String(r.id));
+    }
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const queue = [rootId];
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      for (const c of childrenOf.get(id) || []) queue.push(c);
+    }
+    return out;
+  }
+
   async listNotes(input: {
     viewer: string;
     instanceId: string;
     folderId?: string;
+    /**
+     * v1.3.9.3：文档树节点 id。
+     * v1.3.9 起树的层级用 parentId 表达（folderId 是旧「目录」模型遗留字段，
+     * 新节点一律为空），所以「列某节点下的文档」必须按 parentId 收窄。
+     */
+    parentId?: string;
     /** '__root' = 只看未归档；'' / 不传 = 全部 */
+    /** v1.3.9.3：true = 连该节点下的所有子孙文档一起列出（节点「查看节点」用） */
+    deep?: boolean;
     search?: string;
     status?: string;
     page?: number;
@@ -1206,6 +1243,15 @@ export class MemoService {
       // 不收窄 folderId
     } else if (folderId === '__root') where.folderId = '';
     else if (folderId) where.folderId = folderId;
+    /*
+     * v1.3.9.3（需求：节点「查看节点」列出自身节点的所有子级文档）
+     * v1.3.9 起树层级是 parentId 链（folderId 只是旧目录模型的遗留字段，新节点为空），
+     * 所以这里按 parentId 收窄：普通列表 = 直接子级，deep = 整棵子树。
+     */
+    const parentId = String(input.parentId ?? '');
+    if (parentId) {
+      where.parentId = input.deep ? { in: await this.collectSubtreeIds(viewer, instanceId, parentId) } : parentId;
+    }
     const status = String(input.status ?? '');
     where.status = status === 'deleted' ? 'deleted' : { not: 'deleted' };
     const search = String(input.search ?? '').trim();

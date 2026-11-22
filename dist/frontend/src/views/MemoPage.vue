@@ -71,11 +71,35 @@
                 <button
                     v-if="isMobile && editingId"
                     type="button"
-                    class="memo-icon-btn"
-                    :title="$t('common.back')"
+                    class="memo-icon-btn memo-back-tree-btn"
+                    :title="$t('memo.backToTree')"
                     @click="backToTree"
                 >
-                    <font-awesome-icon icon="chevron-left" />
+                    <!--
+                        v1.3.9.3（需求）：按参考图换成「目录树」图标 ——
+                        左侧一条竖干、两段横枝，右侧两个实心文件夹。
+                        自绘 SVG 而不套 FontAwesome：参考图的「竖干 + 两枝 + 双文件夹」
+                        在图标库里没有同款，凑出来的形状读不出「回到目录」。
+                    -->
+                    <svg class="memo-back-tree-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path
+                            d="M6.2 3.6v13.6a2.2 2.2 0 0 0 2.2 2.2h2.4"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.6"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        />
+                        <path d="M6.2 8.9h4.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                        <path
+                            d="M11.1 6.6a1.1 1.1 0 0 1 1.1-1.1h2.2l1.2 1.3h4.9a1.1 1.1 0 0 1 1.1 1.1v2.6a1.1 1.1 0 0 1-1.1 1.1h-8.3a1.1 1.1 0 0 1-1.1-1.1z"
+                            fill="currentColor"
+                        />
+                        <path
+                            d="M11.1 15.4a1.1 1.1 0 0 1 1.1-1.1h2.2l1.2 1.3h4.9a1.1 1.1 0 0 1 1.1 1.1v2.6a1.1 1.1 0 0 1-1.1 1.1h-8.3a1.1 1.1 0 0 1-1.1-1.1z"
+                            fill="currentColor"
+                        />
+                    </svg>
                 </button>
                 <!--
                     v1.3.5（需求）：编辑器设置左侧增加「重新加载」，
@@ -98,7 +122,7 @@
                 点节点 = 打开这篇笔记，同时可以在它下面继续挂子笔记。
             -->
             <aside
-                v-show="!isMobile || (!editingId && activeFolder !== '__trash')"
+                v-show="!isMobile || (!editingId && !previewNode && activeFolder !== '__trash')"
                 class="memo-col memo-col-tree"
                 :style="isMobile ? null : { flexBasis: `${treeWidth}px`, maxWidth: `${treeWidth}px` }"
                 @contextmenu.prevent
@@ -112,6 +136,7 @@
                     @create-child="onCreateChild"
                     @changed="onTreeChanged"
                     @trash="openTrash"
+                    @view-node="openNodeView"
                     @loaded="onTreeLoaded"
                     @node-settings-changed="onNodeSettingsChanged"
                 />
@@ -129,7 +154,7 @@
 
             <!-- 右：回收站 / 编辑器（两栏，v1.3.9 去掉中间列表栏） -->
             <main
-                v-show="!isMobile || editingId || activeFolder === '__trash'"
+                v-show="!isMobile || editingId || !!previewNode || activeFolder === '__trash'"
                 class="memo-col memo-col-editor"
             >
                 <!--
@@ -153,6 +178,29 @@
                     :folders="[]"
                     @changed="onTrashChanged"
                 />
+                <!--
+                    v1.3.9.3（需求）：「查看节点」—— 右栏以列表形式列出该节点下的所有子级文档，
+                    版式与回收站一致（标题 / 两行简介 / 日期 / 字数），点条目进编辑器。
+                -->
+                <div v-else-if="previewNode" class="memo-node-view">
+                    <div class="memo-node-view-bar">
+                        <button type="button" class="memo-trash-back" @click="closeNodeView">
+                            <font-awesome-icon icon="chevron-left" />
+                            {{ $t('common.back') }}
+                        </button>
+                        <span class="memo-trash-title">{{ previewNode.title || $t('memo.nodeDocs') }}</span>
+                    </div>
+                    <MemoList
+                        ref="previewList"
+                        :folder-id="previewNode.id"
+                        :active-id="selectedId"
+                        deep
+                        hide-create
+                        :folders="[]"
+                        @select="openNote"
+                        @changed="onPreviewChanged"
+                    />
+                </div>
                 <template v-else>
                     <MemoEditor
                         v-if="currentNote"
@@ -373,6 +421,11 @@ export default {
             folders: [],
             selectedId: '',
             currentNote: null,
+            /**
+             * v1.3.9.3（需求：节点「查看节点」）：非空 = 右栏以列表形式展示该节点的全部子级文档。
+             * { id, title }；点列表里的文档会打开编辑器（并清空它）。
+             */
+            previewNode: null,
             /** v1.3.9：新建类型选择弹窗（v1.3.9.1 起抽成 MemoCreateTypeDialog 公共组件） */
             createDlgVisible: false,
             /** 非空 = 在该节点下新建子笔记（不再套默认目录） */
@@ -500,33 +553,14 @@ export default {
         window.addEventListener('resize', this.syncViewport);
         /*
          * v1.3.1 起：移动端笔记编辑页禁止「屏幕边缘横滑 → 退出页面」。
-         * v1.3.5.1（需求）：把「键盘是否弹出」也纳入判定。
          *
-         * v1.3.9.2（需求）：改成两级行为 ——
-         *   · 编辑中（软键盘未弹出）→ 回到节点树，页面不退出；
-         *   · 编辑中 + 软键盘正弹出 → 只吃掉这次返回，等用户自己收键盘；
-         *   · 已在节点树里 → 不拦截，直接走浏览器默认回退（history.back()）。
-         * 边缘手势本身已被 edgeSwipeGuard preventDefault 吃掉，所以「交给浏览器」
-         * 必须由这里显式调 history.back() 补上，否则会变成「滑了没反应」。
-         * 返回 true 表示「这次返回已被消费」。
+         * v1.3.9.3（需求）：边缘滑动一律不做页面内处理 ——
+         *   · 在编辑页里滑：保持停在编辑页，不退回节点树、也不退页；
+         *   · 在节点树里滑：同样什么都不做（不再走 history.back()）。
+         * 「不后退」本身由 edgeSwipeGuard 在 touchmove 上 preventDefault 完成，
+         * 这里只把回调消费掉（返回 true），不再触发任何页面动作。
          */
-        setEmptyStackBackHandler(() => {
-            if (!this.isMobile) return true;
-            const ed = this.$refs.editor;
-            // MemoEditor 用 visualViewport 跌幅维护 kbOpen（v1.3.2 同一口径）
-            if (ed && ed.kbOpen) return true;
-            if (this.editingId) {
-                this.backToTree();
-                return true;
-            }
-            // 已在节点树：不做任何页面内处理，交给浏览器回退
-            try {
-                window.history.back();
-            } catch (e) {
-                /* 历史里没有上一页时什么都不做，保持页面不动 */
-            }
-            return true;
-        });
+        setEmptyStackBackHandler(() => true);
         try {
             this.instance = localStorage.getItem('gohub_instance_id') || '';
         } catch (e) {
@@ -653,6 +687,8 @@ export default {
         },
         async openNote(id) {
             if (!id) return;
+            // v1.3.9.3：从「查看节点」列表点进文档 → 收起列表，右栏换回编辑器
+            this.previewNode = null;
             this.selectedId = id;
             // 深链 / 编辑器内跳转时同步树高亮
             if (this.activeFolder !== '__trash') this.activeFolder = id;
@@ -714,6 +750,7 @@ export default {
         /** v1.3.9：移动端从编辑器回到记事树 */
         backToTree() {
             this.currentNote = null;
+            this.previewNode = null;
             this.selectedId = '';
             this.activeFolder = '';
             if (this.$route?.query?.id) {
@@ -877,16 +914,23 @@ export default {
                 getComputedStyle(this.$refs.pageEl || document.documentElement).getPropertyValue('--memo-tb-h'),
                 10,
             ) || 56;
-            if (Date.now() - (this._tbSwitchAt || 0) < 500 && Math.abs(delta) <= tbH + 4) return;
+            if (Date.now() - (this._tbSwitchAt || 0) < 260 && Math.abs(delta) <= tbH + 4) return;
+            /*
+             * v1.3.9.3（需求：滚动好一会顶栏才开始隐藏，要跟手一些）
+             * 起手阈值从 50px 收到 12px：手指一动、页面真的动了就收起，
+             * 不必先滚掉半个顶栏高度。反向同理 —— 回到 12px 以内立刻放出。
+             * 12px 仍能过滤掉触摸抖动，不会在顶部一碰就闪。
+             */
+            const TURN_AT = 12;
             const down = delta > 0;
             if (down) {
                 const atBottom = scrollY - top <= 48;
                 // 到底保持收起（v1.3.3.2 需求：不要为了压振荡在底部强行展开）
-                if (atBottom || top >= 50) this.setTopbarHidden(true);
+                if (atBottom || top >= TURN_AT) this.setTopbarHidden(true);
                 return;
             }
-            // 上滑：只有回到距顶部 50px 以内才放出顶栏，其它位置保持隐藏
-            if (top < 50) this.setTopbarHidden(false);
+            // 上滑：只有回到距顶部 12px 以内才放出顶栏，其它位置保持隐藏
+            if (top < TURN_AT) this.setTopbarHidden(false);
         },
         /* ── v1.3.1.2：编辑器「发布到瞬间」 ─────────────────────── */
         onPublishMoment(text) {
@@ -912,8 +956,39 @@ export default {
         },
         openTrash() {
             this.activeFolder = '__trash';
+            this.previewNode = null;
             this.currentNote = null;
             this.selectedId = '';
+        },
+        /**
+         * v1.3.9.3（需求）：节点「查看节点」。
+         * 右栏切到列表，树上保持该节点高亮（activeFolder 仍指向它），
+         * 这样用户能一眼看出「这个列表属于哪个节点」。
+         */
+        openNodeView({ id, title } = {}) {
+            if (!id) return;
+            this.currentNote = null;
+            this.selectedId = '';
+            this.activeFolder = id;
+            this.previewNode = { id: String(id), title: String(title || '') };
+        },
+        closeNodeView() {
+            const backId = this.previewNode?.id || '';
+            this.previewNode = null;
+            /*
+             * 移动端：右栏只有一屏，返回 = 回节点树（否则会先进到该节点的编辑页，
+             * 还要再点一次顶栏的「返回目录」，多一步）。
+             * 桌面端：左右栏并存，返回 = 重新打开这个节点本身。
+             */
+            if (this.isMobile) {
+                this.backToTree();
+                return;
+            }
+            if (backId) this.openNote(backId);
+        },
+        /** 列表里的文档被移动 / 删除后，树上的计数与结构要跟着变 */
+        onPreviewChanged() {
+            this.refreshTree();
         },
         /** 打开新建类型弹窗；parentId 非空 = 在该节点下建子笔记 */
         openCreateDialog(parentId) {
@@ -1264,9 +1339,11 @@ export default {
     overflow: visible;
     /*
      * v1.3.9.1（需求：吸附显隐的动作柔和流畅一些）：
-     * 收起 / 展开用更长的时长的缓出曲线，不再是 0.22s ease 的生硬一跳。
+     * 收起 / 展开用缓出曲线，不再是 0.22s ease 的生硬一跳。
+     * v1.3.9.3（需求：过渡有点长 —— 滚动好一会顶栏才开始收）：
+     * 收到 0.18s；配合下面的「起手阈值」调小，滚动一起手就跟着走。
      */
-    transition: margin-top 0.3s cubic-bezier(0.33, 0, 0.2, 1), opacity 0.22s ease;
+    transition: margin-top 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.14s linear;
 }
 .memo-page.is-topbar-hidden .memo-topbar {
     /*
@@ -1352,6 +1429,12 @@ export default {
 .memo-icon-btn:hover {
     background: var(--el-fill-color);
     color: var(--el-color-primary);
+}
+/* v1.3.9.3：移动端「返回目录」用自绘的目录树图标，尺寸对齐其它顶栏图标 */
+.memo-back-tree-icon {
+    width: 17px;
+    height: 17px;
+    display: block;
 }
 .memo-cols {
     flex: 1 1 auto;
@@ -1529,6 +1612,28 @@ export default {
     font-size: 13px;
     font-weight: 600;
     color: var(--el-text-color-primary);
+}
+/* v1.3.9.3：节点「查看节点」——右栏整块换成子级文档列表（版式同回收站） */
+.memo-node-view {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+.memo-node-view-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    background: var(--el-bg-color);
+}
+/* 列表要吃掉标题栏之外的剩余高度（.ml-root 自己写的是 height:100%，在 flex 列里会多出一行） */
+.memo-node-view :deep(.ml-root) {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
 }
 .memo-mobile-bar {
     flex: 0 0 auto;

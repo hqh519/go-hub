@@ -4822,30 +4822,41 @@ export default {
                 node.descendants((child, rel) => {
                     if (child.type.name === 'taskItem') targets.push(pos + 1 + rel);
                 });
-                if (!targets.length) return;
-                const tr = this.editor.state.tr;
-                let changed = false;
-                for (const at of targets) {
-                    const n = tr.doc.nodeAt(at);
-                    if (!n || n.type.name !== 'taskItem') continue;
-                    if (!!n.attrs.checked === checked) continue;
-                    tr.setNodeMarkup(at, undefined, { ...n.attrs, checked });
-                    changed = true;
-                }
-                if (!changed) return;
-                this._taskSync = true;
-                this.editor.view.dispatch(tr);
-                this._taskSync = false;
                 /*
-                 * v1.3.5（需求）：点任务列表勾选框后，把光标放到勾选框后面
-                 * （也就是该任务项文字的开头）。taskItem 的第一个子节点是 paragraph：
-                 *   pos           → taskItem 起点
-                 *   pos + 1       → paragraph 起点
-                 *   pos + 2       → paragraph 内第一个字符
+                 * v1.3.9.3（需求）：没有子任务时也要把光标放到行末 ——
+                 * 不能再像以前那样「没子项就直接 return」，否则最常见的单条任务
+                 * 点完勾选框光标根本不动。
+                 */
+                if (targets.length) {
+                    const tr = this.editor.state.tr;
+                    let changed = false;
+                    for (const at of targets) {
+                        const n = tr.doc.nodeAt(at);
+                        if (!n || n.type.name !== 'taskItem') continue;
+                        if (!!n.attrs.checked === checked) continue;
+                        tr.setNodeMarkup(at, undefined, { ...n.attrs, checked });
+                        changed = true;
+                    }
+                    if (changed) {
+                        this._taskSync = true;
+                        this.editor.view.dispatch(tr);
+                        this._taskSync = false;
+                    }
+                }
+                /*
+                 * v1.3.5（需求）：点任务列表勾选框后，把光标放到勾选框后面。
+                 * v1.3.9.3（需求）：改为落到「该勾选框所在行的行末」——
+                 *   pos                → taskItem 起点
+                 *   pos + 1            → 第一个子节点（paragraph）起点
+                 *   pos + 2            → paragraph 内第一个字符
+                 *   + 首段内容长度      → 这一行最后一个字符之后（行末）
+                 * 嵌套列表不影响：只取第一个子节点（勾选框所在的那一行）。
                  * 折叠/隐藏导致位置失效时静默放弃，不影响勾选本身。
                  */
                 try {
-                    const at = Math.min(pos + 2, this.editor.state.doc.content.size);
+                    const first = node.childCount ? node.child(0) : null;
+                    const lineEnd = pos + 2 + (first ? first.content.size : 0);
+                    const at = Math.max(1, Math.min(lineEnd, this.editor.state.doc.content.size));
                     this.editor.chain().focus().setTextSelection(at).run();
                 } catch (err) {
                     /* 位置已随重排失效：忽略 */
@@ -5222,9 +5233,20 @@ export default {
                 extensions: [
                     basicSetup,
                     markdown(),
+                    // v1.3.9.3（需求）：源码模式自动换行，长行不再横向甩出去
+                    EditorView.lineWrapping,
                     EditorView.theme({
-                        '&': { height: '100%', fontSize: '14px' },
-                        '.cm-scroller': { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', lineHeight: '1.7' },
+                        /*
+                         * v1.3.9.3（需求）：源码模式要像实时模式那样整页滚动 ——
+                         * 编辑器高度跟着内容长，内部不再产生滚动条（overflow: visible），
+                         * 由外层 .me-body 统一滚动，吸附 / 顶栏显隐才会跟着走。
+                         */
+                        '&': { height: 'auto', fontSize: '14px' },
+                        '.cm-scroller': {
+                            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                            lineHeight: '1.7',
+                            overflow: 'visible',
+                        },
                         '.cm-content': { padding: '8px 4px 40px' },
                     }),
                     EditorView.updateListener.of((u) => {
@@ -5834,8 +5856,9 @@ export default {
             const prev = this._lastScrollTop || 0;
             const delta = top - prev;
             this._lastScrollTop = top;
-            if (top <= 4) {
+            if (top <= 12) {
                 // 已经在顶部：不存在「回滚吸附」的意义，直接复位
+                // v1.3.9.3：阈值 4 → 12，与顶栏的「起手阈值」对齐，两行同一刻复位
                 this._stkAcc = 0;
                 if (this.reverseSticky) this.reverseSticky = false;
                 if (this.blHide) this.blHide = false;
@@ -5865,7 +5888,8 @@ export default {
                 if (this.reverseSticky) this.reverseSticky = false;
             }
             // v1.3.9.2：往下滚（非回滚态）且已离开顶部时收起反向链接行
-            const shouldHide = !this.reverseSticky && top > 40;
+            // v1.3.9.3：起手阈值 40 → 12，与顶栏同步 —— 滚动一动两行一起收
+            const shouldHide = !this.reverseSticky && top > 12;
             if (this.blHide !== shouldHide) this.blHide = shouldHide;
         },
         /** v1.3.2：该工具是否被折叠进行末下拉 */
@@ -8952,6 +8976,17 @@ export default {
          * 所以这里直接比大小，不再像斜杠菜单那样只在下方放不下时才翻上去。
          * 之前固定向下（coords.bottom + 6），光标落在视口下半部分时面板会被裁掉。
          */
+        /**
+         * 引用面板（`[[` / `((`）的定位。
+         *
+         * v1.3.4.2：按光标上下空间择向。
+         * v1.3.9.3（需求：移动端浮层会溢出到页面外）：只「择向」不够 ——
+         *   · 水平方向原来直接用光标 x，靠近右边缘时 220px 宽的面板整个甩出屏幕；
+         *   · 垂直方向原来只比较上下空间，两侧都放不下时面板仍然会顶出屏幕。
+         * 现在：上下谁的空间大就开在谁那边（能完整放下的一侧优先），
+         * 左右按面板实际宽度夹在屏幕内，高度用 --me-ref-maxh 收窄到可用空间，
+         * 保证任何终端都不会有一角跑到屏幕外。
+         */
         refStyleAt(pos) {
             const ed = this.editor;
             if (!ed) return {};
@@ -8961,12 +8996,34 @@ export default {
             } catch (e) {
                 return {};
             }
-            const below = window.innerHeight - c.bottom;
-            const above = c.top;
-            const openUp = above > below;
+            const vw = window.innerWidth || 375;
+            const vh = window.innerHeight || 667;
+            /** 与光标留的空隙 */
+            const GAP = 6;
+            /** 距屏幕边缘的安全边距 */
+            const MARGIN = 8;
+            /** 与 .me-ref 实际宽度 / 高度保持一致（v1.3.5 起是 320 × 360） */
+            const PANEL_W = 320;
+            const MAX_H = 360;
+            const spaceBelow = Math.max(0, vh - c.bottom - GAP - MARGIN);
+            const spaceAbove = Math.max(0, c.top - GAP - MARGIN);
+            const fitBelow = spaceBelow >= MAX_H;
+            const fitAbove = spaceAbove >= MAX_H;
+            let openUp;
+            if (fitAbove && !fitBelow) openUp = true;
+            else if (fitBelow && !fitAbove) openUp = false;
+            else openUp = spaceAbove > spaceBelow;
+            // 放不下就按可用空间收窄；140px 是「至少还能看到两三条」的下限
+            const avail = Math.max(140, Math.min(MAX_H, openUp ? spaceAbove : spaceBelow));
+            // 水平：按实际面板宽夹在左右边距之内（窄屏时面板跟着视口收窄）
+            const panelW = Math.min(PANEL_W, vw - MARGIN * 2);
+            let left = Number(c.left) || 0;
+            if (left + panelW > vw - MARGIN) left = vw - MARGIN - panelW;
+            if (left < MARGIN) left = MARGIN;
+            const base = { left: `${Math.round(left)}px`, '--me-ref-maxh': `${Math.round(avail)}px` };
             return openUp
-                ? { left: `${Math.round(c.left)}px`, bottom: `${Math.round(window.innerHeight - c.top + 6)}px` }
-                : { left: `${Math.round(c.left)}px`, top: `${Math.round(c.bottom + 6)}px` };
+                ? { ...base, bottom: `${Math.round(vh - c.top + GAP)}px` }
+                : { ...base, top: `${Math.round(c.bottom + GAP)}px` };
         },
 
         /**
@@ -11230,14 +11287,15 @@ export default {
      * 高度变了但文字仍然是 flex 居中 + 26px 行高，所以「标题垂直居中」不受影响。
      */
     /* v1.3.4.1（需求）：标题行行高改为 40px，flex 垂直居中不变 */
-    height: 40px;
+    /* v1.3.9.3（需求）：标题栏行高再减 2px（40 → 38），仍靠 flex 居中，标题不偏移 */
+    height: 38px;
     padding: 0 16px;
 }
 .me-title-row.is-sticky {
     /* 标题吸住时补一条极淡的分隔，否则正文会「贴着」标题滑过去 */
     box-shadow: inset 0 -1px 0 var(--el-border-color-lighter);
-    height: 40px;
-    min-height: 40px;
+    height: 38px;
+    min-height: 38px;
 }
 /* 返回顶部按钮：钉在标题行最右侧 */
 .me-title-top {
@@ -11422,8 +11480,14 @@ export default {
     height: 100%;
 }
 .me-source {
-    height: 100%;
-    overflow: auto;
+    /*
+     * v1.3.9.3（需求：源码模式要能触发顶栏 / 工具栏 / 标题栏 / 反向链接行的显隐与吸附）
+     * 原来这里是 height:100% + overflow:auto —— CodeMirror 在内层自己滚，
+     * 外层 .me-body 的 scroll 事件永远不触发，吸附与显隐就都停在原地。
+     * 现在改成高度自适应、由 .me-body 统一滚动，和实时模式共用同一套滚动逻辑。
+     */
+    height: auto;
+    overflow: visible;
     overscroll-behavior-y: contain;
     /* v1.3.1.2（需求）：源码模式内容左对齐（CM6 默认会用 text-align: inherit） */
     text-align: left;
@@ -13078,9 +13142,10 @@ export default {
     z-index: 3100;
     background: rgba(0, 0, 0, 0.18);
     display: flex;
-    align-items: flex-start;
+    /* v1.3.9.3（需求）：大纲弹出页改为页面正中（垂直 + 水平居中） */
+    align-items: center;
     justify-content: center;
-    padding-top: 8vh;
+    padding: 16px;
 }
 .me-outline {
     width: min(520px, 88vw);
@@ -13247,7 +13312,11 @@ export default {
      * 面板加宽一点，标题与预览改为上下两行，预览最多 4 行。
      */
     width: 320px;
-    max-height: 360px;
+    /* v1.3.9.3：让 width / max-height 包含内边距与边框 —— refStyleAt 是按这两个数值
+       夹屏幕边界的，内容盒 + padding + border 会让面板比算出来的宽 10px，右侧溢出。 */
+    box-sizing: border-box;
+    /* v1.3.9.3：实际高度由 refStyleAt 按可用空间写进 --me-ref-maxh，保证不顶出屏幕 */
+    max-height: var(--me-ref-maxh, 360px);
 }
 /*
  * v1.3.5：引用面板的每一项改为纵向排版 ——
@@ -13513,7 +13582,8 @@ export default {
     /* v1.3.9.2：往下滚时整行收起（高度过渡，不留空位），回滚再展开 */
     max-height: 280px;
     overflow: hidden;
-    transition: max-height 0.22s ease, opacity 0.18s ease, border-top-color 0.18s ease;
+    /* v1.3.9.3（需求）：过渡收短到 0.16s，与顶栏同一节奏，滚动时不再「慢半拍」 */
+    transition: max-height 0.16s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.13s linear, border-top-color 0.13s linear;
 }
 .me-backlinks.is-scroll-hidden {
     max-height: 0;

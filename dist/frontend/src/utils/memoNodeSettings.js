@@ -18,15 +18,6 @@ export const DOC_TYPES = [
     { key: 'template', label: 'memo.typeTemplate', icon: 'clone' },
 ];
 
-/** 系统一级节点的默认图标（按标题；标题由服务端固定） */
-export const SYSTEM_ICON = {
-    笔记: 'book',
-    日记: 'calendar',
-    札记: 'edit',
-    灵感: 'bolt',
-    模板: 'clone',
-};
-
 /** 每种类型的「页」默认图标（不含下级的节点） */
 export const DEFAULT_TYPE_ICON = {
     note: 'file-lines',
@@ -93,18 +84,20 @@ export function normalizeNodeSettings(raw) {
 
 /**
  * 解析某个节点该显示哪个图标：
- *  · 系统一级节点：保留系统专属图标（不受设置影响，避免误伤既有观感）；
+ *  · 系统一级节点（笔记/日记/札记/灵感/模板）：直接用「各类型页面图标」里本类型的图标，
+ *    与下级同套图标、只靠颜色区分（一级节点着色、下级不着色）；
  *  · 目录节点（含下级）：folderIcon（空 = 默认 folder-open）；
  *  · 叶子节点页：对应 docType 的 typeIcons（空 = DEFAULT_TYPE_ICON）。
  */
 export function iconForNode(node, settings) {
-    if (node.isSystem) return SYSTEM_ICON[node.title] || DEFAULT_TYPE_ICON[node.docType] || 'file-lines';
     const s = normalizeNodeSettings(settings);
+    const typeIcon = s.typeIcons[node.docType] || DEFAULT_TYPE_ICON[node.docType] || 'file-lines';
+    // v1.3.9.3（需求）：一级节点不再用系统专属图标，改为各类型页面的自身图标；
+    // 颜色差异由模板里的 .is-system 控制，这里只决定图标名。
+    if (node.isSystem) return typeIcon;
     const hasChildren = Array.isArray(node.children) ? node.children.length > 0 : !!node.directCount;
     if (hasChildren) return s.folderIcon || 'folder-open';
-    const custom = s.typeIcons[node.docType];
-    if (custom) return custom;
-    return DEFAULT_TYPE_ICON[node.docType] || 'file-lines';
+    return typeIcon;
 }
 
 /** 归一化后的类型图标（编辑器标题栏用，取「当前文档所属类型」的图标） */

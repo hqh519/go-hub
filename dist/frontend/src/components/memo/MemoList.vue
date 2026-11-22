@@ -19,7 +19,7 @@
                     <font-awesome-icon icon="times" />
                 </button>
             </div>
-            <button v-if="!isTrash" type="button" class="ml-new" :title="$t('memo.newNote')" @click="$emit('create')">
+            <button v-if="!isTrash && !hideCreate" type="button" class="ml-new" :title="$t('memo.newNote')" @click="$emit('create')">
                 <font-awesome-icon icon="plus" />
             </button>
         </div>
@@ -110,6 +110,10 @@ export default {
         folderId: { type: String, default: '' },
         activeId: { type: String, default: '' },
         folders: { type: Array, default: () => [] },
+        /** v1.3.9.3：连子孙节点的文档一起列出（节点「查看节点」） */
+        deep: { type: Boolean, default: false },
+        /** v1.3.9.3：「查看节点」列表里不出现「新建」按钮 */
+        hideCreate: { type: Boolean, default: false },
     },
     emits: ['select', 'create', 'changed'],
     data() {
@@ -139,6 +143,10 @@ export default {
             this.page = 1;
             this.load();
         },
+        deep() {
+            this.page = 1;
+            this.load();
+        },
     },
     mounted() {
         this.load();
@@ -149,7 +157,10 @@ export default {
             else this.loading = true;
             try {
                 const r = await fetchNotes({
-                    folderId: this.folderId,
+                    // 回收站忽略目录维度；其它情况按「树节点」走 parentId（v1.3.9 起的层级字段）
+                    folderId: this.isTrash ? '__trash' : '',
+                    parentId: this.isTrash ? '' : this.folderId,
+                    deep: this.deep ? 1 : '',
                     search: this.search,
                     status: this.isTrash ? 'deleted' : '',
                     page: this.page,

@@ -1118,6 +1118,25 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1393',
+      title: '七十八、v1.3.9.3 更新要点',
+      intro: '这一版统一了节点树一级目录的图标，节点更多菜单新增「查看节点」，右栏可以直接列出某个节点下的全部子文档；编辑器把标题栏再压 2px、大纲改到页面正中、源码模式支持自动换行并与滚动联动，任务列表勾选后光标自动落到行末；移动端「返回目录」换成目录树图标，边缘侧滑不再退页，引用搜索浮层在任何屏幕尺寸下都不会溢出。',
+      items: [
+        { t: '一级节点图标统一', d: '「笔记 / 日记 / 札记 / 灵感 / 模板」五个一级目录不再使用各自专属图标，改为直接使用节点设置里「各类型页面图标」的值，与下级文档同一套图标；只有这五个一级节点用主题色，子节点仍为灰色。' },
+        { t: '查看节点', d: '目录节点的更多菜单在「删除节点」之前新增「查看节点」：右栏以列表形式列出该节点下的全部子级文档（含更深层级），每条显示标题、两行简介、日期与字数，点条目直接进入编辑；列表内仍可搜索。' },
+        { t: '标题栏更紧凑', d: '编辑器标题栏行高再减 2px，标题与类型图标依旧垂直居中，顶部更省空间。' },
+        { t: '大纲居中', d: '「大纲」弹出页从「偏上」改为页面正中（水平 + 垂直居中），大屏下不用再抬头找。' },
+        { t: '顶栏跟手', d: '顶部栏的起手阈值从 50px 收到 12px，收起 / 展开过渡从 0.3s 缩到 0.18s，滚动一动就跟着走；底部反向链接行采用同一阈值与同一节奏，两处同时收起、同时回来。' },
+        { t: '符号面板精简', d: '符号工具移除「语法」分类，该分类下的符号一并移除，其余分类不变（现为 20 个分类、1058 个符号）。' },
+        { t: '返回目录新图标', d: '移动端记事编辑页顶栏的「返回目录」按钮换成目录树样式的图标（竖干 + 两条横枝 + 双文件夹），语义更直白。' },
+        { t: '移动端不再误退页', d: '手机从屏幕边缘横滑时，记事编辑页保持原样不做任何跳转；同时全站禁止「边缘滑动导致页面前进 / 后退」，任何页面滑到边缘都只是普通手势。' },
+        { t: '引用浮层不出屏', d: '输入 [[ 或 (( 弹出的引用搜索面板会按光标上方 / 下方的可用空间自动选择打开方向，左右夹在屏幕安全边距内，高度不足时自动收窄，手机上不会被裁到屏幕外。' },
+        { t: '源码模式换行与联动', d: '源码模式下的长行自动换行，不再横向甩出去；滚动源码时顶部栏、工具栏、标题栏与反向链接行都会像实时模式一样隐藏、显示与吸附。' },
+        { t: '任务勾选定位行末', d: '点击任务列表的勾选框后，光标自动定位到该勾选框所在那一行的行末，接着输入不用再手动移光标；勾选上级任务联动下级的行为保持不变。' },
+        { t: '升级兼容', d: '本版没有数据结构变更，直接覆盖升级即可，旧数据与旧版本回滚都不受影响。' }
+      ]
+    },
+    {
       id: 'whatsnew-1392',
       title: '七十七、v1.3.9.2 更新要点',
       intro: '这一版把节点树的关系线收敛成一条对齐三角按钮的竖线，移动端侧滑按「编辑中 / 节点树」分层处理，节点设置默认值按参考图落定；编辑器把「编辑 / 源码 / 预览」与大纲收到反向链接行末尾，重做了预览版式，创建子页改为存到当前页下级，上下标进入选中文本的默认工具条；「选择文件」的小眼睛改成按住才预览并支持一次插入多个文件；表情与符号面板按新的分类与布局重建。',
@@ -2621,6 +2640,25 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1393',
+      title: '78. What is new in v1.3.9.3',
+      intro: 'This release unifies the icons of the five top-level tree nodes, adds View node so the right pane can list every document under a node, tightens the editor title bar by another 2px, centres the outline dialog, lets source mode wrap and drive the scroll behaviour, and puts the caret at the end of the line after ticking a task. On mobile the back-to-tree button gets a directory-tree icon, edge swipes no longer navigate away, and the reference search panel never overflows the screen.',
+      items: [
+        { t: 'Unified top-level icons', d: 'The five top-level nodes (notes, diary, journal, inspiration, templates) now use the per-type page icon from node settings, the same icon set as their children; only these five are tinted with the theme colour, child nodes stay grey.' },
+        { t: 'View node', d: 'Folder nodes gain View node just above Delete node: the right pane lists every document under that node (including deeper levels) with title, a two-line excerpt, date and word count, and clicking a row opens it for editing. The list can be searched.' },
+        { t: 'Tighter title bar', d: 'The editor title bar loses another 2px of height while the title and type icon stay vertically centred.' },
+        { t: 'Centred outline', d: 'The outline dialog is now anchored to the centre of the page both horizontally and vertically.' },
+        { t: 'Top bar follows the finger', d: 'The hide threshold drops from 50px to 12px and the transition from 0.3s to 0.18s, so the bar reacts as soon as scrolling starts; the backlinks row uses the same threshold and timing, so both collapse and return together.' },
+        { t: 'Smaller symbol panel', d: 'The Grammar (Markdown) category is removed from the symbol tool together with its characters; the remaining categories are unchanged (now 20 categories, 1058 symbols).' },
+        { t: 'New back-to-tree icon', d: 'The mobile back-to-tree button now uses a directory-tree icon (trunk with two branches and two folders).' },
+        { t: 'No accidental back navigation', d: 'Swipe in from the screen edge while editing a memo and nothing happens; edge swipes no longer navigate forwards or backwards anywhere in the app.' },
+        { t: 'Reference panel stays on screen', d: 'The [[ and (( search panel now opens above or below the caret depending on the available room, is clamped to the screen margins left and right, and shrinks its height when space is tight.' },
+        { t: 'Source mode wraps and scrolls', d: 'Long lines wrap in source mode instead of scrolling sideways, and scrolling there hides, shows and pins the top bar, toolbar, title bar and backlinks row exactly as in the visual editor.' },
+        { t: 'Caret at end of line', d: 'Ticking a task checkbox puts the caret at the end of that task line, ready for typing; ticking a parent task still ticks its children.' },
+        { t: 'Upgrade notes', d: 'No data structure changes in this release; a straight overwrite upgrade is enough and rolling back is safe.' }
       ]
     },
     {

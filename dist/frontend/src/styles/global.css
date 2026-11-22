@@ -22,6 +22,18 @@ body {
     background-color: var(--bg-color);
 }
 
+/*
+ * v1.3.9.3（需求：移动端禁止边缘滑动导致页面后退）
+ * 除了 edgeSwipeGuard 在 touchmove 上吃掉手势之外，这里再关掉浏览器的
+ * 「横向滑动导航 / 下拉刷新」链 —— 双保险，避免个别机型在手势起手的第一帧
+ * 就先把页面拉走（那一帧还没来得及 preventDefault）。
+ * 只关横向，纵向滚动与内部横向滚动条都不受影响。
+ */
+html,
+body {
+    overscroll-behavior-x: none;
+}
+
 :focus-visible {
     outline: none;
 }

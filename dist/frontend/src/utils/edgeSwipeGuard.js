@@ -114,14 +114,29 @@ const SOFT_CONTROL_SELECTOR = [
 ].join(',')
 
 /**
+ * 显式声明「本元素不归横滑守卫管」的逃生口：
+ * 组件自己已经处理好横向手势（例如灯箱翻页带），从边缘起手也要能滑。
+ */
+const NO_GUARD_SELECTOR = '.no-hswipe-guard'
+
+/**
  * @param {Element} target 起手处元素
  * @param {boolean} fromEdge 是否从屏幕边缘起手
  */
 function isControl(target, fromEdge) {
     if (!target || !target.closest) return false
     try {
+        if (target.closest(NO_GUARD_SELECTOR)) return true
+        /*
+         * v1.3.9.3（需求：全站移动端禁止边缘滑动后退）
+         * 边缘带里的控件不再单独放行 —— 只要从屏幕边缘横着起手，一律吃掉，
+         * 保证任何页面都不会因为手指划过屏幕边缘而退页。
+         * 这里只 preventDefault，不 stopPropagation，所以滑块 / 标签条自己的
+         * touchmove 逻辑照常收到事件，拖动功能不受影响。
+         */
+        if (fromEdge) return false
         if (target.closest(DRAG_CONTROL_SELECTOR)) return true
-        if (!fromEdge && target.closest(SOFT_CONTROL_SELECTOR)) return true
+        if (target.closest(SOFT_CONTROL_SELECTOR)) return true
         return false
     } catch (e) {
         return false

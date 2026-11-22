@@ -116,6 +116,8 @@ export class MemoController {
       viewer,
       instanceId: q.instanceId || '',
       folderId: q.folderId,
+      parentId: q.parentId,
+      deep: q.deep === '1' || q.deep === 'true',
       search: q.search,
       status: q.status,
       page: Number(q.page) || 1,

@@ -126,6 +126,9 @@
                                     <el-dropdown-item command="promote" :disabled="data.isSystem || !data.parentId">
                                         {{ $t('memo.promoteNode') }}
                                     </el-dropdown-item>
+                                    <el-dropdown-item v-if="hasChildren(data)" command="view">
+                                        {{ $t('memo.viewNode') }}
+                                    </el-dropdown-item>
                                     <el-dropdown-item command="delete" divided :disabled="data.isSystem">
                                         {{ $t('memo.deleteNode') }}
                                     </el-dropdown-item>
@@ -245,7 +248,7 @@ export default {
         active: { type: String, default: '' },
         instanceId: { type: String, default: '' },
     },
-    emits: ['select', 'create', 'create-child', 'changed', 'trash', 'loaded', 'node-settings-changed'],
+    emits: ['select', 'create', 'create-child', 'changed', 'trash', 'loaded', 'node-settings-changed', 'view-node'],
     data() {
         return {
             nodes: [],
@@ -540,6 +543,7 @@ export default {
             if (cmd === 'rename') return this.doRename(data);
             if (cmd === 'move') return this.openMove(data);
             if (cmd === 'promote') return this.doPromote(data);
+            if (cmd === 'view') return this.$emit('view-node', { id: data.id, title: data.title || '' });
             if (cmd === 'delete') return this.doDelete(data);
         },
         async doRename(node) {
