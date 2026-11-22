@@ -10,7 +10,7 @@
         「md 是真源」的落地方式：任何一次切换 / 保存都先取当前视图的 md，
         再把它喂给另一个视图 —— 富文本里的 JSON 只是派生缓存，从不单独落库。
     -->
-    <div class="me-root" :class="[`theme-${editorTheme}`, { 'is-float-open': anyFloatOpen }]" :style="styleVars">
+    <div class="me-root" :class="[`theme-${editorTheme}`, { 'is-float-open': anyFloatOpen, 'is-head-hidden': hideHead }]" :style="styleVars">
         <!--
             v1.3.1.2（需求：滚动吸附可配置）
             工具栏、标题栏、辅助栏（版本/时间/字数那一行）都挪进滚动容器 `.me-body`，
@@ -228,7 +228,7 @@
                 </div>
                 <!-- v1.3.3.2：辅助栏不再参与吸附（需求已移除该开关），保持普通跟随滚动 -->
                 <div class="me-meta">
-                    <button type="button" class="me-meta-btn" :title="$t('memo.historyOpen')" @click="openHistory">
+                    <button v-if="historyEnabled" type="button" class="me-meta-btn" :title="$t('memo.historyOpen')" @click="openHistory">
                         <font-awesome-icon icon="history" class="me-meta-icon" />
                         {{ $t('memo.versionNo', { n: version || 1 }) }}
                     </button>
@@ -403,7 +403,7 @@
             :class="{ 'is-open': backlinksOpen, 'is-kb-hidden': kbOpen, 'is-scroll-hidden': blHide }"
         >
             <div class="me-bl-bar">
-                <button type="button" class="me-bl-head" @click="backlinksOpen = !backlinksOpen">
+                <button v-if="backlinksEnabled" type="button" class="me-bl-head" @click="backlinksOpen = !backlinksOpen">
                     <font-awesome-icon icon="link" class="me-bl-icon" />
                     <span class="me-bl-title">{{ $t('memo.backlinks') }}</span>
                     <span class="me-bl-count">{{ backlinks.length }}</span>
@@ -4031,6 +4031,26 @@ export default {
          * 标题行右侧的滚动按钮据此在「回顶部 / 到底部」之间切换。
          */
         topbarHidden: { type: Boolean, default: false },
+        /**
+         * v1.4.0（需求：文章板块与笔记共用一套编辑器）
+         *
+         * 注入外部接口后，保存正文 / 标签就会写到那个模块去（文章 / 待办用
+         * /api/article），而不是固定的记事接口。不传时（记事页）行为与之前完全一致。
+         *
+         * 约定：只需提供实际用到的几个方法
+         *   saveNote(id, payload) -> { version, updatedAt }
+         *   fetchNoteTags(id) -> { tags: [{name}] }
+         *   saveNoteTags(id, names) -> { tags }
+         *   backlinks: false  —— 关闭反链面板（文章本期没有块索引）
+         *   history: false    —— 关闭历史快照（文章本期没有历史表）
+         */
+        api: { type: Object, default: null },
+        /**
+         * v1.4.0：隐藏编辑器自带的「标题 / 元信息 / 标签」三行。
+         * 文章编辑页自己提供标题、标签等模块，编辑区只负责正文与工具条，
+         * 两处都显示标题会让用户不知道改哪个才是真的。
+         */
+        hideHead: { type: Boolean, default: false },
     },
     emits: ['saved', 'dirty', 'request-settings', 'open-note', 'publish-moment', 'reload', 'tree-refresh'],
     data() {
@@ -4418,6 +4438,21 @@ export default {
                 toolbar: one.toolbar === true,
                 title: one.title === true,
             };
+        },
+        /**
+         * v1.4.0：外部模块（文章 / 待办）注入接口后的能力开关。
+         * 没有注入时全部按「记事的老行为」执行，因此这里只影响文章编辑页。
+         */
+        extApiActive() {
+            return !!(this.api && typeof this.api === 'object');
+        },
+        /** 反链面板：外部模块显式关闭时不加载、不显示 */
+        backlinksEnabled() {
+            return !this.extApiActive || this.api.backlinks !== false;
+        },
+        /** 历史快照：外部模块显式关闭时按钮不出现，定时器也不写 */
+        historyEnabled() {
+            return !this.extApiActive || this.api.history !== false;
         },
         /** 触屏设备（与瞬间发布页同一判据：三项取或） */
         isTouchDevice() {
@@ -5352,12 +5387,13 @@ export default {
         /** 当前这一篇被谁引用了（整篇 / 本篇某个块） */
         async loadBacklinks() {
             const id = this.note?.id;
-            if (!id) {
+            if (!id || !this.backlinksEnabled) {
                 this.backlinks = [];
                 return;
             }
             try {
-                const r = await fetchBacklinks(id);
+                const fn = (this.api && typeof this.api.fetchBacklinks === 'function') ? this.api.fetchBacklinks : fetchBacklinks;
+                const r = await fn(id);
                 this.backlinks = Array.isArray(r?.backlinks) ? r.backlinks : [];
             } catch (e) {
                 // 反链是辅助信息，拉不到就当没有 —— 绝不能因为它挡住正文
@@ -5538,7 +5574,8 @@ export default {
                 return;
             }
             try {
-                const r = await fetchNoteTags(id);
+                const fn = (this.api && typeof this.api.fetchNoteTags === 'function') ? this.api.fetchNoteTags : fetchNoteTags;
+                const r = await fn(id);
                 this.tags = Array.isArray(r?.tags) ? r.tags : [];
             } catch (e) {
                 this.tags = [];
@@ -5597,7 +5634,8 @@ export default {
             const id = this.note?.id;
             if (!id) return;
             try {
-                const r = await saveNoteTags(id, this.tags.map((t) => t.name));
+                const fn = (this.api && typeof this.api.saveNoteTags === 'function') ? this.api.saveNoteTags : saveNoteTags;
+                const r = await fn(id, this.tags.map((t) => t.name));
                 this.tags = Array.isArray(r?.tags) ? r.tags : this.tags;
             } catch (e) {
                 ElMessage.error(this.$t('memo.saveFail'));
@@ -5621,7 +5659,10 @@ export default {
         },
         async loadHistory() {
             const id = this.note?.id;
-            if (!id) return;
+            if (!id || !this.historyEnabled) {
+                this.historyItems = [];
+                return;
+            }
             this.historyLoading = true;
             try {
                 const r = await fetchNoteHistory(id);
@@ -5691,7 +5732,7 @@ export default {
         },
         async maybePushHistory() {
             const id = this.note?.id;
-            if (!id) return;
+            if (!id || !this.historyEnabled) return;
             /*
              * v1.3.1.2：判据从「dirty」改成「正文与上次快照不同」。
              *
@@ -6204,7 +6245,8 @@ export default {
             const md = this.currentMd();
             this.lastMd = md;
             try {
-                const r = await saveNote(this.note.id, {
+                const doSave = (this.api && typeof this.api.saveNote === 'function') ? this.api.saveNote : saveNote;
+                const r = await doSave(this.note.id, {
                     title: this.title,
                     content: md,
                     version: this.version,
@@ -10425,6 +10467,14 @@ export default {
     height: 100%;
     min-height: 0;
     background: var(--el-bg-color);
+}
+
+/*
+ * v1.4.0：文章 / 待办编辑页只借用编辑器的「工具栏 + 正文 + 底部模式栏」，
+ * 标题、元信息、标签由页面自己的模块区提供 —— 两头都显示标题会让人不知道改哪个。
+ */
+.me-root.is-head-hidden .me-head {
+    display: none;
 }
 
 /* 标题 */

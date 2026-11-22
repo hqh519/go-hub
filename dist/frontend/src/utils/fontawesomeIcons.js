@@ -212,6 +212,10 @@ import { faUsers } from '@fortawesome/free-solid-svg-icons/faUsers';
 import { faBookOpen } from '@fortawesome/free-solid-svg-icons/faBookOpen';
 import { faBookBookmark } from '@fortawesome/free-solid-svg-icons/faBookBookmark';
 import { faNewspaper } from '@fortawesome/free-solid-svg-icons/faNewspaper';
+// v1.4.0：文章 / 待办板块图标（列表勾选、新建分类、评论数）
+import { faListCheck } from '@fortawesome/free-solid-svg-icons/faListCheck';
+import { faFolderPlus } from '@fortawesome/free-solid-svg-icons/faFolderPlus';
+import { faComment } from '@fortawesome/free-solid-svg-icons/faComment';
 import { faFeatherPointed } from '@fortawesome/free-solid-svg-icons/faFeatherPointed';
 import { faPenNib } from '@fortawesome/free-solid-svg-icons/faPenNib';
 import { faPencil } from '@fortawesome/free-solid-svg-icons/faPencil';
@@ -319,6 +323,9 @@ export default [
     faBookOpen,
     faBookBookmark,
     faNewspaper,
+    faListCheck,
+    faFolderPlus,
+    faComment,
     faFeatherPointed,
     faPenNib,
     faPencil,

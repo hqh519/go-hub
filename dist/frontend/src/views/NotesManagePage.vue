@@ -151,7 +151,9 @@
                         <font-awesome-icon icon="search" />
                     </button>
 
+                    <!-- v1.4.0：文章 / 待办 / 笔记的标签在各自编辑页里管理，这里不提供标签管理入口 -->
                     <button
+                        v-if="!isArticleKind && !isMemoKind"
                         type="button"
                         class="nt-icon-btn"
                         :class="{ 'is-on': tagMode }"
@@ -290,7 +292,8 @@
                     @click="switchKind(t.value)"
                 >{{ $t(t.label) }}</button>
             </div>
-            <div class="nt-tools">
+            <!-- v1.4.0：文章 / 待办 / 笔记 不用瞬间那一套「媒体类型 + 排序」筛选 -->
+            <div v-if="!isArticleKind && !isMemoKind" class="nt-tools">
                 <el-select
                     ref="mediaSelect"
                     v-model="mediaKind"
@@ -362,64 +365,95 @@
 
             <template v-else-if="!isRegisterKind">
                 <!--
-                    v1.2.1（需求）：回收站提示条。
-                    与图床管理页的 `.trash-banner` 同一套观感（危险色、圆角 10px、
-                    左侧垃圾桶图标），只是文案里「文件」换成「内容」。
+                    v1.4.0（需求：我的发布页的「文章」「待办」「笔记」三个分类要加载对应数据）
+                    这三类都不是「瞬间卡片流」，各自的版式差别很大，所以统一走独立面板：
+                      · 文章 / 待办 → ArticleListPanel（与 /article、/todo 同一个组件、同一套接口）
+                      · 笔记        → MemoBrowsePanel（卡片墙，点开跳 /memo?id= 进工作台）
+                    面板自带空态与操作，下面的瞬间列表只在其它分类下渲染。
                 -->
-                <div v-if="trashMode" class="nt-trash-banner" role="status">
-                    <font-awesome-icon icon="trash-alt" class="nt-trash-banner-icon" />
-                    <span class="nt-trash-banner-text">{{ $t('notes.trashBanner') }}</span>
-                </div>
+                <ArticleListPanel
+                    v-if="isArticleKind"
+                    ref="articlePanel"
+                    :type="kind"
+                    :folder-id="trashMode ? '__trash' : '__all'"
+                    :instance-id="instanceId"
+                    :search-text="search"
+                    hide-toolbar
+                    @edit="openArticleEdit"
+                    @create="createArticleHere"
+                    @changed="onArticlePanelChanged"
+                />
 
-                <div v-if="loading && !list.length" class="nt-loading">
-                    <font-awesome-icon icon="spinner" spin />
-                    <span>{{ $t('notes.loading') }}</span>
-                </div>
+                <MemoBrowsePanel
+                    v-else-if="isMemoKind"
+                    ref="memoPanel"
+                    :instance-id="instanceId"
+                    :search="search"
+                    @open="openMemoNote"
+                    @create="createMemoHere"
+                />
 
-                <div v-else-if="!list.length" class="nt-empty">
-                    <font-awesome-icon :icon="emptyIcon" class="nt-empty-icon" />
-                    <p class="nt-empty-title">{{ emptyTitle }}</p>
-                    <p class="nt-empty-tip">{{ emptyTip }}</p>
-                    <button v-if="canPublishCurrent" type="button" class="nt-empty-btn" @click="openPublish">
-                        {{ publishLabel }}
-                    </button>
-                </div>
-
-                <div v-else class="nt-list">
-                    <MomentCard
-                        v-for="n in list"
-                        :key="n.id"
-                        :ref="`card-${n.id}`"
-                        :note="n"
-                        :square="isSquare"
-                        @preview="(i) => openPreview(n, i)"
-                        @edit="openEdit"
-                        @delete="confirmDelete"
-                        @restore="confirmRestore"
-                        @purge="confirmPurge"
-                        @tag-click="onTagClick"
-                        @edit-time="openTimeEditor"
-                    />
-                </div>
-
-                <div v-if="list.length" class="nt-more">
+                <template v-else>
                     <!--
-                        v1.1.7：手动模式才显示「加载更多」按钮；
-                        自动模式滚到底就自己加载，这里只在请求进行中给一句轻提示，不占按钮位。
+                        v1.2.1（需求）：回收站提示条。
+                        与图床管理页的 `.trash-banner` 同一套观感（危险色、圆角 10px、
+                        左侧垃圾桶图标），只是文案里「文件」换成「内容」。
                     -->
-                    <template v-if="hasMore">
-                        <el-button
-                            v-if="pageLoadMode === 'manual'"
-                            size="small"
-                            :loading="loading"
-                            @click="loadMore"
-                        >
-                            {{ $t('notes.loadMore') }}
-                        </el-button>
-                        <span v-else-if="loading" class="nt-end">{{ $t('notes.loadingMore') }}</span>
-                    </template>
-                    <span v-else class="nt-end">{{ $t('notes.listEnd', { n: total }) }}</span>
-                </div>
+                    <div v-if="trashMode" class="nt-trash-banner" role="status">
+                        <font-awesome-icon icon="trash-alt" class="nt-trash-banner-icon" />
+                        <span class="nt-trash-banner-text">{{ $t('notes.trashBanner') }}</span>
+                    </div>
+
+                    <div v-if="loading && !list.length" class="nt-loading">
+                        <font-awesome-icon icon="spinner" spin />
+                        <span>{{ $t('notes.loading') }}</span>
+                    </div>
+
+                    <div v-else-if="!list.length" class="nt-empty">
+                        <font-awesome-icon :icon="emptyIcon" class="nt-empty-icon" />
+                        <p class="nt-empty-title">{{ emptyTitle }}</p>
+                        <p class="nt-empty-tip">{{ emptyTip }}</p>
+                        <button v-if="canPublishCurrent" type="button" class="nt-empty-btn" @click="openPublish">
+                            {{ publishLabel }}
+                        </button>
+                    </div>
+
+                    <div v-else class="nt-list">
+                        <MomentCard
+                            v-for="n in list"
+                            :key="n.id"
+                            :ref="`card-${n.id}`"
+                            :note="n"
+                            :square="isSquare"
+                            @preview="(i) => openPreview(n, i)"
+                            @edit="openEdit"
+                            @delete="confirmDelete"
+                            @restore="confirmRestore"
+                            @purge="confirmPurge"
+                            @tag-click="onTagClick"
+                            @edit-time="openTimeEditor"
+                        />
+                    </div>
+
+                    <div v-if="list.length" class="nt-more">
+                        <!--
+                            v1.1.7：手动模式才显示「加载更多」按钮；
+                            自动模式滚到底就自己加载，这里只在请求进行中给一句轻提示，不占按钮位。
+                        -->
+                        <template v-if="hasMore">
+                            <el-button
+                                v-if="pageLoadMode === 'manual'"
+                                size="small"
+                                :loading="loading"
+                                @click="loadMore"
+                            >
+                                {{ $t('notes.loadMore') }}
+                            </el-button>
+                            <span v-else-if="loading" class="nt-end">{{ $t('notes.loadingMore') }}</span>
+                        </template>
+                        <span v-else class="nt-end">{{ $t('notes.listEnd', { n: total }) }}</span>
+                    </div>
+                </template>
             </template>
         </main>
 
@@ -633,8 +667,13 @@ import MemoCreateTypeDialog from '@/components/memo/MemoCreateTypeDialog.vue';
 import RegPanel from '@/components/reg/RegPanel.vue';
 import RegEntryDialog from '@/components/reg/RegEntryDialog.vue';
 import NoteTagPanel from '@/components/notes/NoteTagPanel.vue';
+// v1.4.0：文章 / 待办 / 笔记三个分类的独立面板（与 /article、/todo、/memo 共用同一套接口）
+import ArticleListPanel from '@/components/article/ArticleListPanel.vue';
+import MemoBrowsePanel from '@/components/article/MemoBrowsePanel.vue';
 import NoteSettingsDialog from '@/components/notes/NoteSettingsDialog.vue';
 import { extOf, formatSize } from '@/utils/notes';
+// v1.4.0：文章 / 待办的创建与错误提取（与 /article、/todo 同一套接口封装）
+import { createArticle as apiCreateArticle, articleError } from '@/utils/articleApi';
 import { buildFileDetail } from '@/utils/fileDetail';
 import { loadNoteSettings, applyCachedSettings, noteSettings, parsePageBg } from '@/utils/noteSettings';
 import { writeThemeCookie } from '@/utils/themeCookie';
@@ -676,6 +715,8 @@ export default {
         FileDetailDialog,
         TagManagementDialog,
         MomentCard,
+        ArticleListPanel,
+        MemoBrowsePanel,
         MomentPublishDialog,
         MemoCreateTypeDialog,
         RegPanel,
@@ -897,6 +938,17 @@ export default {
          */
         isRegisterKind() {
             return this.kind === 'register';
+        },
+        /**
+         * v1.4.0：文章 / 待办分类 —— 用文章表的数据，由 ArticleListPanel 渲染。
+         * 两者只是 type 不同，列表差异（勾选框 / 完成率）在面板内部处理。
+         */
+        isArticleKind() {
+            return this.kind === 'article' || this.kind === 'todo';
+        },
+        /** v1.4.0：笔记分类 —— 加载记事管理里的文档（memo），卡片墙浏览 */
+        isMemoKind() {
+            return this.kind === 'memo';
         },
         emptyIcon() {
             if (this.trashMode) return 'trash-alt';
@@ -1292,18 +1344,47 @@ export default {
             if (!id) return;
             const route = this.$router.resolve({ path: '/memo', query: { id } });
             window.open(route.href, '_blank', 'noopener');
+            // 新建完刷新卡片墙，免得刚建的记事要手动刷新才出现
+            this.$refs.memoPanel?.reload?.();
+        },
+        /* ── v1.4.0：文章 / 待办 / 笔记三个分类 ───────────────── */
+        /** 文章 / 待办的「编辑」→ 进各自的编辑页（与 /article、/todo 同一套页面） */
+        openArticleEdit(id) {
+            if (!id) return;
+            this.$router.push(`/article/edit/${encodeURIComponent(id)}`);
+        },
+        /**
+         * 「发布」按钮在文章 / 待办分类下就是「新建」：
+         * 先落一条空稿再跳编辑页 —— 页签、标签都挂在 id 上，没有 id 无从编辑。
+         */
+        async createArticleHere() {
+            try {
+                const r = await apiCreateArticle({ type: this.kind, title: '' });
+                if (!r?.id) throw new Error(this.$t('article.saveFail'));
+                this.$router.push(`/article/edit/${encodeURIComponent(r.id)}`);
+            } catch (e) {
+                this.$message.error(articleError(e).message || this.$t('article.saveFail'));
+            }
+        },
+        onArticlePanelChanged() {
+            // 面板自己维护列表；切换分类 / 删除后由面板重新拉取，这里不需要额外同步
+        },
+        /** 笔记卡片 → 记事工作台（新标签页打开，与「添加记事」一致，不打断当前浏览） */
+        openMemoNote(id) {
+            if (!id) return;
+            const route = this.$router.resolve({ path: '/memo', query: { id } });
+            window.open(route.href, '_blank', 'noopener');
+        },
+        createMemoHere() {
+            this.memoCreateVisible = true;
         },
         switchKind(v) {
             if (this.kind === v) return;
             /*
-             * v1.3.9.1（需求）：点「笔记」分类 → 先弹出独立的「添加记事」类型选择页，
-             * 选择类型并创建后才在新标签页打开创建的记事编辑页（不再直接跳 /memo）。
-             * 当前停留的分类保持不变。
+             * v1.4.0（需求变更）：「笔记」分类不再一点就弹创建页 ——
+             * 现在它要真的加载记事管理里的数据供浏览，所以和别的分类一样正常切换。
+             * 创建入口在面板右上角（点开仍是同一个 MemoCreateTypeDialog）。
              */
-            if (v === 'memo') {
-                this.memoCreateVisible = true;
-                return;
-            }
             this.kind = v;
             this.saveKind();
             if (this.tagMode) return; // 标签管理模式由面板自己按 kind 过滤
@@ -1507,6 +1588,18 @@ export default {
             if (bottom >= doc.scrollHeight - 240) this.loadMore();
         },
         async fetchList(reset) {
+            /*
+             * v1.4.0：文章 / 待办 / 笔记三类由各自的独立面板取数，
+             * 这里直接返回 —— 否则每切一次分类都会多打一次注定为空的 /api/notes/list。
+             */
+            if (this.isArticleKind || this.isMemoKind) {
+                this.loading = false;
+                if (reset) {
+                    this.list = [];
+                    this.total = 0;
+                }
+                return;
+            }
             this.loading = true;
             try {
                 const qs = this.buildQuery();
@@ -1540,6 +1633,15 @@ export default {
             /* v1.3.5.3：登记类目走独立的提交表单，不打开瞬间编辑页 */
             if (this.isRegisterKind) {
                 this.regDialogVisible = true;
+                return;
+            }
+            // v1.4.0：文章 / 待办直接新建一条空稿并进编辑页；笔记走「添加记事」类型选择
+            if (this.isArticleKind) {
+                this.createArticleHere();
+                return;
+            }
+            if (this.isMemoKind) {
+                this.memoCreateVisible = true;
                 return;
             }
             // v1.1.9.4：广场与旧「全部」同口径 —— 先让用户选类型，再进编辑页

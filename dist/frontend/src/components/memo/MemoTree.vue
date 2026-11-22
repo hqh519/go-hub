@@ -116,7 +116,12 @@
                             </button>
                             <template #dropdown>
                                 <el-dropdown-menu>
-                                    <el-dropdown-item command="child">{{ $t('memo.newChildNote') }}</el-dropdown-item>
+                                    <el-dropdown-item v-if="hasChildren(data)" command="view">
+                                        {{ $t('memo.viewNode') }}
+                                    </el-dropdown-item>
+                                    <el-dropdown-item command="child">
+                                        {{ $t('memo.newChildNote') }}
+                                    </el-dropdown-item>
                                     <el-dropdown-item command="rename" :disabled="data.isSystem">
                                         {{ $t('memo.rename') }}
                                     </el-dropdown-item>
@@ -125,9 +130,6 @@
                                     </el-dropdown-item>
                                     <el-dropdown-item command="promote" :disabled="data.isSystem || !data.parentId">
                                         {{ $t('memo.promoteNode') }}
-                                    </el-dropdown-item>
-                                    <el-dropdown-item v-if="hasChildren(data)" command="view">
-                                        {{ $t('memo.viewNode') }}
                                     </el-dropdown-item>
                                     <el-dropdown-item command="delete" divided :disabled="data.isSystem">
                                         {{ $t('memo.deleteNode') }}

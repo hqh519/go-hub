@@ -35,6 +35,9 @@ import { NotesService } from './notes/notes.service';
 // v1.3.0 笔记管理（memo）—— 目录树 + 文档型笔记，与瞬间共用 notes 主表
 import { MemoController } from './notes/memo.controller';
 import { MemoService } from './notes/memo.service';
+// v1.4.0 文章板块（文章 / 待办 / 导航共用一张表）—— /api/article
+import { ArticleController } from './article/article.controller';
+import { ArticleService } from './article/article.service';
 
 @Module({
   imports: [InstancesModule, SharesModule],
@@ -64,6 +67,8 @@ import { MemoService } from './notes/memo.service';
     RegController,
     // v1.3.0：笔记管理（/api/memo）
     MemoController,
+    // v1.4.0：文章板块（/api/article）
+    ArticleController,
   ],
   providers: [
     SettingsService,
@@ -77,6 +82,7 @@ import { MemoService } from './notes/memo.service';
     NotesService,
     RegService,
     MemoService,
+    ArticleService,
   ],
 })
 export class AppModule {}

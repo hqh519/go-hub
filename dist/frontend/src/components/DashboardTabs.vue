@@ -152,6 +152,9 @@ export default {
                 { name: 'post', icon: 'note-sticky', label: 'dashboardTabs.notesManagement' },
                 // v1.3.0：笔记（memo）工作台 —— 三栏目录 / 列表 / 编辑器，与发布中心是两套东西
                 { name: 'memo', icon: 'file-lines', label: 'dashboardTabs.memoManagement' },
+                // v1.4.0：文章管理（/article）与待办管理（/todo）—— 同一张文章表，两个入口
+                { name: 'article', icon: 'newspaper', label: 'dashboardTabs.articleManagement' },
+                { name: 'todo', icon: 'list-check', label: 'dashboardTabs.todoManagement' },
                 // v1.3.5.3：登记管理（统计 / 单位设置）
                 { name: 'reg', icon: 'clipboard-list', label: 'dashboardTabs.regManagement' },
             ];

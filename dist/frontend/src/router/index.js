@@ -450,6 +450,35 @@ const routes = [
   },
   {
     /*
+     * v1.4.0：文章管理（/article）—— 左分类目录 + 右博客式文章列表。
+     * 与记事（/memo）分开：那边是「一篇一篇写」的文档工作台，这边是「栏目化」的内容管理，
+     * 文章的模块区（摘要 / 封面 / 页签 / 分类 / 标签）比一篇文档多得多。
+     * 守卫同后台页：必须登录；实例隔离与「只看自己的文章」由后端 api/article 兜底。
+     */
+    path: '/article',
+    name: 'article',
+    component: () => import('../views/ArticlePage.vue'),
+    beforeEnter: manageAuthGuard
+  },
+  {
+    // 文章编辑独立页：模块区铺满整屏，正文与右侧页签都能留足空间
+    path: '/article/edit/:id',
+    name: 'articleEdit',
+    component: () => import('../views/ArticleEditPage.vue'),
+    beforeEnter: manageAuthGuard
+  },
+  {
+    /*
+     * v1.4.0：待办管理（/todo）—— 三栏：分类 / 待办列表 / 编辑区。
+     * 与文章同一张表（type='todo'），只是列表多一个整篇勾选框与正文完成率。
+     */
+    path: '/todo',
+    name: 'todo',
+    component: () => import('../views/TodoPage.vue'),
+    beforeEnter: manageAuthGuard
+  },
+  {
+    /*
      * v1.3.5.3 登记管理（P1）—— /reg
      * 以多种形态统计登记数据：概览卡片 / 趋势柱状 / 按账户分布 / 单位设置。
      * 守卫同后台页：必须登录；数据范围由后端按账户与实例收窄。

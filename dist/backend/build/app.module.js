@@ -36,6 +36,8 @@ const reg_service_1 = require("./reg/reg.service");
 const notes_service_1 = require("./notes/notes.service");
 const memo_controller_1 = require("./notes/memo.controller");
 const memo_service_1 = require("./notes/memo.service");
+const article_controller_1 = require("./article/article.controller");
+const article_service_1 = require("./article/article.service");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -67,6 +69,7 @@ exports.AppModule = AppModule = __decorate([
             notes_controller_1.NotesController,
             reg_controller_1.RegController,
             memo_controller_1.MemoController,
+            article_controller_1.ArticleController,
         ],
         providers: [
             settings_service_1.SettingsService,
@@ -80,6 +83,7 @@ exports.AppModule = AppModule = __decorate([
             notes_service_1.NotesService,
             reg_service_1.RegService,
             memo_service_1.MemoService,
+            article_service_1.ArticleService,
         ],
     })
 ], AppModule);

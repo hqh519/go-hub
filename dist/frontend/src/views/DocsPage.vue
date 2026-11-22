@@ -1118,6 +1118,25 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-140',
+      title: '七十九、v1.4.0 更新要点',
+      intro: 'v1.4.0 新增「文章」与「待办」两个板块：页面切换里多出「文章管理」与「待办管理」；文章编辑页不再是单个正文框，而是标题、摘要、封面、备注、页签、标签、分类一起的组合页；待办直接复用文章的表结构与编辑器，靠类型字段分流，并在列表上按正文里的任务项算出完成率。「我的发布」也随之拆成文章、待办、笔记三个分类。',
+      items: [
+        { t: '新板块：文章管理（/article）', d: '页面切换下拉里「笔记管理」之后多了「文章管理」。两栏：左栏分类目录直接沿用笔记管理页的结构 —— 标题行带「收起全部 / 新建分类」，下面是搜索框、固定项、无限层级目录树与底部回收站；右栏改成博客列表式的文章管理，每条显示封面、标题、草稿标记、标签、两行摘要，以及分类 / 作者 / 浏览 / 评论 / 时间 / 字数，行尾是「编辑」与更多菜单。' },
+        { t: '新板块：待办管理（/todo）', d: '同一份数据换一种看法。三栏：左栏分类、中栏待办列表、右栏编辑面板。中栏按 joplin 的观感做 —— 每行标题前一个勾选框直接标记完成，标题后一个环形图显示这条待办正文里的任务完成率；右栏模块与文章编辑页完全一致。窄屏（宽度不够并排三栏）自动降级成两级：先列表，点进某条再进编辑，顶栏留一个返回。' },
+        { t: '文章与待办共用一套表', d: '没有为待办再建一套表。articles 加一个 type 字段：article 是普通文章、todo 是待办、nav 是导航（导航页后续做）；article_tabs / article_folders / article_tags 三张从表同样复用。列表接口按 type 过滤，所以 /todo 只会拿到 todo 的数据，/article 只会拿到 article 的，两边互不干扰；新建待办时类型由前端固定写 todo，新建导航写 nav，用户不用选。' },
+        { t: '文章编辑页：一个页面八个模块', d: '标题、摘要、备注、封面图片、分类、标签是纯表单（文本框 / 选择器 / 图床选图），只有正文与页签进编辑器。这样标题栏、摘要这些常规字段不用挤进正文流里，正文区可以专心写字；移动端把「摘要 / 封面 / 分类 / 标签」收进一个折叠开关，展开时正文区不至于被挤到只剩两百多像素。' },
+        { t: '页签：正文不再只有一页', d: '页签竖排在正文右侧，形成水平切换：点一下换页，双击改名字，+ 新增，小叉删除，至少保留一个。页签数量上限 30、标题 40 字，都是防误操作的上限，不是产品限制。数据上每个页签是一行 article_tabs，保存时整批提交（新增 / 改名 / 删除 / 排序一次落库），并把第一个页签的正文镜像回主表 —— 列表页取摘要、搜索正文都只看主表，不用连查页签。' },
+        { t: '和笔记共用同一套编辑器', d: '文章页用的就是笔记页那个编辑器，工具条、实时 / 源码 / 预览三种模式、粘贴上传、表格代码块全都一样。做法是给编辑器加了两个可选入口：一个外部保存接口，一个隐藏头部。文章模式把保存换成「写页签接口」，把当前页签的正文塞进去、其它页签原样提交；同时关掉反向链接与历史两个按钮 —— 文章没有引用表也没有历史表，留着按钮只会点出一片空。共用一份实现的好处是以后编辑器改一次，笔记和文章同时受益。' },
+        { t: '待办完成率怎么算', d: '解析正文里的 `- [ ]` 与 `- [x]`：支持 * + 三个符号与 1. 这样的有序写法，空任务不计入，代码围栏（``` 与 ~~~）里的不算 —— 否则贴一段示例代码，任务数会凭空多出几十个。算出的总数 / 完成数存在主表上，列表直接读，不用每次打开列表都重新解析全文；在编辑器里勾选任务，中栏的环会跟着变；全部勾满时自动把这条待办标成已完成。' },
+        { t: '分类树与拖拽', d: '目录支持无限层级：拖到某个分类上变成它的子级，拖到两项之间是同级排序，松手即保存。删除分类时子分类上浮一级、分类下的文章回到「未分类」，不连坐删除 —— 目录是给人整理用的，误删一个目录不应该带走里面的内容。目录节点上的数字是含子孙的累计条数，父级折叠着也能看出里面有多少东西。' },
+        { t: '保存与版本冲突', d: '沿用整套系统的乐观锁：每次保存带 version，服务端发现不是最新就返回 409。文章页有两个保存源 —— 元信息（标题 / 摘要等，停止输入 0.8 秒后存）与正文（停止输入 1.5 秒后存），两者共用同一个版本号，偶尔会撞车。笔记页撞车可以弹「覆盖 / 放弃」，文章页没有第二个副本，弹了也没有意义，所以改成取一次最新版本号静默重试，正文不会白写。' },
+        { t: '三栏可以拖着调', d: '待办页的两条分栏线都能拖，宽度记在浏览器本地，下次进来还是上次的宽度；文章管理页的分类栏同理。列表栏窄于 560px 时自动切成紧凑竖排卡片：勾选框挪到左上、完成率环在右上、操作悬浮在右下、封面与标签先收起来，避免一条 330px 的窄栏里硬塞横排信息被挤成一列字。' },
+        { t: '「我的发布」拆成三类', d: '「文章」分类加载文章数据，卡片式展示，可直接新建文章或点进编辑；「待办」分类加载待办数据，带勾选框与完成率环，方便筛和改；「笔记」分类加载记事管理里的笔记，卡片墙浏览，点开在新标签页进入记事编辑。三个分类都是浏览入口，点「发布」时按当前分类走对应流程，不用先回别的页面。' },
+        { t: '升级兼容', d: '本版只新增四张表（articles / article_tabs / article_folders / article_tags），不改动任何已有表结构 —— Tag 表只在 Prisma 里多了一条反向关系，不产生列变更。旧库启动时自动建表即可，已有瞬间、文件、笔记、标签、登记数据都不受影响；文章与待办初始为空，用起来才会产生数据。' }
+      ]
+    },
+    {
       id: 'whatsnew-1393',
       title: '七十八、v1.3.9.3 更新要点',
       intro: '这一版统一了节点树一级目录的图标，节点更多菜单新增「查看节点」，右栏可以直接列出某个节点下的全部子文档；编辑器把标题栏再压 2px、大纲改到页面正中、源码模式支持自动换行并与滚动联动，任务列表勾选后光标自动落到行末；移动端「返回目录」换成目录树图标，边缘侧滑不再退页，引用搜索浮层在任何屏幕尺寸下都不会溢出。',
@@ -2640,6 +2659,25 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-140',
+      title: '79. What is new in v1.4.0',
+      intro: 'v1.4.0 adds two sections: Articles and Todos. The page switcher gains Articles and Todos; the article editor is no longer a single body box but a composed page with title, excerpt, cover, note, tabs, tags and category. Todos reuse the article tables and the same editor, separated only by a type field, and the list shows a completion rate computed from the task items in the body. My posts is split into Articles, Todos and Notes.',
+      items: [
+        { t: 'New section: Articles (/article)', d: 'Articles sits right after Notes in the page switcher. Two columns: the left tree reuses the structure of the notes page - a header row with collapse-all and new-folder, a search box, the pinned rows, an unlimited folder tree and a trash entry at the bottom; the right column is a blog-style article manager showing cover, title, draft badge, tags, a two-line excerpt, category / author / views / comments / time / word count, and Edit plus a more menu at the row end.' },
+        { t: 'New section: Todos (/todo)', d: 'The same data seen differently. Three columns: folders, a todo list and the editor. The middle column follows the Joplin feel - a checkbox in front of each title marks it done, a ring after the title shows the task completion rate of that todo body, and the right panel has exactly the same modules as the article editor. On narrow screens it degrades to two levels: list first, tap through to the editor with a back button in the top bar.' },
+        { t: 'One set of tables for articles and todos', d: 'No second schema. articles carries a type field: article, todo, or nav (the nav page comes later); article_tabs, article_folders and article_tags are shared the same way. The list endpoint filters by type, so /todo only sees todo rows and /article only sees article rows. The type is written by the client on create - todo from the todo page, nav later - so nobody has to pick it.' },
+        { t: 'Article editor: eight modules on one page', d: 'Title, excerpt, note, cover, category and tags are plain form controls (inputs, selects, a picker over the library); only the body and the tabs go into the editor. Keeping routine fields out of the body flow lets the writing area stay focused, and on phones the four secondary fields fold behind one toggle so the body does not shrink to a couple of hundred pixels.' },
+        { t: 'Tabs: the body is no longer one page', d: 'Tabs sit vertically to the right of the body and switch horizontally: click to switch, double-click to rename, plus to add, the small cross to delete, always at least one. The limits (30 tabs, 40 characters per title) are guard rails against accidents, not product limits. Each tab is a row in article_tabs; saving submits the whole set at once (adds, renames, deletes and order in one write) and mirrors the first tab body back to the main table - the list view reads excerpts and searches bodies from the main table only, without joining tabs.' },
+        { t: 'The same editor as Notes', d: 'The article page uses the very editor from the notes page: same toolbar, same live / source / preview modes, same paste-to-upload, tables and code blocks. It is wired in through two optional hooks - an external save function and a hidden head. In article mode the save becomes the tabs endpoint (current tab body from the editor, other tabs submitted as they are), and the backlinks and history buttons are switched off because articles have neither table. One shared implementation means a future editor change benefits both sections at once.' },
+        { t: 'How the completion rate is computed', d: 'It parses - [ ] and - [x] from the body, accepting *, + and ordered 1. markers, ignoring empty tasks and ignoring anything inside code fences (``` and ~~~) - otherwise pasting a snippet of sample code would invent dozens of tasks. The totals are stored on the main row so lists read them directly instead of re-parsing every body on every load; ticking a task in the editor updates the ring in the middle column, and ticking everything marks the todo itself done.' },
+        { t: 'Folders and drag and drop', d: 'Unlimited nesting: drop onto a folder to make it a child, drop between two rows to reorder siblings, and it saves on drop. Deleting a folder promotes its children one level and moves its articles back to Unfiled instead of deleting them - folders exist to organise things, and removing one should not take the contents with it. The count on each node includes all descendants, so a collapsed parent still tells you how much is inside.' },
+        { t: 'Saving and version conflicts', d: 'The usual optimistic locking: every save carries a version and the server answers 409 when it is stale. The article page has two save sources - meta (title, excerpt and friends, 0.8s after typing stops) and body (1.5s after typing stops) - sharing one version, so they occasionally collide. On the notes page a collision can offer overwrite or reload; an article has no second copy, so the dialog would be pointless. It now fetches the latest version and silently retries, and no body text is lost.' },
+        { t: 'Resizable columns', d: 'Both splitter lines on the todo page drag, and the widths are remembered in local storage; the article folder column works the same way. When the list column drops below 560px it switches to a compact vertical card: checkbox top-left, completion ring top-right, actions floating bottom-right, cover and tags hidden - so a 330px column does not squeeze a horizontal row into one character per line.' },
+        { t: 'My posts split into three', d: 'The Articles tab loads article data as cards and can create an article or open one for editing; the Todos tab loads todos with checkboxes and completion rings for quick filtering and editing; the Notes tab loads notes from the notes section as a card wall and opens the note editor in a new tab. All three are browsing entries, and the publish button follows the current tab instead of sending you to another page first.' },
+        { t: 'Upgrade compatibility', d: 'Only four new tables (articles, article_tabs, article_folders, article_tags); no existing table changes - the Tag model gains a Prisma back-relation only, which produces no column change. An existing database just gets the new tables on startup, and moments, files, notes, tags and register data are untouched. Articles and todos start empty and only fill as you use them.' }
       ]
     },
     {

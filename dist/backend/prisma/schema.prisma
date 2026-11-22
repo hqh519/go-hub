@@ -41,54 +41,54 @@ datasource db {
 // 普通用户：仅可上传（需「用户名 + 上传密码」）与查看/管理自身账户下的文件（需「用户名 + 用户密码」），
 // 且是否可编辑/删除自身文件、是否禁用由管理员逐个账户控制。
 model User {
-  id              String   @id @default(cuid())
-  username        String   @unique
-  passwordHash    String // 用户密码（唯一登录凭据）scrypt 格式 salt:hash
+  id               String    @id @default(cuid())
+  username         String    @unique
+  passwordHash     String // 用户密码（唯一登录凭据）scrypt 格式 salt:hash
   // 历史字段：v202610221824 起「上传密码」功能已下线，登录只认自身的用户名 + 密码。
   // 列保留是为了 db push 不做破坏性变更（避免删列），代码不再读写。
-  uploadPassword  String   @default("")
-  nickname        String   @default("") // 展示名
+  uploadPassword   String    @default("")
+  nickname         String    @default("") // 展示名
   // 邮箱（v202610221824）：可由用户自行维护，仅用于账户标识与通知，不做登录凭据
-  email           String   @default("")
+  email            String    @default("")
   // 头像（v202610221824）：列里存「版本戳」（毫秒时间戳），图片本体固定落在
   // uploads/avatars/<userId>.webp —— 每次修改覆盖同一文件，保证每个用户仅留存一张。
   // 前端用 /api/avatar/<username>?v=<avatar> 访问，版本戳变化即刷新缓存。
-  avatar          String   @default("")
-  role            String   @default("admin") // admin | user
-  enabled         Boolean  @default(true) // 禁用后无法登录/上传
-  canEdit         Boolean  @default(true) // 允许编辑自身文件（重命名/元数据/标签）
-  canDelete       Boolean  @default(true) // 允许删除自身文件
-  linkEnabled     Boolean  @default(true) // 链接权限：关闭后该账户的文件外链（/file/*）不可访问
+  avatar           String    @default("")
+  role             String    @default("admin") // admin | user
+  enabled          Boolean   @default(true) // 禁用后无法登录/上传
+  canEdit          Boolean   @default(true) // 允许编辑自身文件（重命名/元数据/标签）
+  canDelete        Boolean   @default(true) // 允许删除自身文件
+  linkEnabled      Boolean   @default(true) // 链接权限：关闭后该账户的文件外链（/file/*）不可访问
   // 管理备注（v2.1.0）：仅管理员在「用户管理 → 编辑账户」里可见可改，绝不下发给普通用户
-  adminNote       String   @default("")
-  enforceLimits   Boolean  @default(true) // 类型和大小限制：开启时受「允许上传格式 + 单文件大小上限」约束，关闭则跳过
+  adminNote        String    @default("")
+  enforceLimits    Boolean   @default(true) // 类型和大小限制：开启时受「允许上传格式 + 单文件大小上限」约束，关闭则跳过
   // ---- v2.8.8：用户级「视频兼容转码」策略 ----
   //   inherit —— 跟随全局（后台「其他设置 → 上传相关配置 → 视频兼容转码」）
   //   off     —— 该账户所有上传入口都不做兼容转码（不受全局影响）
   //   on      —— 一律做兼容转码（不受全局影响）
   //   user    —— 由用户自己在前台上传设置里选（刷新回落到「跟随全局」）
-  transcodePolicy String   @default("inherit")
+  transcodePolicy  String    @default("inherit")
   // ---- v2.8.8：用户级单文件大小上限（MB）----
   // 0 = 留空，按全局「单文件大小上限」执行；>0 = 该账户上传按这个值封顶
-  maxFileSizeMB   Int      @default(0)
-  mainChannelId   String   @default("") // 该账户上传时优先使用的主渠道 ID（空 = 用全局）
-  backupChannelId String   @default("") // 该账户上传时优先使用的备份渠道 ID（空 = 用全局）
+  maxFileSizeMB    Int       @default(0)
+  mainChannelId    String    @default("") // 该账户上传时优先使用的主渠道 ID（空 = 用全局）
+  backupChannelId  String    @default("") // 该账户上传时优先使用的备份渠道 ID（空 = 用全局）
   // ---- 邮箱验证（v2.3.0）----
   // 邮箱验证码校验通过后置 true；「验证过的邮箱」在编辑页锁定不可改，
   // 改绑需要重新走一次验证码校验。启用两步验证前必须先通过邮箱验证。
-  emailVerified   Boolean  @default(false)
+  emailVerified    Boolean   @default(false)
   // ---- 两步验证（TOTP，v202610221824）----
   // totpSecret 为 AES-GCM 加密后的 Base32 密钥；启用后进后台需再输入 6 位验证码
-  totpSecret      String   @default("")
-  totpEnabled     Boolean  @default(false)
+  totpSecret       String    @default("")
+  totpEnabled      Boolean   @default(false)
   // 恢复码（v2.3.0）：启用 2FA 时一次性生成 10 个，**只展示一次**。
   // 库里只存每个恢复码的 HMAC-SHA256（JSON 数组），不存明文 —— 用掉一个删一个。
   // 用于「验证器丢失」时进后台 / 关闭 2FA。
-  recoveryHashes  String   @default("[]")
+  recoveryHashes   String    @default("[]")
   // 最近一次生成恢复码的时间（仅用于展示与日志）
-  recoveryAt      DateTime?
+  recoveryAt       DateTime?
   // 后端（管理端）最近一次通过 2FA 的时间；超过 backSessionDays 即视为过期，需重新验证
-  backVerifiedAt  DateTime?
+  backVerifiedAt   DateTime?
   // ---- 会话有效期（天，v202610221824）----
   // 空 = 未设置 → 按 7 天处理。0 = 永久（不下发过期）。
   // frontSessionDays 管「前端上传页/画廊」登录态；backSessionDays 管「后台管理页」的 2FA 验证态。
@@ -98,22 +98,22 @@ model User {
   // 管理员在「用户管理 → 编辑账户 → 管理员操作 → 分享权限」里开启后，该账户才能
   // 使用文件夹 / 标签的「对外分享」，用户编辑页也才加载「对外分享」模块。
   // 默认 false：升级后普通用户不会突然多出对外分享入口，行为与升级前一致。
-  shareEnabled    Boolean  @default(false)
-  metas           String   @default("{}")
+  shareEnabled     Boolean   @default(false)
+  metas            String    @default("{}")
   // ---- v3.0.0（R16）：账户自定义背景图 ----
   // 存 JSON 数组字符串（如 ["https://a.jpg","https://b.jpg"]），空串 = 跟随系统设置。
   // 上传页背景图覆盖「网页设置 → 上传页背景图」，管理页背景图覆盖「网页设置 → 管理页背景图」；
   // 每次刷新在数组里随机取一张（前端 backgroundManager 统一处理）。
-  uploadBkImg     String   @default("")
-  adminBkImg      String   @default("")
+  uploadBkImg      String    @default("")
+  adminBkImg       String    @default("")
   // ---- 对外 WebDAV 授权（v1.0.6）----
   // webdavEnabled：管理员在「用户管理 → 编辑账户 → 管理员操作」里开启后，
   //   该账户才能创建 WebDAV 渠道；总开关在「系统管理 → 安全设置 → 对外 WebDAV」。
   //   管理员账户一律禁止使用 WebDAV（需求约定：只能通过普通用户启用）。
   // webdavMax：最多可创建的 WebDAV 渠道数（默认 2）。
-  webdavEnabled   Boolean  @default(false)
-  webdavMax       Int      @default(2)
-  createdAt       DateTime @default(now())
+  webdavEnabled    Boolean   @default(false)
+  webdavMax        Int       @default(2)
+  createdAt        DateTime  @default(now())
 
   @@map("users")
 }
@@ -151,31 +151,31 @@ model Setting {
 
 // 存储渠道配置（密钥字段 AES-GCM 加密后存于 config 内）
 model Channel {
-  id        String   @id @default(cuid())
+  id              String   @id @default(cuid())
   // 渠道业务 ID：6 位数字，创建后固定不变；
   // 系统内部（默认渠道 / 备份渠道 / 上传指定渠道）一律以 code 识别，渠道名可随意改但不允许重名。
-  code      String   @unique
-  name      String   @unique // 渠道显示名（可修改，不允许重名）
-  type      String // cos | minio | r2 | s3 | easyimages | lsky | webdav | immich | custom | local
-  enabled   Boolean  @default(true)
-  isMain    Boolean  @default(false) // 主渠道（可多条，上传走 enable 的第一条主渠道）
-  isBackup  Boolean  @default(false) // 备份渠道
+  code            String   @unique
+  name            String   @unique // 渠道显示名（可修改，不允许重名）
+  type            String // cos | minio | r2 | s3 | easyimages | lsky | webdav | immich | custom | local
+  enabled         Boolean  @default(true)
+  isMain          Boolean  @default(false) // 主渠道（可多条，上传走 enable 的第一条主渠道）
+  isBackup        Boolean  @default(false) // 备份渠道
   // 备用库池（v202610221824）：「更多 → 设为备用库」打标，可同时勾选多条。
   // 前端上传主渠道全部失败后，按 code 升序在这些备用库之间轮流尝试。
-  backupPool Boolean @default(false)
+  backupPool      Boolean  @default(false)
   // 用户授权（v202610221824）：JSON 数组，存被授权的用户名（["alice","bob"]）。
   // 空数组 = 未授权任何人（仅管理员可用）；管理员账户恒可用，不受此限制。
   // 非管理员调用 /api/channels 时只返回 local + 自己获授权的渠道。
-  authorizedUsers String @default("[]")
-  config    String   @default("{}") // JSON：各渠道配置，敏感字段加密存储
+  authorizedUsers String   @default("[]")
+  config          String   @default("{}") // JSON：各渠道配置，敏感字段加密存储
   // 渠道类型编号（排序用，与渠道 code 无关）：
   //   easyimages 100 / lsky 110 / immich 120 / minio 130 / r2 140 / s3 150
   //   cos 160 / aliyun 170 / webdav 180 / custom 190 / local 999
   // 所有渠道下拉框的排序规则（v2.0.0 起）：typeCode 升序 → name a→z
-  typeCode  Int      @default(0)
-  sortOrder Int      @default(0)
-  metas     String   @default("{}")
-  createdAt DateTime @default(now())
+  typeCode        Int      @default(0)
+  sortOrder       Int      @default(0)
+  metas           String   @default("{}")
+  createdAt       DateTime @default(now())
 
   copies FileCopy[]
 
@@ -185,31 +185,31 @@ model Channel {
 
 // 文件记录（对外文件标识 name 即外链 /file/:name 的 :name，随机生成、与主键 id 相互独立）
 model FileRecord {
-  id           String    @id @default(cuid())
-  name         String    @unique
+  id               String    @id @default(cuid())
+  name             String    @unique
   // 重命名历史（v2.3.0）：
   //   firstName —— 第一次的 File_ID（上传时写入，之后不再变）
   //   prevName  —— 上一次的 File_ID（每次重命名时把「当时的值」写进来）
   // 详情页重命名对话框提供「恢复到初始名 / 恢复到上一次」两个快捷键，
   // 避免改花了就再也回不去原来的名字。
-  firstName    String    @default("")
-  prevName     String    @default("")
-  originalName String
-  size         Int       @default(0) // 字节；单文件上限受上传设置约束（默认远小于 2GB，Int 足够）
-  originalSize Int       @default(0) // 压缩前的初始文件大小（字节）；未压缩时与 size 相同
-  mime         String    @default("")
-  hash         String    @default("") // sha256，用于秒传/去重
-  md5          String    @default("") // md5，用于去重（配合 size）与搜索；**当前实际内容**的 md5
+  firstName        String    @default("")
+  prevName         String    @default("")
+  originalName     String
+  size             Int       @default(0) // 字节；单文件上限受上传设置约束（默认远小于 2GB，Int 足够）
+  originalSize     Int       @default(0) // 压缩前的初始文件大小（字节）；未压缩时与 size 相同
+  mime             String    @default("")
+  hash             String    @default("") // sha256，用于秒传/去重
+  md5              String    @default("") // md5，用于去重（配合 size）与搜索；**当前实际内容**的 md5
   // v1.2.1：最初的 md5 —— 上传那一刻原文件内容的 md5，之后**永不改变**。
   //   为什么要单列：md5 会在「原位编辑 / 压缩 / 转码」后被刷新成新内容的 md5，
   //   一旦如此，用户再上传那个原始文件就再也匹配不上「同一个文件」了。
   //   去重时两组都认：①原始大小+原始 md5 ②实际大小+实际 md5（见 common/dedup.ts）。
-  originalMd5  String    @default("")
+  originalMd5      String    @default("")
   // v1.2.1：被「剪辑处理页」处理过（裁剪 / 旋转 / 涂鸦 / 文字 → 保存并替换）的时间；
   //   null = 从未剪辑过。筛选页的「文件剪辑」按这一列判断（独立成列才能走库级筛选）。
-  editedAt     DateTime?
-  folder       String    @default("") // 逻辑分类目录（可后台移动，仅改库不改真实路径）
-  uploader     String    @default("") // 上传者用户名（用户账户体系：文件按此归集给用户）
+  editedAt         DateTime?
+  folder           String    @default("") // 逻辑分类目录（可后台移动，仅改库不改真实路径）
+  uploader         String    @default("") // 上传者用户名（用户账户体系：文件按此归集给用户）
   // 上传渠道（上传来源入口）：
   //   Default  —— GoHub 前端上传页
   //   Upload   —— 前端上传页「文件」模式
@@ -221,30 +221,30 @@ model FileRecord {
   //   StoreIn  —— v1.1.0：异地渠道 → 本地渠道转存成功（详情页「异地存入」）
   //   StoreOut —— v1.1.0：本地渠道 → 异地渠道转存成功（详情页「本地转出」）
   // 注：String 而非 enum，新增取值不需要数据库迁移；无法识别的旧值统一按 Default 展示。
-  uploadSource String    @default("Default")
-  ip           String    @default("") // 上传来源 IP
+  uploadSource     String    @default("Default")
+  ip               String    @default("") // 上传来源 IP
   // 重定向地址：非空时 /file/:name 直接 302 到该地址（在不改图床外链的前提下替换真实文件源）；
   // 清空后自动恢复使用渠道真实直链。
-  redirectUrl  String    @default("")
+  redirectUrl      String    @default("")
   // 限时访问（v2.1.0）：非空时 /file/:name 只在该时刻之前可用，过期返回 410 Gone；
   // 为空 = 永久有效（默认）。由文件详情页「限时」按钮设置/取消。
-  linkExpiresAt DateTime?
+  linkExpiresAt    DateTime?
   // 文件备注（v2.1.0）：仅上传者本人（作者）可见，管理端列表不下发；
   // 与 metas 分开存，避免被通用的 metas 覆盖写回逻辑抹掉。
-  note         String    @default("")
+  note             String    @default("")
   // 评分 / 等级（v3.0.0 R8）：详情页直接点击存库 ——
   //   rating 0-5，支持 0.5 半星（0 = 未评分）；level 0-5 爱心等级（0 = 未设）。
   // 独立成列（不走 metas）——「筛选 → 评级」要按范围查库。
-  rating       Float     @default(0)
-  level        Int       @default(0)
-  views        Int       @default(0) // 被访问次数（GET /file/:name 命中累计，管理端预览不计）
-  status       String    @default("active") // active | deleted（deleted = 在回收站，可恢复）
-  deletedAt    DateTime? // 进入回收站的时间；恢复时清空。排序/定期清理依据
+  rating           Float     @default(0)
+  level            Int       @default(0)
+  views            Int       @default(0) // 被访问次数（GET /file/:name 命中累计，管理端预览不计）
+  status           String    @default("active") // active | deleted（deleted = 在回收站，可恢复）
+  deletedAt        DateTime? // 进入回收站的时间；恢复时清空。排序/定期清理依据
   // v3.0.0 多实例：文件归属的实例 ID。
   //   空串 = 默认实例（用户初始空间，无需创建、不可删除）——
   //   不设值可以完全兼容既有数据与查询习惯：无值即默认实例。
   //   WebDAV / API 等外部入口不指定实例，统一落默认实例。
-  instanceId   String    @default("")
+  instanceId       String    @default("")
   // 上传计时（后台文件详情 →「上传时长 / 上传速度」）：
   //   uploadStartedAt  请求到达服务端的时刻（分块上传为第一片 init 的时刻）
   //   uploadFinishedAt 文件记录落库的时刻
@@ -269,9 +269,9 @@ model FileRecord {
   //   只有从「图床管理 / 笔记管理」用灯箱打开过并关闭的文件才有值；
   //   文件详情页、直接点外链、渠道直链访问都不记录（views 列仍按外链访问累计）。
   //   历史记录页的「最近浏览」筛选直接按这一列取范围。
-  lastViewedAt DateTime?
-  metas        String    @default("{}") // 标签、备注等扩展
-  createdAt    DateTime  @default(now())
+  lastViewedAt     DateTime?
+  metas            String    @default("{}") // 标签、备注等扩展
+  createdAt        DateTime  @default(now())
 
   copies FileCopy[]
   tags   FileTag[]
@@ -288,11 +288,11 @@ model FileRecord {
 
 // 文件在各渠道的副本（主备双写的核心表）
 model FileCopy {
-  id        String   @id @default(cuid())
-  fileId    String
-  channelId String
-  remoteKey String // 渠道内资源标识（只存 key，不存 URL —— 直链按渠道当前配置动态构造）
-  remoteUrl String   @default("") // 仅「非本渠道上传」的外部地址（登记文件/外链）存完整 URL
+  id         String   @id @default(cuid())
+  fileId     String
+  channelId  String
+  remoteKey  String // 渠道内资源标识（只存 key，不存 URL —— 直链按渠道当前配置动态构造）
+  remoteUrl  String   @default("") // 仅「非本渠道上传」的外部地址（登记文件/外链）存完整 URL
   // ---- v3.0.0（R10）：固化寻址地址 ----
   // objectPath = 实际上传产出的 URL 去掉 scheme://host 后的 path（不含 ?query）。
   //   · 域名永不落库：加载时用「渠道当前加载域名 + objectPath」实时拼；
@@ -306,10 +306,10 @@ model FileCopy {
   // urlQuery = 文件级查询串（不含 ?）。immich 的 key=<shareKey> 必须固化；
   //   渠道级参数（COS/OSS 的 suffix）不进这里，仍由配置动态取。
   urlQuery   String   @default("")
-  status    String   @default("active") // active | pending | failed
-  isPrimary Boolean  @default(false) // 是否主渠道副本
-  metas     String   @default("{}")
-  createdAt DateTime @default(now())
+  status     String   @default("active") // active | pending | failed
+  isPrimary  Boolean  @default(false) // 是否主渠道副本
+  metas      String   @default("{}")
+  createdAt  DateTime @default(now())
 
   file    FileRecord @relation(fields: [fileId], references: [id], onDelete: Cascade)
   channel Channel    @relation(fields: [channelId], references: [id])
@@ -341,7 +341,7 @@ model ApiToken {
 
 // 标签（v3.0.0 起按实例隔离；v1.0.0 加用户维度；v1.0.2 改为「实例 + 类型 + 名称」确权）
 model Tag {
-  id        String   @id @default(cuid())
+  id         String   @id @default(cuid())
   // v1.0.2 确权模型：标签的身份 = instanceId + type + name。
   //   · 同一实例内同名同类型的标签只有一条，实例内所有成员共用；
   //   · owner 退化为「创建人」，不再参与查重与查询过滤；
@@ -350,27 +350,29 @@ model Tag {
   // 唯一性由应用层（common/tags.ts findOrCreateTag）保证：老库里同名标签可能
   // 分属多个 owner，直接加 (instanceId,type,name) 唯一索引会让升级时 db push 失败。
   // 历史重复数据由启动时的 mergeDuplicateTags 合并。
-  name      String
+  name       String
   // v3.0.0：标签所属实例（空 = 默认实例）
-  instanceId String  @default("")
+  instanceId String   @default("")
   // v1.0.2：标签类型（默认文件标签）
-  type      String   @default("file")
+  type       String   @default("file")
   // v1.0.2：仅记录创建人，不参与隔离
-  owner     String   @default("")
+  owner      String   @default("")
   // v1.1.6：作用域补充维度。
   //   · 文件标签（type='file'）恒为 ""：沿用「实例内共用一套」的团队语义；
   //   · 笔记标签（type='note'）填**用户名**：笔记是私有内容，标签也必须按账户隔离，
   //     否则 A 建的「旅行」会成为 B 的同一行标签（改名 / 删除会互相影响，还会暴露创建人）。
   //   加进唯一键后，同一实例里不同账户可以有同名笔记标签，互不干扰。
-  scope     String   @default("")
-  metas     String   @default("{}")
-  createdAt DateTime @default(now())
+  scope      String   @default("")
+  metas      String   @default("{}")
+  createdAt  DateTime @default(now())
 
-  files FileTag[]
+  files        FileTag[]
   // v1.2.0：笔记板块的标签关联（type='note' 的标签走这里）
-  noteTags NoteTag[]
+  noteTags     NoteTag[]
   // v1.3.5.6：登记板块的标签关联（type='register' 的标签走这里）
   regEntryTags RegEntryTag[]
+  // v1.4.0：文章板块的标签关联（type='article' / 'todo' / 'nav' 的标签走这里）
+  articleTags  ArticleTag[]
 
   // v1.0.3：唯一键正式改为「实例 + 类型 + 名称」（数据库层生效）。
   //   · 旧键 [name, instanceId, owner] 已删除 —— 它允许同一实例下不同用户各存一份同名标签，
@@ -422,35 +424,35 @@ model IpRecord {
 //   prevVisitAt  同一 ip（+ 同账户）上一条记录的访问时间 —— 展示「上次来访」。
 //   targetUrl    「跳转链接」：由后端在收到下一次访问时回填到上一条记录（同一 ip+UA 的相邻两条）。
 model AccessLog {
-  id          String   @id @default(cuid())
-  ip          String   @default("")
+  id          String    @id @default(cuid())
+  ip          String    @default("")
   // IP 归属地（开启「IP 归属地查询」后才会有值，异步补写）
-  ipLocation  String   @default("")
+  ipLocation  String    @default("")
   // 来路（Referer）：域名与完整链接分开存，前端列表按域名聚合更方便
-  refererHost String   @default("")
-  refererUrl  String   @default("")
+  refererHost String    @default("")
+  refererUrl  String    @default("")
   // 访问页面（站内路径，如 /dashboard 或 /file/abc.png）
-  path        String   @default("")
+  path        String    @default("")
   // 跳转链接（基于后续访问回填，空 = 还没跳走 / 直接关页）
-  targetUrl   String   @default("")
+  targetUrl   String    @default("")
   // 页面标题（前端上报，便于在列表里辨认）
-  title       String   @default("")
+  title       String    @default("")
   // 停留时长（毫秒，前端 beacon 回填；0 = 未上报）
-  stayMs      Int      @default(0)
+  stayMs      Int       @default(0)
   // 登录用户（未登录为空串）
-  username    String   @default("")
+  username    String    @default("")
   // 客户端环境
-  ua          String   @default("")
-  device      String   @default("") // desktop | mobile | tablet
-  browser     String   @default("")
-  os          String   @default("")
-  method      String   @default("GET")
-  status      Int      @default(200)
+  ua          String    @default("")
+  device      String    @default("") // desktop | mobile | tablet
+  browser     String    @default("")
+  os          String    @default("")
+  method      String    @default("GET")
+  status      Int       @default(200)
   // 访问类型：page（站内页面）/ file（外链直链）/ api
-  kind        String   @default("page")
+  kind        String    @default("page")
   prevVisitAt DateTime?
-  metas       String   @default("{}")
-  createdAt   DateTime @default(now())
+  metas       String    @default("{}")
+  createdAt   DateTime  @default(now())
 
   @@index([createdAt])
   @@index([ip, createdAt])
@@ -488,22 +490,22 @@ model Instance {
 //     密码只存 sha256 哈希（metas/验证同规则，任一层级命中即通过）；
 //   · sharedUsers 存用户名 JSON 数组；gallery = 目录对外分享（提交到访客图库）。
 model FolderMeta {
-  id          String   @id @default(cuid())
-  owner       String   @default("") // 归属用户名（空 = 系统/管理员目录）
-  path        String // 逻辑目录路径（FileRecord.folder 原样，如 "2026/10"）
-  instanceId  String   @default("") // 所属实例（空 = 默认实例）
+  id           String   @id @default(cuid())
+  owner        String   @default("") // 归属用户名（空 = 系统/管理员目录）
+  path         String // 逻辑目录路径（FileRecord.folder 原样，如 "2026/10"）
+  instanceId   String   @default("") // 所属实例（空 = 默认实例）
   // v1.0.3：目录属性也引入「类型」维度，与标签保持同一套确权口径。
   //   目前只有文件分类（file）；后续笔记 / 文章 / 待办 / 导航接入时，
   //   各自的分类互不影响，同名路径可以各存一份属性。
   //   唯一性 = 归属人 + 实例 + 类型 + 路径。
-  type        String   @default("file")
-  passwordHash String  @default("") // 所属文件加密（sha256；空 = 未加密）
-  note        String   @default("") // 备注，仅创建者可见
-  sharedUsers String   @default("[]") // 共享用户名数组（JSON）
-  sharedPerm  String   @default("edit") // 共享权限：edit=可编辑 / readonly=只读（被共享人对目录只读）
-  gallery     Boolean  @default(false) // 目录对外分享（访客图库）
-  metas       String   @default("{}")
-  createdAt   DateTime @default(now())
+  type         String   @default("file")
+  passwordHash String   @default("") // 所属文件加密（sha256；空 = 未加密）
+  note         String   @default("") // 备注，仅创建者可见
+  sharedUsers  String   @default("[]") // 共享用户名数组（JSON）
+  sharedPerm   String   @default("edit") // 共享权限：edit=可编辑 / readonly=只读（被共享人对目录只读）
+  gallery      Boolean  @default(false) // 目录对外分享（访客图库）
+  metas        String   @default("{}")
+  createdAt    DateTime @default(now())
 
   @@unique([owner, instanceId, type, path])
   @@index([owner, instanceId, type])
@@ -565,71 +567,71 @@ model ShareLink {
 
 /// 笔记主干（所有笔记类型共用）
 model Note {
-  id            String    @id @default(cuid())
+  id               String    @id @default(cuid())
   /// moment | article | collection | nav | todo | memo（memo 自 v1.3.0 起实现，其余为预留）
-  kind          String
+  kind             String
   /// 正文：瞬间 = 纯文本；笔记（memo）/ 文章 = markdown
-  content       String    @default("")
+  content          String    @default("")
   /// v1.3.0：正文格式。'' = 老数据（瞬间的纯文本）；'markdown' = 编辑器产出的 md。
   /// 只在保存时升级、打开时绝不改写 —— 老数据原样可读，不会被误当 md 重新解析。
-  contentFormat String    @default("")
+  contentFormat    String    @default("")
   /// v1.3.0：所属目录（memo_folders.id；空 = 未归档，落在「全部笔记」下）
   /// v1.3.9：目录模型退役，改用下面的 parentId（保留本列只为旧版本平稳衔接）
-  folderId      String    @default("")
+  folderId         String    @default("")
   /// v1.3.9：父节点（另一篇笔记的 id；空 = 根级）。
   /// 文档节点模型：每篇笔记既可写正文，又可作为目录无限嵌套子笔记。
-  parentId      String    @default("")
+  parentId         String    @default("")
   /// v1.3.9：同级排序（值小的在前；相同按 createdAt 兜底）
-  sort          Int       @default(0)
+  sort             Int       @default(0)
   /// v1.3.9：系统固定一级节点（笔记 / 日记 / 札记 / 灵感 / 模板）——不可删除、改名、移动
-  isSystem      Boolean   @default(false)
+  isSystem         Boolean   @default(false)
   /// v1.3.9.1：文档类型（note | diary | journal | inspiration | template）。
   /// 与 kind 的区别：kind 是「笔记板块」这一大类（memo），docType 是记事管理里的具体类型。
   /// 移动节点后会按新父级所属的固定一级目录重新落类型。
-  docType       String    @default("")
+  docType          String    @default("")
   /// v1.3.9.1：心情（与瞬间同一套 key，空 = 未设置）
-  mood          String    @default("")
+  mood             String    @default("")
   /// v1.3.9.1：心情名称（「开心」…，与瞬间 note_moments.moodName 同口径，空 = 未设置）
-  moodName      String    @default("")
+  moodName         String    @default("")
   /// v1.3.9.1：天气（与瞬间同一套 key，空 = 未设置）
-  weather       String    @default("")
+  weather          String    @default("")
   /// v1.3.9.1：天气名称（「晴」…，与瞬间 note_moments.weatherName 同口径，空 = 未设置）
-  weatherName   String    @default("")
+  weatherName      String    @default("")
   /// v1.3.0：标题（memo / 以后的 article 用）。
   /// 瞬间的标题仍走 `note_moments.title` —— 那边已有独立列与迁移回填逻辑，
   /// 不动它是为了「瞬间列表按标题排序 / 筛选」这条既有路径零改动。
-  title         String    @default("")
+  title            String    @default("")
   /// 封面 → files.id（空 = 无封面）
-  coverFileId   String    @default("")
+  coverFileId      String    @default("")
   /// private | public | specified
-  visibility    String    @default("private")
+  visibility       String    @default("private")
   /// v1.3.5.2：指定可见的名单模式 —— ""（未设置）| allow（仅名单内可见）| deny（名单内不可见）
-  visibilityMode String   @default("")
+  visibilityMode   String    @default("")
   /// v1.3.5.2：指定可见的用户名 JSON 数组（查询用 contains '"用户名"' 精确匹配）
-  visibilityUsers String  @default("[]")
+  visibilityUsers  String    @default("[]")
   /// draft | published | deleted（deleted = 在回收站，可恢复）
-  status        String    @default("published")
+  status           String    @default("published")
   /// 作者（用户名；空 = 系统）
-  author        String    @default("")
+  author           String    @default("")
   /// 所属实例（空 = 默认实例）—— 与文件体系同一套实例隔离口径
-  instanceId    String    @default("")
+  instanceId       String    @default("")
   /// 乐观并发版本号：每次保存 +1（协作编辑的锁/冲突检测后续版本会用）
-  version       Int       @default(1)
-  publishedAt   DateTime?
+  version          Int       @default(1)
+  publishedAt      DateTime?
   /// v1.1.7：首次发布时间 —— 只在创建瞬间时写一次，之后不论怎么改 publishedAt 都不动它。
   /// 目前只落库不对外下发（需求：「暂时先存储到数据表，无需加载」），留给以后做
   /// 「原始发布时刻」相关的统计 / 展示。
   firstPublishedAt DateTime?
-  deletedAt     DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  deletedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
   /// 扩展数据（JSON 字符串）。需要筛选/排序的字段必须独立成列，不要塞这里
-  metas         String    @default("{}")
+  metas            String    @default("{}")
 
-  moment NoteMoment?
-  assets NoteAsset[]
-  tags   NoteTag[]
-  markers NoteMarker[]
+  moment   NoteMoment?
+  assets   NoteAsset[]
+  tags     NoteTag[]
+  markers  NoteMarker[]
   comments NoteComment[]
 
   /// 类型 tab + 时间排序（「全部」视图走 kind 前缀，单类型走等值）
@@ -756,31 +758,31 @@ model NoteHistory {
 
 /// 瞬间专属（1:1）
 model NoteMoment {
-  noteId    String @id
+  noteId      String @id
   /// 标题（v1.1.3 起独立成列）。
   /// 之前存在 notes.metas 的 JSON 里 —— 那样只能对整段 JSON 做 LIKE，
   /// 既没法按标题排序，也没法建索引，标题一多就是全表扫描。
   /// 迁移：compat-sync.js 会在 db push 之前建列并把 metas.title 回填过来。
-  title     String @default("")
+  title       String @default("")
   /// 冗余列：发布/编辑时算一次写死 —— 列表筛选与排版直接读，不用每次翻页都聚合附件表
   /// text | image | video | audio | mixed
-  mediaKind String @default("text")
-  assetCount Int   @default(0)
+  mediaKind   String @default("text")
+  assetCount  Int    @default(0)
   /// 正文字数（只数汉字 + 字母 + 数字，不含标点与符号 —— 与前端计数同一套规则）
-  charCount Int    @default(0)
+  charCount   Int    @default(0)
   /// 枚举字符串，不存 emoji（emoji 只是前端的展示形态）
-  weather   String @default("")
-  mood      String @default("")
+  weather     String @default("")
+  mood        String @default("")
   /// v1.1.2：心情 / 天气的**名称**（「开心」「晴」…）。
   /// 枚举值以后可能增删，名称独立存一列 —— 后续做筛选/统计时直接按名称查，
   /// 不用在前端维护一张枚举 → 中文的映射表（多语言下也不会串）。
   weatherName String @default("")
   moodName    String @default("")
-  location  String @default("")
+  location    String @default("")
   /// v1.3.5.1：标记名称冗余快照 —— 编辑回填与列表展示不必 join note_markers；
   /// 真正的关联关系仍写 note_markers，供后续按标记筛选 / 统计使用。
-  markerName String @default("")
-  note      Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  markerName  String @default("")
+  note        Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@index([mediaKind])
   @@map("note_moments")
@@ -812,8 +814,8 @@ model NoteAsset {
 model NoteTag {
   noteId String
   tagId  String
-  note   Note @relation(fields: [noteId], references: [id], onDelete: Cascade)
-  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  note   Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@id([noteId, tagId])
   @@index([tagId])
@@ -854,8 +856,8 @@ model NoteMarker {
   noteId    String
   markerId  String
   createdAt DateTime @default(now())
-  note      Note   @relation(fields: [noteId], references: [id], onDelete: Cascade)
-  marker    Marker @relation(fields: [markerId], references: [id], onDelete: Cascade)
+  note      Note     @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  marker    Marker   @relation(fields: [markerId], references: [id], onDelete: Cascade)
 
   @@id([noteId, markerId])
   @@unique([noteId])
@@ -886,6 +888,128 @@ model NoteComment {
   /// 某条瞬间的留言列表（按时间正序翻页）
   @@index([noteId, createdAt])
   @@map("note_comments")
+}
+
+// ============================================================
+//  文章板块（v1.4.0 起）
+//
+//  文章（article）/ 待办（todo）/ 导航（nav）**共用一张表**，靠 type 区分：
+//    · type = 'article' → 普通文章；'todo' → 待办；'nav' → 导航（后续开发）
+//    · 新建待办时自动写 'todo'，新建导航时自动写 'nav'，其余一律 'article'
+//  三者的字段完全一致（标题 / 摘要 / 封面 / 备注 / 正文 / 页签 / 标签 / 分类），
+//  分成三张表会让「同一套编辑模块」被迫写三遍，也无法共用列表与统计逻辑。
+//
+//  正文与页签：**每篇至少有一个页签**，正文就存在页签里（article_tabs.content）。
+//    · 需求要求页签可无限增加、可改名，且每个页签有独立正文，切换即换正文；
+//    · articles.content 是「第一个页签正文」的镜像列 —— 只用于列表摘要兜底与关键
+//      字检索，写页签时由服务端一次性同步，读列表不需要 join 页签表。
+//
+//  完成为什么按「页签里的任务项」统计而不是只看一个勾：
+//    需求要的是「检测正文中共有几个待办项、完成了几个，算出完成率」。
+//    计数在保存页签时算好落缓存列（todo_total / todo_done），列表页不必解析正文。
+// ============================================================
+
+/// 文章主干（文章 / 待办 / 导航共用）
+model Article {
+  id          String    @id @default(cuid())
+  /// article | todo | nav
+  type        String    @default("article")
+  title       String    @default("")
+  /// 摘要（列表展示；用户可手填，留空时列表回退到正文首段）
+  excerpt     String    @default("")
+  /// 备注（仅作者可见，纯文本）
+  note        String    @default("")
+  /// 正文镜像（= 第一个页签的正文）—— 列表摘要兜底 / 检索用，真源在 article_tabs
+  content     String    @default("")
+  /// 封面 → files.id（空 = 无封面）
+  coverFileId String    @default("")
+  /// 分类（article_folders.id；空 = 未分类）
+  folderId    String    @default("")
+  /// draft | published | deleted（deleted = 在回收站，可恢复）
+  status      String    @default("draft")
+  /// 待办专用：整篇是否已勾选完成（列表前面的勾选框）
+  done        Boolean   @default(false)
+  author      String    @default("")
+  /// 所属实例（空 = 默认实例）—— 与文件 / 笔记同一套隔离口径
+  instanceId  String    @default("")
+  /// 浏览 / 评论计数（对外浏览页累计；管理端列表只展示）
+  views       Int       @default(0)
+  comments    Int       @default(0)
+  /// 同级排序（值小的在前）
+  sort        Int       @default(0)
+  /// 乐观并发版本号（保存时 +1）
+  version     Int       @default(1)
+  /// 正文字数（全部页签合计，只数汉字 / 字母 / 数字）
+  wordCount   Int       @default(0)
+  /// 待办项统计（全部页签合计）：总数 / 已完成数 —— 列表直接算完成率
+  todoTotal   Int       @default(0)
+  todoDone    Int       @default(0)
+  publishedAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  metas       String    @default("{}")
+
+  tabs ArticleTab[]
+  tags ArticleTag[]
+
+  @@index([instanceId, type, status, folderId, updatedAt])
+  @@index([instanceId, author, type, status, updatedAt])
+  @@index([instanceId, type, status, deletedAt])
+  @@map("articles")
+}
+
+/// 文章分类目录（传统文件夹树；文章与待办各有一棵独立的树，靠 type 区分）
+model ArticleFolder {
+  id         String   @id @default(cuid())
+  /// article | todo | nav
+  type       String   @default("article")
+  name       String   @default("")
+  /// 上级目录 id（空 = 一级目录）
+  parentId   String   @default("")
+  author     String   @default("")
+  instanceId String   @default("")
+  sort       Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([instanceId, author, type, parentId])
+  @@map("article_folders")
+}
+
+/// 文章页签（每篇至少一条；正文真源）
+model ArticleTab {
+  id        String   @id @default(cuid())
+  articleId String
+  title     String   @default("")
+  content   String   @default("")
+  /// 同级顺序（0 起；0 号页签的正文同步进 articles.content）
+  sort      Int      @default(0)
+  /// 该页签里的待办项统计（保存时算好）
+  todoTotal Int      @default(0)
+  todoDone  Int      @default(0)
+  wordCount Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, sort])
+  @@map("article_tabs")
+}
+
+/// 文章-标签关联（标签本体复用 Tag，type 跟随文章类型：article / todo / nav）
+model ArticleTag {
+  articleId String
+  tagId     String
+  createdAt DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, tagId])
+  @@index([tagId])
+  @@map("article_tags")
 }
 
 // ============================================================

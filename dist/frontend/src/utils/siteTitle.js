@@ -38,6 +38,10 @@ const PAGE_NAMES = {
     '/memo': '记事管理',
     /* v1.3.7（需求）：登记管理页也纳入 {pagename} */
     '/reg': '登记管理',
+    /* v1.4.0：文章 / 待办两个新板块，以及一直漏着的使用文档页 */
+    '/article': '文章管理',
+    '/todo': '待办管理',
+    '/docs': '使用文档',
     '/customerConfig': '用户管理',
     '/systemConfig': '系统管理',
     '/manage/history': '历史记录'
@@ -47,6 +51,10 @@ const PAGE_NAMES = {
 function pageNameOf(path) {
     if (PAGE_NAMES[path]) return PAGE_NAMES[path];
     if (path === '/customerConfig' || path.indexOf('/customerConfig/') === 0) return '用户管理';
+    // v1.4.0：文章编辑页单独给个名字，列表页仍是「文章管理」
+    if (path.indexOf('/article/edit/') === 0) return '文章编辑';
+    if (path.indexOf('/article/') === 0) return '文章管理';
+    if (path.indexOf('/todo/') === 0) return '待办管理';
     return '';
 }
 
