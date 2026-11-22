@@ -16,7 +16,7 @@
  */
 export const DEFAULT_TOOLBAR_LINES = [
     'foldAll h1 h2 h3 h4 h5 h6 | paragraph bold italic underline strike fontSize textColor highlight [对齐 alignLeft alignCenter alignRight] | taskList bulletList orderedList listConvert indent outdent | file upload linkExtract [浏览 image video audio]',
-    'outline undo redo selectLine selectAll deleteNode clear | [插入 link whiteboard blockquote callout tabsBlock code codeBlock htmlBlock iframe annotate mathBlock subDoc] [粘贴 paste pasteKeep pastePlain pasteEscaped] [表格 table tableAddRow tableAddRowBefore tableAddCol tableAddColBefore tableDelRow tableDelCol tableMerge tableSplit tableDelete] [时间 dateYmd dateSlash dateDash dateCn timeHms] [工具 imgSizeCycle mediaPreview mediaDetail stats publish htmlMd] | emoji symbol findReplace insertLineBelow hardBreak hr',
+    'outline undo redo selectLine selectAll deleteNode clear | [插入 link whiteboard blockquote callout tabsBlock code codeBlock htmlBlock iframe annotate mathBlock subDoc] [粘贴 paste pasteKeep pastePlain pasteEscaped] [表格 table tableAddRow tableAddRowBefore tableAddCol tableAddColBefore tableDelRow tableDelCol tableMerge tableSplit tableDelete] [时间 dateYmd dateSlash dateDash dateCn timeHms] [工具 imgSizeCycle mediaPreview mediaDetail stats publish htmlMd importTemplate] | emoji symbol findReplace insertLineBelow hardBreak hr',
 ];
 
 /** v1.3.7：光标工具栏出厂默认（`[组名 …]` 是一组下拉） */
@@ -53,6 +53,8 @@ export const TOOLBAR_TOKENS = [
     // 二、文字格式
     'bold', 'italic', 'underline', 'strike', 'highlight', 'code',
     'fontSize', 'textColor', 'clear',
+    // v1.3.9.1（需求）：设为上标 / 设为下标
+    'superscript', 'subscript',
     // 三、列表
     'bulletList', 'orderedList', 'taskList', 'indent', 'outdent', 'listConvert',
     // 四、对齐与行级操作
@@ -66,9 +68,9 @@ export const TOOLBAR_TOKENS = [
     // 六、表格操作
     'tableAddRow', 'tableAddRowBefore', 'tableAddCol', 'tableAddColBefore',
     'tableDelRow', 'tableDelCol', 'tableMerge', 'tableSplit', 'tableDelete',
-    // 七、内容工具（大纲 / 折叠 / 统计 / 查找 / HTML / 批注）
+    // 七、内容工具（大纲 / 折叠 / 统计 / 查找 / HTML / 批注 / 导入模板）
     'outline', 'foldAll', 'stats', 'findReplace',
-    'htmlMd', 'htmlBlock', 'annotate',
+    'htmlMd', 'htmlBlock', 'annotate', 'importTemplate',
     // 八、粘贴
     'paste', 'pasteKeep', 'pastePlain', 'pasteEscaped',
     // 九、媒体

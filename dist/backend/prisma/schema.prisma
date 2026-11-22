@@ -581,8 +581,20 @@ model Note {
   parentId      String    @default("")
   /// v1.3.9：同级排序（值小的在前；相同按 createdAt 兜底）
   sort          Int       @default(0)
-  /// v1.3.9：系统固定一级节点（笔记 / 日记 / 札记 / 灵感）——不可删除、改名、移动
+  /// v1.3.9：系统固定一级节点（笔记 / 日记 / 札记 / 灵感 / 模板）——不可删除、改名、移动
   isSystem      Boolean   @default(false)
+  /// v1.3.9.1：文档类型（note | diary | journal | inspiration | template）。
+  /// 与 kind 的区别：kind 是「笔记板块」这一大类（memo），docType 是记事管理里的具体类型。
+  /// 移动节点后会按新父级所属的固定一级目录重新落类型。
+  docType       String    @default("")
+  /// v1.3.9.1：心情（与瞬间同一套 key，空 = 未设置）
+  mood          String    @default("")
+  /// v1.3.9.1：心情名称（「开心」…，与瞬间 note_moments.moodName 同口径，空 = 未设置）
+  moodName      String    @default("")
+  /// v1.3.9.1：天气（与瞬间同一套 key，空 = 未设置）
+  weather       String    @default("")
+  /// v1.3.9.1：天气名称（「晴」…，与瞬间 note_moments.weatherName 同口径，空 = 未设置）
+  weatherName   String    @default("")
   /// v1.3.0：标题（memo / 以后的 article 用）。
   /// 瞬间的标题仍走 `note_moments.title` —— 那边已有独立列与迁移回填逻辑，
   /// 不动它是为了「瞬间列表按标题排序 / 筛选」这条既有路径零改动。

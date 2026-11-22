@@ -430,6 +430,15 @@
             @saved="reload"
         />
 
+        <!--
+            v1.3.9.1（需求）：点「笔记」分类 → 先弹出独立的「添加记事」类型选择页，
+            选择类型并创建后才在新标签页打开创建的记事编辑页（不是直接跳记事管理页）。
+        -->
+        <MemoCreateTypeDialog
+            v-model="memoCreateVisible"
+            @created="onMemoCreated"
+        />
+
         <!-- 发布 / 编辑 -->
         <MomentPublishDialog
             v-model="publishVisible"
@@ -618,6 +627,8 @@ import FileDetailDialog from '@/components/dashboard/FileDetailDialog.vue';
 import TagManagementDialog from '@/components/dashboard/TagManagementDialog.vue';
 import MomentCard from '@/components/notes/MomentCard.vue';
 import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue';
+// v1.3.9.1：「笔记」分类的「添加记事」类型选择弹窗（与 /memo、首页发布模式共用）
+import MemoCreateTypeDialog from '@/components/memo/MemoCreateTypeDialog.vue';
 /* v1.3.5.3 登记功能：流水账面板 + 提交表单 */
 import RegPanel from '@/components/reg/RegPanel.vue';
 import RegEntryDialog from '@/components/reg/RegEntryDialog.vue';
@@ -666,6 +677,7 @@ export default {
         TagManagementDialog,
         MomentCard,
         MomentPublishDialog,
+        MemoCreateTypeDialog,
         RegPanel,
         RegEntryDialog,
         NoteTagPanel,
@@ -691,6 +703,8 @@ export default {
             searchType: 'all',
             // v1.1.3：「全部」类型下点发布 → 先选类型
             publishTypeVisible: false,
+            /** v1.3.9.1：「笔记」分类的「添加记事」类型选择弹窗 */
+            memoCreateVisible: false,
             // 标签筛选（点卡片上的 #标签 触发）
             tagId: '',
             tagName: '',
@@ -1269,15 +1283,25 @@ export default {
             }
         },
         /* ── 列表 ───────────────────────────────────────────────── */
+        /**
+         * v1.3.9.1（需求）：「添加记事」创建完成 ——
+         * 在新标签页打开创建的记事编辑页（/memo?id=xxx），当前页保持不动。
+         */
+        onMemoCreated(r) {
+            const id = r && r.id;
+            if (!id) return;
+            const route = this.$router.resolve({ path: '/memo', query: { id } });
+            window.open(route.href, '_blank', 'noopener');
+        },
         switchKind(v) {
             if (this.kind === v) return;
             /*
-             * v1.3.0：笔记（memo）已经拆成独立页面（/memo，三栏目录 + 编辑器）。
-             * 这里保留这个分类入口是为了「点了有个明确去处」，而不是停在空列表上提示
-             * 「该类型尚未上线」—— 那句话现在已经是错的。
+             * v1.3.9.1（需求）：点「笔记」分类 → 先弹出独立的「添加记事」类型选择页，
+             * 选择类型并创建后才在新标签页打开创建的记事编辑页（不再直接跳 /memo）。
+             * 当前停留的分类保持不变。
              */
             if (v === 'memo') {
-                this.$router.push('/memo').catch(() => {});
+                this.memoCreateVisible = true;
                 return;
             }
             this.kind = v;

@@ -88,6 +88,21 @@ let MemoController = class MemoController {
         const data = await this.memo.listTree(viewer, instanceId || '');
         return { success: true, data };
     }
+    async getNodeSettings(req, instanceId) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.getNodeSettings(viewer, instanceId || '');
+        return { success: true, data };
+    }
+    async saveNodeSettings(req, body) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.saveNodeSettings(viewer, String(body.instanceId ?? ''), body.settings ?? body);
+        return { success: true, data };
+    }
+    async templates(req, instanceId) {
+        const { viewer } = this.ctx(req);
+        const data = await this.memo.listTemplates(viewer, instanceId || '');
+        return { success: true, data };
+    }
     async resolveBlock(req, q) {
         const { viewer } = this.ctx(req);
         const bid = String(q.blockId || '');
@@ -216,12 +231,23 @@ let MemoController = class MemoController {
             content: body.content,
             folderId: body.folderId,
             version: body.version,
+            mood: body.mood,
+            moodName: body.moodName,
+            weather: body.weather,
+            weatherName: body.weatherName,
         });
         if ('error' in r && r.error)
             this.fail(r.error);
         if ('conflict' in r && r.conflict) {
             throw new common_1.HttpException({ success: false, conflict: true, message: r.message, version: r.version }, common_1.HttpStatus.CONFLICT);
         }
+        return { success: true, data: r };
+    }
+    async promote(req, id, body) {
+        const { viewer } = this.ctx(req);
+        const r = await this.memo.promoteNode(viewer, String(body.instanceId ?? ''), id);
+        if ('error' in r && r.error)
+            this.fail(String(r.error));
         return { success: true, data: r };
     }
     async move(req, id, body) {
@@ -317,6 +343,30 @@ __decorate([
     __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], MemoController.prototype, "tree", null);
+__decorate([
+    (0, common_1.Get)('node-settings'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "getNodeSettings", null);
+__decorate([
+    (0, common_1.Put)('node-settings'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, Object]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "saveNodeSettings", null);
+__decorate([
+    (0, common_1.Get)('templates'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)('instanceId')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "templates", null);
 __decorate([
     (0, common_1.Get)('blocks/resolve'),
     __param(0, (0, common_1.Req)()),
@@ -467,6 +517,15 @@ __decorate([
     __metadata("design:paramtypes", [Object, String, Object]),
     __metadata("design:returntype", Promise)
 ], MemoController.prototype, "save", null);
+__decorate([
+    (0, common_1.Post)(':id/promote'),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, Object]),
+    __metadata("design:returntype", Promise)
+], MemoController.prototype, "promote", null);
 __decorate([
     (0, common_1.Post)(':id/move'),
     __param(0, (0, common_1.Req)()),

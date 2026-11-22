@@ -15,7 +15,21 @@ const notes_util_1 = require("./notes.util");
 const tags_1 = require("../common/tags");
 const memo_util_1 = require("./memo.util");
 const memo_block_util_1 = require("./memo-block.util");
-const SYSTEM_ROOT_TITLES = ['笔记', '日记', '札记', '灵感'];
+const SYSTEM_ROOT_TITLES = ['笔记', '日记', '札记', '灵感', '模板'];
+const ROOT_DOC_TYPE = {
+    笔记: 'note',
+    日记: 'diary',
+    札记: 'journal',
+    灵感: 'inspiration',
+    模板: 'template',
+};
+const DEFAULT_NODE_SETTINGS = {
+    rowHeight: 32,
+    showLines: true,
+    folderIcon: '',
+    typeIcons: { note: '', diary: '', journal: '', inspiration: '', template: '' },
+};
+const LEGACY_SYSTEM_TITLES = ['笔记', '日记', '札记', '灵感'];
 function migratedKey(instanceId, viewer) {
     return `memoTreeMigrated:${instanceId || '_'}:${viewer}`;
 }
@@ -34,7 +48,19 @@ function timeOf(v) {
     return Number.isFinite(t) ? t : 0;
 }
 let MemoService = MemoService_1 = class MemoService {
+    rootsInflight = new Map();
     async ensureSystemRoots(viewer, instanceId) {
+        const lockKey = `${viewer}@${instanceId || '_'}`;
+        const flying = this.rootsInflight.get(lockKey);
+        if (flying)
+            return flying;
+        const task = this.ensureSystemRootsInner(viewer, instanceId).finally(() => {
+            this.rootsInflight.delete(lockKey);
+        });
+        this.rootsInflight.set(lockKey, task);
+        return task;
+    }
+    async ensureSystemRootsInner(viewer, instanceId) {
         const rows = await prisma_1.prisma.note.findMany({
             where: {
                 author: viewer,
@@ -44,15 +70,64 @@ let MemoService = MemoService_1 = class MemoService {
                 parentId: '',
                 status: { not: 'deleted' },
             },
-            select: { id: true, title: true },
+            select: { id: true, title: true, docType: true, createdAt: true },
+            orderBy: [{ createdAt: 'asc' }],
         });
         const byTitle = new Map();
-        for (const r of rows)
-            byTitle.set(String(r.title || ''), String(r.id));
+        const dup = [];
+        for (const r of rows) {
+            const title = String(r.title || '');
+            const id = String(r.id);
+            if (byTitle.has(title)) {
+                dup.push({ keep: byTitle.get(title), drop: id, title });
+                continue;
+            }
+            byTitle.set(title, id);
+            const want = ROOT_DOC_TYPE[title];
+            if (want && String(r.docType || '') !== want) {
+                await prisma_1.prisma.note.update({ where: { id }, data: { docType: want } });
+            }
+        }
+        for (const d of dup) {
+            await prisma_1.prisma.note.updateMany({ where: { parentId: d.drop }, data: { parentId: d.keep } });
+            await prisma_1.prisma.note.update({
+                where: { id: d.drop },
+                data: { status: 'deleted', isSystem: false },
+            });
+            const keepType = ROOT_DOC_TYPE[d.title];
+            if (keepType)
+                await this.retypeSubtree(viewer, instanceId, d.keep, keepType);
+            app_log_1.appLog.info('memo', `合并重复固定节点「${d.title}」（${viewer}@${instanceId || 'default'}）`);
+        }
         for (let i = 0; i < SYSTEM_ROOT_TITLES.length; i += 1) {
             const title = SYSTEM_ROOT_TITLES[i];
             if (byTitle.has(title))
                 continue;
+            const legacy = await prisma_1.prisma.note.findFirst({
+                where: {
+                    author: viewer,
+                    instanceId,
+                    kind: 'memo',
+                    title,
+                    parentId: '',
+                    isSystem: false,
+                    status: { not: 'deleted' },
+                },
+                orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+                select: { id: true },
+            });
+            if (legacy) {
+                await prisma_1.prisma.note.update({
+                    where: { id: String(legacy.id) },
+                    data: { isSystem: true, docType: ROOT_DOC_TYPE[title] || 'note', sort: i },
+                });
+                byTitle.set(title, String(legacy.id));
+                app_log_1.appLog.info('memo', `认领旧节点「${title}」为固定节点（${viewer}@${instanceId || 'default'}）`);
+                const adoptType = ROOT_DOC_TYPE[title];
+                if (adoptType)
+                    await this.retypeSubtree(viewer, instanceId, String(legacy.id), adoptType);
+                continue;
+            }
             const row = await prisma_1.prisma.note.create({
                 data: {
                     kind: 'memo',
@@ -62,6 +137,7 @@ let MemoService = MemoService_1 = class MemoService {
                     parentId: '',
                     sort: i,
                     isSystem: true,
+                    docType: ROOT_DOC_TYPE[title] || 'note',
                     author: viewer,
                     instanceId,
                     visibility: 'private',
@@ -106,6 +182,7 @@ let MemoService = MemoService_1 = class MemoService {
                                 parentId: parentNote,
                                 sort: asInt(f.sort),
                                 isSystem: false,
+                                docType: 'note',
                                 author: viewer,
                                 instanceId,
                                 visibility: 'private',
@@ -138,7 +215,41 @@ let MemoService = MemoService_1 = class MemoService {
             }
             await prisma_1.prisma.setting.upsert({ where: { key }, create: { key, value: '1' }, update: { value: '1' } });
         }
-        return this.ensureSystemRoots(viewer, instanceId);
+        const roots = await this.ensureSystemRoots(viewer, instanceId);
+        await this.backfillDocTypes(viewer, instanceId);
+        return roots;
+    }
+    async backfillDocTypes(viewer, instanceId) {
+        const pending = await prisma_1.prisma.note.findMany({
+            where: { author: viewer, instanceId, kind: 'memo', docType: '' },
+            select: { id: true, parentId: true, title: true, isSystem: true },
+        });
+        if (!pending.length)
+            return;
+        const all = await prisma_1.prisma.note.findMany({
+            where: { author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, parentId: true, title: true, isSystem: true },
+        });
+        const byId = new Map(all.map((r) => [String(r.id), r]));
+        const typeOf = (pid) => {
+            let cur = String(pid || '');
+            let guard = 0;
+            while (cur && guard < MAX_FOLDER_DEPTH) {
+                const n = byId.get(cur);
+                if (!n)
+                    break;
+                if (n.isSystem)
+                    return ROOT_DOC_TYPE[String(n.title || '')] || 'note';
+                cur = String(n.parentId || '');
+                guard += 1;
+            }
+            return 'note';
+        };
+        for (const r of pending) {
+            const title = String(r.title || '');
+            const t = r.isSystem ? ROOT_DOC_TYPE[title] || 'note' : typeOf(String(r.parentId || ''));
+            await prisma_1.prisma.note.update({ where: { id: String(r.id) }, data: { docType: t } });
+        }
     }
     async listTree(viewer, instanceId) {
         await this.ensureTreeMigrated(viewer, instanceId);
@@ -150,6 +261,7 @@ let MemoService = MemoService_1 = class MemoService {
                 parentId: true,
                 sort: true,
                 isSystem: true,
+                docType: true,
                 status: true,
                 createdAt: true,
                 updatedAt: true,
@@ -165,6 +277,7 @@ let MemoService = MemoService_1 = class MemoService {
                 parentId: String(r.parentId || ''),
                 sort: asInt(r.sort),
                 isSystem: !!r.isSystem,
+                docType: String(r.docType || '') || (r.isSystem ? ROOT_DOC_TYPE[String(r.title || '')] || 'note' : 'note'),
                 status: String(r.status || ''),
                 charCount: asInt(metas.charCount),
                 wordCount: metas.wordCount != null ? asInt(metas.wordCount) : null,
@@ -253,7 +366,9 @@ let MemoService = MemoService_1 = class MemoService {
     }
     async createNode(viewer, instanceId, input) {
         const rawType = String(input.type ?? 'note');
-        const type = rawType === 'diary' || rawType === 'journal' || rawType === 'inspiration' ? rawType : 'note';
+        let type = rawType === 'diary' || rawType === 'journal' || rawType === 'inspiration' || rawType === 'template'
+            ? rawType
+            : 'note';
         const roots = await this.ensureTreeMigrated(viewer, instanceId);
         const now = new Date();
         const YYYY = String(now.getFullYear());
@@ -261,7 +376,6 @@ let MemoService = MemoService_1 = class MemoService {
         const DD = MemoService_1.pad2(now.getDate());
         const hh = MemoService_1.pad2(now.getHours());
         const mi = MemoService_1.pad2(now.getMinutes());
-        const ss = MemoService_1.pad2(now.getSeconds());
         const explicitParent = String(input.parentId ?? '');
         let parentId = '';
         let title = String(input.title ?? '').trim();
@@ -274,11 +388,15 @@ let MemoService = MemoService_1 = class MemoService {
                     kind: 'memo',
                     status: { not: 'deleted' },
                 },
-                select: { id: true },
+                select: { id: true, docType: true },
             });
             if (!ok)
                 return { error: '上级节点不存在' };
             parentId = explicitParent;
+            const parentType = String(ok.docType || '');
+            if (parentType === 'diary' || parentType === 'journal' || parentType === 'inspiration' || parentType === 'template' || parentType === 'note') {
+                type = parentType;
+            }
         }
         if (!parentId) {
             const rootNote = roots.get(SYSTEM_ROOT_TITLES[0]) || roots.get('笔记') || '';
@@ -295,21 +413,55 @@ let MemoService = MemoService_1 = class MemoService {
                 const root = roots.get('灵感') || '';
                 parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
             }
+            else if (type === 'template') {
+                parentId = roots.get('模板') || '';
+            }
             else {
                 parentId = rootNote;
             }
         }
         if (!title) {
-            if (type === 'diary')
-                title = `${YYYY}${MM}${DD}-${hh}${mi}`;
-            else if (type === 'inspiration')
-                title = `灵感:${YYYY}${MM}${DD}-${hh}${mi}${ss}`;
+            if (type === 'diary') {
+                const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
+                title = `${YYYY}年${Number(MM)}月${Number(DD)}日 ${week}`;
+            }
+            else if (type === 'inspiration') {
+                title = `灵感_${YYYY}${MM}${DD}-${hh}${mi}`;
+            }
+            else if (type === 'template') {
+                const prefix = '未命名模板';
+                title = `${prefix}${await this.nextUntitledIndex(viewer, instanceId, parentId, prefix)}`;
+            }
             else {
                 const prefix = type === 'journal' ? '未命名札记' : '未命名笔记';
                 title = `${prefix}${await this.nextUntitledIndex(viewer, instanceId, parentId, prefix)}`;
             }
         }
         title = title.slice(0, MAX_TITLE);
+        if (type === 'diary' && !String(input.title ?? '').trim()) {
+            const existed = await prisma_1.prisma.note.findFirst({
+                where: {
+                    author: viewer,
+                    instanceId,
+                    kind: 'memo',
+                    parentId,
+                    title,
+                    status: { not: 'deleted' },
+                },
+                select: { id: true, version: true, createdAt: true },
+            });
+            if (existed) {
+                return {
+                    id: String(existed.id),
+                    title,
+                    parentId,
+                    type,
+                    existed: true,
+                    version: asInt(existed.version, 1),
+                    createdAt: timeOf(existed.createdAt),
+                };
+            }
+        }
         const md = String(input.content ?? '');
         const useIds = await this.blockIdsEnabled(instanceId, viewer);
         const content = useIds ? (0, memo_util_1.withBlockIds)(md) : md;
@@ -327,6 +479,7 @@ let MemoService = MemoService_1 = class MemoService {
                 parentId,
                 sort: asInt(last?.sort) + 1,
                 isSystem: false,
+                docType: type,
                 author: viewer,
                 instanceId,
                 visibility: 'private',
@@ -348,6 +501,141 @@ let MemoService = MemoService_1 = class MemoService {
             type,
             version: asInt(row.version, 1),
             createdAt: timeOf(row.createdAt),
+        };
+    }
+    async docTypeForParent(viewer, instanceId, parentId) {
+        let cur = String(parentId || '');
+        let firstType = '';
+        let guard = 0;
+        while (cur && guard < MAX_FOLDER_DEPTH) {
+            const n = await prisma_1.prisma.note.findFirst({
+                where: { id: cur, author: viewer, instanceId, kind: 'memo' },
+                select: { parentId: true, isSystem: true, title: true, docType: true },
+            });
+            if (!n)
+                break;
+            if (!firstType)
+                firstType = String(n.docType || '');
+            if (n.isSystem) {
+                const t = ROOT_DOC_TYPE[String(n.title || '')];
+                if (t)
+                    return t;
+            }
+            cur = String(n.parentId || '');
+            guard += 1;
+        }
+        return firstType === 'diary' || firstType === 'journal' || firstType === 'inspiration' || firstType === 'template'
+            ? firstType
+            : 'note';
+    }
+    async retypeSubtree(viewer, instanceId, rootId, type) {
+        const ids = await this.subtreeIds(viewer, instanceId, rootId);
+        if (!ids.length)
+            return 0;
+        const r = await prisma_1.prisma.note.updateMany({
+            where: { id: { in: ids }, author: viewer, instanceId, kind: 'memo' },
+            data: { docType: type },
+        });
+        return r.count;
+    }
+    async promoteNode(viewer, instanceId, id) {
+        const row = await prisma_1.prisma.note.findFirst({
+            where: { id, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, isSystem: true, parentId: true },
+        });
+        if (!row)
+            return { error: '笔记不存在' };
+        if (row.isSystem)
+            return { error: '固定一级目录不能升级' };
+        const oldParent = String(row.parentId || '');
+        if (!oldParent)
+            return { error: '已经是最高层级' };
+        const parent = await prisma_1.prisma.note.findFirst({
+            where: { id: oldParent, author: viewer, instanceId, kind: 'memo' },
+            select: { id: true, parentId: true },
+        });
+        const newParent = parent ? String(parent.parentId || '') : '';
+        const last = await prisma_1.prisma.note.findFirst({
+            where: { author: viewer, instanceId, kind: 'memo', parentId: newParent, status: { not: 'deleted' } },
+            orderBy: { sort: 'desc' },
+            select: { sort: true },
+        });
+        await prisma_1.prisma.note.update({
+            where: { id },
+            data: { parentId: newParent, sort: asInt(last?.sort) + 1 },
+        });
+        const docType = await this.docTypeForParent(viewer, instanceId, newParent);
+        await this.retypeSubtree(viewer, instanceId, id, docType);
+        app_log_1.appLog.info('memo', `节点升级：${id} 从 ${oldParent} 升到 ${newParent || '根级'}，类型重算为 ${docType}`);
+        return { ok: true, parentId: newParent, docType };
+    }
+    nodeSettingsKey(instanceId, viewer) {
+        return `memoNodeSettings:${instanceId || '_'}:${viewer}`;
+    }
+    async getNodeSettings(viewer, instanceId) {
+        const key = this.nodeSettingsKey(instanceId, viewer);
+        const row = await prisma_1.prisma.setting.findUnique({ where: { key } });
+        const saved = (0, notes_util_1.safeParse)(row?.value, {});
+        const def = DEFAULT_NODE_SETTINGS;
+        const typeIcons = { ...def.typeIcons };
+        if (saved.typeIcons && typeof saved.typeIcons === 'object') {
+            for (const k of Object.keys(typeIcons)) {
+                const v = saved.typeIcons[k];
+                if (typeof v === 'string')
+                    typeIcons[k] = v.slice(0, 60);
+            }
+        }
+        return {
+            rowHeight: Math.min(64, Math.max(22, asInt(saved.rowHeight, def.rowHeight))),
+            showLines: typeof saved.showLines === 'boolean' ? saved.showLines : def.showLines,
+            folderIcon: typeof saved.folderIcon === 'string' ? saved.folderIcon.slice(0, 60) : def.folderIcon,
+            typeIcons,
+        };
+    }
+    async saveNodeSettings(viewer, instanceId, input) {
+        const cur = await this.getNodeSettings(viewer, instanceId);
+        const src = (input || {});
+        const next = {
+            rowHeight: Math.min(64, Math.max(22, asInt(src.rowHeight, cur.rowHeight))),
+            showLines: typeof src.showLines === 'boolean' ? src.showLines : cur.showLines,
+            folderIcon: typeof src.folderIcon === 'string' ? String(src.folderIcon).slice(0, 60) : cur.folderIcon,
+            typeIcons: { ...cur.typeIcons },
+        };
+        const ti = src.typeIcons;
+        if (ti && typeof ti === 'object') {
+            for (const k of Object.keys(next.typeIcons)) {
+                const v = ti[k];
+                if (typeof v === 'string')
+                    next.typeIcons[k] = v.slice(0, 60);
+            }
+        }
+        const key = this.nodeSettingsKey(instanceId, viewer);
+        const value = JSON.stringify(next);
+        await prisma_1.prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } });
+        return next;
+    }
+    async listTemplates(viewer, instanceId) {
+        await this.ensureTreeMigrated(viewer, instanceId);
+        const rows = await prisma_1.prisma.note.findMany({
+            where: {
+                author: viewer,
+                instanceId,
+                kind: 'memo',
+                docType: 'template',
+                isSystem: false,
+                status: { not: 'deleted' },
+            },
+            select: { id: true, title: true, content: true, parentId: true, updatedAt: true, createdAt: true },
+            orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+        });
+        return {
+            templates: rows.map((r) => ({
+                id: String(r.id),
+                title: String(r.title || ''),
+                content: String(r.content || ''),
+                updatedAt: timeOf(r.updatedAt),
+                createdAt: timeOf(r.createdAt),
+            })),
         };
     }
     async moveNode(viewer, instanceId, id, input) {
@@ -394,7 +682,9 @@ let MemoService = MemoService_1 = class MemoService {
             data.sort = asInt(last?.sort) + 1;
         }
         await prisma_1.prisma.note.update({ where: { id }, data: data });
-        return { ok: true, parentId: target };
+        const docType = await this.docTypeForParent(viewer, instanceId, target);
+        await this.retypeSubtree(viewer, instanceId, id, docType);
+        return { ok: true, parentId: target, docType };
     }
     async reorderNodes(viewer, instanceId, parentId, ids) {
         const list = Array.isArray(ids) ? ids.map((x) => String(x)) : [];
@@ -742,6 +1032,11 @@ let MemoService = MemoService_1 = class MemoService {
             parentId: String(row.parentId || ''),
             sort: asInt(row.sort),
             isSystem: !!row.isSystem,
+            docType: String(row.docType || ''),
+            mood: String(row.mood || ''),
+            moodName: String(row.moodName || ''),
+            weather: String(row.weather || ''),
+            weatherName: String(row.weatherName || ''),
             version: asInt(row.version, 1),
             status: String(row.status || ''),
             createdAt: timeOf(row.createdAt),
@@ -841,6 +1136,14 @@ let MemoService = MemoService_1 = class MemoService {
             version: { increment: 1 },
             metas: JSON.stringify({ excerpt: (0, memo_util_1.excerptOf)(content), charCount: (0, memo_util_1.countMemoChars)(content) }),
         };
+        if (input.mood !== undefined)
+            data.mood = String(input.mood ?? '').slice(0, 40);
+        if (input.moodName !== undefined)
+            data.moodName = String(input.moodName ?? '').slice(0, 60);
+        if (input.weather !== undefined)
+            data.weather = String(input.weather ?? '').slice(0, 40);
+        if (input.weatherName !== undefined)
+            data.weatherName = String(input.weatherName ?? '').slice(0, 60);
         if (input.folderId !== undefined) {
             const folderId = String(input.folderId ?? '');
             if (folderId) {

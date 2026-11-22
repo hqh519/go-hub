@@ -1118,6 +1118,30 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1391',
+      title: '七十六、v1.3.9.1 更新要点',
+      intro: '这一版把记事树升级为可配置的节点树：一键收起 / 展开、节点设置、移动与升级、模板复用都补齐了；编辑器新增类型图标、心情天气、上下标与导入模板，预览模式与编辑模式共用同一套样式，首页和「我的发布」的「笔记」入口也统一到创建记事类型页。',
+      items: [
+        { t: '名称与按钮', d: '「记事树」改名「节点树」，「新建笔记」改名「添加记事」，节点菜单里的「新建子笔记」改名「新建子页」。' },
+        { t: '顶部「添加记事」', d: '「添加记事」从树底部移到页面顶栏「保存」左侧，样式与「我的发布」的「发布瞬间」一致：桌面大图标加文字，移动端只留小图标。' },
+        { t: '一键收起 / 展开', d: '只要有任一目录处于展开状态，顶部按钮就显示为「已展开」，点一下收起全部层级；全部收起后再点则一键展开。每个目录节点前的按钮可单独收起/展开自己的全部子级，并带过渡动画，不再是硬切。' },
+        { t: '缩进与关系线', d: '层级缩进调小一档，关系线改为直角折线的参考样式并保留虚线，层级关系一眼看清。' },
+        { t: '图标与行内布局', d: '每个节点行末的「更多」按钮统一靠右对齐；节点设置里新增笔记 / 日记 / 札记 / 灵感 / 文档 / 文章相关的单色图标，选中后直接显示图标本身，不再只显示图标名称。' },
+        { t: '回收站入口', d: '回收站从树底部移到顶部「节点设置」右侧，改为图标按钮，进入后按钮保持高亮。' },
+        { t: '移动端树不再跳', d: '手机上把文档树滑到最底部时，顶部栏不再闪烁跳动，桌面端一并检查处理。' },
+        { t: '子页同类型', d: '在某个节点下新建子页时，直接沿用该节点的类型，不再弹出类型选择页；创建时把文档类型写进数据表。' },
+        { t: '移动与升级', d: '节点更多菜单新增「移动」和「升级」：移动到别的节点下、或层级上升一级后，都会按新位置重新记录类型。' },
+        { t: '日记、灵感与模板', d: '日记默认名改为「2026年11月22日 周日」格式，同名日记已存在时直接打开已有日记；灵感默认名改为「灵感_YYYYMMDD-HHMM」；新增「模板」类型（默认落在 /模板），编辑器的「导入模板」会直接把模板源码导入当前文档。' },
+        { t: '节点设置', d: '可调整行高、是否显示层级关系线、目录节点图标，以及笔记 / 日记 / 札记 / 灵感 / 模板各类型页面的图标，图标统一为单色。' },
+        { t: '标题与元信息', d: '编辑器标题前显示当前文档类型图标，移动端标题与图标的间距收紧；元信息行在移动端不再显示「字符」，只保留字数统计。' },
+        { t: '行级菜单与行号', d: '光标在编辑区第一行时不显示光标工具菜单；列表菜单只在光标位于列表标识右侧第一位时出现（非第一位与文本末尾都不出现）；当前行的行号按钮显示背景色，移开即隐藏。' },
+        { t: '上下标与字号', d: '新增「设为上标」「设为下标」两个工具并加入可用工具列表：选中文字点击即设为上标 / 下标，再点取消，两者互斥，落盘为 <sup> / <sub>；字号档位补齐 12 / 14 / 15 / 16 / 18 / 20 / 24 / 28 / 32px。' },
+        { t: '预览与吸附', d: '预览模式与编辑模式共用同一套排版样式，只是隐藏工具栏与行级栏、正文不可编辑；顶部栏、工具栏、标题栏的吸附显隐换成更柔和的过渡。' },
+        { t: '刷新', d: '右上「刷新」重新加载当前页面内容，节点树一并重载；有未保存改动时先确认。' },
+        { t: '两处发布入口', d: '首页「发布」模式与「我的发布」页的「笔记」都改为打开创建记事类型页，创建完成后在新标签页打开新记事的编辑页，当前页保持不动。' }
+      ]
+    },
+    {
       id: 'whatsnew-139',
       title: '七十五、v1.3.9 更新要点',
       intro: '这一版把笔记管理改成「文档节点 + 两栏」：每个节点本身就是一篇笔记，也可以无限嵌套子笔记；新建时先选笔记 / 日记 / 札记 / 灵感，标题与落点自动生成。同时移除了发布瞬间的附件拖动排序。',
@@ -2573,6 +2597,30 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1391',
+      title: '76. What is new in v1.3.9.1',
+      intro: 'The note tree becomes a configurable node tree with collapse/expand all, node settings, move and promote, and reusable templates. The editor gains a document type icon, mood/weather pickers, superscript/subscript and import-template, preview shares the editing layout, and both Notes entry points now open the create-note type picker.',
+      items: [
+        { t: 'Names and buttons', d: '"Note tree" becomes "Node tree", "New note" becomes "Add record", and "New child note" in the node menu becomes "New subpage".' },
+        { t: 'Add record in the header', d: '"Add record" moves from the tree footer to the page header, left of Save, styled like "Publish moment" on My Posts: icon plus label on desktop, icon only on phones.' },
+        { t: 'Collapse / expand all', d: 'While any folder is open the header button shows the expanded state and collapses every level at once; once all are closed it expands them again. Each folder node also toggles its own subtree with a soft transition instead of a hard repaint.' },
+        { t: 'Indent and guide lines', d: 'Hierarchy indent is reduced by one step and guide lines follow the reference style (right-angled, still dashed).' },
+        { t: 'Icons and row layout', d: 'The "more" button on every node is right-aligned at the row end. Node settings add note / diary / journal / inspiration / document / article icons, and the chosen icon is rendered directly instead of showing only its name.' },
+        { t: 'Trash entry', d: 'Trash moves from the tree footer to the tree header, right of Node settings, as an icon button that stays highlighted while Trash is open.' },
+        { t: 'Steady mobile header', d: 'Scrolling the tree to the bottom on phones no longer makes the top bar flicker; the desktop side was checked too.' },
+        { t: 'Typed subpages', d: 'Creating a subpage under a node inherits its type without the type picker, and the document type is stored in the database.' },
+        { t: 'Move and promote', d: 'The node menu gains "Move" and "Promote"; after either action the type is re-recorded for the new location.' },
+        { t: 'Diary, inspiration, templates', d: 'Diary titles default to "22 November 2026, Sunday" style and an existing diary with the same title opens instead of duplicating; inspiration titles default to "Inspiration_YYYYMMDD-HHMM"; a "Template" type is added (stored under /Template) and "Import template" writes the template source straight into the current document.' },
+        { t: 'Node settings', d: 'Row height, hierarchy lines, the folder-node icon and a per-type icon for note / diary / journal / inspiration / template pages. All icons are monochrome.' },
+        { t: 'Title and meta row', d: 'The editor title shows the document type icon with a tighter gap on phones; the meta row drops the character count on phones and keeps the word count.' },
+        { t: 'Line menus and gutter', d: 'No cursor toolbar on the first line; the list menu appears only when the caret sits at the first position right of the list marker (not mid-text, not at the end); the current line number gets a background highlight and loses it on leave.' },
+        { t: 'Superscript, subscript, font sizes', d: 'New "Superscript" and "Subscript" tools join the available tools: select text and click to apply, click again to clear, the two are mutually exclusive, and content is stored as <sup> / <sub>. Font sizes now cover 12 / 14 / 15 / 16 / 18 / 20 / 24 / 28 / 32px.' },
+        { t: 'Preview and sticky bars', d: 'Preview reuses the whole editing layout and only hides the toolbar and line bar while making the body read-only; the header, toolbar and title bars fade in and out more softly.' },
+        { t: 'Refresh', d: 'The top-right Refresh reloads the current page content together with the node tree, asking first when there are unsaved edits.' },
+        { t: 'Publish entry points', d: 'The "Notes" button in the home Publish mode and the "Notes" category under My Posts both open the create-note type picker and then open the new note in a new tab, leaving the current page untouched.' }
       ]
     },
     {

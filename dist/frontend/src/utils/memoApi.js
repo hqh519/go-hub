@@ -86,6 +86,29 @@ export async function createNode({ type = 'note', parentId = '', title = '', con
   return unwrap(res);
 }
 
+/** v1.3.9.1：更多菜单「升级」—— 层级上升一级（服务端重算类型） */
+export async function promoteNode(id) {
+  const res = await axios.post(`/api/memo/${encodeURIComponent(id)}/promote`, { instanceId: inst() });
+  return unwrap(res);
+}
+
+/** v1.3.9.1：文档树节点设置（行高 / 关系线 / 图标） */
+export async function fetchNodeSettings() {
+  const res = await axios.get('/api/memo/node-settings', { params: { instanceId: inst() } });
+  return unwrap(res);
+}
+
+export async function saveNodeSettings(settings) {
+  const res = await axios.put('/api/memo/node-settings', { settings, instanceId: inst() });
+  return unwrap(res);
+}
+
+/** v1.3.9.1：导入模板弹窗的数据源（模板分类下的文档，含正文） */
+export async function fetchTemplates() {
+  const res = await axios.get('/api/memo/templates', { params: { instanceId: inst() } });
+  return unwrap(res);
+}
+
 /** 改名（固定一级节点会被服务端拒绝） */
 export async function renameNode(id, title) {
   const res = await axios.put(`/api/memo/${encodeURIComponent(id)}/rename`, { title, instanceId: inst() });
@@ -145,13 +168,17 @@ export async function createNote({ title = '', content = '', folderId = '' }) {
   return unwrap(res);
 }
 
-export async function saveNote(id, { title, content, folderId, version }) {
+export async function saveNote(id, { title, content, folderId, version, mood, moodName, weather, weatherName }) {
   try {
     const res = await axios.put(`/api/memo/${encodeURIComponent(id)}`, {
       title,
       content,
       folderId,
       version,
+      mood,
+      moodName,
+      weather,
+      weatherName,
       instanceId: inst(),
     });
     return unwrap(res);

@@ -36,6 +36,20 @@
             </DashboardTabs>
             <div class="memo-topbar-right">
                 <!--
+                    v1.3.9.1（需求）：节点树里的「添加记事」按钮移到顶部栏「保存」左侧，
+                    样式与「我的发布」页的「发布瞬间」一致 —— 桌面端大图标 + 文字，
+                    移动端只显示小图标按钮。
+                -->
+                <button
+                    type="button"
+                    class="memo-publish-btn"
+                    :title="$t('memo.createNote')"
+                    @click="openCreateDialog()"
+                >
+                    <font-awesome-icon icon="plus" class="memo-publish-icon" />
+                    <span class="memo-publish-text">{{ $t('memo.createNote') }}</span>
+                </button>
+                <!--
                     v1.3.4（需求）：保存按钮从工具栏最后一行移到顶部栏。
                     桌面端排在「编辑器设置」左侧，移动端排在「返回笔记列表」左侧 ——
                     都靠「放在这一组的最前面」实现，不用为两个终端写两套顺序。
@@ -95,10 +109,11 @@
                     :instance-id="instanceId"
                     @select="onPickNode"
                     @create="openCreateDialog()"
-                    @create-child="openCreateDialog"
+                    @create-child="onCreateChild"
                     @changed="onTreeChanged"
                     @trash="openTrash"
                     @loaded="onTreeLoaded"
+                    @node-settings-changed="onNodeSettingsChanged"
                 />
                 <!--
                     v1.3.3（需求）：桌面端树栏可以拖边框改宽度。
@@ -117,6 +132,18 @@
                 v-show="!isMobile || editingId || activeFolder === '__trash'"
                 class="memo-col memo-col-editor"
             >
+                <!--
+                    v1.3.9.1（需求）：移动端进入「回收站」时文档树被隐藏，
+                    顶栏的返回按钮又只在编辑态显示 —— 会卡在回收站回不去。
+                    这里补一条带返回按钮的标题栏（仅移动端显示）。
+                -->
+                <div v-if="isMobile && activeFolder === '__trash'" class="memo-trash-bar">
+                    <button type="button" class="memo-trash-back" @click="backToTree">
+                        <font-awesome-icon icon="chevron-left" />
+                        {{ $t('common.back') }}
+                    </button>
+                    <span class="memo-trash-title">{{ $t('memo.trash') }}</span>
+                </div>
                 <!-- 回收站：仍用列表形态（它没有树结构，逐条恢复 / 彻底删除最直接） -->
                 <MemoList
                     v-if="activeFolder === '__trash'"
@@ -134,6 +161,7 @@
                         :instance-id="instanceId"
                         :toolbar-config="editorSettings.toolbarLines"
                         :editor-config="editorSettings"
+                        :node-settings="nodeSettings"
                         :topbar-hidden="topbarHidden"
                         @saved="onSaved"
                         @publish-moment="onPublishMoment"
@@ -144,7 +172,7 @@
                         <font-awesome-icon icon="file-lines" class="memo-blank-icon" />
                         <p class="memo-blank-title">{{ $t('memo.pickOrCreate') }}</p>
                         <button type="button" class="memo-blank-btn" @click="openCreateDialog()">
-                            {{ $t('memo.newNote') }}
+                            {{ $t('memo.createNote') }}
                         </button>
                     </div>
                 </template>
@@ -153,30 +181,15 @@
 
         <!--
             v1.3.9（需求）：新建按钮先选类型。
-            4 种类型各有默认标题与默认落点：
-              笔记 → 未命名笔记x，落在 /笔记
-              日记 → YYYYMMDD-HHMM，落在 /日记/YYYY/MM
-              札记 → 未命名札记x，落在 /札记/YYYY
-              灵感 → 灵感:YYYYMMDD-HHMMSS，落在 /灵感/YYYY
+            v1.3.9.1：弹窗抽成公共组件 MemoCreateTypeDialog ——
+            /memo 顶部「添加记事」、首页「发布」模式的「笔记」、「我的发布」的「笔记」
+            三处共用同一份 UI 与创建逻辑，避免三份拷贝各改各的。
         -->
-        <el-dialog v-model="createDlgVisible" :title="$t('memo.createTitle')" width="440px" append-to-body class="memo-create-dialog">
-            <p class="memo-create-tip">{{ createParentId ? $t('memo.createChildTip') : $t('memo.createTip') }}</p>
-            <div class="memo-create-list">
-                <button
-                    v-for="t in createTypes"
-                    :key="t.key"
-                    type="button"
-                    class="memo-create-item"
-                    @click="doCreate(t.key)"
-                >
-                    <font-awesome-icon :icon="t.icon" class="memo-create-icon" />
-                    <span class="memo-create-body">
-                        <span class="memo-create-name">{{ $t(t.label) }}</span>
-                        <span class="memo-create-desc">{{ $t(t.desc) }}</span>
-                    </span>
-                </button>
-            </div>
-        </el-dialog>
+        <MemoCreateTypeDialog
+            v-model="createDlgVisible"
+            :parent-id="createParentId"
+            @created="onMemoCreated"
+        />
 
         <!--
             v1.3.1.2（需求：选中文字「发布到瞬间」）——
@@ -337,15 +350,17 @@ import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue';
 import MemoTree from '@/components/memo/MemoTree.vue';
 import MemoList from '@/components/memo/MemoList.vue';
 import MemoEditor from '@/components/memo/MemoEditor.vue';
+import MemoCreateTypeDialog from '@/components/memo/MemoCreateTypeDialog.vue';
 import { DEFAULT_TOOLBAR_LINES, TOOLBAR_TOKENS, DEFAULT_INPUT_TOOLS, DEFAULT_CUSTOM_CSS, DEFAULT_STICKY } from '@/utils/memoEditorConfig';
 import { setMemoInstance, fetchNote, createNode as apiCreateNode, memoError } from '@/utils/memoApi';
+import { DEFAULT_NODE_SETTINGS } from '@/utils/memoNodeSettings';
 import { excerptOf } from '@/utils/markdown';
 import { ensureInstanceUnlocked, revokeInstanceUnlock } from '@/utils/instanceSwitch';
 import { setEmptyStackBackHandler } from '@/utils/layerStack';
 
 export default {
     name: 'MemoPage',
-    components: { DashboardTabs, MemoTree, MemoList, MemoEditor, InstanceSwitchDialog, MomentPublishDialog },
+    components: { DashboardTabs, MemoTree, MemoList, MemoEditor, MemoCreateTypeDialog, InstanceSwitchDialog, MomentPublishDialog },
     data() {
         return {
             isMobile: false,
@@ -357,16 +372,12 @@ export default {
             folders: [],
             selectedId: '',
             currentNote: null,
-            /** v1.3.9：新建类型选择弹窗 */
+            /** v1.3.9：新建类型选择弹窗（v1.3.9.1 起抽成 MemoCreateTypeDialog 公共组件） */
             createDlgVisible: false,
             /** 非空 = 在该节点下新建子笔记（不再套默认目录） */
             createParentId: '',
-            createTypes: [
-                { key: 'note', icon: 'book', label: 'memo.typeNote', desc: 'memo.typeNoteDesc' },
-                { key: 'diary', icon: 'calendar', label: 'memo.typeDiary', desc: 'memo.typeDiaryDesc' },
-                { key: 'journal', icon: 'edit', label: 'memo.typeJournal', desc: 'memo.typeJournalDesc' },
-                { key: 'inspiration', icon: 'bolt', label: 'memo.typeInspiration', desc: 'memo.typeInspirationDesc' },
-            ],
+            // v1.3.9.1：文档树节点设置（行高 / 关系线 / 图标），透传给编辑器标题栏
+            nodeSettings: { ...DEFAULT_NODE_SETTINGS, typeIcons: { ...DEFAULT_NODE_SETTINGS.typeIcons } },
             treeDrawer: false,
             settingsVisible: false,
             /** v1.3.2：刚复制的工具名（显示在可用工具列表最下方） */
@@ -483,7 +494,7 @@ export default {
          */
     },
     async mounted() {
-        this.        restoreTreeWidth();
+        this.restoreTreeWidth();
         this.syncViewport();
         window.addEventListener('resize', this.syncViewport);
         /*
@@ -540,7 +551,21 @@ export default {
         this.$nextTick(() => this.setupTopbarMetrics());
         // 深链：/memo?id=xxx 直接打开某篇（分享链接、刷新后恢复）
         const id = String(this.$route?.query?.id || '');
+        /*
+         * v1.3.9.1：/memo?create=1 —— 首页「发布」/「我的发布」的「笔记」入口跳过来后
+         * 直接弹出创建记事类型选择页；创建完成后由 openNote 把 query 换成 id，
+         * 于是「在前标签页跳转到创建的记事编辑页」自然成立，不需要新开标签页。
+         * 标记读掉就删，避免刷新后重复弹窗。
+         */
+        const createFlag = String(this.$route?.query?.create || '');
+        const wantCreate = !!createFlag && createFlag !== '0';
+        if (wantCreate) {
+            const q = { ...this.$route.query };
+            delete q.create;
+            this.$router.replace({ path: '/memo', query: q }).catch(() => {});
+        }
         if (id) await this.openNote(id);
+        else if (wantCreate) this.openCreateDialog();
     },
     beforeUnmount() {
         window.removeEventListener('resize', this.syncViewport);
@@ -613,6 +638,11 @@ export default {
         onTreeLoaded(payload) {
             // v1.3.9：树返回扁平节点数组（旧版是 folders + unfiled）
             this.folders = Array.isArray(payload?.nodes) ? payload.nodes : [];
+            // v1.3.9.1：节点设置接口偶发失败时 node-settings-changed 不会触发，这里兜一次底
+            if (payload?.nodeSettings) this.nodeSettings = payload.nodeSettings;
+        },
+        onNodeSettingsChanged(settings) {
+            this.nodeSettings = settings || { ...DEFAULT_NODE_SETTINGS };
         },
         async openNote(id) {
             if (!id) return;
@@ -653,6 +683,10 @@ export default {
                     return;
                 }
             }
+            // v1.3.9.1（需求）：刷新要重新加载当前页面内容，文档树栏也一起重载
+            await this.$refs.tree?.reload?.();
+            // 回收站是列表形态，同样跟着刷一次（没有 reload 方法的组件会被可选链跳过）
+            await this.$refs.trashList?.reload?.();
             await this.reloadNote(this.selectedId);
         },
         /** v1.3.4：顶部栏保存按钮 → 转给编辑器（保存逻辑仍只有一份） */
@@ -754,7 +788,22 @@ export default {
         onWindowScroll() {
             const top = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
             // v1.3.4.1（需求）：只有滚到距顶部 50px 以内才放出顶栏
-            if (top < 50 && this.topbarHidden) this.topbarHidden = false;
+            if (top < 50) this.setTopbarHidden(false);
+        },
+        /**
+         * v1.3.9.1（修「滑到最底部时顶部栏一直闪烁跳动」）：
+         * 顶栏显隐统一走这里并加 350ms 切换锁定 ——
+         * 顶栏收起 / 展开会改变顶部占位高度，下方滚动容器的可滚动区间随之变化，
+         * 滚动位置会被浏览器重新 clamp 并再触发一次 scroll，形成
+         * 「收起 → 高度变化 → 再触发 → 展开 → …」的闪烁跳动回路（桌面端同样存在）。
+         * 切换后的短暂锁窗把这条回路掐断；350ms 足够过渡动画走完，正常操作无感。
+         */
+        setTopbarHidden(v) {
+            if (this.topbarHidden === v) return;
+            const now = Date.now();
+            if (this._tbSwitchAt && now - this._tbSwitchAt < 350) return;
+            this.topbarHidden = v;
+            this._tbSwitchAt = now;
         },
         onPageScroll(e) {
             const el = e.target;
@@ -774,38 +823,53 @@ export default {
             const scrollX = el.scrollWidth - el.clientWidth;
             const scrollY = el.scrollHeight - el.clientHeight;
             if (scrollX > 4 && scrollY < 80) return;
-            // 容器不可滚（内容比视口短）时直接不参与，顶栏常显
-            if (scrollY < 80) {
-                if (this.topbarHidden) this.topbarHidden = false;
+            /*
+             * v1.3.9.1：可滚范围太小的容器不参与「自动收起」。
+             * 顶栏收起 / 展开本身就会改变容器高度（±顶栏高度），当可滚范围只有几十像素时，
+             * 一收就够不着底、一放又刚好够，任何一条规则都会把另一条推翻 —— 表现就是顶栏
+             * 在底部反复闪烁跳动。这里只在「确实停在顶部」时把顶栏放出来，永不主动收起。
+             */
+            if (scrollY < 120) {
+                const t0 = el.scrollTop;
+                if (t0 < 50 && (!this._tbSwitchAt || Date.now() - this._tbSwitchAt > 400)) this.setTopbarHidden(false);
                 return;
             }
             const top = el.scrollTop;
-            const last = el.__memoLastTop ?? 0;
+            const last = typeof el.__memoLastTop === 'number' ? el.__memoLastTop : top;
             el.__memoLastTop = top;
-            const down = top > last;
-            // v1.3.4.1（需求）：距顶部 50px 以内才显示顶栏，其它位置的向上滚动保持隐藏
-            if (top < 50) {
-                if (this.topbarHidden) this.topbarHidden = false;
+            /*
+             * v1.3.9.1（根治「滑到最底部时顶部栏一直闪烁跳动」）：
+             * 先过滤「不是用户滚出来的位移」再去判断显隐。
+             * 顶栏一收，下方容器瞬间长高 55px，浏览器会把 scrollTop 重新 clamp 并
+             * 补发一次 scroll —— 这类事件的位移通常只有几像素、方向还和用户相反。
+             * 以前的代码在过滤之前就执行「到底→收」「top<50→放」，
+             * 于是 clamp 事件把顶栏放出来、放出来又变矮、再触发收起……来回闪。
+             * 现在：位移 < 4px 一律当噪声丢掉，方向只看真实滚动。
+             */
+            const delta = top - last;
+            if (Math.abs(delta) < 4) return;
+            /*
+             * v1.3.9.1（根治闪烁的关键）：识别「我们自己造成的位移」。
+             * 顶栏一收 / 一放，下方容器高度正好变化 ±顶栏高度，浏览器随之把
+             * scrollTop clamp 掉同样的像素数，并补发一次 scroll。这类事件的位移
+             * 与顶栏高度几乎相等，且发生在切换后的一瞬 —— 直接丢掉。
+             * 不丢掉的话：到底收起 → clamp 上移 → 「top<50 就显示」→ 又变矮 → 再收起，
+             * 就是用户看到的「一直闪烁跳动」。
+             */
+            const tbH = parseInt(
+                getComputedStyle(this.$refs.pageEl || document.documentElement).getPropertyValue('--memo-tb-h'),
+                10,
+            ) || 56;
+            if (Date.now() - (this._tbSwitchAt || 0) < 500 && Math.abs(delta) <= tbH + 4) return;
+            const down = delta > 0;
+            if (down) {
+                const atBottom = scrollY - top <= 48;
+                // 到底保持收起（v1.3.3.2 需求：不要为了压振荡在底部强行展开）
+                if (atBottom || top >= 50) this.setTopbarHidden(true);
                 return;
             }
-            /*
-             * 到底了：一律保持收起状态。
-             * 底部没有更多内容，此时把顶栏弹出来除了遮挡别无用处；
-             * 由于这里不再「展开」，也就不会因为展开改变高度而反复触发滚动。
-             */
-            const atBottom = el.scrollHeight - el.clientHeight - top <= 48;
-            if (atBottom) {
-                if (!this.topbarHidden) this.topbarHidden = true;
-                return;
-            }
-            if (Math.abs(top - last) < 8) return;
-            /*
-             * 只处理「正滚」：向下滚就收起。
-             * 回滚不做任何展开动作 —— 需求写得很清楚：只有滚到距顶部 100px 以内才显示，
-             * 其它位置的向上滚动保持隐藏。这样也不会出现「展开→高度变化→再触发滚动」
-             * 的振荡回路（顶栏收起/展开会改变滚动容器高度，这是上一版闪烁的根源）。
-             */
-            if (down && !this.topbarHidden) this.topbarHidden = true;
+            // 上滑：只有回到距顶部 50px 以内才放出顶栏，其它位置保持隐藏
+            if (top < 50) this.setTopbarHidden(false);
         },
         /* ── v1.3.1.2：编辑器「发布到瞬间」 ─────────────────────── */
         onPublishMoment(text) {
@@ -839,22 +903,33 @@ export default {
             this.createParentId = typeof parentId === 'string' && parentId && !parentId.startsWith('__') ? parentId : '';
             this.createDlgVisible = true;
         },
-        async doCreate(type) {
-            if (this._creating) return;
-            this._creating = true;
+        /**
+         * v1.3.9.1（需求）：某文档节点下新建子文档 → 直接创建同类型文档，不弹类型选择页。
+         * parentId 与 docType 由树节点带过来；后端 createNode 也会以父节点 docType
+         * 再覆盖一次（双保险，避免旧缓存节点没带类型时建错分类）。
+         */
+        async onCreateChild(payload) {
+            const p = typeof payload === 'string' ? { id: payload, docType: '' } : (payload || {});
+            const parentId = String(p.id || '');
+            if (!parentId) return;
+            this.createParentId = parentId;
+            this.createDlgVisible = false;
             try {
-                const r = await apiCreateNode({ type, parentId: this.createParentId });
-                if (!r?.id) throw new Error(this.$t('memo.saveFail'));
-                this.createDlgVisible = false;
-                await this.$refs.tree?.reload?.();
-                this.$refs.tree?.revealNode?.(r.id);
-                await this.openNote(r.id);
-                ElMessage.success(this.$t('memo.created'));
+                const r = await apiCreateNode({ type: String(p.docType || 'note'), parentId });
+                await this.onMemoCreated(r);
             } catch (e) {
                 ElMessage.error(memoError(e).message || this.$t('memo.saveFail'));
-            } finally {
-                this._creating = false;
             }
+        },
+        /**
+         * 创建成功（v1.3.9.1：创建逻辑收进 MemoCreateTypeDialog，这里只负责落地）：
+         * 重载节点树、展开祖先链、打开新文档。
+         */
+        async onMemoCreated(r) {
+            if (!r?.id) return;
+            await this.$refs.tree?.reload?.();
+            this.$refs.tree?.revealNode?.(r.id);
+            await this.openNote(r.id);
         },
         /**
          * 树发生变化（改名 / 拖拽 / 删除）：
@@ -1170,7 +1245,11 @@ export default {
     position: relative;
     z-index: 60;
     overflow: visible;
-    transition: margin-top 0.22s ease, opacity 0.18s ease;
+    /*
+     * v1.3.9.1（需求：吸附显隐的动作柔和流畅一些）：
+     * 收起 / 展开用更长的时长的缓出曲线，不再是 0.22s ease 的生硬一跳。
+     */
+    transition: margin-top 0.3s cubic-bezier(0.33, 0, 0.2, 1), opacity 0.22s ease;
 }
 .memo-page.is-topbar-hidden .memo-topbar {
     /*
@@ -1346,55 +1425,50 @@ export default {
     font-size: 13px;
     cursor: pointer;
 }
-/* v1.3.9：新建节点类型选择（笔记 / 日记 / 札记 / 灵感） */
-.memo-create-tip {
-    margin: 0 0 10px;
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--el-text-color-secondary);
-}
-.memo-create-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-.memo-create-item {
-    display: flex;
+/*
+ * v1.3.9.1：新建节点类型选择弹窗抽成公共组件 MemoCreateTypeDialog，
+ * memo-create-* 样式随组件走（scoped 无法跨组件命中），这里不再保留。
+ *
+ * v1.3.9.1（需求）：「添加记事」按钮 —— 样式与「我的发布」页的「发布瞬间」
+ * 同一套（主色背景、图标 + 文字；移动端只留图标）。
+ */
+.memo-publish-btn {
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border: 1px solid var(--el-border-color-lighter);
-    border-radius: 8px;
-    background: var(--el-bg-color);
-    cursor: pointer;
-    text-align: left;
-}
-.memo-create-item:hover {
-    border-color: var(--el-color-primary);
-    background: var(--el-color-primary-light-9);
-}
-.memo-create-icon {
-    flex: 0 0 auto;
-    width: 18px;
-    font-size: 15px;
-    color: var(--el-color-primary);
-    text-align: center;
-}
-.memo-create-body {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-}
-.memo-create-name {
-    font-size: 13.5px;
+    justify-content: center;
+    gap: 6px;
+    height: 30px;
+    padding: 0 14px;
+    box-sizing: border-box;
+    border: none;
+    border-radius: 9px;
+    background: var(--el-color-primary);
+    color: #fff;
+    font-size: 13px;
     font-weight: 600;
-    color: var(--el-text-color-primary);
+    font-family: inherit;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+    flex: 0 0 auto;
+    transition: filter 0.15s ease;
 }
-.memo-create-desc {
-    font-size: 11.5px;
-    color: var(--el-text-color-secondary);
+.memo-publish-btn:hover {
+    filter: brightness(1.08);
 }
+.memo-publish-icon {
+    font-size: 12px;
+}
+@media (max-width: 768px) {
+    /* 手机上只留图标，避免把顶栏撑爆（与「发布瞬间」同一口径） */
+    .memo-publish-text {
+        display: none;
+    }
+    .memo-publish-btn {
+        padding: 0 10px;
+    }
+}
+
 
 /* 移动端：树与编辑器互斥铺满（v1.3.9：中间列表栏已移除，树改成主视图） */
 .memo-page.is-mobile .memo-cols {
@@ -1406,6 +1480,38 @@ export default {
     width: 100%;
     height: 100%;
     border-left: none;
+}
+/* v1.3.9.1：移动端进入回收站时的顶部返回栏 */
+.memo-trash-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    background: var(--el-bg-color);
+}
+.memo-trash-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border: none;
+    border-radius: 6px;
+    background: var(--el-fill-color);
+    color: var(--el-text-color-regular);
+    font-family: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
+}
+.memo-trash-back:hover {
+    color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+}
+.memo-trash-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--el-text-color-primary);
 }
 .memo-mobile-bar {
     flex: 0 0 auto;

@@ -328,6 +328,14 @@
             :instance-id="currentInstanceId || ''"
             @saved="onRecordSaved"
         />
+        <!--
+            v1.3.9.1（需求）：发布模式「笔记」→ 先弹出独立的「添加记事」类型选择页，
+            选择类型创建后才在新标签页打开创建的记事编辑页（不是直接跳记事管理页）。
+        -->
+        <MemoCreateTypeDialog
+            v-model="memoCreateVisible"
+            @created="onMemoCreated"
+        />
         <el-dialog :title="$t('settings.linkFormatTitle')" v-model="showUrlDialog" :width="dialogWidth" :show-close="false" class="settings-dialog settings-dialog-scope">
             <div class="dialog-section">
                 <div class="section-header">
@@ -473,6 +481,7 @@ import RecordFileDialog from '@/components/upload/RecordFileDialog.vue'
 import DirectoryTreePicker from '@/components/DirectoryTreePicker.vue'
 import DirectorySuggestionInput from '@/components/DirectorySuggestionInput.vue'
 import MomentPublishDialog from '@/components/notes/MomentPublishDialog.vue'
+import MemoCreateTypeDialog from '@/components/memo/MemoCreateTypeDialog.vue'
 import RegEntryDialog from '@/components/reg/RegEntryDialog.vue'
 import fetchWithAuth from '@/utils/fetchWithAuth'
 import { formatMomentTime } from '@/utils/notes'
@@ -524,6 +533,8 @@ export default {
             recordDialogVisible: false,
             /** v1.3.5.3：登记提交表单 */
             regDialogVisible: false,
+            /** v1.3.9.1：发布模式「笔记」的「添加记事」类型选择弹窗 */
+            memoCreateVisible: false,
             /** 本次会话里刚发布的内容（只放内存，刷新即清零，与「文件 / 链接」页的上传结果一致） */
             recordResults: [],
             uploadFolder: '', // 上传文件夹
@@ -640,7 +651,7 @@ export default {
                  * 数据库表结构与既有类型完全一致，只是多一个 kind 取值。
                  * 编辑页尚未实装，先按既有约定置 ready:false（点了给「未开放」提示）。
                  */
-                { kind: 'memo', icon: 'edit', color: '#14b8a6', ready: false, label: this.$t('notes.typeMemo') }
+                { kind: 'memo', icon: 'edit', color: '#14b8a6', ready: true, label: this.$t('notes.typeMemo') }
             ];
         },
         /**
@@ -854,6 +865,7 @@ export default {
         DirectoryTreePicker,
         DirectorySuggestionInput,
         MomentPublishDialog,
+        MemoCreateTypeDialog,
         RegEntryDialog
     },
     methods: {
@@ -1034,6 +1046,15 @@ export default {
                 this.regDialogVisible = true
                 return
             }
+            /*
+             * v1.3.9.1（需求）：发布模式「笔记」→ 先弹出独立的「添加记事」类型选择页；
+             * 选择类型并创建后由 onMemoCreated 在**新标签页**打开创建的记事编辑页。
+             * 不是一点击就跳到记事管理页。
+             */
+            if (app && app.kind === 'memo') {
+                this.memoCreateVisible = true
+                return
+            }
             if (!app.ready) {
                 this.$message.warning(this.$t('notes.typeNotReadyTip'))
                 return
@@ -1041,6 +1062,16 @@ export default {
             this.recordDialogVisible = true
         },
         /** 发布完成：按 id 拉回这一条，追加到列表顶部（刷新页面即清空） */
+        /**
+         * v1.3.9.1（需求）：「添加记事」创建完成 ——
+         * 在新标签页打开创建的记事编辑页（/memo?id=xxx），当前页保持不动。
+         */
+        onMemoCreated(r) {
+            const id = r && r.id
+            if (!id) return
+            const route = this.$router.resolve({ path: '/memo', query: { id } })
+            window.open(route.href, '_blank', 'noopener')
+        },
         async onRecordSaved(payload) {
             const id = payload && payload.id
             if (!id) return

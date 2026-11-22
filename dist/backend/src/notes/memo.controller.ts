@@ -136,6 +136,29 @@ export class MemoController {
     return { success: true, data };
   }
 
+  /* ── v1.3.9.1：文档树节点设置 / 模板列表（静态段，必须排在 @Get(':id') 之前） ── */
+
+  @Get('node-settings')
+  async getNodeSettings(@Req() req: Request, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.getNodeSettings(viewer, instanceId || '');
+    return { success: true, data };
+  }
+
+  @Put('node-settings')
+  async saveNodeSettings(@Req() req: Request, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.saveNodeSettings(viewer, String(body.instanceId ?? ''), body.settings ?? body);
+    return { success: true, data };
+  }
+
+  @Get('templates')
+  async templates(@Req() req: Request, @Query('instanceId') instanceId?: string) {
+    const { viewer } = this.ctx(req);
+    const data = await this.memo.listTemplates(viewer, instanceId || '');
+    return { success: true, data };
+  }
+
   /*
    * ── 块索引与引用（v1.3.1 落地 · v1.5.0 计划） ──
    * 注意路由顺序：这些静态段必须排在 `@Get(':id')` **之前**，
@@ -319,6 +342,10 @@ export class MemoController {
       content: body.content,
       folderId: body.folderId,
       version: body.version,
+      mood: body.mood,
+      moodName: body.moodName,
+      weather: body.weather,
+      weatherName: body.weatherName,
     });
     if ('error' in r && r.error) this.fail(r.error);
     // 版本冲突用 409：前端据此弹「已在别处修改」，不能当成普通错误提示
@@ -328,6 +355,15 @@ export class MemoController {
         HttpStatus.CONFLICT,
       );
     }
+    return { success: true, data: r };
+  }
+
+  /** v1.3.9.1：更多菜单「升级」—— 层级上升一级并重算类型 */
+  @Post(':id/promote')
+  async promote(@Req() req: Request, @Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const { viewer } = this.ctx(req);
+    const r = await this.memo.promoteNode(viewer, String(body.instanceId ?? ''), id);
+    if ('error' in r && r.error) this.fail(String(r.error));
     return { success: true, data: r };
   }
 

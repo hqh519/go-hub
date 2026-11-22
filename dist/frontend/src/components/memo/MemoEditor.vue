@@ -30,8 +30,12 @@
             @touchstart="onTableTouchStart"
             @scroll.passive="onBodyScroll"
         >
-            <!-- 工具栏：按设置里的行配置渲染，`|` 生成分隔线 -->
+            <!--
+                工具栏：按设置里的行配置渲染，`|` 生成分隔线。
+                v1.3.9.1（需求）：预览模式不显示工具栏（共用编辑器视图，仅不可编辑）。
+            -->
             <div
+                v-show="mode !== 'preview'"
                 ref="toolbarWrap"
                 class="me-toolbar-wrap"
                 :class="{ 'is-sticky': isStickyNow('toolbar') }"
@@ -110,7 +114,7 @@
                                         :divided="!!d.divided"
                                         :class="{ 'is-active': token === 'listConvert' && d.command === currentListType() }"
                                     >
-                                        <span v-if="d.dot" class="me-color-dot" :class="`is-${d.dot}`"></span>{{ $t(d.label) }}
+                                        <span v-if="d.dot" class="me-color-dot" :class="`is-${d.dot}`"></span>{{ d.text || $t(d.label) }}
                                     </el-dropdown-item>
                                 </el-dropdown-menu>
                             </template>
@@ -213,6 +217,17 @@
                     :class="{ 'is-sticky': isStickyNow('title') }"
                     :style="{ top: stickyTop('title') }"
                 >
+                    <!--
+                        v1.3.9.1（需求）：标题名称前面加载「当前文档所属类型」的图标。
+                        图标按 docType 取，且跟随「节点设置 → 各类型页图标」的自定义值，
+                        与文档树里同一篇文档的图标保持一致。
+                    -->
+                    <font-awesome-icon
+                        v-if="note"
+                        :icon="docTypeIcon"
+                        class="me-title-doc-icon"
+                        :title="docTypeLabel"
+                    />
                     <input
                         v-model="title"
                         class="me-title"
@@ -254,11 +269,12 @@
                         v1.3.4.1（需求）：字数 / 字符按新口径统计。
                         「字数」= 汉字 + 字母；「字符」= 总字符数（所有字符都统计）。
                         v1.3.5（需求）：点这两项弹出内容统计页 —— 改成按钮，键盘也能触发。
+                        v1.3.9.1（需求）：移动端只留字数统计，`字符 xxx` 移除不要。
                     -->
                     <button type="button" class="me-meta-item me-meta-stat" :title="$t('memo.statsTitle')" @click="openStats">
                         {{ $t('memo.wordCount', { n: wordCount }) }}
                     </button>
-                    <button type="button" class="me-meta-item me-meta-stat" :title="$t('memo.statsTitle')" @click="openStats">
+                    <button v-if="!isMobileViewport" type="button" class="me-meta-item me-meta-stat" :title="$t('memo.statsTitle')" @click="openStats">
                         {{ $t('memo.charCountAll', { n: charCount }) }}
                     </button>
                     <span class="me-status">
@@ -266,6 +282,18 @@
                         <span v-else-if="dirty" class="me-status-text is-dirty">{{ $t('memo.unsaved') }}</span>
                         <span v-else class="me-status-text">{{ $t('memo.saved') }}</span>
                     </span>
+                    <!--
+                        v1.3.9.1（需求）：历史版本那一行的后面加心情 / 天气图标。
+                        与「发布瞬间」共用同一套图标与名称（MoodWeatherPicker → utils/notes.js），
+                        选择后随正文一起保存，名称落 notes.moodName / weatherName。
+                    -->
+                    <MoodWeatherPicker
+                        v-if="note"
+                        class="me-meta-mood"
+                        :mood="mood"
+                        :weather="weather"
+                        @change="onMoodWeatherChange"
+                    />
                 </div>
                 <!-- 标签行：交互与瞬间发布页一致（输入即查候选，空格 / 回车成标签） -->
                 <div class="me-tags">
@@ -313,7 +341,7 @@
                     v-for="row in gutterRows"
                     :key="`gut-${row.pos}`"
                     class="me-gutter-row"
-                    :class="{ 'is-heading': row.level > 0 }"
+                    :class="{ 'is-heading': row.level > 0, 'is-cursor': mode === 'wysiwyg' && String(row.pos) === cursorBlockPos }"
                     :data-pos="row.pos"
                     :data-no="row.no"
                     :style="{ top: `${row.top}px` }"
@@ -365,10 +393,18 @@
                 </div>
             </div>
 
-            <EditorContent v-show="mode === 'wysiwyg'" :editor="editor" class="me-wysiwyg" />
+            <!--
+                v1.3.9.1（需求）：预览模式直接共用编辑模式的整套样式 ——
+                同一个 TipTap 编辑器实例只是不可编辑（editable=false）、隐藏工具栏与行级栏，
+                不再用 marked 渲染一份静态 HTML（两套样式永远对不齐）。
+            -->
+            <EditorContent
+                v-show="mode === 'wysiwyg' || mode === 'preview'"
+                :editor="editor"
+                class="me-wysiwyg"
+                :class="{ 'is-readonly': mode === 'preview' }"
+            />
             <div v-show="mode === 'source'" ref="sourceEl" class="me-source"></div>
-            <!-- 预览：内容来自 renderMarkdownSafe（marked + DOMPurify 白名单） -->
-            <div v-show="mode === 'preview'" class="me-preview gh-md" v-safe-html="previewHtml"></div>
 
             <!--
                 图片缩放手柄（v1.4.0）：8 个方向的把手浮在选中的图片上方。
@@ -618,11 +654,11 @@
                             <font-awesome-icon icon="caret-down" class="me-bub-caret" />
                         </button>
                         <template #dropdown>
+                            <!-- v1.3.9.1（需求）：字号扩到具体像素值，与工具栏下拉同一份选项 -->
                             <el-dropdown-menu>
-                                <el-dropdown-item command="s">{{ $t('memo.fontSmall') }}</el-dropdown-item>
-                                <el-dropdown-item command="m">{{ $t('memo.fontNormal') }}</el-dropdown-item>
-                                <el-dropdown-item command="l">{{ $t('memo.fontLarge') }}</el-dropdown-item>
-                                <el-dropdown-item command="clear" divided>{{ $t('memo.fontDefault') }}</el-dropdown-item>
+                                <el-dropdown-item v-for="f in TOOL_DROPDOWNS.fontSize.items" :key="`bubfs-${f.command}`" :command="f.command" :divided="!!f.divided">
+                                    {{ f.text || $t(f.label) }}
+                                </el-dropdown-item>
                             </el-dropdown-menu>
                         </template>
                     </el-dropdown>
@@ -1258,6 +1294,49 @@
             </template>
         </el-dialog>
 
+        <!--
+            v1.3.9.1（需求）：「导入模板」工具弹窗。
+            加载「模板」节点下的可用文档，选中确认后用模板的全部正文覆盖当前文档。
+            导入前明确提醒「会覆盖当前内容」。
+        -->
+        <el-dialog
+            v-model="importTplDlg.visible"
+            :title="$t('memo.importTemplateTitle')"
+            width="460px"
+            append-to-body
+            class="me-import-tpl-dialog"
+        >
+            <p class="me-itpl-tip">{{ $t('memo.importTemplateTip') }}</p>
+            <div v-loading="importTplDlg.loading" class="me-itpl-list">
+                <button
+                    v-for="t in importTplDlg.list"
+                    :key="'itpl-' + t.id"
+                    type="button"
+                    class="me-itpl-item"
+                    :class="{ 'is-active': importTplDlg.selectedId === t.id }"
+                    @click="importTplDlg.selectedId = t.id"
+                >
+                    <font-awesome-icon icon="clone" class="me-itpl-icon" />
+                    <span class="me-itpl-body">
+                        <span class="me-itpl-name">{{ t.title || $t('memo.untitled') }}</span>
+                        <span class="me-itpl-meta">{{ formatHistoryTime(t.updatedAt) }}</span>
+                    </span>
+                </button>
+                <div v-if="!importTplDlg.loading && !importTplDlg.list.length" class="me-itpl-empty">
+                    {{ $t('memo.importTemplateEmpty') }}
+                </div>
+            </div>
+            <template #footer>
+                <el-button size="small" @click="importTplDlg.visible = false">{{ $t('common.cancel') }}</el-button>
+                <el-button
+                    size="small"
+                    type="primary"
+                    :disabled="!importTplDlg.selectedId"
+                    @click="confirmImportTemplate"
+                >{{ $t('memo.importTemplateConfirm') }}</el-button>
+            </template>
+        </el-dialog>
+
         <!-- 图床选文件 -->
         <!--
             v1.3.5.2（需求）：白板工具。
@@ -1343,6 +1422,8 @@ import CodeBlock from '@tiptap/extension-code-block';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import katex from 'katex';
 import FilePickerDialog from '@/components/notes/FilePickerDialog.vue';
+import MoodWeatherPicker from '@/components/memo/MoodWeatherPicker.vue';
+import { typeIconOf, DOC_TYPES } from '@/utils/memoNodeSettings';
 import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 /*
  * v1.3.3.2（需求：选中文件 → 预览 / 文件详情）
@@ -1369,6 +1450,7 @@ import {
     fetchNoteHistoryItem,
     restoreNoteHistory,
     pushNoteHistory,
+    fetchTemplates,
 } from '@/utils/memoApi';
 import { uploadOne, defaultUploadFolder, importUrlToBed } from '@/utils/uploadTarget';
 /* v1.3.5.2：白板工具复用现有的图片处理组件（涂鸦 / 文字 / 形状 / 马赛克） */
@@ -1428,7 +1510,12 @@ const FontSize = Mark.create({
             size: {
                 default: 'm',
                 parseHTML: (el) => {
-                    const m = /gh-fs-(s|m|l)/.exec(el.getAttribute('class') || '');
+                    /*
+                     * v1.3.9.1（需求）：字号扩到具体像素值 ——
+                     * 12 / 14 / 15 / 16 / 18 / 20 / 24 / 28 / 32；
+                     * 旧的 s / m / l 三档类名继续兼容（老文档里已落库的数据不能丢）。
+                     */
+                    const m = /gh-fs-(s|m|l|[0-9]+)/.exec(el.getAttribute('class') || '');
                     return m ? m[1] : 'm';
                 },
                 renderHTML: (attrs) => ({ class: `gh-fs-${attrs.size || 'm'}` }),
@@ -1440,6 +1527,49 @@ const FontSize = Mark.create({
     },
     renderHTML({ HTMLAttributes }) {
         return ['span', mergeAttributes(HTMLAttributes)];
+    },
+});
+
+/**
+ * v1.3.9.1（需求）：「设为上标 / 设为下标」两个工具。
+ *
+ * 没有引入 @tiptap/extension-subscript / superscript 依赖 ——
+ * 项目里没有装，而这两个 mark 的行为就是最朴素的 HTML sup / sub 标签：
+ *   · md 落盘写 `<sup>…</sup>` / `<sub>…</sub>`（行内 HTML，marked 与
+ *     DOMPurify 白名单本来就放行，别的 markdown 查看器也认识）；
+ *   · parseHTML 排除 .gh-ann —— 批注节点也是 sup 标签，不能被当成上标吞掉。
+ */
+const SuperscriptMark = Mark.create({
+    name: 'superscript',
+    parseHTML() {
+        return [{ tag: 'sup:not(.gh-ann)' }];
+    },
+    renderHTML() {
+        return ['sup', {}, 0];
+    },
+    addCommands() {
+        return {
+            setSuperscript: () => ({ commands }) => commands.setMark(this.name),
+            unsetSuperscript: () => ({ commands }) => commands.unsetMark(this.name),
+            toggleSuperscript: () => ({ commands }) => commands.toggleMark(this.name),
+        };
+    },
+});
+
+const SubscriptMark = Mark.create({
+    name: 'subscript',
+    parseHTML() {
+        return [{ tag: 'sub' }];
+    },
+    renderHTML() {
+        return ['sub', {}, 0];
+    },
+    addCommands() {
+        return {
+            setSubscript: () => ({ commands }) => commands.setMark(this.name),
+            unsetSubscript: () => ({ commands }) => commands.unsetMark(this.name),
+            toggleSubscript: () => ({ commands }) => commands.toggleMark(this.name),
+        };
     },
 });
 
@@ -3467,6 +3597,8 @@ const TOOLS = {
     outline: { icon: 'list', label: 'memo.toolOutline', run: null },
     /* v1.3.5（需求）：内容统计独立成一个工具，可在编辑器设置里加进工具栏 */
     stats: { icon: 'chart-bar', label: 'memo.toolStats', run: null },
+    /* v1.3.9.1（需求）：导入模板 —— 弹窗选模板文档，覆盖当前正文 */
+    importTemplate: { icon: 'file-import', label: 'memo.toolImportTemplate', run: null },
     foldAll: { icon: 'angles-up', label: 'memo.toolFoldAll', run: null },
     clear: { icon: 'eraser', label: 'memo.toolClear', run: (e) => e.chain().focus().unsetAllMarks().clearNodes().run() },
     /*
@@ -3513,6 +3645,22 @@ const TOOLS = {
     htmlBlock: { svgKey: 'svgHtml', label: 'memo.toolHtmlBlock', run: null },
     /* 批注（选中文本后添加） */
     annotate: { icon: 'comment-dots', label: 'memo.toolAnnotate', run: null },
+    /*
+     * v1.3.9.1（需求）：「设为上标 / 设为下标」——
+     * 选中文本后点击，把所选内容设置为上标（<sup>）/ 下标（<sub>）。
+     */
+    superscript: {
+        icon: 'superscript',
+        label: 'memo.toolSuperscript',
+        run: null,
+        active: (e) => e && e.isActive('superscript'),
+    },
+    subscript: {
+        icon: 'subscript',
+        label: 'memo.toolSubscript',
+        run: null,
+        active: (e) => e && e.isActive('subscript'),
+    },
     /* v1.3.3.3（需求）：新建子文档并把引用插到当前光标处 */
     subDoc: { icon: 'file-circle-plus', label: 'memo.subDoc', run: null },
     /* v1.3.3（需求）：媒体选中条用的两个通用动作 */
@@ -3636,10 +3784,14 @@ const TEXT_COLORS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray
  */
 const TOOL_DROPDOWNS = {
     fontSize: {
+        /*
+         * v1.3.9.1（需求）：字号选项太少，扩到具体像素值 ——
+         * 12 / 14 / 15 / 16 / 18 / 20 / 24 / 28 / 32。
+         * command 直接是像素数字符串（落盘为 span.gh-fs-12 这样的类名），
+         * text 是下拉里显示的原文（不走 i18n）；旧的 s/m/l 仍可解析，只是不再提供选项。
+         */
         items: [
-            { command: 's', label: 'memo.fontSmall' },
-            { command: 'm', label: 'memo.fontNormal' },
-            { command: 'l', label: 'memo.fontLarge' },
+            ...['12', '14', '15', '16', '18', '20', '24', '28', '32'].map((px) => ({ command: px, text: `${px}px` })),
             { command: 'clear', label: 'memo.fontDefault', divided: true },
         ],
     },
@@ -3862,11 +4014,13 @@ function parseToolTokens(text) {
 /** 斜杠菜单命令表 */
 export default {
     name: 'MemoEditor',
-    components: { EditorContent, FilePickerDialog, UploadTargetDialog, MediaPreviewOverlay, FileDetailUnified, ImageCropDialog },
+    components: { EditorContent, FilePickerDialog, MoodWeatherPicker, UploadTargetDialog, MediaPreviewOverlay, FileDetailUnified, ImageCropDialog },
     props: {
         /** 笔记详情（含 id / content / version）；null = 还没选中 */
         note: { type: Object, default: null },
         instanceId: { type: String, default: '' },
+        /** v1.3.9.1：文档树节点设置（决定标题栏的类型图标），由 MemoPage 传入 */
+        nodeSettings: { type: Object, default: () => ({}) },
         /** 工具栏行配置（来自编辑器设置） */
         toolbarConfig: { type: Array, default: () => DEFAULT_TOOLBAR_LINES },
         /**
@@ -3892,6 +4046,8 @@ export default {
             saving: false,
             pendingSave: false,
             charCount: 0,
+            /** v1.3.9.1：窗口宽度（只在跨 900px 断点时更新，供 isMobileViewport 用） */
+            winW: typeof window !== 'undefined' ? window.innerWidth : 1440,
             pickerVisible: false,
             sourceView: null,
             saveTimer: null,
@@ -3908,6 +4064,14 @@ export default {
             outline: { open: false, items: [], folded: {} },
             /** v1.3.5：内容统计弹窗（字符 / 字 / 链接 / 图片 / 引用 / 块） */
             stats: { open: false, items: [] },
+            /** v1.3.9.1：心情 / 天气（与瞬间同一套 key；名称单独存库） */
+            mood: '',
+            moodName: '',
+            weather: '',
+            weatherName: '',
+            /** v1.3.9.1：导入模板弹窗 */
+            importTplDlg: { visible: false, loading: false, list: [], selectedId: '' },
+            docTypes: DOC_TYPES,
             /**
              * 引用搜索（v1.3.1 · v1.5.0 计划）：
              * `[[` 搜文档、`((` 搜块。两者共用一个面板，靠 mode 区分。
@@ -3966,6 +4130,8 @@ export default {
             gutterMenu: { open: false, x: 0, y: 0, pos: 0, type: '' },
             /** v1.3.3.2：左侧行号栏的每一行（按块矩形算出的绝对位置） */
             gutterRows: [],
+            /** v1.3.9.1：光标当前所在的顶层块 pos —— 行号按钮用它显示 / 隐藏背景高亮 */
+            cursorBlockPos: '',
             /**
              * v1.3.4：列表项自己的折叠按钮（每个有下级的 li 一个）。
              * 与行号栏分开存：行号是「顶层块」的，这个是「任意层级 li」的。
@@ -3977,6 +4143,8 @@ export default {
             hoverCard: { open: false, x: 0, y: 0, title: '', text: '', loading: false },
             /* v1.3.1.2：浮层 / 右键菜单 / 表格 */
             TEXT_COLORS,
+            /** v1.3.9.1：字号等下拉工具的选项表（气泡里也要渲染，挂到 data 供模板访问） */
+            TOOL_DROPDOWNS,
             tableBar: { open: false, above: true, style: {} },
             /** v1.3.7：批注悬浮页（note / 位置 / 节点位置）；v1.3.8 加 width（移动端居中用） */
             annPop: { open: false, visible: false, note: '', left: 0, top: 0, width: 280, pos: null },
@@ -4025,6 +4193,16 @@ export default {
         };
     },
     computed: {
+        /** v1.3.9.1：标题栏前的文档类型图标（跟随节点设置的自定义图标） */
+        docTypeIcon() {
+            return typeIconOf(String(this.note?.docType || 'note'), this.nodeSettings);
+        },
+        /** v1.3.9.1：标题栏类型图标的悬停名称 */
+        docTypeLabel() {
+            const t = String(this.note?.docType || 'note');
+            const hit = DOC_TYPES.find((d) => d.key === t);
+            return hit ? this.$t(hit.label) : this.$t('memo.typeNote');
+        },
         /**
          * H1-H6 字号与正文行高（v1.3.1.2「样式设置页」）。
          *
@@ -4262,7 +4440,9 @@ export default {
          *   · isTouchUi       = 是否触摸（交互用：工具组 hover/click、长按）
          */
         isMobileViewport() {
-            return typeof window !== 'undefined' && window.innerWidth <= 900;
+            // v1.3.9.1：宽度存进响应式 winW（只在跨 900px 断点时更新），
+            // 否则旋转屏幕 / 拖窄窗口后「字符 xxx」等 v-if 不会跟着变。
+            return this.winW <= 900;
         },
         isTouchUi() {
             return typeof this.isTouchDevice === 'function' ? this.isTouchDevice() : !!this.isTouchDevice;
@@ -4682,6 +4862,11 @@ export default {
          * 所以一个 window 级 capture 监听就覆盖了编辑器内部容器的滚动。
          */
         this.onViewportChange = (e) => {
+            // v1.3.9.1：只在跨 900px 断点时更新 winW，避免拖动窗口时每帧重渲染
+            if (e && e.type === 'resize') {
+                const w = window.innerWidth;
+                if ((w <= 900) !== (this.winW <= 900)) this.winW = w;
+            }
             this.syncImgBox();
             this.updateInputBar();
             // v1.3.3.2：滚动 / 改窗口大小都要让浮层跟着内容走（需求）
@@ -4875,6 +5060,9 @@ export default {
                     IframeBlock,
                     FontSize,
                     TextColor,
+                    // v1.3.9.1（需求）：设为上标 / 设为下标
+                    SuperscriptMark,
+                    SubscriptMark,
                     // v1.3.1.2：左侧行级栏（点开块操作菜单）
                     // v1.3.3.2：改为覆盖层定位（syncGutter），不再往文档里插 widget
                     // v1.3.1.1：段落 / 标题对齐（align 属性版）
@@ -4937,11 +5125,20 @@ export default {
                 this.title = '';
                 this.version = 0;
                 this.charCount = 0;
+                this.mood = '';
+                this.moodName = '';
+                this.weather = '';
+                this.weatherName = '';
                 this.editor?.commands.clearContent(true);
                 return;
             }
             this.title = String(note.title || '');
             this.version = Number(note.version) || 1;
+            // v1.3.9.1：心情 / 天气（未设置时留空，选择器按需求回退展示第一个）
+            this.mood = String(note.mood || '');
+            this.moodName = String(note.moodName || '');
+            this.weather = String(note.weather || '');
+            this.weatherName = String(note.weatherName || '');
             const md = String(note.content || '');
             this.charCount = this.countChars(md);
             this.updatedAt = Number(note.updatedAt) || 0;
@@ -4979,22 +5176,31 @@ export default {
         },
 
         async switchMode(prev, next) {
-            // 先把「上一个视图」的内容取成 md，再灌给新视图 —— 顺序不能反
+            /*
+             * 先把「上一个视图」的内容取成 md，再灌给新视图 —— 顺序不能反。
+             * v1.3.9.1：预览模式改为共用同一个 TipTap 编辑器（只是 readonly），
+             * 所以 preview 不再是静态分支 —— 编辑器里永远是最新内容，
+             * 从 preview 离开时直接取编辑器文档即可（也从根上修掉了
+             * 「预览停留期间正文没跟上 lastMd」的潜在错位）。
+             */
             let md = '';
             if (prev === 'source') {
                 md = this.sourceView ? this.sourceView.state.doc.toString() : this.currentMdFallback();
-            } else if (prev === 'preview') {
-                md = this.lastMd;
             } else {
                 md = this.editor ? docToMd(this.editor.getJSON()) : '';
             }
             this.lastMd = md;
             if (next === 'source') {
                 await this.mountSource(md);
+            } else if (next === 'preview') {
+                // 预览 = 同一个编辑器 + 不可编辑；工具栏由模板 v-show 隐藏
+                if (this.editor) this.editor.setEditable(false);
             } else if (next === 'wysiwyg') {
-                this.editor.commands.setContent(this.docOf(md), { emitUpdate: false });
-            } else {
-                this.previewHtml = renderMarkdownSafe(md);
+                if (this.editor) this.editor.setEditable(true);
+                if (prev !== 'preview') {
+                    // 只有从源码模式回来才需要重灌（preview 就是编辑器自己，内容没动过）
+                    this.editor.commands.setContent(this.docOf(md), { emitUpdate: false });
+                }
             }
         },
 
@@ -5882,6 +6088,70 @@ export default {
             this.scheduleSave();
         },
 
+        /** v1.3.9.1：心情 / 天气选择 —— 记下名称并触发一次保存（名称随正文落库） */
+        onMoodWeatherChange({ field, value, name }) {
+            if (field === 'mood') {
+                this.mood = value;
+                this.moodName = name;
+            } else {
+                this.weather = value;
+                this.weatherName = name;
+            }
+            this.scheduleSave();
+        },
+
+        /** v1.3.9.1：导入模板 —— 打开弹窗并加载「模板」节点下的可用文档 */
+        async openImportTemplate() {
+            this.importTplDlg.visible = true;
+            this.importTplDlg.loading = true;
+            this.importTplDlg.selectedId = '';
+            try {
+                const r = await fetchTemplates();
+                this.importTplDlg.list = Array.isArray(r?.templates) ? r.templates : [];
+                if (this.importTplDlg.list.length) {
+                    this.importTplDlg.selectedId = this.importTplDlg.list[0].id;
+                }
+            } catch (e) {
+                this.importTplDlg.list = [];
+                ElMessage.error(memoError(e).message || this.$t('memo.loadFail'));
+            } finally {
+                this.importTplDlg.loading = false;
+            }
+        },
+
+        /** v1.3.9.1：确认导入 —— 覆盖前明确提醒，确认后用模板正文覆盖当前文档 */
+        async confirmImportTemplate() {
+            const tpl = this.importTplDlg.list.find((t) => t.id === this.importTplDlg.selectedId);
+            if (!tpl) return;
+            try {
+                await ElMessageBox.confirm(
+                    this.$t('memo.importTemplateOverwrite'),
+                    this.$t('memo.importTemplateTitle'),
+                    {
+                        type: 'warning',
+                        confirmButtonText: this.$t('memo.importTemplateConfirm'),
+                        cancelButtonText: this.$t('common.cancel'),
+                    },
+                );
+            } catch (e) {
+                return;
+            }
+            /*
+             * v1.3.9.1（修「导入模板无法导入成功」）：不再切回 wysiwyg ——
+             * 之前「先切模式再灌内容」依赖 mode watcher 的异步时序：
+             * watcher 里的 switchMode 会拿切换前视图的内容重灌编辑器，
+             * 若时序稍有偏差（await $nextTick 并不等待 async watcher 跑完），
+             * 旧内容就会把刚灌进去的模板盖掉，表现为「导入不生效」。
+             * applyContent 本身会同步所有视图（编辑器 / 源码 / 预览），
+             * 任何模式下直接灌模板正文都是安全的，且不丢当前滚动位置。
+             */
+            this.applyContent(String(tpl.content || ''));
+            this.importTplDlg.visible = false;
+            this.markDirty();
+            this.scheduleSave();
+            ElMessage.success(this.$t('memo.importTemplateDone'));
+        },
+
         async saveNow() {
             if (!this.note?.id) return;
             if (this.saving) {
@@ -5896,6 +6166,11 @@ export default {
                     title: this.title,
                     content: md,
                     version: this.version,
+                    // v1.3.9.1：随正文一起提交心情 / 天气及其名称（服务端只在字段给定时写）
+                    mood: this.mood,
+                    moodName: this.moodName,
+                    weather: this.weather,
+                    weatherName: this.weatherName,
                 });
                 this.version = Number(r?.version) || this.version + 1;
                 this.dirty = false;
@@ -6015,6 +6290,26 @@ export default {
             if (token === 'htmlBlock') return this.openHtmlBlock();
             if (token === 'annotate') return this.annotateSelection();
             if (token === 'subDoc') return this.openSubDoc();
+            // v1.3.9.1（需求）：设为上标 / 设为下标（对当前选区切换）
+            if (token === 'superscript' || token === 'subscript') {
+                const ed = this.editor;
+                if (!ed) return;
+                const other = token === 'superscript' ? 'subscript' : 'superscript';
+                if (ed.isActive(token)) {
+                    ed.chain().focus().unsetMark(token).run();
+                } else {
+                    /*
+                     * 上下标互斥：Word / 石墨这类编辑器里给已是上标的文字设下标，
+                     * 结果是「改判」而不是叠成 <sup><sub>x</sub></sup>。
+                     * 先摘掉另一个 mark，DOM 与 md 落盘都干净。
+                     */
+                    let chain = ed.chain().focus();
+                    if (ed.isActive(other)) chain = chain.unsetMark(other);
+                    chain.setMark(token).run();
+                }
+                this.onEditorUpdate();
+                return;
+            }
             if (token === 'publish') return this.publishSelectionToMoment();
             /*
              * v1.3.4：这三个工具在工具栏里是下拉（选了具体值）；
@@ -6042,6 +6337,7 @@ export default {
             if (token === 'mediaDetail') return this.openMediaDetail();
             if (token === 'outline') return this.openOutline();
             if (token === 'stats') return this.openStats();
+            if (token === 'importTemplate') return this.openImportTemplate();
             if (token === 'foldAll') return this.toggleFoldAll();
             if (!this.editor) return;
             if (this.mode !== 'wysiwyg') this.mode = 'wysiwyg';
@@ -9055,10 +9351,10 @@ export default {
         /**
          * v1.3.3.3：列表 / 标题「行末」操作条的显隐与定位。
          *
-         * 判据三条（缺一不可，否则会到处乱浮）：
+         * v1.3.9.1（需求）改后的判据：
          *   1) 必须是折叠光标（有选区就让选中浮层去做事）；
-         *   2) 光标必须在该文本块的**最末尾**（$from.pos >= $from.end()）；
-         *   3) 所在块是标题，或所在行属于列表项（listItem / taskItem）。
+         *   2) 标题菜单：光标停在标题文本的最末尾；
+         *      列表菜单：光标在「列表标识右侧第一位」（第一个段落的 parentOffset === 0）。
          * 位置取光标坐标往上抬 —— 需求要求「显示在光标上方」，
          * 具体高度交给 CSS 的 translateY(-100%)，不用先渲染再测。
          */
@@ -9073,16 +9369,28 @@ export default {
             const { state } = ed;
             const { $from, empty } = state.selection;
             if (!empty) return close();
-            if ($from.pos < $from.end()) return close();
             /*
-             * v1.3.4.1（需求）：只有标识没有内容时不显示行末菜单。
-             * 刚敲完 `- [ ]` / `- ` / `##` 时块里是空的，必须输入了实际内容、
-             * 且光标停在内容行末，才显示列表 / 标题菜单。
+             * v1.3.9.1（需求）：列表菜单的显示条件改为「光标在列表标识的右侧第一位」——
+             *   光标在列表符号后面第一位时显示；在右侧文本后面（非第一位）不显示，
+             *   在文本末尾也不显示。标题菜单保持原规则（光标停在标题文本最末尾）。
              */
-            if (!String($from.parent.textContent || '').trim()) return close();
             const isHeading = $from.parent.type.name === 'heading';
             const inList = ed.isActive('listItem') || ed.isActive('taskItem');
-            if (!isHeading && !inList) return close();
+            if (isHeading) {
+                // 标题菜单：保持「光标停在内容行末」的原规则
+                if ($from.pos < $from.end()) return close();
+                /*
+                 * v1.3.4.1（需求）：只有标识没有内容时不显示行末菜单。
+                 * 刚敲完 `##` 时块里是空的，必须输入了实际内容才显示。
+                 */
+                if (!String($from.parent.textContent || '').trim()) return close();
+            } else if (inList) {
+                // 列表菜单：必须落在列表项的第一个段落里，且 parentOffset === 0（标识后的第一位）
+                const item = this.currentListItem();
+                if (!item || $from.depth - 1 !== item.depth || $from.parentOffset !== 0) return close();
+            } else {
+                return close();
+            }
             const coords = ed.view.coordsAtPos($from.pos);
             const bodyW = (this.$refs.bodyEl && this.$refs.bodyEl.clientWidth) || window.innerWidth;
             const barW = isHeading ? 268 : 320;
@@ -9397,6 +9705,14 @@ export default {
             const isEmptyLine = empty && parent.type.name === 'paragraph'
                 && parent.content.size === 0 && !hasAnyText && !inContentBlock;
             if (!isEmptyLine) {
+                if (this.inputBar.open) this.inputBar = { open: false, style: {} };
+                return;
+            }
+            /*
+             * v1.3.9.1（需求）：光标处于整个编辑区的第一行时不显示光标工具菜单栏，
+             * 不是第一行才按现有规则显示。
+             */
+            if ($from.depth >= 1 && $from.before(1) === 0) {
                 if (this.inputBar.open) this.inputBar = { open: false, style: {} };
                 return;
             }
@@ -9948,6 +10264,21 @@ export default {
              */
             const live = this.editor && this.mode === 'wysiwyg' ? this.editor.state.selection : null;
             if (live && live.from > 1) this._lastSelFrom = live.from;
+            /*
+             * v1.3.9.1（需求）：光标停在哪一行，那一行的行号按钮（块操作按钮）
+             * 就显示背景色；光标不在该行时隐藏。行号按顶层块编号，
+             * 这里取光标所在顶层块的 pos 与行号行匹配。
+             */
+            if (this.editor && this.mode === 'wysiwyg') {
+                try {
+                    const { $from } = this.editor.state.selection;
+                    this.cursorBlockPos = $from.depth >= 1 ? String($from.before(1)) : '';
+                } catch (err) {
+                    this.cursorBlockPos = '';
+                }
+            } else {
+                this.cursorBlockPos = '';
+            }
             // 图片被选中时浮出缩放手柄；其它情况一律收起
             this.syncImgBox();
             this.syncMediaBar();
@@ -10722,6 +11053,20 @@ export default {
     font-size: 12px;
     color: var(--el-text-color-secondary);
 }
+/* v1.3.9.1：标题名称前的「当前文档类型」图标（跟随节点设置，单色） */
+.me-title-doc-icon {
+    flex: 0 0 auto;
+    margin-right: 8px;
+    font-size: 16px;
+    line-height: 26px;
+    color: var(--el-color-primary);
+    opacity: 0.9;
+}
+/* v1.3.9.1：历史版本那一行末尾的心情 / 天气（与「发布瞬间」同一套图标） */
+.me-meta-mood {
+    flex: 0 0 auto;
+    margin-left: 2px;
+}
 .me-title {
     flex: 1 1 auto;
     min-width: 0;
@@ -10782,6 +11127,12 @@ export default {
     position: sticky;
     z-index: 6;
     background: var(--el-bg-color);
+    /*
+     * v1.3.9.1（需求：吸附时显示和隐藏的动作柔和流畅一些）：
+     * 吸附状态下 top 值的变化（工具栏吸住 / 松开时标题栏要让位）走缓动过渡，
+     * 不再是瞬间跳位。
+     */
+    transition: top 0.22s cubic-bezier(0.33, 0, 0.2, 1);
 }
 /* 工具栏永远压在最上层；标题其次，附属栏最低（需求：工具栏层级最高） */
 .me-toolbar-wrap.is-sticky,
@@ -10918,6 +11269,13 @@ export default {
         font-size: 18px;
         line-height: 25px;
         height: 25px;
+    }
+    /*
+     * v1.3.9.1（需求）：移动端编辑器标题栏里，标题名称距离前面类型图标的间隔调小。
+     * 桌面保持 8px 不变，只收窄移动端。
+     */
+    .me-title-doc-icon {
+        margin-right: 4px;
     }
 }
 /*
@@ -11453,6 +11811,15 @@ export default {
     color: var(--el-color-primary);
     opacity: 1;
 }
+/*
+ * v1.3.9.1（需求）：光标停在哪一行，那一行的行号按钮（块操作按钮）显示背景色；
+ * 光标不在该行时隐藏（默认无背景，离开自动消失）。
+ */
+.me-gutter-row.is-cursor .me-gutter-no {
+    background: var(--el-color-primary-light-8);
+    color: var(--el-color-primary);
+    opacity: 1;
+}
 .me-gutter-fold:hover {
     background: var(--el-fill-color-dark);
     color: var(--el-color-primary);
@@ -11679,6 +12046,19 @@ export default {
 .me-wysiwyg :deep(.gh-fs-s), .me-preview :deep(.gh-fs-s) { font-size: 0.86em; }
 .me-wysiwyg :deep(.gh-fs-m), .me-preview :deep(.gh-fs-m) { font-size: 1em; }
 .me-wysiwyg :deep(.gh-fs-l), .me-preview :deep(.gh-fs-l) { font-size: 1.18em; }
+/*
+ * v1.3.9.1（需求）：字号扩到具体像素值 —— 12 / 14 / 15 / 16 / 18 / 20 / 24 / 28 / 32。
+ * 与 s/m/l 一样「编辑器与预览各写一份」，保证两边观感一致。
+ */
+.me-wysiwyg :deep(.gh-fs-12), .me-preview :deep(.gh-fs-12) { font-size: 12px; }
+.me-wysiwyg :deep(.gh-fs-14), .me-preview :deep(.gh-fs-14) { font-size: 14px; }
+.me-wysiwyg :deep(.gh-fs-15), .me-preview :deep(.gh-fs-15) { font-size: 15px; }
+.me-wysiwyg :deep(.gh-fs-16), .me-preview :deep(.gh-fs-16) { font-size: 16px; }
+.me-wysiwyg :deep(.gh-fs-18), .me-preview :deep(.gh-fs-18) { font-size: 18px; }
+.me-wysiwyg :deep(.gh-fs-20), .me-preview :deep(.gh-fs-20) { font-size: 20px; }
+.me-wysiwyg :deep(.gh-fs-24), .me-preview :deep(.gh-fs-24) { font-size: 24px; }
+.me-wysiwyg :deep(.gh-fs-28), .me-preview :deep(.gh-fs-28) { font-size: 28px; }
+.me-wysiwyg :deep(.gh-fs-32), .me-preview :deep(.gh-fs-32) { font-size: 32px; }
 .me-wysiwyg :deep(.gh-c-red), .me-preview :deep(.gh-c-red) { color: #e04f4f; }
 .me-wysiwyg :deep(.gh-c-orange), .me-preview :deep(.gh-c-orange) { color: #f08c00; }
 .me-wysiwyg :deep(.gh-c-yellow), .me-preview :deep(.gh-c-yellow) { color: #c9a227; }
@@ -13352,6 +13732,71 @@ export default {
     color: var(--el-text-color-placeholder, #a8abb2);
     font-size: 11.5px;
     text-align: right;
+}
+
+/* v1.3.9.1：导入模板弹窗（el-dialog append-to-body，样式必须放全局块） */
+.me-import-tpl-dialog .el-dialog__body {
+    padding-top: 6px;
+}
+.me-itpl-tip {
+    margin: 0 0 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--el-text-color-secondary, #909399);
+}
+.me-itpl-list {
+    min-height: 96px;
+    max-height: 320px;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.me-itpl-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 10px;
+    border: 1px solid var(--el-border-color-lighter, #ebeef5);
+    border-radius: 7px;
+    background: var(--el-bg-color, #fff);
+    cursor: pointer;
+    text-align: left;
+}
+.me-itpl-item:hover {
+    border-color: var(--el-color-primary, #409eff);
+}
+.me-itpl-item.is-active {
+    border-color: var(--el-color-primary, #409eff);
+    background: var(--el-color-primary-light-9, #ecf5ff);
+}
+.me-itpl-icon {
+    flex: 0 0 auto;
+    font-size: 14px;
+    color: var(--el-color-primary, #409eff);
+}
+.me-itpl-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.me-itpl-name {
+    font-size: 13px;
+    color: var(--el-text-color-primary, #303133);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.me-itpl-meta {
+    font-size: 11px;
+    color: var(--el-text-color-placeholder, #a8abb2);
+}
+.me-itpl-empty {
+    padding: 24px 8px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--el-text-color-secondary, #909399);
 }
 
 </style>

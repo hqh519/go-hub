@@ -109,6 +109,8 @@ import { faFileAlt } from '@fortawesome/free-solid-svg-icons/faFileAlt';
 // v1.1.1：笔记管理（「瞬间」）的顶栏图标
 import { faNoteSticky } from '@fortawesome/free-solid-svg-icons/faNoteSticky';
 import { faFileExport } from '@fortawesome/free-solid-svg-icons/faFileExport';
+// v1.3.9.1：编辑器「导入模板」工具
+import { faFileImport } from '@fortawesome/free-solid-svg-icons/faFileImport';
 import { faFileSignature } from '@fortawesome/free-solid-svg-icons/faFileSignature';
 import { faFilter } from '@fortawesome/free-solid-svg-icons/faFilter';
 import { faFolder } from '@fortawesome/free-solid-svg-icons/faFolder';
@@ -207,6 +209,17 @@ import { faStar } from '@fortawesome/free-solid-svg-icons/faStar';
 import { faPlug } from '@fortawesome/free-solid-svg-icons/faPlug';
 import { faCommentDots } from '@fortawesome/free-solid-svg-icons/faCommentDots';
 import { faUsers } from '@fortawesome/free-solid-svg-icons/faUsers';
+import { faBookOpen } from '@fortawesome/free-solid-svg-icons/faBookOpen';
+import { faBookBookmark } from '@fortawesome/free-solid-svg-icons/faBookBookmark';
+import { faNewspaper } from '@fortawesome/free-solid-svg-icons/faNewspaper';
+import { faFeatherPointed } from '@fortawesome/free-solid-svg-icons/faFeatherPointed';
+import { faPenNib } from '@fortawesome/free-solid-svg-icons/faPenNib';
+import { faPencil } from '@fortawesome/free-solid-svg-icons/faPencil';
+import { faFilePen } from '@fortawesome/free-solid-svg-icons/faFilePen';
+import { faLightbulb } from '@fortawesome/free-solid-svg-icons/faLightbulb';
+import { faBookmark } from '@fortawesome/free-solid-svg-icons/faBookmark';
+import { faSuperscript } from '@fortawesome/free-solid-svg-icons/faSuperscript';
+import { faSubscript } from '@fortawesome/free-solid-svg-icons/faSubscript';
 
 export default [
     faTrash,
@@ -298,7 +311,20 @@ export default [
     faFileAlt,
     faNoteSticky,
     faFileExport,
+    faFileImport,
+    // v1.3.9.1：上标 / 下标工具，以及节点设置里与笔记 / 文章相关的单色图标
+    faSuperscript,
+    faSubscript,
+    faBookmark,
+    faBookOpen,
+    faBookBookmark,
+    faNewspaper,
+    faFeatherPointed,
+    faPenNib,
+    faPencil,
+    faFilePen,
     faFileSignature,
+    faLightbulb,
     faFilter,
     faFolder,
     faFolderOpen,

@@ -95,6 +95,24 @@ function parseInline(src, marks = []) {
       i += m[0].length;
       continue;
     }
+    /*
+     * v1.3.9.1（需求）：「设为上标 / 设为下标」——
+     * md 落盘用行内 HTML `<sup>…</sup>` / `<sub>…</sub>`（DOMPurify 白名单放行）。
+     * 必须放在批注 sup（gh-ann）之后 —— 带 class 的批注节点先被吃掉，
+     * 剩下的裸 sup / sub 才是真正的上标 / 下标。
+     */
+    if ((m = /^<sup>([\s\S]+?)<\/sup>/i.exec(rest))) {
+      flush();
+      out.push(...parseInline(m[1], withMark({ type: 'superscript' })));
+      i += m[0].length;
+      continue;
+    }
+    if ((m = /^<sub>([\s\S]+?)<\/sub>/i.exec(rest))) {
+      flush();
+      out.push(...parseInline(m[1], withMark({ type: 'subscript' })));
+      i += m[0].length;
+      continue;
+    }
     if ((m = /^`([^`]+)`/.exec(rest))) {
       flush();
       out.push({ type: 'text', text: m[1], marks: withMark({ type: 'code' }) });
@@ -166,9 +184,9 @@ function parseInline(src, marks = []) {
       i += m[0].length;
       continue;
     }
-    if ((m = /^<span class="gh-fs-(s|m|l)">([\s\S]*?)<\/span>/i.exec(rest))) {
+    if ((m = /^<span class="gh-fs-(s|m|l|[0-9]+)">([\s\S]*?)<\/span>/i.exec(rest))) {
       flush();
-      out.push(...parseInline(m[2], withMark({ type: 'fontSize', attrs: { size: m[1] } })));
+      out.push(...parseInline(m[2], withMark({ type: 'fontSize', attrs: { size: m[1].toLowerCase() } })));
       i += m[0].length;
       continue;
     }
@@ -1063,6 +1081,9 @@ function inlineToMd(nodes = []) {
     if (color?.attrs?.color) t = `<span class="gh-c-${color.attrs.color}">${t}</span>`;
     if (has('underline')) t = `<u>${t}</u>`;
     if (has('highlight')) t = `==${t}==`;
+    // v1.3.9.1（需求）：上标 / 下标随正文一起落盘（行内 HTML）
+    if (has('superscript')) t = `<sup>${t}</sup>`;
+    if (has('subscript')) t = `<sub>${t}</sub>`;
     if (has('code')) t = `\`${t}\``;
     if (has('bold')) t = `**${t}**`;
     if (has('italic')) t = `*${t}*`;

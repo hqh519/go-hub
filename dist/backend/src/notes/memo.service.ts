@@ -65,8 +65,10 @@ export interface MemoTreeNode {
   title: string;
   parentId: string;
   sort: number;
-  /** 系统固定一级节点（笔记 / 日记 / 札记 / 灵感） */
+  /** 系统固定一级节点（笔记 / 日记 / 札记 / 灵感 / 模板） */
   isSystem: boolean;
+  /** v1.3.9.1：文档类型（note | diary | journal | inspiration | template） */
+  docType: string;
   status: string;
   charCount: number;
   wordCount: number | null;
@@ -78,9 +80,29 @@ export interface MemoTreeNode {
   updatedAt: number;
 }
 
-/** 4 个固定一级节点的定义（顺序即 sort） */
-const SYSTEM_ROOT_TITLES = ['笔记', '日记', '札记', '灵感'] as const;
-type MemoNodeType = 'note' | 'diary' | 'journal' | 'inspiration';
+/** 5 个固定一级节点的定义（顺序即 sort） */
+const SYSTEM_ROOT_TITLES = ['笔记', '日记', '札记', '灵感', '模板'] as const;
+type MemoNodeType = 'note' | 'diary' | 'journal' | 'inspiration' | 'template';
+
+/** 固定一级节点的标题 → docType */
+const ROOT_DOC_TYPE: Record<string, MemoNodeType> = {
+  笔记: 'note',
+  日记: 'diary',
+  札记: 'journal',
+  灵感: 'inspiration',
+  模板: 'template',
+};
+
+/** 节点设置（行高 / 关系线 / 图标）的默认值 */
+const DEFAULT_NODE_SETTINGS = {
+  rowHeight: 32,
+  showLines: true,
+  folderIcon: '',
+  typeIcons: { note: '', diary: '', journal: '', inspiration: '', template: '' } as Record<string, string>,
+};
+
+/** 旧版 4 个固定节点的标题（迁移时补「模板」用） */
+const LEGACY_SYSTEM_TITLES = ['笔记', '日记', '札记', '灵感'];
 
 /** 迁移标记按「用户 + 实例」分开记：不同用户的数据互不影响，谁先访问谁先迁 */
 function migratedKey(instanceId: string, viewer: string): string {
@@ -127,8 +149,30 @@ export class MemoService {
   //  多用户/多实例各自迁移，互不影响。
   // ============================================================
 
-  /** 4 个固定一级节点：缺哪个补哪个（按作者 + 实例各一份） */
+  /**
+   * v1.3.9.1：同一「用户 + 实例」的根节点初始化做进程内串行。
+   *
+   * 前端首屏会并行发 /api/memo/tree、/api/memo/node-settings、/api/memo/templates 三个请求，
+   * 它们各自都会 ensureTreeMigrated → ensureSystemRoots；两个请求同时查到「模板」
+   * 不存在、又同时 create，就会在树里出现两个「模板」根（本次实测到的现象）。
+   * 表上没有（也不该有）「同标题唯一」约束 —— 用户完全可以建多篇同名笔记，
+   * 所以这里用 Promise 复用把并发收口，跨进程的残留再用 mergeDuplicateRoots 兜底。
+   */
+  private rootsInflight = new Map<string, Promise<Map<string, string>>>();
+
+  /** 5 个固定一级节点：缺哪个补哪个（按作者 + 实例各一份） */
   private async ensureSystemRoots(viewer: string, instanceId: string): Promise<Map<string, string>> {
+    const lockKey = `${viewer}@${instanceId || '_'}`;
+    const flying = this.rootsInflight.get(lockKey);
+    if (flying) return flying;
+    const task = this.ensureSystemRootsInner(viewer, instanceId).finally(() => {
+      this.rootsInflight.delete(lockKey);
+    });
+    this.rootsInflight.set(lockKey, task);
+    return task;
+  }
+
+  private async ensureSystemRootsInner(viewer: string, instanceId: string): Promise<Map<string, string>> {
     const rows = await prisma.note.findMany({
       where: {
         author: viewer,
@@ -138,13 +182,73 @@ export class MemoService {
         parentId: '',
         status: { not: 'deleted' },
       },
-      select: { id: true, title: true },
+      select: { id: true, title: true, docType: true, createdAt: true },
+      orderBy: [{ createdAt: 'asc' }],
     });
     const byTitle = new Map<string, string>();
-    for (const r of rows as any[]) byTitle.set(String(r.title || ''), String(r.id));
+    /*
+     * v1.3.9.1（修「树里出现两个模板根」）：
+     * 历史并发 / 旧迁移都可能留下同名系统根。这里按 createdAt 取最早的一个当正主，
+     * 其余的把子节点挂过来后软删除 —— 幂等，多次访问不会反复处理。
+     */
+    const dup: Array<{ keep: string; drop: string; title: string }> = [];
+    for (const r of rows as any[]) {
+      const title = String(r.title || '');
+      const id = String(r.id);
+      if (byTitle.has(title)) {
+        dup.push({ keep: byTitle.get(title)!, drop: id, title });
+        continue;
+      }
+      byTitle.set(title, id);
+      // v1.3.9.1：旧库的系统节点没有 docType，这里补一次（幂等）
+      const want = ROOT_DOC_TYPE[title];
+      if (want && String(r.docType || '') !== want) {
+        await prisma.note.update({ where: { id }, data: { docType: want } });
+      }
+    }
+    for (const d of dup) {
+      await prisma.note.updateMany({ where: { parentId: d.drop }, data: { parentId: d.keep } });
+      await prisma.note.update({
+        where: { id: d.drop },
+        data: { status: 'deleted', isSystem: false },
+      });
+      // 并进来的子节点按「正主」的类型重算一遍，避免留在迁移时的默认 note
+      const keepType = ROOT_DOC_TYPE[d.title];
+      if (keepType) await this.retypeSubtree(viewer, instanceId, d.keep, keepType);
+      appLog.info('memo', `合并重复固定节点「${d.title}」（${viewer}@${instanceId || 'default'}）`);
+    }
     for (let i = 0; i < SYSTEM_ROOT_TITLES.length; i += 1) {
       const title = SYSTEM_ROOT_TITLES[i];
       if (byTitle.has(title)) continue;
+      /*
+       * v1.3.9.1：旧版本把「模板」当成普通目录迁移过（标题一模一样但不是系统节点）。
+       * 这种情况直接把这个节点认领成正主，而不是再建一个 —— 否则树里会并排两个「模板」。
+       */
+      const legacy = await prisma.note.findFirst({
+        where: {
+          author: viewer,
+          instanceId,
+          kind: 'memo',
+          title,
+          parentId: '',
+          isSystem: false,
+          status: { not: 'deleted' },
+        },
+        orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true },
+      });
+      if (legacy) {
+        await prisma.note.update({
+          where: { id: String(legacy.id) },
+          data: { isSystem: true, docType: ROOT_DOC_TYPE[title] || 'note', sort: i },
+        });
+        byTitle.set(title, String(legacy.id));
+        appLog.info('memo', `认领旧节点「${title}」为固定节点（${viewer}@${instanceId || 'default'}）`);
+        // 认领后整棵子树按该类型重算（旧目录迁移时一律写的 note）
+        const adoptType = ROOT_DOC_TYPE[title];
+        if (adoptType) await this.retypeSubtree(viewer, instanceId, String(legacy.id), adoptType);
+        continue;
+      }
       const row = await prisma.note.create({
         data: {
           kind: 'memo',
@@ -154,6 +258,7 @@ export class MemoService {
           parentId: '',
           sort: i,
           isSystem: true,
+          docType: ROOT_DOC_TYPE[title] || 'note',
           author: viewer,
           instanceId,
           visibility: 'private',
@@ -205,6 +310,7 @@ export class MemoService {
                 parentId: parentNote,
                 sort: asInt(f.sort),
                 isSystem: false,
+                docType: 'note',
                 author: viewer,
                 instanceId,
                 visibility: 'private',
@@ -240,7 +346,47 @@ export class MemoService {
       }
       await prisma.setting.upsert({ where: { key }, create: { key, value: '1' }, update: { value: '1' } });
     }
-    return this.ensureSystemRoots(viewer, instanceId);
+    const roots = await this.ensureSystemRoots(viewer, instanceId);
+    // v1.3.9.1：旧数据没有 docType，按所属固定一级节点回填（幂等，每次访问最多一次全表扫描本用户）
+    await this.backfillDocTypes(viewer, instanceId);
+    return roots;
+  }
+
+  /**
+   * v1.3.9.1：按「所属固定一级节点」回填 docType。
+   *
+   * 从节点向上找第一个 `isSystem` 的祖先，它的标题决定 docType；
+   * 根级散文档没有系统祖先，按 note 处理。只处理 docType 为空的行，
+   * 已有类型的节点（例如用户移动过的）不会被覆盖。
+   */
+  private async backfillDocTypes(viewer: string, instanceId: string) {
+    const pending = await prisma.note.findMany({
+      where: { author: viewer, instanceId, kind: 'memo', docType: '' },
+      select: { id: true, parentId: true, title: true, isSystem: true },
+    });
+    if (!pending.length) return;
+    const all = await prisma.note.findMany({
+      where: { author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, parentId: true, title: true, isSystem: true },
+    });
+    const byId = new Map((all as any[]).map((r) => [String(r.id), r]));
+    const typeOf = (pid: string): string => {
+      let cur = String(pid || '');
+      let guard = 0;
+      while (cur && guard < MAX_FOLDER_DEPTH) {
+        const n: any = byId.get(cur);
+        if (!n) break;
+        if (n.isSystem) return ROOT_DOC_TYPE[String(n.title || '')] || 'note';
+        cur = String(n.parentId || '');
+        guard += 1;
+      }
+      return 'note';
+    };
+    for (const r of pending as any[]) {
+      const title = String(r.title || '');
+      const t = r.isSystem ? ROOT_DOC_TYPE[title] || 'note' : typeOf(String(r.parentId || ''));
+      await prisma.note.update({ where: { id: String(r.id) }, data: { docType: t } });
+    }
   }
 
   /**
@@ -257,6 +403,7 @@ export class MemoService {
         parentId: true,
         sort: true,
         isSystem: true,
+        docType: true,
         status: true,
         createdAt: true,
         updatedAt: true,
@@ -272,6 +419,7 @@ export class MemoService {
         parentId: String(r.parentId || ''),
         sort: asInt(r.sort),
         isSystem: !!r.isSystem,
+        docType: String(r.docType || '') || (r.isSystem ? ROOT_DOC_TYPE[String(r.title || '')] || 'note' : 'note'),
         status: String(r.status || ''),
         charCount: asInt(metas.charCount),
         wordCount: metas.wordCount != null ? asInt(metas.wordCount) : null,
@@ -386,8 +534,10 @@ export class MemoService {
     input: { type?: unknown; parentId?: unknown; title?: unknown; content?: unknown },
   ) {
     const rawType = String(input.type ?? 'note');
-    const type: MemoNodeType =
-      rawType === 'diary' || rawType === 'journal' || rawType === 'inspiration' ? rawType : 'note';
+    let type: MemoNodeType =
+      rawType === 'diary' || rawType === 'journal' || rawType === 'inspiration' || rawType === 'template'
+        ? rawType
+        : 'note';
     const roots = await this.ensureTreeMigrated(viewer, instanceId);
     const now = new Date();
     const YYYY = String(now.getFullYear());
@@ -395,7 +545,6 @@ export class MemoService {
     const DD = MemoService.pad2(now.getDate());
     const hh = MemoService.pad2(now.getHours());
     const mi = MemoService.pad2(now.getMinutes());
-    const ss = MemoService.pad2(now.getSeconds());
 
     const explicitParent = String(input.parentId ?? '');
     let parentId = '';
@@ -410,10 +559,19 @@ export class MemoService {
           kind: 'memo',
           status: { not: 'deleted' },
         },
-        select: { id: true },
+        select: { id: true, docType: true },
       });
       if (!ok) return { error: '上级节点不存在' };
       parentId = explicitParent;
+      /*
+       * v1.3.9.1（需求：在某节点下新建子文档 → 直接创建同类型文档，无需再弹类型选择页）。
+       * 父节点的 docType 由 ensureTreeMigrated/backfillDocTypes 保证已回填，
+       * 这里以它为准覆盖前端传来的 type（前端直建子页时会带上父类型，双保险）。
+       */
+      const parentType = String((ok as any).docType || '');
+      if (parentType === 'diary' || parentType === 'journal' || parentType === 'inspiration' || parentType === 'template' || parentType === 'note') {
+        type = parentType;
+      }
     }
 
     if (!parentId) {
@@ -428,20 +586,60 @@ export class MemoService {
       } else if (type === 'inspiration') {
         const root = roots.get('灵感') || '';
         parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+      } else if (type === 'template') {
+        parentId = roots.get('模板') || '';
       } else {
         parentId = rootNote;
       }
     }
 
     if (!title) {
-      if (type === 'diary') title = `${YYYY}${MM}${DD}-${hh}${mi}`;
-      else if (type === 'inspiration') title = `灵感:${YYYY}${MM}${DD}-${hh}${mi}${ss}`;
-      else {
+      if (type === 'diary') {
+        /* v1.3.9.1（需求）：日记默认名称改成「2026年11月22日 周日」 */
+        const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][now.getDay()];
+        title = `${YYYY}年${Number(MM)}月${Number(DD)}日 ${week}`;
+      } else if (type === 'inspiration') {
+        // v1.3.9.1（需求）：灵感默认名称改成「灵感_YYYYMMDD-HHMM」
+        title = `灵感_${YYYY}${MM}${DD}-${hh}${mi}`;
+      } else if (type === 'template') {
+        const prefix = '未命名模板';
+        title = `${prefix}${await this.nextUntitledIndex(viewer, instanceId, parentId, prefix)}`;
+      } else {
         const prefix = type === 'journal' ? '未命名札记' : '未命名笔记';
         title = `${prefix}${await this.nextUntitledIndex(viewer, instanceId, parentId, prefix)}`;
       }
     }
     title = title.slice(0, MAX_TITLE);
+
+    /*
+     * v1.3.9.1（需求：同名日记直接打开已有日记）
+     * 只对「由默认规则生成名称」的日记生效 —— 用户显式传了 title 时按用户的来。
+     * 判断范围是同一个月节点下，未删除且标题完全一致。
+     */
+    if (type === 'diary' && !String(input.title ?? '').trim()) {
+      const existed = await prisma.note.findFirst({
+        where: {
+          author: viewer,
+          instanceId,
+          kind: 'memo',
+          parentId,
+          title,
+          status: { not: 'deleted' },
+        },
+        select: { id: true, version: true, createdAt: true },
+      });
+      if (existed) {
+        return {
+          id: String(existed.id),
+          title,
+          parentId,
+          type,
+          existed: true,
+          version: asInt(existed.version, 1),
+          createdAt: timeOf(existed.createdAt),
+        };
+      }
+    }
 
     const md = String(input.content ?? '');
     const useIds = await this.blockIdsEnabled(instanceId, viewer);
@@ -460,6 +658,7 @@ export class MemoService {
         parentId,
         sort: asInt(last?.sort) + 1,
         isSystem: false,
+        docType: type,
         author: viewer,
         instanceId,
         visibility: 'private',
@@ -484,7 +683,156 @@ export class MemoService {
     };
   }
 
-  /** 移动 / 同级排序（拖拽）；系统固定节点不可移动 */
+  /**
+   * v1.3.9.1：按「所在父链上的固定一级节点」解析某位置应有的 docType。
+   * 从 parentId 往上找第一个 isSystem 的系统根，用它的标题映射到类型；
+   * 链上没有系统根（根级散文档）时，退回父节点自身的类型，再兜底 note。
+   * 移动 / 升级后用它重算类型记录，保证「文档放在哪个分类下就是哪个类型」。
+   */
+  private async docTypeForParent(viewer: string, instanceId: string, parentId: string): Promise<MemoNodeType> {
+    let cur = String(parentId || '');
+    let firstType = '';
+    let guard = 0;
+    while (cur && guard < MAX_FOLDER_DEPTH) {
+      const n: any = await prisma.note.findFirst({
+        where: { id: cur, author: viewer, instanceId, kind: 'memo' },
+        select: { parentId: true, isSystem: true, title: true, docType: true },
+      });
+      if (!n) break;
+      if (!firstType) firstType = String(n.docType || '');
+      if (n.isSystem) {
+        const t = ROOT_DOC_TYPE[String(n.title || '')];
+        if (t) return t;
+      }
+      cur = String(n.parentId || '');
+      guard += 1;
+    }
+    return firstType === 'diary' || firstType === 'journal' || firstType === 'inspiration' || firstType === 'template'
+      ? firstType
+      : 'note';
+  }
+
+  /** 把整棵子树（含自身）的 docType 统一改写 —— 移动 / 升级后保持子节点类型一致 */
+  private async retypeSubtree(viewer: string, instanceId: string, rootId: string, type: MemoNodeType): Promise<number> {
+    const ids = await this.subtreeIds(viewer, instanceId, rootId);
+    if (!ids.length) return 0;
+    const r = await prisma.note.updateMany({
+      where: { id: { in: ids }, author: viewer, instanceId, kind: 'memo' },
+      data: { docType: type },
+    });
+    return r.count;
+  }
+
+  /**
+   * v1.3.9.1（需求：更多菜单「升级」）—— 文档层级上升一级。
+   * 把节点从「父节点下」移到「父节点的父节点下」（父是系统根时升到根级散文档），
+   * 并重算该子树的 docType，因为移动后所属分类变了。
+   */
+  async promoteNode(viewer: string, instanceId: string, id: string) {
+    const row = await prisma.note.findFirst({
+      where: { id, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, isSystem: true, parentId: true },
+    });
+    if (!row) return { error: '笔记不存在' };
+    if ((row as any).isSystem) return { error: '固定一级目录不能升级' };
+    const oldParent = String(row.parentId || '');
+    if (!oldParent) return { error: '已经是最高层级' };
+    const parent: any = await prisma.note.findFirst({
+      where: { id: oldParent, author: viewer, instanceId, kind: 'memo' },
+      select: { id: true, parentId: true },
+    });
+    const newParent = parent ? String(parent.parentId || '') : '';
+    const last = await prisma.note.findFirst({
+      where: { author: viewer, instanceId, kind: 'memo', parentId: newParent, status: { not: 'deleted' } },
+      orderBy: { sort: 'desc' },
+      select: { sort: true },
+    });
+    await prisma.note.update({
+      where: { id },
+      data: { parentId: newParent, sort: asInt(last?.sort) + 1 } as any,
+    });
+    const docType = await this.docTypeForParent(viewer, instanceId, newParent);
+    await this.retypeSubtree(viewer, instanceId, id, docType);
+    appLog.info('memo', `节点升级：${id} 从 ${oldParent} 升到 ${newParent || '根级'}，类型重算为 ${docType}`);
+    return { ok: true, parentId: newParent, docType };
+  }
+
+  /** 节点设置的 setting key（按用户 + 实例隔离，与迁移标记同一口径） */
+  private nodeSettingsKey(instanceId: string, viewer: string): string {
+    return `memoNodeSettings:${instanceId || '_'}:${viewer}`;
+  }
+
+  /** v1.3.9.1：读取文档树节点设置（行高 / 关系线 / 图标），缺项一律补默认值 */
+  async getNodeSettings(viewer: string, instanceId: string) {
+    const key = this.nodeSettingsKey(instanceId, viewer);
+    const row = await prisma.setting.findUnique({ where: { key } });
+    const saved = safeParse(row?.value, {});
+    const def = DEFAULT_NODE_SETTINGS;
+    const typeIcons: Record<string, string> = { ...def.typeIcons };
+    if (saved.typeIcons && typeof saved.typeIcons === 'object') {
+      for (const k of Object.keys(typeIcons)) {
+        const v = (saved.typeIcons as Record<string, unknown>)[k];
+        if (typeof v === 'string') typeIcons[k] = v.slice(0, 60);
+      }
+    }
+    return {
+      rowHeight: Math.min(64, Math.max(22, asInt(saved.rowHeight, def.rowHeight))),
+      showLines: typeof saved.showLines === 'boolean' ? saved.showLines : def.showLines,
+      folderIcon: typeof saved.folderIcon === 'string' ? saved.folderIcon.slice(0, 60) : def.folderIcon,
+      typeIcons,
+    };
+  }
+
+  /** v1.3.9.1：保存文档树节点设置（合并写入，避免漏项把别的设置冲掉） */
+  async saveNodeSettings(viewer: string, instanceId: string, input: unknown) {
+    const cur = await this.getNodeSettings(viewer, instanceId);
+    const src = (input || {}) as Record<string, unknown>;
+    const next = {
+      rowHeight: Math.min(64, Math.max(22, asInt(src.rowHeight, cur.rowHeight))),
+      showLines: typeof src.showLines === 'boolean' ? src.showLines : cur.showLines,
+      folderIcon: typeof src.folderIcon === 'string' ? String(src.folderIcon).slice(0, 60) : cur.folderIcon,
+      typeIcons: { ...cur.typeIcons },
+    };
+    const ti = src.typeIcons;
+    if (ti && typeof ti === 'object') {
+      for (const k of Object.keys(next.typeIcons)) {
+        const v = (ti as Record<string, unknown>)[k];
+        if (typeof v === 'string') next.typeIcons[k] = v.slice(0, 60);
+      }
+    }
+    const key = this.nodeSettingsKey(instanceId, viewer);
+    const value = JSON.stringify(next);
+    await prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } });
+    return next;
+  }
+
+  /** v1.3.9.1：导入模板弹窗的数据源 —— 列出「模板」分类下的可用模板文档（含正文） */
+  async listTemplates(viewer: string, instanceId: string) {
+    await this.ensureTreeMigrated(viewer, instanceId);
+    const rows = await prisma.note.findMany({
+      where: {
+        author: viewer,
+        instanceId,
+        kind: 'memo',
+        docType: 'template',
+        isSystem: false,
+        status: { not: 'deleted' },
+      },
+      select: { id: true, title: true, content: true, parentId: true, updatedAt: true, createdAt: true },
+      orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }],
+    });
+    return {
+      templates: (rows as any[]).map((r) => ({
+        id: String(r.id),
+        title: String(r.title || ''),
+        content: String(r.content || ''),
+        updatedAt: timeOf(r.updatedAt),
+        createdAt: timeOf(r.createdAt),
+      })),
+    };
+  }
+
+  /** 移动 / 同级排序（拖拽）；系统固定节点不可移动；v1.3.9.1 移动后重算类型 */
   async moveNode(
     viewer: string,
     instanceId: string,
@@ -528,7 +876,10 @@ export class MemoService {
       data.sort = asInt(last?.sort) + 1;
     }
     await prisma.note.update({ where: { id }, data: data as any });
-    return { ok: true, parentId: target };
+    // v1.3.9.1（需求：移动时会变更移动后所在的类型记录）—— 连子树一起重算
+    const docType = await this.docTypeForParent(viewer, instanceId, target);
+    await this.retypeSubtree(viewer, instanceId, id, docType);
+    return { ok: true, parentId: target, docType };
   }
 
   /** 同级重排（拖拽落位后一次提交；系统固定节点不参与） */
@@ -940,6 +1291,12 @@ export class MemoService {
       parentId: String((row as any).parentId || ''),
       sort: asInt((row as any).sort),
       isSystem: !!(row as any).isSystem,
+      // v1.3.9.1：类型 + 心情 / 天气（编辑器标题栏与元信息行要显示）
+      docType: String((row as any).docType || ''),
+      mood: String((row as any).mood || ''),
+      moodName: String((row as any).moodName || ''),
+      weather: String((row as any).weather || ''),
+      weatherName: String((row as any).weatherName || ''),
       version: asInt(row.version, 1),
       status: String(row.status || ''),
       createdAt: timeOf(row.createdAt),
@@ -1043,7 +1400,10 @@ export class MemoService {
     viewer: string,
     instanceId: string,
     id: string,
-    input: { title?: unknown; content?: unknown; folderId?: unknown; version?: unknown },
+    input: {
+      title?: unknown; content?: unknown; folderId?: unknown; version?: unknown;
+      mood?: unknown; moodName?: unknown; weather?: unknown; weatherName?: unknown;
+    },
   ) {
     const row = await prisma.note.findFirst({
       where: { id, author: viewer, instanceId, kind: 'memo' },
@@ -1077,6 +1437,14 @@ export class MemoService {
       version: { increment: 1 },
       metas: JSON.stringify({ excerpt: excerptOf(content), charCount: countMemoChars(content) }),
     };
+    /*
+     * v1.3.9.1（需求：编辑器标题栏心情 / 天气，选择后把名称存进数据表）。
+     * 只有传了字段才写 —— 编辑器普通自动保存不带这几个字段，不能把已选的心情清掉。
+     */
+    if (input.mood !== undefined) data.mood = String(input.mood ?? '').slice(0, 40);
+    if (input.moodName !== undefined) data.moodName = String(input.moodName ?? '').slice(0, 60);
+    if (input.weather !== undefined) data.weather = String(input.weather ?? '').slice(0, 40);
+    if (input.weatherName !== undefined) data.weatherName = String(input.weatherName ?? '').slice(0, 60);
     if (input.folderId !== undefined) {
       const folderId = String(input.folderId ?? '');
       if (folderId) {
