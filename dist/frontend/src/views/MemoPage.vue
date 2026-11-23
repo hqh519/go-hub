@@ -292,6 +292,14 @@
                 </div>
                 <p class="ms-copied">{{ copiedTool ? $t('memo.tokenCopied', { name: copiedTool }) : $t('memo.tokenCopyTip') }}</p>
             </div>
+            <!-- v1.4.1（需求）：回车插入实体换行 -->
+            <div class="ms-field ms-row">
+                <div>
+                    <label class="ms-label">{{ $t('memo.hardBreakOnEnter') }}</label>
+                    <p class="ms-tip">{{ $t('memo.hardBreakOnEnterTip') }}</p>
+                </div>
+                <el-switch v-model="settingsDraft.hardBreakOnEnter" />
+            </div>
             <!--
                 v1.3.1.2（需求）：「输入工具配置」改名「光标工具栏配置」，
                 「/菜单工具配置」改名「/命令菜单配置」。
@@ -327,6 +335,10 @@
                 v1.3.2（需求）：原来的 H1-H6 数字输入框太小，改成多行 CSS。
                 选择器会自动限定在编辑器正文区（.me-wysiwyg）内，不会污染全站样式。
             -->
+            <!--
+                v1.4.1（需求）：这一组改名「编辑区样式设置」，并加入编辑区背景色。
+                背景色留空 = 出厂默认（白天 #C7EDCC，夜间跟随暗色主题）。
+            -->
             <div class="ms-field">
                 <label class="ms-label">{{ $t('memo.styleTitle') }}</label>
                 <p class="ms-tip">{{ $t('memo.styleCssTip') }}</p>
@@ -337,6 +349,21 @@
                     spellcheck="false"
                     :placeholder="cssPlaceholder"
                 ></textarea>
+            </div>
+            <div class="ms-field ms-row">
+                <div>
+                    <label class="ms-label">{{ $t('memo.editorBgColor') }}</label>
+                    <p class="ms-tip">{{ $t('memo.editorBgColorTip') }}</p>
+                </div>
+                <div class="ms-color-pick">
+                    <el-color-picker v-model="settingsDraft.bgColor" size="small" :predefine="editorBgPresets" />
+                    <button
+                        v-if="settingsDraft.bgColor"
+                        type="button"
+                        class="ms-color-reset"
+                        @click="settingsDraft.bgColor = ''"
+                    >{{ $t('memo.editorBgReset') }}</button>
+                </div>
             </div>
 
             <!-- v1.3.1.2：滚动吸附（PC / 移动端各自独立） -->
@@ -485,6 +512,10 @@ export default {
         };
     },
     computed: {
+        /** v1.4.1：背景色预置（护眼绿 / 纸白 / 米黄 / 淡蓝 / 浅灰） */
+        editorBgPresets() {
+            return ['#C7EDCC', '#FFFFFF', '#FBF3E4', '#E8F1FB', '#F2F3F5'];
+        },
         /** v1.3.2：CSS 示例（不放 i18n —— 花括号会被当成插值占位符） */
         cssPlaceholder() {
             return 'h1 { font-size: 1.9em; color: #1f2937 }\np { line-height: 1.9 }';
@@ -1085,6 +1116,8 @@ export default {
                     selectAudioLines: Array.isArray(editor.selectAudioLines) ? editor.selectAudioLines.map((x) => String(x || '')) : [],
                     selectFileLines: Array.isArray(editor.selectFileLines) ? editor.selectFileLines.map((x) => String(x || '')) : [],
                     historyInterval: Number(editor.historyInterval) > 0 ? Number(editor.historyInterval) : 3,
+                    // v1.4.1：回车插入实体换行（漏掉这一行，编辑器读到的永远是 undefined → 开关不生效）
+                    hardBreakOnEnter: editor.hardBreakOnEnter === true,
                     // v1.3.1.2：样式（后端已归一）
                     styles: {
                         h1: Number(editor?.styles?.h1) || 1.75,
@@ -1095,6 +1128,8 @@ export default {
                         h6: Number(editor?.styles?.h6) || 0.94,
                         lineHeight: Number(editor?.styles?.lineHeight) || 1.75,
                         customCss: String(editor?.styles?.customCss || DEFAULT_CUSTOM_CSS),
+                        // v1.4.1：编辑区背景色（空 = 出厂默认）
+                        bgColor: String(editor?.styles?.bgColor || ''),
                     },
                     // v1.3.1.2：吸附配置（后端已归一并保证结构完整，这里再兜一层）
                     sticky: {
@@ -1169,7 +1204,9 @@ export default {
                 rightClickTools: (this.editorSettings.rightClickLines || []).join('\n'),
                 selectionTools: (this.editorSettings.selectionLines || []).join('\n'),
                 historyInterval: this.editorSettings.historyInterval || 3,
+                hardBreakOnEnter: this.editorSettings.hardBreakOnEnter === true,
                 customCss: String(this.editorSettings.styles?.customCss || ''),
+                bgColor: String(this.editorSettings.styles?.bgColor || ''),
                 styles: JSON.parse(JSON.stringify(this.editorSettings.styles || {
                     h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: DEFAULT_CUSTOM_CSS,
                 })),
@@ -1248,6 +1285,8 @@ export default {
             this.settingsSaving = true;
             const splitLines = (v) => String(v || '').split('\n').map((x) => x.trim()).filter(Boolean);
             const editor = {
+                // v1.4.1：以现有设置为底，面板里没暴露的字段原样保留
+                ...this.editorSettings,
                 toolbarLines: lines.length ? lines : DEFAULT_TOOLBAR_LINES.slice(),
                 blockIds: !!this.settingsDraft.blockIds,
                 theme: ['auto', 'light', 'dark'].includes(this.settingsDraft.theme) ? this.settingsDraft.theme : 'auto',
@@ -1256,12 +1295,15 @@ export default {
                 rightClickLines: splitLines(this.settingsDraft.rightClickTools).slice(0, 12),
                 selectionLines: splitLines(this.settingsDraft.selectionTools).slice(0, 12),
                 historyInterval: Math.min(120, Math.max(1, Number(this.settingsDraft.historyInterval) || 3)),
+                hardBreakOnEnter: !!this.settingsDraft.hardBreakOnEnter,
                 styles: {
                     ...JSON.parse(JSON.stringify(this.settingsDraft.styles || {
                         h1: 1.75, h2: 1.45, h3: 1.24, h4: 1.1, h5: 1, h6: 0.94, lineHeight: 1.75, customCss: '',
                     })),
                     // v1.3.2：CSS 在草稿里是顶层字段，落库要挂回 styles 下
                     customCss: String(this.settingsDraft.customCss || ''),
+                    // v1.4.1：编辑区背景色（空串 = 出厂默认）
+                    bgColor: String(this.settingsDraft.bgColor || ''),
                 },
                 sticky: JSON.parse(JSON.stringify(this.settingsDraft.sticky || {
                     pc: { toolbar: false, title: false },
@@ -1697,6 +1739,19 @@ export default {
 }
 
 /* v1.3.1.2：吸附开关表格（3 行 × PC / 移动端 两列） */
+.ms-color-pick {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.ms-color-reset {
+    border: none;
+    background: transparent;
+    color: var(--el-color-primary);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 0;
+}
 .ms-sticky-table {
     border: 1px solid var(--el-border-color-lighter);
     border-radius: 8px;

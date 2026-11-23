@@ -215,6 +215,11 @@ export interface EditorSettings {
   /** v1.3.1.1：历史记录自动保存间隔（分钟） */
   historyInterval: number;
   /**
+   * v1.4.1（需求）：回车插入实体换行。
+   * 开启后普通回车插入硬换行（序列化为 `<br>`），不再新起段落。
+   */
+  hardBreakOnEnter: boolean;
+  /**
    * v1.3.1.2：滚动吸附（工具栏 / 标题栏 / 辅助栏），PC 与移动端各自独立，默认全关。
    * 分终端存是因为两端的可视高度差得远 —— 手机上三行都吸住会把正文压得只剩一小块。
    */
@@ -238,6 +243,11 @@ export interface EditorStyleSettings {
   lineHeight: number;
   /** v1.3.2：自定义 CSS（作用于编辑器正文区，选择器会自动加上作用域前缀） */
   customCss: string;
+  /**
+   * v1.4.1（需求）：编辑区背景色。
+   * 空串 = 用出厂默认（白天 #C7EDCC，夜间跟随暗色）；写了就按用户选的来。
+   */
+  bgColor: string;
 }
 
 /** v1.3.7：标题与正文样式出厂默认 CSS */
@@ -267,6 +277,7 @@ export const DEFAULT_EDITOR_STYLES: EditorStyleSettings = {
   h6: 0.94,
   lineHeight: 1.75,
   customCss: DEFAULT_EDITOR_CUSTOM_CSS,
+  bgColor: '',
 };
 
 /** 样式归一：数值夹在合理区间，防止「字号 0」这种把正文弄没的配置 */
@@ -292,6 +303,10 @@ export function normalizeEditorStyles(raw: unknown): EditorStyleSettings {
     customCss: o.customCss === undefined || o.customCss === null
       ? DEFAULT_EDITOR_CUSTOM_CSS
       : String(o.customCss),
+    // v1.4.1：只认 #RGB / #RRGGBB / #RRGGBBAA，写错就当没设置，不至于把正文刷成透明
+    bgColor: /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(String(o.bgColor ?? '').trim())
+      ? String(o.bgColor).trim()
+      : '',
   };
 }
 
@@ -388,6 +403,7 @@ export function normalizeEditorSettings(raw: unknown): EditorSettings {
     historyInterval: Number.isFinite(interval)
       ? Math.min(HISTORY_INTERVAL_MAX, Math.max(HISTORY_INTERVAL_MIN, interval))
       : DEFAULT_HISTORY_INTERVAL,
+    hardBreakOnEnter: o.hardBreakOnEnter === true,
     sticky: normalizeSticky(o.sticky),
     styles: normalizeEditorStyles(o.styles),
   };

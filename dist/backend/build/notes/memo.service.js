@@ -361,6 +361,41 @@ let MemoService = MemoService_1 = class MemoService {
         }
         return max + 1;
     }
+    async ensureDateNode(viewer, instanceId, parentId, title, legacyTitle, sortHint = 0) {
+        const hit = await prisma_1.prisma.note.findFirst({
+            where: {
+                author: viewer,
+                instanceId,
+                kind: 'memo',
+                parentId,
+                title,
+                status: { not: 'deleted' },
+            },
+            select: { id: true },
+        });
+        if (hit)
+            return String(hit.id);
+        if (legacyTitle && legacyTitle !== title) {
+            const legacy = await prisma_1.prisma.note.findFirst({
+                where: {
+                    author: viewer,
+                    instanceId,
+                    kind: 'memo',
+                    parentId,
+                    title: legacyTitle,
+                    status: { not: 'deleted' },
+                    metas: { contains: '"autoFolder":true' },
+                },
+                select: { id: true },
+            });
+            if (legacy) {
+                await prisma_1.prisma.note.update({ where: { id: String(legacy.id) }, data: { title } });
+                app_log_1.appLog.info('memo', `日期目录改名：${legacyTitle} → ${title}（沿用旧目录，历史文档不搬家）`);
+                return String(legacy.id);
+            }
+        }
+        return this.ensureChildNode(viewer, instanceId, parentId, title, sortHint);
+    }
     static pad2(n) {
         return String(n).padStart(2, '0');
     }
@@ -402,16 +437,16 @@ let MemoService = MemoService_1 = class MemoService {
             const rootNote = roots.get(SYSTEM_ROOT_TITLES[0]) || roots.get('笔记') || '';
             if (type === 'diary') {
                 const root = roots.get('日记') || '';
-                const year = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
-                parentId = await this.ensureChildNode(viewer, instanceId, year, MM, 2);
+                const year = await this.ensureDateNode(viewer, instanceId, root, `${YYYY}年`, YYYY, 1);
+                parentId = await this.ensureDateNode(viewer, instanceId, year, `${Number(MM)}月`, MM, 2);
             }
             else if (type === 'journal') {
                 const root = roots.get('札记') || '';
-                parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+                parentId = await this.ensureDateNode(viewer, instanceId, root, `${YYYY}年`, YYYY, 1);
             }
             else if (type === 'inspiration') {
                 const root = roots.get('灵感') || '';
-                parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+                parentId = await this.ensureDateNode(viewer, instanceId, root, `${YYYY}年`, YYYY, 1);
             }
             else if (type === 'template') {
                 parentId = roots.get('模板') || '';

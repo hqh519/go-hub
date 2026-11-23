@@ -293,7 +293,7 @@
                 >{{ $t(t.label) }}</button>
             </div>
             <!-- v1.4.0：文章 / 待办 / 笔记 不用瞬间那一套「媒体类型 + 排序」筛选 -->
-            <div v-if="!isArticleKind && !isMemoKind" class="nt-tools">
+            <div v-if="!isArticleKind && !isMemoKind && !isRegisterKind" class="nt-tools">
                 <el-select
                     ref="mediaSelect"
                     v-model="mediaKind"
@@ -461,7 +461,7 @@
         <RegEntryDialog
             v-model="regDialogVisible"
             :instance-id="instanceId"
-            @saved="reload"
+            @saved="onRegSaved"
         />
 
         <!--
@@ -1349,6 +1349,17 @@ export default {
         },
         /* ── v1.4.0：文章 / 待办 / 笔记三个分类 ───────────────── */
         /** 文章 / 待办的「编辑」→ 进各自的编辑页（与 /article、/todo 同一套页面） */
+        /**
+         * v1.4.1（需求）：在「我的发布」里添加登记，提交成功后要立刻看到最新数据。
+         * reload() 只重拉瞬间那一套列表，登记面板有它自己的分页，必须单独刷。
+         */
+        onRegSaved() {
+            this.reload();
+            this.$nextTick(() => {
+                const panel = this.$refs.regPanel;
+                if (panel && typeof panel.reload === 'function') panel.reload(1);
+            });
+        },
         openArticleEdit(id) {
             if (!id) return;
             this.$router.push(`/article/edit/${encodeURIComponent(id)}`);
@@ -1359,9 +1370,23 @@ export default {
          */
         async createArticleHere() {
             try {
-                const r = await apiCreateArticle({ type: this.kind, title: '' });
+                /*
+                 * v1.4.1（需求：发布页的「添加待办」要进待办编辑页，而不是文章编辑页）
+                 * 待办与文章共用一张表，但页面不同：待办进 /todo 的右栏编辑，文章进 /article/edit。
+                 * 待办同样自动命名「待办 YYYY-MM-DD」并直接发布（待办没有草稿态）。
+                 */
+                const isTodo = this.kind === 'todo';
+                const d = new Date();
+                const p2 = (n) => String(n).padStart(2, '0');
+                const title = isTodo ? `待办 ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}` : '';
+                const r = await apiCreateArticle({
+                    type: isTodo ? 'todo' : 'article',
+                    title,
+                    status: isTodo ? 'published' : 'draft',
+                });
                 if (!r?.id) throw new Error(this.$t('article.saveFail'));
-                this.$router.push(`/article/edit/${encodeURIComponent(r.id)}`);
+                if (isTodo) this.$router.push({ path: '/todo', query: { id: r.id } });
+                else this.$router.push(`/article/edit/${encodeURIComponent(r.id)}`);
             } catch (e) {
                 this.$message.error(articleError(e).message || this.$t('article.saveFail'));
             }

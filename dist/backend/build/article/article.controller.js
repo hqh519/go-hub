@@ -111,6 +111,7 @@ let ArticleController = class ArticleController {
             folderId: body.folderId,
             title: body.title,
             content: body.content,
+            status: body.status,
         });
         this.unwrap(r);
         return { success: true, data: r };

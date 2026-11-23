@@ -93,6 +93,7 @@ exports.DEFAULT_EDITOR_STYLES = {
     h6: 0.94,
     lineHeight: 1.75,
     customCss: exports.DEFAULT_EDITOR_CUSTOM_CSS,
+    bgColor: '',
 };
 function normalizeEditorStyles(raw) {
     const o = (raw && typeof raw === 'object' ? raw : {});
@@ -113,6 +114,9 @@ function normalizeEditorStyles(raw) {
         customCss: o.customCss === undefined || o.customCss === null
             ? exports.DEFAULT_EDITOR_CUSTOM_CSS
             : String(o.customCss),
+        bgColor: /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(String(o.bgColor ?? '').trim())
+            ? String(o.bgColor).trim()
+            : '',
     };
 }
 function normalizeSticky(raw) {
@@ -166,6 +170,7 @@ function normalizeEditorSettings(raw) {
         historyInterval: Number.isFinite(interval)
             ? Math.min(exports.HISTORY_INTERVAL_MAX, Math.max(exports.HISTORY_INTERVAL_MIN, interval))
             : exports.DEFAULT_HISTORY_INTERVAL,
+        hardBreakOnEnter: o.hardBreakOnEnter === true,
         sticky: normalizeSticky(o.sticky),
         styles: normalizeEditorStyles(o.styles),
     };

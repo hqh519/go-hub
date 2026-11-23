@@ -79,6 +79,23 @@ export function isAppBlank() {
     const root = document.getElementById('app');
     if (!root) return true;
     if (root.children.length === 0) return true;
+    /*
+     * v1.4.1（需求：手机切出去不到 10 秒再回来，页面整片空白）
+     *
+     * 这类白屏的 DOM 其实还在、文字也还在，只是 #app 的高度被算成了 0
+     * （冻结期间 visualViewport 高度为 0，回来时布局没有重新量），
+     * 原来的判定看到 textContent 非空就认为「已渲染」，永远不会复活。
+     * 高度为 0 就是看不见，先判空白。
+     */
+    if (root.getBoundingClientRect().height <= 1) {
+        /*
+         * 高度 0 不一定真空白：有些页面把内容全放在 position: fixed 的层里，
+         * #app 自身盒高为 0 但肉眼是好的。用「屏幕中心能不能命中 #app 里的元素」
+         * 复核一次，避免把正常页面判成白屏、陷入反复刷新。
+         */
+        const el = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+        if (!el || el === document.documentElement || el === document.body || !root.contains(el)) return true;
+    }
     if ((root.textContent || '').trim()) return false;
     if (root.querySelector('img, svg, canvas, video, iframe, picture')) {
         const rect = root.getBoundingClientRect();

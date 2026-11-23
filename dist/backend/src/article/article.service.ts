@@ -473,7 +473,7 @@ export class ArticleService {
   async createArticle(
     viewer: string,
     instanceId: string,
-    input: { type?: unknown; folderId?: unknown; title?: unknown; content?: unknown },
+    input: { type?: unknown; folderId?: unknown; title?: unknown; content?: unknown; status?: unknown },
   ) {
     const type = normalizeArticleType(input.type);
     const title = String(input.title ?? '').trim().slice(0, MAX_ARTICLE_TITLE);
@@ -484,6 +484,16 @@ export class ArticleService {
     }
     const content = String(input.content ?? '');
     const stat = countTodoTasks(content);
+    /*
+     * v1.4.1（需求）：待办没有「草稿」这一说 —— 新建即发布。
+     * 文章仍然从草稿起步（作者通常还要写摘要 / 选封面）。
+     *
+     * 待办这里**不看前端传的 status**：待办有多个创建入口（列表页、发布页、
+     * 右键菜单…），逐个入口保证传 published 太脆，漏一个就会冒出「草稿待办」。
+     * 收口在服务端，任何入口新建待办都是已发布。
+     */
+    const asked = String(input.status ?? '').trim();
+    const status = type === 'todo' ? 'published' : asked === 'published' ? 'published' : 'draft';
     const article = await prisma.article.create({
       data: {
         type,
@@ -492,7 +502,8 @@ export class ArticleService {
         folderId,
         author: viewer,
         instanceId,
-        status: 'draft',
+        status,
+        publishedAt: status === 'published' ? new Date() : null,
         wordCount: countArticleWords(content),
         todoTotal: stat.total,
         todoDone: stat.done,

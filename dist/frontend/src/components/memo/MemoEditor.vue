@@ -178,6 +178,21 @@
                     </el-dropdown>
                     <!-- 每行末尾的弹性占位（v1.3.9.2：模式切换已移到下方「反向链接」行末尾） -->
                     <span class="me-grow"></span>
+                    <!--
+                        v1.4.1（需求）：编辑器设置入口固定挂在工具栏最后一行的最后，
+                        跟着工具栏一起滚动 / 吸附。不写进用户配置 —— 写进配置就可能在
+                        「把工具栏改精简」时被删掉，而它正是改配置的入口，删了就找不回来。
+                    -->
+                    <button
+                        v-if="li === toolbarLines.length - 1"
+                        type="button"
+                        class="me-btn me-btn-settings"
+                        :title="$t('memo.editorSettings')"
+                        @mousedown.prevent
+                        @click="editorSettingsOpen = true"
+                    >
+                        <font-awesome-icon icon="cog" />
+                    </button>
                 </div>
             </div>
 
@@ -374,6 +389,7 @@
                 :editor="editor"
                 class="me-wysiwyg"
                 :class="{ 'is-readonly': mode === 'preview' }"
+                @click="onPreviewClick"
             />
             <div v-show="mode === 'source'" ref="sourceEl" class="me-source"></div>
 
@@ -1410,7 +1426,14 @@
             @record-detail="onLightboxDetail"
         />
         <FileDetailUnified v-model="fileDlg.open" :file="fileDlg.file" />
-    </div>
+        <!-- v1.4.1：编辑器设置（工具栏最后一格打开；文章 / 待办编辑页同样可用） -->
+    <EditorSettingsDialog
+        v-model="editorSettingsOpen"
+        :instance-id="instanceId"
+        :editor-config="editorConfig"
+        @saved="onEditorSettingsSaved"
+    />
+</div>
 </template>
 
 <script>
@@ -1471,6 +1494,7 @@ import { uploadOne, defaultUploadFolder, importUrlToBed } from '@/utils/uploadTa
 import ImageCropDialog from '@/components/upload/ImageCropDialog.vue';
 import { mediaKindOfMime } from '@/utils/notes';
 import { DEFAULT_TOOLBAR_LINES } from '@/utils/memoEditorConfig';
+import EditorSettingsDialog from '@/components/memo/EditorSettingsDialog.vue';
 import DOMPurify from 'dompurify';
 import { htmlToMd } from '@/utils/htmlToMd';
 
@@ -4011,7 +4035,7 @@ function parseToolTokens(text) {
 /** 斜杠菜单命令表 */
 export default {
     name: 'MemoEditor',
-    components: { EditorContent, FilePickerDialog, MoodWeatherPicker, UploadTargetDialog, MediaPreviewOverlay, FileDetailUnified, ImageCropDialog },
+    components: { EditorContent, FilePickerDialog, MoodWeatherPicker, UploadTargetDialog, MediaPreviewOverlay, FileDetailUnified, ImageCropDialog, EditorSettingsDialog },
     props: {
         /** 笔记详情（含 id / content / version）；null = 还没选中 */
         note: { type: Object, default: null },
@@ -4052,7 +4076,7 @@ export default {
          */
         hideHead: { type: Boolean, default: false },
     },
-    emits: ['saved', 'dirty', 'request-settings', 'open-note', 'publish-moment', 'reload', 'tree-refresh'],
+    emits: ['saved', 'dirty', 'request-settings', 'open-note', 'publish-moment', 'reload', 'tree-refresh', 'editor-config-changed'],
     data() {
         return {
             editor: null,
@@ -4086,6 +4110,8 @@ export default {
             moodName: '',
             weather: '',
             weatherName: '',
+            /** v1.4.1：编辑器设置弹窗（工具栏最后一格打开） */
+            editorSettingsOpen: false,
             /** v1.3.9.1：导入模板弹窗 */
             importTplDlg: { visible: false, loading: false, list: [], selectedId: '' },
             docTypes: DOC_TYPES,
@@ -4240,6 +4266,8 @@ export default {
                 '--gh-h5-size': `${v(st.h5, 1)}em`,
                 '--gh-h6-size': `${v(st.h6, 0.94)}em`,
                 '--gh-line-height': `${v(st.lineHeight, 1.75)}`,
+                /* v1.4.1（需求）：编辑区背景色；空 = 白天 #C7EDCC / 夜间跟随暗色 */
+                '--me-bg': this.editorBgColor,
             };
         },
         /**
@@ -4487,6 +4515,16 @@ export default {
             if (t === 'light' || t === 'dark') return t;
             const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
             return dark ? 'dark' : 'light';
+        },
+        /**
+         * v1.4.1（需求）：编辑区背景色。
+         * 用户在「编辑区样式设置」里选了就按选的来；没选时白天给 #C7EDCC（护眼绿），
+         * 夜间不刷底色 —— 暗色下刷浅绿会把正文衬得刺眼，也破坏暗色主题。
+         */
+        editorBgColor() {
+            const raw = String(this.editorConfig?.styles?.bgColor || '').trim();
+            if (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(raw)) return raw;
+            return this.editorTheme === 'dark' ? 'transparent' : '#C7EDCC';
         },
         /** 历史预览渲染（走同一套 marked + DOMPurify） */
         renderHistoryPreview() {
@@ -5346,6 +5384,104 @@ export default {
             return false;
         },
 
+        /**
+         * v1.4.1（需求）：预览模式下点任何文件 → 走系统灯箱浏览，不再原地无反应或直接下载。
+         *
+         * 为什么用 DOM click 而不是 handleClick：预览是 editable=false，ProseMirror 的
+         * editHandlers（含 handleClick）只在可编辑状态下绑定，预览时那些回调根本不会触发。
+         * 所以这里挂在 EditorContent 根节点上，用普通事件兜。
+         *
+         * 三处例外：
+         *   · 视频 / 音频底部的控制条 —— 那是播放 / 进度条，点了要能播；
+         *   · 普通网页外链（不是文件）—— 保持原样，不抢；
+         *   · Ctrl / Cmd + 点击附件 —— 用户明确想下载，交给浏览器。
+         */
+        onPreviewClick(e) {
+            if (this.mode !== 'preview') return;
+            const t = e && e.target;
+            if (!t || !t.closest) return;
+            const anchor = t.closest('a.gh-file');
+            if (anchor) {
+                if (e.ctrlKey || e.metaKey) return; // 明确要下载，不拦
+                e.preventDefault();
+                e.stopPropagation();
+                this.openAttachmentLightbox(anchor);
+                return;
+            }
+            const media = t.closest('img, video, audio');
+            if (!media) return;
+            if (media.tagName === 'VIDEO' || media.tagName === 'AUDIO') {
+                const r = media.getBoundingClientRect();
+                const zone = Math.min(56, r.height * 0.35);
+                if (e.clientY > r.bottom - zone) return; // 控制条区域，放行
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            const kind = media.tagName === 'IMG' ? 'image' : media.tagName === 'VIDEO' ? 'video' : 'audio';
+            const pos = this.mediaPosOfEl(media);
+            if (pos >= 0) this.openEditorLightbox(kind, pos);
+            else this.openSingleLightbox(media.currentSrc || media.src, kind);
+        },
+
+        /** 预览模式下取媒体节点在文档里的位置（不改变选区，避免留一个选中框） */
+        mediaPosOfEl(el) {
+            const ed = this.editor;
+            if (!ed || !el) return -1;
+            const isMedia = (pos) => {
+                if (typeof pos !== 'number' || pos < 0) return false;
+                const n = ed.state.doc.nodeAt(pos);
+                return !!n && MEDIA_NODE_NAMES.includes(n.type.name);
+            };
+            try {
+                const p0 = ed.view.posAtDOM(el, 0);
+                if (isMedia(p0)) return p0;
+                if (isMedia(p0 + 1)) return p0 + 1;
+            } catch (e) {
+                /* 取不到就当没有位置，退回单文件灯箱 */
+            }
+            return -1;
+        },
+
+        /** 附件的扩展名 → 灯箱类型（与 openMediaPreview 同一套判定） */
+        kindFromExt(ext) {
+            const VIDEO = ['mp4', 'webm', 'mov', 'm4v', 'ogv'];
+            const AUDIO = ['mp3', 'wav', 'm4a', 'ogg', 'flac', 'aac'];
+            const TEXT = ['txt', 'md', 'markdown', 'json', 'csv', 'log', 'yml', 'yaml'];
+            const IMAGE = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif'];
+            if (IMAGE.includes(ext)) return 'image';
+            if (VIDEO.includes(ext)) return 'video';
+            if (AUDIO.includes(ext)) return 'audio';
+            if (ext === 'pdf') return 'pdf';
+            if (TEXT.includes(ext)) return 'text';
+            return 'other';
+        },
+
+        /** v1.4.1：附件卡片（a.gh-file）→ 单文件灯箱 */
+        openAttachmentLightbox(a) {
+            const url = String(a.getAttribute('href') || '');
+            if (!url) return;
+            const raw = String(a.getAttribute('title') || a.textContent || '');
+            const name = raw.replace(/^📎\s*/, '').trim() || decodeURIComponent(url.split('/').pop() || '') || '文件';
+            const ext = (/\.([a-z0-9]+)(?:$|[?#])/i.exec(url) || [])[1]?.toLowerCase() || '';
+            this.lightbox = {
+                open: true,
+                items: [{ key: url, name, url, kind: this.kindFromExt(ext), ext, recordId: this.fileIdOfSrc(url) }],
+                index: 0,
+            };
+        },
+
+        /** v1.4.1：没有文档位置时的兜底 —— 只开这一个文件 */
+        openSingleLightbox(url, kind) {
+            if (!url) return;
+            const ext = (/\.([a-z0-9]+)(?:$|[?#])/i.exec(url) || [])[1]?.toLowerCase() || '';
+            const name = decodeURIComponent(String(url).split('/').pop() || '') || '文件';
+            this.lightbox = {
+                open: true,
+                items: [{ key: url, name, url, kind: kind || this.kindFromExt(ext), ext, recordId: this.fileIdOfSrc(url) }],
+                index: 0,
+            };
+        },
+
         onEditorUpdate() {
             const md = this.currentMd();
             this.lastMd = md;
@@ -6183,6 +6319,19 @@ export default {
             this.scheduleSave();
         },
 
+        /**
+         * v1.4.1：设置保存后立刻作用到当前编辑器。
+         * 直接把新值合进 editorConfig —— 父页面传下来的是同一个响应式对象，
+         * 合并后工具栏 / 配色 / 背景色的 computed 会一起重算，不用刷新页面。
+         */
+        onEditorSettingsSaved(editor) {
+            if (this.editorConfig && typeof this.editorConfig === 'object') {
+                Object.assign(this.editorConfig, editor);
+                // 背景色走 CSS 变量，assign 不会触发 styleVars 依赖之外的更新，这里补一刀
+                this.$forceUpdate && this.$forceUpdate();
+            }
+            this.$emit('editor-config-changed', editor);
+        },
         /** v1.3.9.1：导入模板 —— 打开弹窗并加载「模板」节点下的可用文档 */
         async openImportTemplate() {
             this.importTplDlg.visible = true;
@@ -9405,6 +9554,59 @@ export default {
              * 两个动作都自己重排节点，不依赖 liftListItem / 原生 Backspace ——
              * 原生只会把项抬出列表，做不出「变成下级块」。
              */
+            /*
+             * v1.4.1（需求）：输入 `()` 或 `（）` 后回车 → 插入提示块。
+             * 只认「光标前正好是这两个字符」的情况：写作时括号太常见，
+             * 松一点（比如任意位置出现括号）就会把正常标点吃掉。
+             * 行内代码 / 代码块里不处理 —— 那里的括号是代码。
+             */
+            if (
+                this.mode === 'wysiwyg' &&
+                event.key === 'Enter' &&
+                !event.shiftKey &&
+                !this.slash.open &&
+                !event.isComposing &&
+                event.keyCode !== 229
+            ) {
+                const ed = this.editor;
+                const sel = ed && ed.state.selection;
+                if (ed && sel && sel.empty && !ed.isActive('codeBlock') && !ed.isActive('code')) {
+                    const parent = sel.$from.parent;
+                    const text = String(parent.textContent || '').slice(0, sel.$from.parentOffset);
+                    if (/\(\)$/.test(text) || /（）$/.test(text)) {
+                        ed.chain()
+                            .focus()
+                            .deleteRange({ from: sel.$from.pos - 2, to: sel.$from.pos })
+                            .insertContent({ type: 'callout', attrs: { type: 'info' }, content: [{ type: 'paragraph' }] })
+                            .run();
+                        this.onEditorUpdate();
+                        return true;
+                    }
+                }
+            }
+            /*
+             * v1.4.1（需求）：回车插入实体换行。
+             * 开关开了以后，普通回车插入硬换行（保存下来就是 `<br>`），
+             * 想新起段落用 Shift+Enter —— 反过来给，写作时才不会「想换行找不到键」。
+             * 代码块 / 斜杠菜单 / 输入法组合中都不抢回车。
+             */
+            if (
+                this.mode === 'wysiwyg' &&
+                event.key === 'Enter' &&
+                !this.slash.open &&
+                !event.isComposing &&
+                event.keyCode !== 229 &&
+                this.editorConfig &&
+                this.editorConfig.hardBreakOnEnter
+            ) {
+                const ed = this.editor;
+                if (ed && !ed.isActive('codeBlock')) {
+                    if (event.shiftKey) ed.chain().focus().splitBlock().run();
+                    else ed.chain().focus().setHardBreak().run();
+                    this.onEditorUpdate();
+                    return true;
+                }
+            }
             if (this.mode === 'wysiwyg' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
                 if (event.key === 'Enter' && this.enterListExit()) return true;
                 if (event.key === 'Backspace' && this.nestListIntoPrev()) return true;
@@ -11512,6 +11714,33 @@ export default {
 .me-grow {
     flex: 1 1 auto;
 }
+/* v1.4.1：工具栏末位的「编辑器设置」，与普通工具同尺寸，左侧一条分隔线 */
+.me-btn-settings {
+    flex: 0 0 auto;
+    margin-left: 2px;
+    color: var(--el-text-color-secondary);
+    /*
+     * v1.4.1：工具栏是横向滚动容器，末位按钮在窄屏 / 工具很多时会被滚出可视区。
+     * 与「编辑/源码/预览」同款处理 —— sticky 钉在行尾，任何时候都点得到。
+     */
+    position: sticky;
+    right: 0;
+    z-index: 3;
+    background: var(--el-bg-color);
+    padding-left: 4px;
+}
+.me-btn-settings::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: 6px;
+    bottom: 6px;
+    width: 1px;
+    background: var(--el-border-color-lighter);
+}
+.me-btn-settings:hover {
+    color: var(--el-color-primary);
+}
 
 /* 编辑区 */
 .me-body {
@@ -11519,6 +11748,8 @@ export default {
     min-height: 0;
     overflow: auto;
     position: relative;
+    /* v1.4.1（需求）：编辑区背景（默认白天 #C7EDCC，可在编辑器设置里改） */
+    background: var(--me-bg, transparent);
     /*
      * v1.3.3.3（需求：滚到底部不要继续拉动页面、露出底部背景层）
      * overscroll-behavior 关掉「滚动链」：滚到编辑区底部就停住，

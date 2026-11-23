@@ -8,7 +8,7 @@
         右侧是操作区（编辑 + 更多菜单）。待办变体在前面多一个整篇勾选框，
         后面多一圈「正文待办项完成率」，其余完全一致 —— 两者本就是同一张表。
     -->
-    <div class="alp-root" :class="{ 'is-compact': compact }">
+    <div class="alp-root" :class="{ 'is-compact': compact, 'is-todo': type === 'todo' }">
         <div v-if="!hideToolbar" class="alp-toolbar">
             <div class="alp-search">
                 <font-awesome-icon icon="search" class="alp-search-icon" />
@@ -97,21 +97,35 @@
                             <span v-if="item.folderName" class="alp-meta-item alp-folder">
                                 <font-awesome-icon icon="folder" />{{ item.folderName }}
                             </span>
-                            <span class="alp-meta-item">
-                                <font-awesome-icon icon="user" />{{ item.author || '—' }}
-                            </span>
-                            <span class="alp-meta-item">
-                                <font-awesome-icon icon="eye" />{{ item.views || 0 }}
-                            </span>
-                            <span class="alp-meta-item">
-                                <font-awesome-icon icon="comment" />{{ item.comments || 0 }}
-                            </span>
-                            <span class="alp-meta-item">
-                                <font-awesome-icon icon="clock" />{{ fmtTime(item.updatedAt) }}
-                            </span>
-                            <span class="alp-meta-item">
-                                <font-awesome-icon icon="font" />{{ $t('article.wordCount', { n: item.wordCount || 0 }) }}
-                            </span>
+                            <!--
+                                v1.4.1（需求）：待办底行的用户名移除，改为创建日期；
+                                浏览 / 评论对待办没有意义，一并收掉，只留日期与字数。
+                            -->
+                            <template v-if="type === 'todo'">
+                                <span class="alp-meta-item">
+                                    <font-awesome-icon icon="calendar" />{{ fmtDate(item.createdAt) }}
+                                </span>
+                                <span class="alp-meta-item">
+                                    <font-awesome-icon icon="font" />{{ $t('article.wordCount', { n: item.wordCount || 0 }) }}
+                                </span>
+                            </template>
+                            <template v-else>
+                                <span class="alp-meta-item">
+                                    <font-awesome-icon icon="user" />{{ item.author || '—' }}
+                                </span>
+                                <span class="alp-meta-item">
+                                    <font-awesome-icon icon="eye" />{{ item.views || 0 }}
+                                </span>
+                                <span class="alp-meta-item">
+                                    <font-awesome-icon icon="comment" />{{ item.comments || 0 }}
+                                </span>
+                                <span class="alp-meta-item">
+                                    <font-awesome-icon icon="clock" />{{ fmtTime(item.updatedAt) }}
+                                </span>
+                                <span class="alp-meta-item">
+                                    <font-awesome-icon icon="font" />{{ $t('article.wordCount', { n: item.wordCount || 0 }) }}
+                                </span>
+                            </template>
                         </div>
                     </div>
 
@@ -205,7 +219,8 @@ export default {
             hasMore: false,
             search: '',
             status: '',
-            sort: 'updated',
+            /* v1.4.1（需求）：待办按创建日期倒序；文章保持「最近更新」 */
+            sort: this.type === 'todo' ? 'created' : 'updated',
         };
     },
     computed: {
@@ -250,6 +265,14 @@ export default {
             return sameYear
                 ? `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
                 : `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+        },
+        /** 待办底行的创建日期（只到天，够看） */
+        fmtDate(ts) {
+            const n = Number(ts) || 0;
+            if (!n) return '—';
+            const d = new Date(n);
+            const p = (x) => String(x).padStart(2, '0');
+            return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
         },
         coverUrl(item) {
             if (!item?.coverName) return '';
@@ -535,9 +558,20 @@ export default {
 .alp-item.is-active {
     background: var(--el-color-primary-light-9);
 }
-.alp-item.is-done .alp-title {
-    color: var(--el-text-color-secondary);
-    text-decoration: line-through;
+/* v1.4.1（需求）：勾选后不要删除线，整条待办转灰 */
+.alp-item.is-done {
+    background: var(--el-fill-color-lighter);
+}
+.alp-item.is-done .alp-title,
+.alp-item.is-done .alp-excerpt,
+.alp-item.is-done .alp-meta,
+.alp-item.is-done .alp-tag,
+.alp-item.is-done .alp-cover {
+    color: var(--el-text-color-placeholder);
+    opacity: 0.62;
+}
+.alp-item.is-done .alp-cover img {
+    filter: grayscale(1);
 }
 .alp-check {
     flex: 0 0 auto;
@@ -865,6 +899,10 @@ export default {
     .alp-progress {
         width: 34px;
         height: 34px;
+    }
+    /* v1.4.1（需求）：手机上的待办列表不加载封面，把宽度让给标题与完成率 */
+    .alp-root.is-todo .alp-cover {
+        display: none;
     }
 }
 </style>

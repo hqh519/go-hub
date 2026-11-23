@@ -522,6 +522,60 @@ export class MemoService {
     return max + 1;
   }
 
+  /**
+   * v1.4.1（需求）：年 / 月目录带单位 —— `2026年` / `11月`。
+   *
+   * 旧版本建的是 `2026` / `11`。如果只改新名字，升级后树里会同时出现
+   * 「2026」与「2026年」两个目录：旧日记还留在旧目录里，新日记进新目录，
+   * 用户看到的就是「昨天的日记不见了」。
+   *
+   * 所以这里多做一步：新名字不存在、旧名字存在、且旧目录是自动建的
+   * （`metas.autoFolder` 标记）时，直接把旧目录改名过来 —— 旧日记跟着一起搬进
+   * 「2026年」，不用做数据迁移，也不用担心两个目录并存。
+   * 用户手工建的目录不带这个标记，一律不动。
+   */
+  private async ensureDateNode(
+    viewer: string,
+    instanceId: string,
+    parentId: string,
+    title: string,
+    legacyTitle: string,
+    sortHint = 0,
+  ): Promise<string> {
+    const hit = await prisma.note.findFirst({
+      where: {
+        author: viewer,
+        instanceId,
+        kind: 'memo',
+        parentId,
+        title,
+        status: { not: 'deleted' },
+      },
+      select: { id: true },
+    });
+    if (hit) return String(hit.id);
+    if (legacyTitle && legacyTitle !== title) {
+      const legacy = await prisma.note.findFirst({
+        where: {
+          author: viewer,
+          instanceId,
+          kind: 'memo',
+          parentId,
+          title: legacyTitle,
+          status: { not: 'deleted' },
+          metas: { contains: '"autoFolder":true' },
+        },
+        select: { id: true },
+      });
+      if (legacy) {
+        await prisma.note.update({ where: { id: String(legacy.id) }, data: { title } });
+        appLog.info('memo', `日期目录改名：${legacyTitle} → ${title}（沿用旧目录，历史文档不搬家）`);
+        return String(legacy.id);
+      }
+    }
+    return this.ensureChildNode(viewer, instanceId, parentId, title, sortHint);
+  }
+
   private static pad2(n: number): string {
     return String(n).padStart(2, '0');
   }
@@ -530,7 +584,7 @@ export class MemoService {
    * 按类型创建节点。
    *
    * - `parentId` 显式给了（在某个节点上「新建子笔记」）→ 直接挂到它下面，
-   *   不再套 `/日记/YYYY/MM` 那套默认路径 —— 用户已经指明了位置，再套一层就是反直觉。
+   *   不再套 `/日记/YYYY年/MM月` 那套默认路径 —— 用户已经指明了位置，再套一层就是反直觉。
    * - 没给 → 按类型落到默认的一级固定目录下。
    */
   async createNode(
@@ -583,14 +637,17 @@ export class MemoService {
       const rootNote = roots.get(SYSTEM_ROOT_TITLES[0]) || roots.get('笔记') || '';
       if (type === 'diary') {
         const root = roots.get('日记') || '';
-        const year = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
-        parentId = await this.ensureChildNode(viewer, instanceId, year, MM, 2);
+        // v1.4.1（需求）：落点改成 `/日记/YYYY年/MM月`（原来是 /日记/YYYY/MM）
+        const year = await this.ensureDateNode(viewer, instanceId, root, `${YYYY}年`, YYYY, 1);
+        parentId = await this.ensureDateNode(viewer, instanceId, year, `${Number(MM)}月`, MM, 2);
       } else if (type === 'journal') {
         const root = roots.get('札记') || '';
-        parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+        // v1.4.1（需求）：`/札记/YYYY年`
+        parentId = await this.ensureDateNode(viewer, instanceId, root, `${YYYY}年`, YYYY, 1);
       } else if (type === 'inspiration') {
         const root = roots.get('灵感') || '';
-        parentId = await this.ensureChildNode(viewer, instanceId, root, YYYY, 1);
+        // v1.4.1（需求）：`/灵感/YYYY年`
+        parentId = await this.ensureDateNode(viewer, instanceId, root, `${YYYY}年`, YYYY, 1);
       } else if (type === 'template') {
         parentId = roots.get('模板') || '';
       } else {

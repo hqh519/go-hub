@@ -378,6 +378,8 @@ let ArticleService = class ArticleService {
         }
         const content = String(input.content ?? '');
         const stat = (0, article_util_1.countTodoTasks)(content);
+        const asked = String(input.status ?? '').trim();
+        const status = type === 'todo' ? 'published' : asked === 'published' ? 'published' : 'draft';
         const article = await prisma_1.prisma.article.create({
             data: {
                 type,
@@ -386,7 +388,8 @@ let ArticleService = class ArticleService {
                 folderId,
                 author: viewer,
                 instanceId,
-                status: 'draft',
+                status,
+                publishedAt: status === 'published' ? new Date() : null,
                 wordCount: (0, article_util_1.countArticleWords)(content),
                 todoTotal: stat.total,
                 todoDone: stat.done,

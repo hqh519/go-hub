@@ -1118,6 +1118,30 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-141',
+      title: '八十、v1.4.1 更新要点',
+      intro: '这一版把「编辑器设置」搬到工具栏末位，任何编辑器里都能直接打开；编辑器新增「输入 () 或 （） 回车变提示块」与「回车插入实体换行」两项，编辑区背景可以自定义、白天默认护眼绿；记事预览里的文件点击改为灯箱打开；文章与待办改成右栏内直接编辑，修掉「有时保存无效」，移动端长按页签管理、上滚收起顶栏，桌面页签栏能拖宽；待办新建即发布并自动命名，列表去掉删除线、改按创建日期倒序。',
+      items: [
+        { t: '编辑器设置：跟着工具栏走', d: '设置入口固定挂在工具栏最后一行的最末位，和工具一起滚动、一起吸附，手机上钉在行尾始终可点。以前它只在记事管理页的顶栏里，写文章 / 待办时想调一下工具栏或配色得先切回记事页；现在任何编辑器里点一下就开。' },
+        { t: '括号回车变提示块', d: '在正文里输入 `()` 或全角 `（）` 再回车，会直接落成一个提示块（callout），不用再去工具栏里找。只认「光标前正好是这两个字符」，行内代码与代码块里不处理 —— 括号在写作里太常见，松一点就会把正常标点吃掉。' },
+        { t: '回车插入实体换行', d: '编辑器设置里新增开关。开启后普通回车插入硬换行（保存下来就是 `<br>`），想新起段落用 Shift + 回车；代码块里回车仍然是换行，不受影响。适合需要精确控制行距、或要粘到别处渲染的写法。' },
+        { t: '编辑区样式设置与背景色', d: '原来那一组「标题与正文样式」改名为「编辑区样式设置」，并新增「编辑区背景色」。留空就是出厂默认：白天 `#C7EDCC` 护眼绿，夜间自动跟随暗色主题不刷底色；也可以自己选颜色，附五个常用预置色。设置里没暴露的字段在保存时原样保留，不会被这版的新面板清掉。' },
+        { t: '导入模板的确认框置顶', d: '以前点「导入模板」再确认覆盖时，确认框会被导入模板那个对话框整个盖住，看起来像「点了没反应」。原因是整站把 Element Plus 弹层基准提到了 4000，而消息框是命令式 API，仍从 2000 起。现在统一抬到 5000，任何时候都在最上层。' },
+        { t: '预览模式：点文件走灯箱', d: '预览模式下点正文里的图片、视频、音频或附件卡片，改为打开系统灯箱浏览，不再原地没反应或直接触发下载；视频音频底部那条控制条仍然放行，Ctrl / Cmd + 点击附件也照旧交给浏览器下载。' },
+        { t: '文档默认目录加年 / 月', d: '新建日记落到 `/日记/YYYY年/MM月`，新建札记落到 `/札记/YYYY年`，新建灵感落到 `/灵感/YYYY年`。月份按实际数字显示（`11月`，不是 `011月`），这些目录不存在时自动逐级创建。' },
+        { t: '登记管理页补顶部栏', d: '登记管理页补上了与我的发布、文章管理同款的顶部栏：页面切换下拉、切换实例、刷新。以前它是页面里唯一没有这行的后台页，进去以后想换页面只能点浏览器返回。' },
+        { t: '文章管理：右栏内直接编辑', d: '点文章不再跳独立页，右栏从列表切成编辑；点「全部文章」或某个分类，右栏回到该分类的列表。切换文章 / 返回列表 / 切分类之前会先把当前这篇没落库的改动写掉，避免「点了别的条目，上一篇白改」。' },
+        { t: '「有时保存无效」修掉了', d: '根因是三条：元信息（0.8 秒防抖）与正文（1.5 秒防抖）各发一笔请求、共用同一个版本号，必有一笔 409 而错误只弹个提示；冲突后没有重试；保存按钮不看结果，失败也弹「已保存」。现在两路保存排进同一条队列，冲突时取最新版本静默重试一次，两步都成功才提示成功，失败如实报错。' },
+        { t: '移动端编辑页交互', d: '页签不再显示小叉，改为长按弹出「重命名 / 删除页签」菜单，正文页签在菜单里明确标注不可删除；新增页签的「+」移到页签列表末尾。正文往上滚时顶部栏与返回列表栏一起收起，往下滚或回到顶部再出现 —— 用的是与记事页顶栏同一套判定，忽略横向容器和「一收一放」造成的假位移，不会来回闪。' },
+        { t: '桌面页签栏可拖宽', d: '页签栏左边缘加了一条拖动带，往左拖变宽、往右拖变窄（96 ~ 380px），宽度记在本地，下次打开还是上次的宽度。页签名太长时不用再靠悬浮提示猜。' },
+        { t: '待办：新建即发布、自动命名', d: '新建待办自动命名「待办 YYYY-MM-DD」，并且直接是发布状态 —— 待办没有草稿这一说。从「我的发布 → 待办」点「添加待办」也会进待办编辑页（以前错进了文章编辑页），同样带好标题与发布状态。' },
+        { t: '待办列表：灰化与按创建日期', d: '勾选标题前的框不再给标题加删除线，改为整条转灰（封面去色），更像「做完了」而不是「划掉了」；底行去掉用户名，改为创建日期（浏览 / 评论对待办没有意义，一并收掉）；列表默认按创建日期倒序。手机上待办列表不加载封面，把宽度让给标题与完成率。' },
+        { t: '我的发布页三处调整', d: '「登记」分类下移除了分类行右侧的「全部类型 / 最新发布」两个筛选（登记有自己的条目 / 标签 / 时间筛选）；在发布页提交登记后立刻刷新登记流水，不用手动点刷新；待办分类的创建入口直连待办编辑页。' },
+        { t: '切出去再回来不再白屏', d: '手机切到别的 App 再切回来（哪怕不到 10 秒）偶发整片空白。原因是回到前台后的「强制重排 + resize」被 30 秒节流一起挡掉了，而冻结期间视口高度会变成 0。现在解锁滚动与重排每次都做，只有拉配置 / 通知刷新受节流；白屏守护也新增了「#app 高度为 0 且屏幕中心命中不到内容」的判定，真白了会自动恢复。' },
+        { t: '系统管理页下拉层级', d: '左上角「页面切换」展开后不再被左侧菜单栏压住：下拉展开时把顶栏整体抬到侧栏之上，收起即恢复原层级，不影响其它页面的浮层关系。' }
+      ]
+    },
+    {
       id: 'whatsnew-140',
       title: '七十九、v1.4.0 更新要点',
       intro: 'v1.4.0 新增「文章」与「待办」两个板块：页面切换里多出「文章管理」与「待办管理」；文章编辑页不再是单个正文框，而是标题、摘要、封面、备注、页签、标签、分类一起的组合页；待办直接复用文章的表结构与编辑器，靠类型字段分流，并在列表上按正文里的任务项算出完成率。「我的发布」也随之拆成文章、待办、笔记三个分类。',
@@ -2659,6 +2683,30 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-141',
+      title: '80. What is new in v1.4.1',
+      intro: 'This release moves editor settings to the end of the toolbar so any editor can open it; adds "() or （） plus Enter becomes a callout" and "Enter inserts a hard break"; makes the editor background customisable with a default eye-friendly green in light mode; opens files in the lightbox from preview; turns articles and todos into in-column editing, fixes the occasional lost save, adds long-press tab management and scroll-to-hide bars on phones, and a draggable tab rail on desktop; todos are published on create with an automatic title, and the todo list drops the strikethrough and sorts by creation date.',
+      items: [
+        { t: 'Editor settings follows the toolbar', d: 'The settings entry now sits at the very end of the last toolbar row, scrolling and sticking with the tools, pinned to the row end on phones. It used to live only in the notes page header, so tweaking the toolbar or colours while writing an article meant switching back first. Now one click in any editor opens it.' },
+        { t: 'Brackets plus Enter become a callout', d: 'Typing () or the full-width （） and pressing Enter drops a callout right there instead of hunting through the toolbar. Only the exact two characters right before the caret count, and inline code or code blocks are skipped - brackets are far too common in prose for a looser rule.' },
+        { t: 'Enter inserts a hard break', d: 'A new switch in editor settings. When on, a plain Enter inserts a hard line break (saved as <br>) and Shift + Enter starts a new paragraph; inside code blocks Enter still adds a line. Useful when line spacing must be exact or the text is rendered elsewhere.' },
+        { t: 'Editor area style and background', d: 'The old "Heading and body style" group is renamed "Editor area style" and gains a background colour. Empty means the factory default: #C7EDCC in light mode, and the dark theme is left alone at night. Five presets are provided, and fields this panel does not expose are preserved on save.' },
+        { t: 'Import-template confirm on top', d: 'Confirming an overwrite used to hide behind the import dialog, looking like nothing happened: the app raises the Element Plus layer base to 4000 while message boxes are imperative and still start at 2000. They now sit at 5000 and are always on top.' },
+        { t: 'Preview opens files in the lightbox', d: 'In preview mode, clicking an image, video, audio or attachment card opens the system lightbox instead of doing nothing or downloading; the media control bar still works, and Ctrl / Cmd + click still downloads.' },
+        { t: 'Default folders gain year / month', d: 'New diaries go to /Diary/YYYY/MM (with 年 and 月 suffixes), journals to /Journal/YYYY and inspirations to /Inspiration/YYYY, created level by level when missing. Months use the real number (11月, not 011月).' },
+        { t: 'Register page gets a header', d: 'The register page now has the same header as My posts and Articles: page switcher, instance switch and refresh. It was the last admin page without one, leaving the browser back button as the only way out.' },
+        { t: 'Articles: edit inside the right column', d: 'Clicking an article swaps the right column from list to editor; clicking All articles or a folder returns to that list. Before switching article, going back or changing folder, pending edits are written first, so the previous article is never lost.' },
+        { t: 'The occasional lost save is fixed', d: 'Three causes: meta (0.8s debounce) and body (1.5s debounce) each sent a request with the same version so one always hit 409 and the error was only a toast; conflicts were not retried; the save button reported success without checking. Both paths now share one queue, a conflict fetches the latest version and retries silently, and success is only reported when both steps succeed.' },
+        { t: 'Mobile editor interactions', d: 'Tabs no longer show a cross; long-press opens a rename / delete menu, and the body tab is explicitly marked undeletable. The add-tab button moves to the end of the tab strip. Scrolling the body up hides the top bar and the back-to-list bar together and brings them back on scroll down or at the top, using the same guards as the notes header so it never flickers.' },
+        { t: 'Draggable tab rail on desktop', d: 'The left edge of the tab rail is a drag handle: drag left to widen, right to narrow (96-380px), remembered locally. Long tab names no longer depend on a tooltip.' },
+        { t: 'Todos: published on create, auto title', d: 'A new todo is titled "待办 YYYY-MM-DD" and is published immediately - todos have no draft state. Add todo from My posts now opens the todo editor (it used to open the article editor) with the same title and status.' },
+        { t: 'Todo list: greyed out, sorted by date', d: 'Ticking the checkbox no longer strikes through the title; the whole row turns grey with a desaturated cover, reading as done rather than crossed out. The footer drops the username for the creation date (views and comments mean nothing for a todo) and the list sorts by creation date descending. Phones skip covers in todo lists to give the title and ring more room.' },
+        { t: 'Three fixes on My posts', d: 'The register tab loses the "all types / latest" filters from the category row (the register panel has its own marker, tag and range filters); submitting a register entry refreshes the ledger immediately; the todo tab creates todos straight into the todo editor.' },
+        { t: 'No more white screen after switching apps', d: 'Switching to another app and back (even under 10 seconds) sometimes left a blank page: the forced reflow and resize on return were gated by a 30-second throttle while the viewport height had collapsed to zero. Unlocking and reflowing now happen on every return, and the blank-page guard also treats a zero-height #app whose centre hits nothing as blank, recovering automatically.' },
+        { t: 'System settings dropdown layer', d: 'The page switcher on the system settings page is no longer covered by the left sidebar: the header is lifted above the sidebar only while the menu is open, then returns to its normal layer.' }
       ]
     },
     {

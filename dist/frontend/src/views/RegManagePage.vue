@@ -6,7 +6,29 @@
         · 统计图表：横轴 = 时间范围，纵轴 = 数据口径，图例 1~5 = 筛选条件；
         · 设置：条目管理（改名 / 改类型 / 改单位 / 改分母 / 改性质 / 合并 / 删除）与自定义单位。
     -->
-    <div class="reg-page">
+    <div class="reg-page" :class="{ 'has-instance-badge': instanceSeq > 0 }" :style="instanceBadgeStyle">
+        <!--
+            v1.4.1（需求）：登记管理页补一行顶部栏 —— 与「我的发布 / 文章管理 / 待办管理」
+            同一套：左边是页面切换下拉（尾部带「切换实例」），右边留空。
+            这一行只负责导航，页内原有的标题行（图标 + 标题 + 数据/设置切换）保持不动。
+        -->
+        <div class="reg-topbar">
+            <DashboardTabs active-tab="reg">
+                <template #extra-item="{ close }">
+                    <div class="page-option-sep" aria-hidden="true"></div>
+                    <button
+                        type="button"
+                        class="page-option admin-page-instance-option"
+                        @click.stop="openInstanceFromPageSwitch(close)"
+                    >
+                        <span v-if="instanceSeq > 0" class="admin-page-instance-seq">{{ instanceSeq }}</span>
+                        <font-awesome-icon v-else icon="server" class="admin-page-instance-icon" />
+                        <span class="admin-page-instance-text">{{ $t('instancePicker.title') }}</span>
+                    </button>
+                </template>
+            </DashboardTabs>
+        </div>
+
         <header class="reg-head">
             <div class="reg-head-left">
                 <font-awesome-icon icon="clipboard-list" class="reg-head-icon" />
@@ -539,6 +561,8 @@
 
 <script>
 import fetchWithAuth from '@/utils/fetchWithAuth';
+import DashboardTabs from '@/components/DashboardTabs.vue';
+import axios from '@/utils/axios';
 import { Bar, Doughnut, Line, Radar } from 'vue-chartjs';
 import {
     Chart as ChartJS,
@@ -578,10 +602,12 @@ const emptyLegendOpts = () => ({ places: [], subjects: [], related: [], tags: []
 
 export default {
     name: 'RegManagePage',
-    components: { Bar, Doughnut, Line, Radar },
+    components: { Bar, Doughnut, Line, Radar, DashboardTabs },
     data() {
         return {
             tab: 'stats',
+            /** v1.4.1：顶部栏的实例下拉用（序号徽标） */
+            instances: [],
             loading: false,
             trackers: [],
             /* 总范围：类型（默认流水，不再有「全部」）+ 条目（空 = 全部条目） */
@@ -1129,6 +1155,20 @@ export default {
         instanceId() {
             try { return localStorage.getItem('gohub_instance_id') || ''; } catch (e) { return ''; }
         },
+        /** v1.4.1：当前实例在列表里的序号（0 = 默认实例，不显示徽标） */
+        instanceSeq() {
+            const cur = String(this.instanceId || '');
+            if (!cur) return 0;
+            const idx = this.instances.findIndex((i) => String(i.id) === cur);
+            return idx >= 0 ? idx + 1 : 0;
+        },
+        instanceBadgeStyle() {
+            const n = this.instanceSeq;
+            if (!n) return null;
+            const circled = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫', '⑬', '⑭', '⑮', '⑯', '⑰', '⑱', '⑲', '⑳'];
+            const text = n <= circled.length ? circled[n - 1] : `(${n})`;
+            return { '--instance-seq': `"${text}"` };
+        },
     },
     mounted() {
         this.syncNarrow();
@@ -1138,6 +1178,8 @@ export default {
         /* v1.3.6：移动端点图表外任意位置，收起已弹出的数据提示 */
         document.addEventListener('pointerdown', this.hideChartTooltip, true);
         this.loadCandidates();
+        /* v1.4.1：顶部栏的实例序号 —— 与其它后台页一致，取不到就当默认实例 */
+        this.fetchInstances();
         /* v1.3.6：支持 /reg?tracker=条目名（发布页点条目跳转过来） */
         this.initTrackers();
         this.loadReports();
@@ -1158,6 +1200,40 @@ export default {
         document.removeEventListener('pointerdown', this.hideChartTooltip, true);
     },
     methods: {
+        /* ── v1.4.1 顶部栏：实例 ───────────────────────────── */
+        async fetchInstances() {
+            try {
+                const res = await axios.get('/api/instances');
+                const list = Array.isArray(res.data) ? res.data : [];
+                this.instances = [...list].sort(
+                    (a, b) => (new Date(a.createdAt).getTime() || 0) - (new Date(b.createdAt).getTime() || 0),
+                );
+            } catch (e) {
+                this.instances = [];
+            }
+        },
+        openInstanceFromPageSwitch(closeFn) {
+            if (typeof closeFn === 'function') closeFn();
+            this.openInstanceManagement();
+        },
+        async openInstanceManagement() {
+            const win = window.open('about:blank', '_blank');
+            let url = '/customerConfig';
+            try {
+                const res = await axios.get('/api/manage/users');
+                const list = Array.isArray(res.data) ? res.data : [];
+                const me = this.$store?.getters?.sessionUser || '';
+                const hit = me ? list.find((u) => u && u.username === me) : null;
+                if (hit && hit.id) url = `/customerConfig/edit/${encodeURIComponent(hit.id)}?anchor=instances`;
+            } catch (e) {
+                /* 取不到就退回用户管理列表 */
+            }
+            try {
+                win.location.href = url;
+            } catch (e) {
+                window.open(url, '_blank', 'noopener');
+            }
+        },
         /** 时间桶的起点（tooltip 算间隔用） */
         bucketStart(key) {
             const k = String(key || '');
@@ -1756,6 +1832,17 @@ export default {
     color: var(--el-text-color-primary);
     /* 外层容器（后台布局）是居中对齐的，列表行必须显式回到左对齐 */
     text-align: left;
+}
+
+/* v1.4.1：顶部栏 —— 与文章 / 待办 / 我的发布同一套外观，用负外边距吃掉页面 padding 做到通栏 */
+.reg-topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: -16px -18px 14px;
+    padding: 8px 14px;
+    background: var(--el-bg-color);
+    border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .reg-head {

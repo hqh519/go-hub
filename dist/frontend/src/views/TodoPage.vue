@@ -13,7 +13,11 @@
 
         移动端：目录进抽屉，列表与编辑两级切换（与记事页同一套处理）。
     -->
-    <div class="tp-page" :class="{ 'is-mobile': isMobile, 'has-instance-badge': instanceSeq > 0 }" :style="instanceBadgeStyle">
+    <div
+        class="tp-page"
+        :class="{ 'is-mobile': isMobile, 'is-topbar-hidden': barsHidden, 'has-instance-badge': instanceSeq > 0 }"
+        :style="instanceBadgeStyle"
+    >
         <div class="tp-topbar">
             <DashboardTabs active-tab="todo" />
             <div class="tp-topbar-right">
@@ -75,6 +79,7 @@
 
             <main class="tp-col tp-col-editor" v-show="!isMobile || !!selectedId">
                 <ArticleEditPanel
+                    ref="panel"
                     :article-id="selectedId"
                     type="todo"
                     embedded
@@ -84,6 +89,7 @@
                     :editor-config="editorConfig"
                     @close="backToList"
                     @changed="onEditorChanged"
+                    @bars-hidden="barsHidden = $event"
                 />
             </main>
         </div>
@@ -116,6 +122,8 @@ export default {
             treeWidth: 200,
             listWidth: 360,
             editorConfig: { toolbarLines: [] },
+            /** v1.4.1：移动端滚动时收起顶栏（由编辑面板的滚动判定驱动） */
+            barsHidden: false,
         };
     },
     computed: {
@@ -157,13 +165,30 @@ export default {
         this.editorConfig = await fetchEditorConfig(this.instance);
         const id = String(this.$route?.query?.id || '');
         if (id) this.openTodo(id);
+        this.$nextTick(this.measureTopbarHeight);
+    },
+    updated() {
+        this.measureTopbarHeight();
     },
     beforeUnmount() {
         window.removeEventListener('resize', this.syncViewport);
+        // 离开页面（切路由）也要把编辑中的内容写掉
+        this.$refs.panel?.flushNow?.();
     },
     methods: {
         syncViewport() {
             this.isMobile = window.innerWidth <= 900;
+            if (!this.isMobile) this.barsHidden = false;
+        },
+        /** v1.4.1：量顶栏真实高度写进 --tp-tb-h */
+        measureTopbarHeight() {
+            const bar = this.$el && this.$el.querySelector ? this.$el.querySelector('.tp-topbar') : null;
+            if (!bar) return;
+            const h = bar.offsetHeight;
+            if (h > 0 && this._tpBarH !== h) {
+                this._tpBarH = h;
+                this.$el.style.setProperty('--tp-tb-h', `${h}px`);
+            }
         },
         onTreeLoaded({ nodes }) {
             this.folders = Array.isArray(nodes) ? nodes : [];
@@ -187,13 +212,19 @@ export default {
         },
         openTodo(id) {
             if (!id) return;
+            // 切到另一篇之前，先把当前这篇没落库的改动写掉
+            this.$refs.panel?.flushNow?.();
             this.selectedId = String(id);
             if (this.$route?.query?.id !== id) {
                 this.$router.replace({ path: '/todo', query: { ...this.$route.query, id } }).catch(() => {});
             }
         },
         backToList() {
+            // 回列表前把这一篇没落库的改动写掉（自动保存有 0.8~1.5s 空窗）
+            this.$refs.panel?.flushNow?.();
             this.selectedId = '';
+            // 回到列表：顶栏必须露出来，否则用户看不到页面切换 / 新建
+            this.barsHidden = false;
             if (this.$route?.query?.id) {
                 const q = { ...this.$route.query };
                 delete q.id;
@@ -207,7 +238,15 @@ export default {
         async createTodo() {
             const folderId = this.activeFolder.startsWith('__') ? '' : this.activeFolder;
             try {
-                const r = await createArticle({ type: 'todo', folderId, title: '' });
+                /*
+                 * v1.4.1（需求）：
+                 *  · 标题自动填「待办 YYYY-MM-DD」
+                 *  · 待办没有草稿态，新建即发布（后端对 type=todo 的默认值也是 published）
+                 */
+                const d = new Date();
+                const p2 = (n) => String(n).padStart(2, '0');
+                const title = `待办 ${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+                const r = await createArticle({ type: 'todo', folderId, title, status: 'published' });
                 if (!r?.id) throw new Error(this.$t('article.saveFail'));
                 this.openTodo(r.id);
                 this.$refs.list?.reload?.();
@@ -281,6 +320,13 @@ export default {
     padding: 8px 14px;
     background: var(--el-bg-color);
     border-bottom: 1px solid var(--el-border-color-lighter);
+    /* v1.4.1（需求）：移动端上滚收起顶栏，高度按 JS 量的 --tp-tb-h 精确上移 */
+    transition: margin-top 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.14s linear;
+}
+.tp-page.is-topbar-hidden .tp-topbar {
+    margin-top: calc(-1 * var(--tp-tb-h, 49px) - 1px);
+    opacity: 0;
+    pointer-events: none;
 }
 .tp-topbar-right {
     margin-left: auto;

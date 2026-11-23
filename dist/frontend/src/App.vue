@@ -87,10 +87,23 @@ export default {
       const activate = (reason) => {
         if (document.hidden) return
         const now = Date.now()
-        if (reason !== 'pageshow' && now - lastActive < 30 * 1000) return
-        lastActive = now
-        this.$store.dispatch('fetchUserConfig').catch(() => {})
-        window.dispatchEvent(new CustomEvent('gohub:activate', { detail: { reason } }))
+        /*
+         * v1.4.1（需求：切出去不到 10 秒再回来，页面白屏不显示）
+         *
+         * 原来的 30 秒节流把「重排 + resize」也一起掐掉了：
+         * 短暂切到别的 App 再回来，页面冻结期间 visualViewport 高度变成 0，
+         * 回来时按 0 高度算出来的布局不会被重新量一遍，整页就是白的 ——
+         * 而这时 activate 因为不到 30 秒直接 return，连一次 resize 都没派发。
+         *
+         * 现在只有「拉配置 + 通知页面刷新数据」受节流；解锁 body 与强制重排
+         * 每次回到前台都做（纯本地操作，没有接口成本）。
+         */
+        const throttled = reason !== 'pageshow' && now - lastActive < 30 * 1000
+        if (!throttled) {
+          lastActive = now
+          this.$store.dispatch('fetchUserConfig').catch(() => {})
+          window.dispatchEvent(new CustomEvent('gohub:activate', { detail: { reason } }))
+        }
         /*
          * v1.3.2（需求：休眠回来「页面能加载但点不动 / 滚不动」）
          *

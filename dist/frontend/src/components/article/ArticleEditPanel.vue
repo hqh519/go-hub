@@ -12,7 +12,7 @@
         /article/edit/:id 是独立整页；/todo 把它嵌在右栏（embedded），
         两处共用这一个组件，避免两个页面各写一遍模块区。
     -->
-    <div class="aep-root" :class="{ 'is-embedded': embedded }">
+    <div class="aep-root" :class="{ 'is-embedded': embedded, 'is-bar-hidden': barsHidden }">
         <header class="aep-bar">
             <button v-if="!embedded" type="button" class="aep-back" @click="$emit('close')">
                 <font-awesome-icon icon="chevron-left" />
@@ -182,10 +182,25 @@
                         @dirty="onEditorDirty"
                     />
                 </div>
-                <aside class="aep-tabs" :class="{ 'is-mobile': isMobile }">
+                <!--
+                    v1.4.1（需求）：桌面端页签栏可以拖动左边框改宽度。
+                    宽度写进 localStorage，下次进来还是上次的宽度。
+                -->
+                <aside
+                    class="aep-tabs"
+                    :class="{ 'is-mobile': isMobile }"
+                    :style="isMobile ? null : { flexBasis: `${tabsWidth}px`, width: `${tabsWidth}px` }"
+                >
+                    <span
+                        v-if="!isMobile"
+                        class="aep-tabs-resizer"
+                        :title="$t('article.resizeTabs')"
+                        @pointerdown.prevent="startTabsResize"
+                    ></span>
                     <div class="aep-tabs-head">
                         <span>{{ $t('article.tabs') }}</span>
-                        <button type="button" class="aep-tabs-add" :title="$t('article.addTab')" @click="addTab">
+                        <!-- 移动端把「+」放到列表末尾（需求），桌面端仍留在标题右侧 -->
+                        <button v-if="!isMobile" type="button" class="aep-tabs-add" :title="$t('article.addTab')" @click="addTab">
                             <font-awesome-icon icon="plus" />
                         </button>
                     </div>
@@ -195,7 +210,11 @@
                             :key="t.id || `tab-${i}`"
                             class="aep-tab"
                             :class="{ 'is-active': i === activeTab }"
-                            @click="switchTab(i)"
+                            @click="onTabClick(i)"
+                            @touchstart.passive="onTabPressStart(i, $event)"
+                            @touchmove.passive="onTabPressMove($event)"
+                            @touchend="onTabPressEnd"
+                            @touchcancel="onTabPressEnd"
                         >
                             <span v-if="editingTab !== i" class="aep-tab-name" :title="t.title" @dblclick.stop="startRename(i)">
                                 {{ t.title || $t('article.untitledTab') }}
@@ -210,8 +229,12 @@
                                 @blur="finishRename(i)"
                                 @click.stop
                             />
+                            <!--
+                                v1.4.1（需求）：移动端不出小叉，改为长按页签弹菜单；
+                                正文（第一个页签）无论哪个终端都不允许删除。
+                            -->
                             <button
-                                v-if="tabs.length > 1"
+                                v-if="i > 0 && tabs.length > 1 && !isMobile"
                                 type="button"
                                 class="aep-tab-x"
                                 :title="$t('article.deleteTab')"
@@ -220,9 +243,44 @@
                                 <font-awesome-icon icon="times" />
                             </button>
                         </div>
+                        <!-- v1.4.1（需求）：移动端新增页签按钮排在最末尾 -->
+                        <button
+                            v-if="isMobile"
+                            type="button"
+                            class="aep-tab aep-tab-add-end"
+                            :title="$t('article.addTab')"
+                            @click.stop="addTab"
+                        >
+                            <font-awesome-icon icon="plus" />
+                            <span>{{ $t('article.addTab') }}</span>
+                        </button>
                     </div>
-                    <p class="aep-tabs-tip">{{ $t('article.tabTip') }}</p>
+                    <p class="aep-tabs-tip">{{ isMobile ? $t('article.tabTipMobile') : $t('article.tabTip') }}</p>
                 </aside>
+            </div>
+
+            <!-- v1.4.1：移动端长按页签弹出的操作菜单（重命名 / 删除） -->
+            <div v-if="tabMenu.open" class="aep-sheet-mask" @click.self="closeTabMenu" @touchmove.prevent>
+                <div class="aep-sheet">
+                    <p class="aep-sheet-title">{{ tabs[tabMenu.index]?.title || $t('article.untitledTab') }}</p>
+                    <button type="button" class="aep-sheet-item" @click="menuRenameTab">
+                        <font-awesome-icon icon="pen" />
+                        <span>{{ $t('article.renameTab') }}</span>
+                    </button>
+                    <button
+                        v-if="tabMenu.index > 0 && tabs.length > 1"
+                        type="button"
+                        class="aep-sheet-item is-danger"
+                        @click="menuDeleteTab"
+                    >
+                        <font-awesome-icon icon="trash" />
+                        <span>{{ $t('article.deleteTab') }}</span>
+                    </button>
+                    <p v-else class="aep-sheet-note">{{ $t('article.bodyTabLocked') }}</p>
+                    <button type="button" class="aep-sheet-item is-cancel" @click="closeTabMenu">
+                        {{ $t('common.cancel') }}
+                    </button>
+                </div>
             </div>
 
             <FilePickerDialog v-model="pickerVisible" :instance-id="instanceId" @confirm="onCoverPicked" />
@@ -309,6 +367,30 @@ export default {
             saving: false,
             metaTimer: null,
             tagTimer: null,
+            /**
+             * v1.4.1：页签保存的串行锁。正文自动保存（1.5s）与元信息保存（0.8s）
+             * 共用同一个 version，两个请求同时飞出去必然有一个 409；
+             * 排队后第二笔会等第一笔回来、用新版本号再发，不会自相残杀。
+             */
+            tabSaveLock: null,
+            /** v1.4.1：移动端长按页签的操作菜单 */
+            tabMenu: { open: false, index: -1 },
+            pressTimer: null,
+            pressFired: false,
+            pressStart: { x: 0, y: 0 },
+            /**
+             * v1.4.1：文章被删掉之后不要再往服务端写。
+             * 删除后组件会卸载，卸载钩子里的 flushNow 如果照常提交，
+             * 会把带着 status=published 的元信息写回已软删的行 —— 等于把文章复活。
+             */
+            closedByDelete: false,
+            /** v1.4.1：桌面端页签栏宽度（可拖动，记住上次） */
+            tabsWidth: 128,
+            /**
+             * v1.4.1（需求：移动端上滚隐藏「顶部栏 / 返回列表栏」）：
+             * 只有手机上才启用；桌面端保持常显，避免多一坨会动的像素。
+             */
+            barsHidden: false,
         };
     },
     computed: {
@@ -361,32 +443,16 @@ export default {
                 backlinks: false,
                 history: false,
                 saveNote: async (_id, payload) => {
-                    const put = async () => {
-                        const tabs = this.tabs.map((t, i) => ({
-                            id: t.id || '',
-                            title: t.title || '',
-                            content: i === this.activeTab ? String(payload?.content ?? '') : String(t.content || ''),
-                        }));
-                        const r = await saveArticleTabs(this.articleId, { tabs, version: this.version });
-                        this.applyTabsFromServer(r);
-                        return { version: r?.version, updatedAt: r?.updatedAt };
-                    };
-                    try {
-                        return await put();
-                    } catch (e) {
-                        const err = articleError(e);
-                        // 正文保存和元信息保存共用 version，偶尔会撞车。
-                        // 记事页撞车可以弹「覆盖/放弃」，文章页没有第二个副本，
-                        // 直接取一次最新版本号静默重试，避免正文白写。
-                        if (!err.conflict) throw err;
-                        try {
-                            const fresh = await fetchArticle(this.articleId);
-                            this.version = Number(fresh?.version) || this.version;
-                        } catch (_) {
-                            /* 取不到就按原版本再试一次 */
-                        }
-                        return await put();
-                    }
+                    /*
+                     * 编辑器以为自己在「保存一篇笔记」，实际接到「保存整批页签」上：
+                     * 当前页签用编辑器刚吐出来的正文，其它页签原样带回。
+                     * 走 persistTabs 而不是直接发请求，是为了和手动保存 / 元信息保存
+                     * 排在同一条队列里 —— 两笔同版本请求同时飞，必有一笔 409。
+                     */
+                    const cur = this.tabs[this.activeTab];
+                    if (cur && payload && typeof payload.content === 'string') cur.content = payload.content;
+                    const r = await this.persistTabs();
+                    return { version: r?.version, updatedAt: r?.updatedAt };
                 },
                 fetchNoteTags: async () => ({ tags: this.tags.map((name) => ({ name })) }),
                 saveNoteTags: async (_id, names) => {
@@ -410,18 +476,126 @@ export default {
         this.syncViewport();
         // 手机上先把「摘要 / 封面 / 分类 / 标签」收起来，把高度让给正文
         if (this.isMobile) this.fieldsOpen = false;
+        this.restoreTabsWidth();
         window.addEventListener('resize', this.syncViewport);
         window.addEventListener('beforeunload', this.flushOnLeave);
+        /* v1.4.1：正文滚动容器在编辑器内部，scroll 不冒泡 —— 用捕获阶段统一收 */
+        this.$el.addEventListener('scroll', this.onPanelScroll, true);
+        this.measureBarHeight();
+    },
+    updated() {
+        this.measureBarHeight();
     },
     beforeUnmount() {
         window.removeEventListener('resize', this.syncViewport);
         window.removeEventListener('beforeunload', this.flushOnLeave);
+        this.$el.removeEventListener('scroll', this.onPanelScroll, true);
+        this.stopTabsResize();
+        // 组件没了，页面顶栏也不能继续藏着
+        this.$emit('bars-hidden', false);
         // 离开页面把没落库的东西写掉 —— 自动保存虽快，切页往往就在 800ms 内
-        this.flushMeta();
+        this.flushNow();
     },
     methods: {
         syncViewport() {
             this.isMobile = window.innerWidth <= 900;
+            if (!this.isMobile) this.setBarsHidden(false);
+        },
+        /* ── v1.4.1：桌面端页签栏拖动改宽 ───────────────────── */
+        restoreTabsWidth() {
+            try {
+                const v = parseInt(localStorage.getItem('gohub_article_tabs_w') || '', 10);
+                if (v >= 96 && v <= 380) this.tabsWidth = v;
+            } catch (e) {
+                /* 隐私模式下 localStorage 会抛，忽略即可 */
+            }
+        },
+        startTabsResize(e) {
+            if (this.isMobile) return;
+            const startX = e.clientX;
+            const startW = this.tabsWidth;
+            const move = (ev) => {
+                // 页签栏贴在右边：往左拖 = 变宽
+                this.tabsWidth = Math.round(Math.min(380, Math.max(96, startW + (startX - ev.clientX))));
+            };
+            const up = () => {
+                window.removeEventListener('pointermove', move);
+                window.removeEventListener('pointerup', up);
+                window.removeEventListener('pointercancel', up);
+                this._barResizeOff = null;
+                try {
+                    localStorage.setItem('gohub_article_tabs_w', String(this.tabsWidth));
+                } catch (e2) {
+                    /* 忽略 */
+                }
+            };
+            this.stopTabsResize();
+            window.addEventListener('pointermove', move);
+            window.addEventListener('pointerup', up);
+            window.addEventListener('pointercancel', up);
+            this._barResizeOff = up;
+        },
+        stopTabsResize() {
+            if (!this._barResizeOff) return;
+            try {
+                this._barResizeOff();
+            } catch (e) {
+                /* 忽略 */
+            }
+            this._barResizeOff = null;
+        },
+        /**
+         * v1.4.1（需求：移动端上滚隐藏顶部栏 / 返回列表栏）
+         * 与记事页顶栏同一套判定：忽略横向容器、可滚范围过小的容器；
+         * 反向位移、切换后一瞬的 clamp 位移都当噪声丢掉，避免顶栏来回闪。
+         */
+        onPanelScroll(e) {
+            if (!this.isMobile) return;
+            const el = e.target;
+            if (!el || typeof el.scrollTop !== 'number') return;
+            const scrollX = el.scrollWidth - el.clientWidth;
+            const scrollY = el.scrollHeight - el.clientHeight;
+            if (scrollX > 4 && scrollY < 80) return;
+            const top = el.scrollTop;
+            if (scrollY < 120) {
+                if (top < 50 && (!this._barSwitchAt || Date.now() - this._barSwitchAt > 400)) this.setBarsHidden(false);
+                return;
+            }
+            const last = typeof el.__aepLastTop === 'number' ? el.__aepLastTop : top;
+            el.__aepLastTop = top;
+            const delta = top - last;
+            if (Math.abs(delta) < 4) return;
+            const barH = this._aepBarH || 44;
+            if (Date.now() - (this._barSwitchAt || 0) < 260 && Math.abs(delta) <= barH + 40) return;
+            const TURN_AT = 12;
+            if (delta > 0) {
+                const atBottom = scrollY - top <= 48;
+                if (atBottom || top >= TURN_AT) this.setBarsHidden(true);
+                return;
+            }
+            if (top < TURN_AT) this.setBarsHidden(false);
+        },
+        setBarsHidden(v) {
+            const next = this.isMobile ? !!v : false;
+            if (this.barsHidden === next) {
+                this.$emit('bars-hidden', next);
+                return;
+            }
+            const now = Date.now();
+            if (this._barSwitchAt && now - this._barSwitchAt < 320) return;
+            this.barsHidden = next;
+            this._barSwitchAt = now;
+            this.$emit('bars-hidden', next);
+        },
+        /** 顶栏真实高度写进 --aep-bar-h，收起时按它精确上移（否则会留一条细线） */
+        measureBarHeight() {
+            const bar = this.$el && this.$el.querySelector ? this.$el.querySelector('.aep-bar') : null;
+            if (!bar) return;
+            const h = bar.offsetHeight;
+            if (h > 0 && this._aepBarH !== h) {
+                this._aepBarH = h;
+                this.$el.style.setProperty('--aep-bar-h', `${h}px`);
+            }
         },
         flushOnLeave() {
             this.flushMeta();
@@ -449,8 +623,15 @@ export default {
         async load() {
             if (!this.articleId) return;
             this.loading = true;
+            /* v1.4.1：换到另一篇时把「已删除」标记复位，否则新的一篇永远存不上 */
+            this.closedByDelete = false;
+            // 换文档回到顶部语义：顶栏先露出来
+            this.setBarsHidden(false);
             try {
-                const a = await fetchArticle(this.articleId);
+                const id = this.articleId;
+                const a = await fetchArticle(id);
+                // 请求在飞的时候用户又切了另一篇 —— 丢掉这次结果，避免把旧内容灌进新页
+                if (this.articleId !== id) return;
                 this.form = {
                     title: String(a?.title || ''),
                     excerpt: String(a?.excerpt || ''),
@@ -520,6 +701,57 @@ export default {
             this.activeTab = i;
             this.mountEditor();
         },
+        /* ── v1.4.1：页签点按 / 长按菜单 ───────────────────── */
+        onTabClick(i) {
+            // 长按刚弹过菜单，这一下 click 是手指抬起带出来的，不要再切页
+            if (this.pressFired) {
+                this.pressFired = false;
+                return;
+            }
+            this.switchTab(i);
+        },
+        onTabPressStart(i, e) {
+            if (!this.isMobile) return;
+            const t = (e.touches && e.touches[0]) || null;
+            this.pressStart = { x: t ? t.clientX : 0, y: t ? t.clientY : 0 };
+            this.pressFired = false;
+            clearTimeout(this.pressTimer);
+            this.pressTimer = setTimeout(() => {
+                this.pressFired = true;
+                this.openTabMenu(i);
+            }, 520);
+        },
+        onTabPressMove(e) {
+            if (!this.pressTimer) return;
+            const t = (e.touches && e.touches[0]) || null;
+            if (!t) return;
+            // 手指在滑动（想滚动页签栏）就取消长按
+            if (Math.abs(t.clientX - this.pressStart.x) > 10 || Math.abs(t.clientY - this.pressStart.y) > 10) {
+                this.onTabPressEnd();
+            }
+        },
+        onTabPressEnd() {
+            clearTimeout(this.pressTimer);
+            this.pressTimer = null;
+        },
+        openTabMenu(i) {
+            if (i < 0 || i >= this.tabs.length) return;
+            if (this.editingTab === i) return;
+            this.tabMenu = { open: true, index: i };
+        },
+        closeTabMenu() {
+            this.tabMenu = { open: false, index: -1 };
+        },
+        menuRenameTab() {
+            const i = this.tabMenu.index;
+            this.closeTabMenu();
+            if (i >= 0) this.startRename(i);
+        },
+        async menuDeleteTab() {
+            const i = this.tabMenu.index;
+            this.closeTabMenu();
+            if (i > 0) await this.removeTab(i, true);
+        },
         addTab() {
             if (this.tabs.length >= 30) {
                 ElMessage.warning(this.$t('article.tabLimit'));
@@ -532,19 +764,22 @@ export default {
             this.dirty = true;
             this.markDirty();
         },
-        async removeTab(i) {
+        async removeTab(i, skipConfirm) {
             if (this.tabs.length <= 1) {
                 ElMessage.warning(this.$t('article.keepOneTab'));
                 return;
             }
-            try {
-                await ElMessageBox.confirm(
-                    this.$t('article.deleteTabTip', { name: this.tabs[i]?.title || '' }),
-                    this.$t('article.deleteTab'),
-                    { type: 'warning', confirmButtonText: this.$t('common.confirm'), cancelButtonText: this.$t('common.cancel') },
-                );
-            } catch (e) {
-                return;
+            // 移动端长按菜单已经确认过一次，这里不再弹第二个框
+            if (!skipConfirm) {
+                try {
+                    await ElMessageBox.confirm(
+                        this.$t('article.deleteTabTip', { name: this.tabs[i]?.title || '' }),
+                        this.$t('article.deleteTab'),
+                        { type: 'warning', confirmButtonText: this.$t('common.confirm'), cancelButtonText: this.$t('common.cancel') },
+                    );
+                } catch (e) {
+                    return;
+                }
             }
             this.captureActiveTab();
             this.tabs.splice(i, 1);
@@ -591,52 +826,117 @@ export default {
                 clearTimeout(this.metaTimer);
                 this.metaTimer = null;
             }
-            if (!this.articleId || !this.dirty) return;
-            const payload = {
-                title: this.form.title,
-                excerpt: this.form.excerpt,
-                note: this.form.note,
-                coverFileId: this.form.coverFileId,
-                folderId: this.form.folderId,
-                status: this.form.status,
-                version: this.version,
-            };
+            if (!this.articleId || !this.dirty || this.closedByDelete) return true;
+            const metaId = this.articleId;
+            /*
+             * v1.4.1：与页签保存排同一条队列。
+             * 元信息（0.8s 防抖）与正文自动保存（1.5s）各有各的定时器，
+             * 两个定时器撞在一起就会同时拿同一个 version 发两笔请求，必有一笔 409。
+             * 排队后第二笔等第一笔回来、带着新版本号再发，从源头避免自相残杀。
+             */
+            const prev = this.tabSaveLock || Promise.resolve();
+            let release;
+            this.tabSaveLock = new Promise((r) => (release = r));
             try {
-                const r = await updateArticle(this.articleId, payload);
-                this.version = Number(r?.version) || this.version;
-                this.dirty = false;
-                this.$emit('changed');
-                this.$emit('saved', { id: this.articleId, title: this.form.title });
-            } catch (e) {
-                const err = articleError(e);
-                if (err.conflict) {
-                    // 自己两条保存路径撞车（元信息 vs 页签）：拿到最新版本重试一次，不打断用户
-                    try {
-                        const a = await fetchArticle(this.articleId);
-                        this.version = Number(a?.version) || this.version;
-                        const r2 = await updateArticle(this.articleId, { ...payload, version: this.version });
-                        this.version = Number(r2?.version) || this.version;
-                        this.dirty = false;
-                        this.$emit('changed');
-                        return;
-                    } catch (e2) {
-                        ElMessage.error(articleError(e2).message || this.$t('article.saveFail'));
-                        return;
+                await prev.catch(() => {});
+                if (!this.dirty || this.closedByDelete || this.articleId !== metaId) return true;
+                const payload = {
+                    title: this.form.title,
+                    excerpt: this.form.excerpt,
+                    note: this.form.note,
+                    coverFileId: this.form.coverFileId,
+                    folderId: this.form.folderId,
+                    status: this.form.status,
+                    version: this.version,
+                };
+                try {
+                    const r = await updateArticle(metaId, payload);
+                    if (this.articleId !== metaId) return true; // 期间切了文章，不回写状态
+                    this.version = Number(r?.version) || this.version;
+                    this.dirty = false;
+                    this.$emit('changed');
+                    this.$emit('saved', { id: this.articleId, title: this.form.title });
+                    return true;
+                } catch (e) {
+                    const err = articleError(e);
+                    if (err.conflict) {
+                        // 外部（另一标签页 / 另一端）改过：取最新版本重试一次，不打断用户
+                        try {
+                            const a = await fetchArticle(metaId);
+                            this.version = Number(a?.version) || this.version;
+                            const r2 = await updateArticle(metaId, { ...payload, version: this.version });
+                            this.version = Number(r2?.version) || this.version;
+                            this.dirty = false;
+                            this.$emit('changed');
+                            return true;
+                        } catch (e2) {
+                            ElMessage.error(articleError(e2).message || this.$t('article.saveFail'));
+                            return false;
+                        }
                     }
+                    ElMessage.error(err.message || this.$t('article.saveFail'));
+                    return false;
                 }
-                ElMessage.error(err.message || this.$t('article.saveFail'));
+            } finally {
+                release();
             }
         },
-        /** 保存页签（正文 + 顺序 + 页签名） */
-        async saveTabsNow() {
-            if (!this.articleId) return;
-            this.captureActiveTab();
-            const tabs = this.tabs.map((t) => ({ id: t.id || '', title: t.title || '', content: String(t.content || '') }));
+        /**
+         * v1.4.1：页签保存的唯一入口 —— 串行 + 冲突重试。
+         *
+         * 之前「保存有时无效」的三个根因都在这里：
+         *   1. 编辑器自动保存与手动保存各发一笔、同一个 version → 后到的那笔 409，
+         *      而 409 的错误被 catch 掉只弹个 toast，正文其实没落库；
+         *   2. 冲突后没有重试，用户刷新就回到旧版本；
+         *   3. 保存按钮不看结果，失败了照样弹「已保存」。
+         * 现在：所有页签保存排进同一条队列，冲突时取最新版本再提交一次，
+         * 失败如实返回 false，由调用方决定要不要报错。
+         */
+        async persistTabs() {
+            if (this.closedByDelete) return null;
+            const prev = this.tabSaveLock || Promise.resolve();
+            let release;
+            this.tabSaveLock = new Promise((r) => (release = r));
             try {
-                const r = await saveArticleTabs(this.articleId, { tabs, version: this.version });
-                this.applyTabsFromServer(r);
+                await prev.catch(() => {});
+                const tabId = this.articleId;
+                if (!tabId || this.closedByDelete) return null;
+                this.captureActiveTab();
+                const built = () =>
+                    this.tabs.map((t) => ({ id: t.id || '', title: t.title || '', content: String(t.content || '') }));
+                const put = async () => {
+                    const r = await saveArticleTabs(tabId, { tabs: built(), version: this.version });
+                    // 请求在飞时切到了另一篇：结果丢掉，别把旧编号的页签回填到新文章
+                    if (this.articleId === tabId) this.applyTabsFromServer(r);
+                    return r;
+                };
+                try {
+                    return await put();
+                } catch (e) {
+                    const err = articleError(e);
+                    if (!err.conflict) throw err;
+                    // 取服务端最新版本号后重试一次：正文以本地为准（用户正在编辑的就是它）
+                    try {
+                        const a = await fetchArticle(tabId);
+                        this.version = Number(a?.version) || this.version;
+                    } catch (e2) {
+                        /* 拿不到版本就按原版本再试一次 */
+                    }
+                    return await put();
+                }
+            } finally {
+                release();
+            }
+        },
+        /** 保存页签（正文 + 顺序 + 页签名）；quiet = 由 saveAll 统一提示，不各自弹 toast */
+        async saveTabsNow(quiet = false) {
+            if (!this.articleId) return false;
+            try {
+                await this.persistTabs();
+                return true;
             } catch (e) {
-                ElMessage.error(articleError(e).message || this.$t('article.saveFail'));
+                if (!quiet) ElMessage.error(articleError(e).message || this.$t('article.saveFail'));
+                return false;
             }
         },
         /** 服务端回来的页签：只回填 id 与统计，不碰编辑器里正在编辑的正文 */
@@ -659,16 +959,68 @@ export default {
             this.$emit('changed');
         },
         async saveAll() {
+            if (this.saving) return;
             this.saving = true;
             try {
-                await this.flushMeta();
-                await this.saveTabsNow();
-                // 编辑器里的正文也清一次脏标记，顶部状态才回到「已保存」
-                this.editorDirty = false;
-                ElMessage.success(this.$t('article.savedOk'));
+                /*
+                 * v1.4.1（保存无效的修复）：
+                 *   1. 先掐掉还挂着的两处防抖（元信息 0.8s / 编辑器 1.5s）——
+                 *      否则它们会在手动保存之后又发一笔旧版本号的请求；
+                 *   2. 编辑器正在保存时等它落地，它的回调会把 version 更新到最新；
+                 *   3. 两步都拿到明确结果，只有都成功才提示「已保存」。
+                 */
+                if (this.metaTimer) {
+                    clearTimeout(this.metaTimer);
+                    this.metaTimer = null;
+                }
+                const ed = this.$refs.editor;
+                if (ed && ed.saveTimer) {
+                    clearTimeout(ed.saveTimer);
+                    ed.saveTimer = null;
+                }
+                await this.waitEditorIdle(ed);
+
+                const okMeta = await this.flushMeta();
+                const okTabs = await this.saveTabsNow(true);
+                if (okMeta && okTabs) {
+                    this.editorDirty = false;
+                    this.$emit('changed');
+                    ElMessage.success(this.$t('article.savedOk'));
+                } else {
+                    // 明确告诉用户没存上，而不是弹一个「已保存」让他放心去刷新
+                    ElMessage.error(this.$t('article.saveFail'));
+                }
             } finally {
                 this.saving = false;
             }
+        },
+        /** 等编辑器把在飞的那笔保存跑完（最多 3 秒，避免异常时一直卡住） */
+        async waitEditorIdle(ed) {
+            if (!ed || !ed.saving) return;
+            for (let i = 0; i < 50 && ed.saving; i += 1) {
+                await new Promise((r) => setTimeout(r, 60));
+            }
+        },
+        /**
+         * v1.4.1：把当前这篇没落库的改动立刻写掉。
+         * 页面在「切换到另一篇 / 返回列表 / 换分类」之前调用它 ——
+         * 自动保存再快也有 0.8~1.5s 的空窗，正好在这时切走就会丢最后一笔。
+         */
+        async flushNow() {
+            if (!this.articleId || this.closedByDelete) return;
+            if (this.metaTimer) {
+                clearTimeout(this.metaTimer);
+                this.metaTimer = null;
+            }
+            const ed = this.$refs.editor;
+            if (ed && ed.saveTimer) {
+                clearTimeout(ed.saveTimer);
+                ed.saveTimer = null;
+            }
+            await this.waitEditorIdle(ed);
+            this.captureActiveTab();
+            await this.flushMeta();
+            await this.saveTabsNow(true);
         },
         onEditorSaved() {
             this.editorDirty = false;
@@ -682,7 +1034,9 @@ export default {
             const next = this.form.status === 'published' ? 'draft' : 'published';
             this.form.status = next;
             this.dirty = true;
-            await this.flushMeta();
+            const ok = await this.flushMeta();
+            // v1.4.1：失败就别报「已发布」，否则用户以为上线了，刷新还是草稿
+            if (!ok) return;
             ElMessage.success(next === 'published' ? this.$t('article.published') : this.$t('article.unpublished'));
         },
         async remove() {
@@ -697,6 +1051,7 @@ export default {
             }
             try {
                 await deleteArticle(this.articleId);
+                this.closedByDelete = true;
                 ElMessage.success(this.$t('article.deleted'));
                 this.$emit('changed');
                 this.$emit('close');
@@ -777,6 +1132,13 @@ export default {
     gap: 10px;
     padding: 7px 12px;
     border-bottom: 1px solid var(--el-border-color-lighter);
+    /* v1.4.1（需求）：移动端上滚收起顶栏，动画与记事页顶栏保持一致 */
+    transition: margin-top 0.18s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.14s linear;
+}
+.aep-root.is-bar-hidden .aep-bar {
+    margin-top: calc(-1 * var(--aep-bar-h, 44px) - 1px);
+    opacity: 0;
+    pointer-events: none;
 }
 .aep-back {
     display: inline-flex;
@@ -1109,6 +1471,7 @@ export default {
     min-width: 0;
 }
 .aep-tabs {
+    position: relative;
     flex: 0 0 128px;
     width: 128px;
     border-left: 1px solid var(--el-border-color-lighter);
@@ -1116,6 +1479,30 @@ export default {
     flex-direction: column;
     min-height: 0;
     background: var(--el-fill-color-lighter);
+}
+/* v1.4.1：拖动条压在页签栏左边缘，命中区比视觉线宽一些，好抓 */
+.aep-tabs-resizer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 8px;
+    transform: translateX(-4px);
+    cursor: col-resize;
+    z-index: 3;
+}
+.aep-tabs-resizer::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 2px;
+    width: 1px;
+    background: transparent;
+    transition: background 0.15s;
+}
+.aep-tabs-resizer:hover::after {
+    background: var(--el-color-primary-light-5);
 }
 .aep-tabs-head {
     flex: 0 0 auto;
@@ -1202,6 +1589,21 @@ export default {
 }
 .aep-tab-x:hover {
     color: var(--el-color-danger);
+}
+/* v1.4.1：移动端排在页签末尾的「新增页签」 */
+.aep-tab-add-end {
+    flex: 0 0 auto;
+    gap: 4px;
+    border: 1px dashed var(--el-border-color);
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-size: 11.5px;
+    padding: 0 10px;
+}
+.aep-tab-add-end:hover {
+    border-color: var(--el-color-primary);
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
 }
 .aep-tabs-tip {
     flex: 0 0 auto;

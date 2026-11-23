@@ -171,6 +171,7 @@ export class ArticleController {
       folderId: body.folderId,
       title: body.title,
       content: body.content,
+      status: body.status,
     });
     this.unwrap(r as { error?: string });
     return { success: true, data: r };
