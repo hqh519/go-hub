@@ -378,6 +378,7 @@
                     :folder-id="trashMode ? '__trash' : '__all'"
                     :instance-id="instanceId"
                     :search-text="search"
+                    :hide-actions="kind === 'todo'"
                     hide-toolbar
                     @edit="openArticleEdit"
                     @create="createArticleHere"

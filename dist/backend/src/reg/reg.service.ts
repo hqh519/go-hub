@@ -128,6 +128,8 @@ export interface RegLegendInput {
 export interface RegEntryInput {
   trackerId?: string;
   trackerName?: string;
+  /** v1.4.1.2：条目描述（新建条目时随条目落库；已有条目以条目上的描述为准） */
+  trackerDesc?: string;
   instanceId?: string;
   title?: string;
   /** 兼容旧调用（CSV 导入 / 老前端）：等同 trackerName */
@@ -233,6 +235,12 @@ export class RegService {
     if (existed) {
       const patch: Record<string, unknown> = {};
       if (input.scene !== undefined) patch.scene = String(input.scene).slice(0, 24);
+      /*
+       * v1.4.1.2：描述跟着条目走。已有条目以条目上的描述为准（表单里是锁定态），
+       * 只有条目原本没描述、而这次表单填了，才补写进去 —— 不覆盖用户已有内容。
+       */
+      const descIn = text(input.trackerDesc, 500);
+      if (descIn && !String(existed.desc || '').trim()) patch.desc = descIn;
       if (Object.keys(patch).length) {
         const row = await prisma.regTracker.update({ where: { id: existed.id }, data: patch });
         return { row, locked: true };
@@ -251,6 +259,8 @@ export class RegService {
         portion: text(input.portion, 32),
         unitKind: String(input.unitKind || '').slice(0, 24),
         precision: Math.max(0, Math.min(6, Math.round(num(input.precision, 2)))),
+        /* v1.4.1.2：新建条目时把表单里的「描述」一起落库 */
+        desc: text(input.trackerDesc, 500),
       },
     });
     return { row, locked: false };
@@ -267,7 +277,7 @@ export class RegService {
     id: string,
     input: {
       name?: string; valueType?: string; unit?: string; portion?: string;
-      scene?: string; note?: string; precision?: number;
+      scene?: string; note?: string; precision?: number; desc?: string;
     },
     owner: string,
   ) {
@@ -296,10 +306,12 @@ export class RegService {
         portion,
         ...(input.scene === undefined ? {} : { scene: String(input.scene).slice(0, 24) }),
         ...(input.note === undefined ? {} : { note: String(input.note).slice(0, 200) }),
+        /* v1.4.1.2：条目描述（登记设置 → 条目编辑里改） */
+        ...(input.desc === undefined ? {} : { desc: String(input.desc).trim().slice(0, 500) }),
         ...(input.precision === undefined ? {} : { precision: Math.max(0, Math.min(6, Math.round(num(input.precision, 2)))) }),
       },
     });
-    return { id: row.id, name: row.name, unit: row.unit, portion: row.portion, valueType: row.valueType };
+    return { id: row.id, name: row.name, unit: row.unit, portion: row.portion, valueType: row.valueType, desc: row.desc };
   }
 
   /**
@@ -722,6 +734,22 @@ export class RegService {
   }
 
   /**
+   * v1.4.1.1（需求：统计类型=时长时改按天数算）
+   * 时长 = 截止时间 - 起始时间；没有起始时间就减发生时间，再没有就减登记时间。
+   * 结果统一换算成「天」（保留两位小数），后续统计与图表都按天运算。
+   */
+  private durationDaysOf(r: any): number {
+    const due = r?.dueAt ? new Date(r.dueAt).getTime() : NaN;
+    if (!Number.isFinite(due)) return 0;
+    const start = r?.startAt ? new Date(r.startAt).getTime() : NaN;
+    const occurred = r?.occurredAt ? new Date(r.occurredAt).getTime() : NaN;
+    const created = r?.createdAt ? new Date(r.createdAt).getTime() : NaN;
+    const base = [start, occurred, created].find((t) => Number.isFinite(t));
+    if (!Number.isFinite(base as number)) return 0;
+    return Math.round(((due - (base as number)) / 86400000) * 100) / 100;
+  }
+
+  /**
    * 统计（一次查库，内存里按「总范围 → 图例」分派）。
    *
    * 总范围配置 = 实例 + 账户口径（scope）+ 类型范围 + 条目 + 时间范围（按横轴字段筛）
@@ -800,6 +828,9 @@ export class RegService {
     }
     const hasDefaultExtra = Object.keys(defaultWhere).length !== Object.keys(totalWhere).length;
 
+    /* v1.4.1.1（需求）：统计类型选「时长」时，所有数值改按「截止 - 起始」的天数算 */
+    const durationMode = type === 'duration';
+
     const rows = await prisma.regEntry.findMany({
       where: defaultWhere as any,
       include: {
@@ -834,8 +865,8 @@ export class RegService {
     /* 单位是否混用：混用时卡片不再挂一个会误导人的单位 */
     const unitKeys = new Set<string>();
     for (const r of rows) {
-      const m = this.metricOf(r, axisY);
-      const v = num(r.amount) * (r.quantity === 0 ? 1 : num(r.quantity, 1));
+      const m = durationMode ? this.durationDaysOf(r) : this.metricOf(r, axisY);
+      const v = durationMode ? m : num(r.amount) * (r.quantity === 0 ? 1 : num(r.quantity, 1));
       total += m;
       quantity += num(r.quantity, 1);
       if (m > max) max = m;
@@ -887,9 +918,12 @@ export class RegService {
     }
     /* v1.3.5.10：图表用「只按总范围配置」的数据，自定义图例项不再被默认项附属条件过滤；
        没有传图例时退回按默认项范围出图（兼容旧调用） */
-    const chart = this.buildChart(legends.length ? chartRows : rows, { axisX, axisY, bucket, from, to, legends });
+    const chart = this.buildChart(legends.length ? chartRows : rows, { axisX, axisY, bucket, from, to, legends, durationMode });
     /* 只有「默认项」时是全部条目一起统计，单位不一致就不显示单位（否则会误导） */
-    if (!legends.some((l) => !l.isDefault) && unitKeys.size > 1) {
+    if (durationMode) {
+      chart.unit = '天';
+      chart.portion = '';
+    } else if (!legends.some((l) => !l.isDefault) && unitKeys.size > 1) {
       chart.unit = '';
       chart.portion = '';
     }
@@ -915,8 +949,8 @@ export class RegService {
       byWeekday,
       histogram: this.buildHistogram(values),
       /* 概览卡片的单位按「总范围」算：单位混用时不挂单位，免得把 分 和 元 加在一起还标个元 */
-      unit: unitKeys.size > 1 ? '' : (firstTracker ? String(firstTracker.unit || '') : ''),
-      portion: unitKeys.size > 1 ? '' : (firstTracker ? String(firstTracker.portion || '') : ''),
+      unit: durationMode ? '天' : (unitKeys.size > 1 ? '' : (firstTracker ? String(firstTracker.unit || '') : '')),
+      portion: durationMode ? '' : (unitKeys.size > 1 ? '' : (firstTracker ? String(firstTracker.portion || '') : '')),
       currency: (rows[0] as any)?.currency || '',
       bucket,
       axisX,
@@ -964,9 +998,14 @@ export class RegService {
    */
   private buildChart(
     rows: any[],
-    opt: { axisX: string; axisY: string; bucket: string; from: Date | null; to: Date | null; legends: RegLegendInput[] },
+    opt: {
+      axisX: string; axisY: string; bucket: string; from: Date | null; to: Date | null;
+      legends: RegLegendInput[];
+      /** v1.4.1.1：时长模式 —— 每个点的值 = 截止 - 起始（天） */
+      durationMode?: boolean;
+    },
   ) {
-    const { axisX, axisY, bucket, from, to, legends } = opt;
+    const { axisX, axisY, bucket, from, to, legends, durationMode } = opt;
     const groups = legends.length ? legends : [null as unknown as RegLegendInput];
 
     const keyOf = (r: any) => {
@@ -1000,7 +1039,7 @@ export class RegService {
       for (const r of hit) {
         const k = keyOf(r);
         if (!k) continue;
-        const m = this.metricOf(r, axisY);
+        const m = durationMode ? this.durationDaysOf(r) : this.metricOf(r, axisY);
         map.set(k, (map.get(k) || 0) + m);
         sum += m;
       }

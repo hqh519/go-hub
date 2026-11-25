@@ -168,7 +168,7 @@ export async function createNote({ title = '', content = '', folderId = '' }) {
   return unwrap(res);
 }
 
-export async function saveNote(id, { title, content, folderId, version, mood, moodName, weather, weatherName }) {
+export async function saveNote(id, { title, content, folderId, version, mood, moodName, weather, weatherName, markerName }) {
   try {
     const res = await axios.put(`/api/memo/${encodeURIComponent(id)}`, {
       title,
@@ -179,6 +179,8 @@ export async function saveNote(id, { title, content, folderId, version, mood, mo
       moodName,
       weather,
       weatherName,
+      /* v1.4.1.2（Bug 修复）：这里之前漏了 markerName —— 编辑器传了也会被丢掉，标记永远存不进去 */
+      markerName,
       instanceId: inst(),
     });
     return unwrap(res);

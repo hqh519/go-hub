@@ -23,7 +23,23 @@
                 <p class="ms-tip">{{ $t('memo.toolbarTip') }}</p>
                 <textarea v-model="draft.toolbar" class="ms-textarea" rows="5" spellcheck="false"></textarea>
                 <p class="ms-tip ms-token-title">{{ $t('memo.toolbarAvail') }}：</p>
-                <p class="ms-token-text">{{ availableTokens }}</p>
+                <!--
+                    v1.4.1.1（需求）：与记事管理页顶栏的「编辑器设置」完全同款 ——
+                    工具名是可点击的 chip，点一下复制到剪贴板并在下方回显中文名称。
+                    原来这里只是一段纯文本，两边打开看到的东西不一样。
+                -->
+                <div class="ms-token-list">
+                    <el-tooltip
+                        v-for="tk in availableToolList"
+                        :key="'tk-' + tk"
+                        :content="tokenLabel(tk)"
+                        placement="top"
+                        :show-after="120"
+                    >
+                        <button type="button" class="ms-token" @click="copyToken(tk)">{{ tk }}</button>
+                    </el-tooltip>
+                </div>
+                <p class="ms-copied">{{ copiedTool ? $t('memo.tokenCopied', { name: copiedTool }) : $t('memo.tokenCopyTip') }}</p>
             </div>
 
             <!-- v1.4.1（需求）：回车插入实体换行 -->
@@ -135,6 +151,8 @@
                 </div>
                 <el-switch v-model="draft.blockIds" />
             </div>
+
+            <p class="ms-tip">{{ $t('memo.settingsPerUser') }}</p>
         </div>
 
         <template #footer>
@@ -181,6 +199,8 @@ export default {
         return {
             loading: false,
             saving: false,
+            /** v1.4.1.1：点工具名后回显「刚复制的是哪一个」 */
+            copiedTool: '',
             /** 接口返回的完整设置，保存时作为底稿合并 */
             raw: null,
             draft: {
@@ -216,11 +236,71 @@ export default {
         availableTokens() {
             return (Array.isArray(TOOLBAR_TOKENS) ? TOOLBAR_TOKENS : []).join(' ');
         },
+        availableToolList() {
+            return Array.isArray(TOOLBAR_TOKENS) ? TOOLBAR_TOKENS : [];
+        },
         cssPlaceholder() {
             return 'h1 { font-size: 1.9em; color: #1f2937 }\np { line-height: 1.9 }';
         },
     },
     methods: {
+        /**
+         * v1.4.1.1：工具名 → 中文名称（与记事管理页同一套映射）。
+         * 大多数工具名就是 `memo.tool` + 首字母大写，少数历史命名不一致的单独列出。
+         */
+        tokenLabel(tk) {
+            const key = `memo.tool${tk.charAt(0).toUpperCase()}${tk.slice(1)}`;
+            if (this.$te(key)) return this.$t(key);
+            const alias = {
+                bulletList: 'memo.toolBullet',
+                orderedList: 'memo.toolOrdered',
+                taskList: 'memo.toolTask',
+                blockquote: 'memo.toolQuote',
+                hardBreak: 'memo.toolLineBreak',
+                tableAddRow: 'memo.tblAddRow',
+                tableAddCol: 'memo.tblAddCol',
+                tableDelRow: 'memo.tblDelRow',
+                tableDelCol: 'memo.tblDelCol',
+                tableMerge: 'memo.tblMerge',
+                tableSplit: 'memo.tblSplit',
+                tableDelete: 'memo.tblDelete',
+                tableAddRowBefore: 'memo.tblAddRowBefore',
+                tableAddColBefore: 'memo.tblAddColBefore',
+                fontSize: 'memo.bubFontSize',
+                textColor: 'memo.bubColor',
+                publish: 'memo.publishToMoment',
+                subDoc: 'memo.subDoc',
+                listConvert: 'memo.toolListConvert',
+                imgSizeCycle: 'memo.toolImgSize',
+                mediaPreview: 'memo.toolMediaPreview',
+                mediaDetail: 'memo.toolFileDetail',
+                deleteNode: 'memo.ctxDelete',
+            };
+            return alias[tk] && this.$te(alias[tk]) ? this.$t(alias[tk]) : tk;
+        },
+        async copyToken(name) {
+            const text = String(name || '');
+            if (!text) return;
+            try {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(text);
+                } else {
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                }
+                const label = this.tokenLabel(text);
+                this.copiedTool = label && label !== text ? `${text}（${label}）` : text;
+            } catch (e) {
+                const label = this.tokenLabel(text);
+                this.copiedTool = label && label !== text ? `${text}（${label}）` : text;
+            }
+        },
         async onOpen() {
             this.loading = true;
             try {
@@ -315,6 +395,38 @@ export default {
 }
 .ms-token-title {
     margin-top: 8px;
+}
+/* v1.4.1.1：可用工具 chip（与记事管理页的设置面板同款） */
+.ms-token-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 132px;
+    overflow-y: auto;
+    padding: 6px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 6px;
+    background: var(--el-fill-color-lighter);
+}
+.ms-token {
+    padding: 2px 7px;
+    border: 1px solid var(--el-border-color-lighter);
+    border-radius: 5px;
+    background: var(--el-bg-color);
+    color: var(--el-text-color-regular);
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    cursor: pointer;
+}
+.ms-token:hover {
+    border-color: var(--el-color-primary);
+    color: var(--el-color-primary);
+}
+.ms-copied {
+    margin: 6px 0 0;
+    font-size: 11.5px;
+    color: var(--el-text-color-secondary);
 }
 .ms-token-text {
     margin: 0;

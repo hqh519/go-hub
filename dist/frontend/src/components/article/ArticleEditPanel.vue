@@ -56,10 +56,29 @@
                         <font-awesome-icon :icon="metaCollapsed ? 'chevron-down' : 'chevron-up'" />
                         <span>{{ $t('article.modules') }}</span>
                     </button>
+                    <!--
+                        v1.4.1.1（需求）：待办要有「截止时间」。
+                        模块区在待办里默认收起，所以这个控件放在收起也不会消失的标题行上，
+                        而不是塞进下面的表单 —— 免得用户要先展开模块才找得到。
+                    -->
+                    <div v-if="type === 'todo'" class="aep-due" :class="{ 'is-urgent': dueLeft && dueLeft.urgent, 'is-overdue': dueLeft && dueLeft.overdue }">
+                        <font-awesome-icon icon="calendar-day" class="aep-due-icon" />
+                        <el-date-picker
+                            v-model="dueAtModel"
+                            class="aep-due-picker"
+                            type="datetime"
+                            size="small"
+                            :placeholder="$t('article.dueAtPlaceholder')"
+                            :teleported="true"
+                        />
+                        <span v-if="dueLeft" class="aep-due-left">{{ dueLeft.text }}</span>
+                    </div>
                     <span class="aep-meta-hint">{{ $t('article.autosaveHint') }}</span>
                 </div>
                 <div v-show="!metaCollapsed" class="aep-meta-body">
+                    <!-- v1.4.1.1：待办的标题由编辑器渲染（工具栏下一行），这里只在文章里出现 -->
                     <input
+                        v-if="type !== 'todo'"
                         v-model="form.title"
                         class="aep-title"
                         type="text"
@@ -132,7 +151,8 @@
                                 <el-option v-for="o in folderOptions" :key="o.id" :label="o.label" :value="o.id" />
                             </el-select>
                         </label>
-                        <div class="aep-field">
+                        <!-- v1.4.1.1：待办的标签行由编辑器渲染（与笔记一致），这里只在文章里出现 -->
+                        <div v-if="type !== 'todo'" class="aep-field">
                             <span class="aep-label">{{ $t('article.tags') }}</span>
                             <div class="aep-tags">
                                 <span v-for="(t, i) in tags" :key="`${t}-${i}`" class="aep-tag">
@@ -176,7 +196,7 @@
                         :instance-id="instanceId"
                         :toolbar-config="toolbarConfig"
                         :editor-config="editorConfig"
-                        hide-head
+                        :hide-head="type !== 'todo'"
                         :api="editorApi"
                         @saved="onEditorSaved"
                         @dirty="onEditorDirty"
@@ -249,10 +269,11 @@
                             type="button"
                             class="aep-tab aep-tab-add-end"
                             :title="$t('article.addTab')"
+                            :aria-label="$t('article.addTab')"
                             @click.stop="addTab"
                         >
+                            <!-- v1.4.1.1（需求）：移动端只要图标，不带文字 -->
                             <font-awesome-icon icon="plus" />
-                            <span>{{ $t('article.addTab') }}</span>
                         </button>
                     </div>
                     <p class="aep-tabs-tip">{{ isMobile ? $t('article.tabTipMobile') : $t('article.tabTip') }}</p>
@@ -346,8 +367,20 @@ export default {
                 folderId: '',
                 status: 'draft',
                 done: false,
+                /* v1.4.1.1：待办编辑区标题栏的心情 / 天气 / 标记（与笔记同一套 key） */
+                mood: '',
+                moodName: '',
+                weather: '',
+                weatherName: '',
+                markerName: '',
+                /* v1.4.1.1：截止时间（毫秒时间戳，0 = 不设截止） */
+                dueAt: 0,
             },
             version: 1,
+            /** v1.4.1.1：待办编辑区的「保存时间」用（编辑器的元信息行要显示） */
+            articleUpdatedAt: 0,
+            /** v1.4.1.1：截止时间的「剩几天」基准 —— 需求要求用发布时间算 */
+            articlePublishedAt: 0,
             wordCount: 0,
             todoTotal: 0,
             todoDone: 0,
@@ -434,6 +467,35 @@ export default {
             return 'is-saved';
         },
         /**
+         * v1.4.1.1（需求）：待办的截止时间。
+         * 表单里存毫秒时间戳（0 = 未设），选择器要 Date，故用带 setter 的计算属性转一道。
+         */
+        dueAtModel: {
+            get() {
+                return this.form.dueAt ? new Date(this.form.dueAt) : null;
+            },
+            set(v) {
+                const ts = v ? new Date(v).getTime() : 0;
+                this.form.dueAt = Number.isFinite(ts) && ts > 0 ? ts : 0;
+                this.onMetaInput();
+            },
+        },
+        /**
+         * 剩余时间提示：与列表同一口径（截止时间 - 发布时间），
+         * 不足 1 天按「剩几时」，过期只留「已逾期」。
+         */
+        dueLeft() {
+            const due = Number(this.form.dueAt) || 0;
+            if (!due) return null;
+            const base = this.articlePublishedAt || Date.now();
+            const diff = due - base;
+            if (diff < 0) return { text: this.$t('article.dueOverdue'), overdue: true, urgent: false };
+            const days = Math.floor(diff / 86400000);
+            if (days >= 1) return { text: this.$t('article.dueDays', { n: days }), overdue: false, urgent: false };
+            const hours = Math.max(1, Math.floor(diff / 3600000));
+            return { text: this.$t('article.dueHours', { n: hours }), overdue: false, urgent: true };
+        },
+        /**
          * 给编辑器的接口注入（v1.4.0）：
          * 编辑器以为自己在「保存一篇笔记」，实际落到「保存当前页签」——
          * 标题不在这里改（由上方标题模块单独保存），反链与历史本版关闭。
@@ -441,7 +503,12 @@ export default {
         editorApi() {
             return {
                 backlinks: false,
-                history: false,
+                /*
+                 * v1.4.1.1（需求）：待办的标题栏要显示「历史版本」。
+                 * 文章没有历史表，点开是空列表（接口 404 已被 loadHistory 吞掉），
+                 * 所以只在待办里放出来，避免文章页多一个点了没反应的按钮。
+                 */
+                history: this.type === 'todo',
                 saveNote: async (_id, payload) => {
                     /*
                      * 编辑器以为自己在「保存一篇笔记」，实际接到「保存整批页签」上：
@@ -451,6 +518,36 @@ export default {
                      */
                     const cur = this.tabs[this.activeTab];
                     if (cur && payload && typeof payload.content === 'string') cur.content = payload.content;
+                    /*
+                     * v1.4.1.1：待办的标题 / 心情 / 天气 / 标记由编辑器那一行改，
+                     * 但落库位置是 articles（不是 notes）。这里把它们同步回 form，
+                     * 先走一次元信息保存，再保存页签 —— 两笔都在同一条队列上，不会撞版本。
+                     */
+                    if (this.type === 'todo' && payload) {
+                        let metaDirty = false;
+                        if (typeof payload.title === 'string' && payload.title !== this.form.title) {
+                            this.form.title = payload.title;
+                            metaDirty = true;
+                        }
+                        if (typeof payload.mood === 'string' && (payload.mood !== this.form.mood || String(payload.moodName || '') !== this.form.moodName)) {
+                            this.form.mood = payload.mood;
+                            this.form.moodName = String(payload.moodName || '');
+                            metaDirty = true;
+                        }
+                        if (typeof payload.weather === 'string' && (payload.weather !== this.form.weather || String(payload.weatherName || '') !== this.form.weatherName)) {
+                            this.form.weather = payload.weather;
+                            this.form.weatherName = String(payload.weatherName || '');
+                            metaDirty = true;
+                        }
+                        if (typeof payload.markerName === 'string' && payload.markerName !== this.form.markerName) {
+                            this.form.markerName = payload.markerName;
+                            metaDirty = true;
+                        }
+                        if (metaDirty) {
+                            this.dirty = true;
+                            await this.flushMeta();
+                        }
+                    }
                     const r = await this.persistTabs();
                     return { version: r?.version, updatedAt: r?.updatedAt };
                 },
@@ -476,6 +573,12 @@ export default {
         this.syncViewport();
         // 手机上先把「摘要 / 封面 / 分类 / 标签」收起来，把高度让给正文
         if (this.isMobile) this.fieldsOpen = false;
+        /*
+         * v1.4.1.1（需求：待办编辑区改成笔记样式）：
+         * 标题已经在编辑器的工具栏下一行，模块区只剩摘要 / 备注 / 封面 / 分类，
+         * 默认收起，打开待办第一眼就是「工具栏 → 标题 → 正文」。
+         */
+        if (this.type === 'todo') this.metaCollapsed = true;
         this.restoreTabsWidth();
         window.addEventListener('resize', this.syncViewport);
         window.addEventListener('beforeunload', this.flushOnLeave);
@@ -610,12 +713,21 @@ export default {
                 folderId: '',
                 status: 'draft',
                 done: false,
+                mood: '',
+                moodName: '',
+                weather: '',
+                weatherName: '',
+                markerName: '',
+                /* v1.4.1.1：截止时间（毫秒时间戳，0 = 不设截止） */
+                dueAt: 0,
             };
             this.tabs = [];
             this.activeTab = 0;
             this.editorNote = null;
             this.tags = [];
             this.version = 1;
+            this.articleUpdatedAt = 0;
+            this.articlePublishedAt = 0;
             this.wordCount = 0;
             this.todoTotal = 0;
             this.todoDone = 0;
@@ -641,8 +753,18 @@ export default {
                     folderId: String(a?.folderId || ''),
                     status: String(a?.status || 'draft'),
                     done: !!a?.done,
+                    // v1.4.1.1：待办标题栏字段（文章不用，但一并带上不影响）
+                    mood: String(a?.mood || ''),
+                    moodName: String(a?.moodName || ''),
+                    weather: String(a?.weather || ''),
+                    weatherName: String(a?.weatherName || ''),
+                    markerName: String(a?.markerName || ''),
+                    // v1.4.1.1：截止时间（0 = 不设截止）
+                    dueAt: Number(a?.dueAt) || 0,
                 };
                 this.version = Number(a?.version) || 1;
+                this.articleUpdatedAt = Number(a?.updatedAt) || 0;
+                this.articlePublishedAt = Number(a?.publishedAt) || Number(a?.createdAt) || 0;
                 this.wordCount = Number(a?.wordCount) || 0;
                 this.todoTotal = Number(a?.todoTotal) || 0;
                 this.todoDone = Number(a?.todoDone) || 0;
@@ -672,12 +794,23 @@ export default {
         mountEditor() {
             const t = this.tabs[this.activeTab] || { title: '', content: '' };
             tabSeq += 1;
+            /*
+             * v1.4.1.1（需求）：待办编辑区改成与笔记一样 —— 标题由编辑器自己渲染
+             * （工具栏下一行），所以这里把文章标题传进去，而不是页签名。
+             * 文章仍走 hideHead，标题留在上方模块区，行为不变。
+             */
+            const isTodo = this.type === 'todo';
             this.editorNote = {
                 id: this.articleId,
-                title: t.title || '',
+                title: isTodo ? String(this.form.title || '') : t.title || '',
                 content: String(t.content || ''),
                 version: this.version,
-                updatedAt: 0,
+                updatedAt: this.articleUpdatedAt,
+                mood: isTodo ? String(this.form.mood || '') : '',
+                moodName: isTodo ? String(this.form.moodName || '') : '',
+                weather: isTodo ? String(this.form.weather || '') : '',
+                weatherName: isTodo ? String(this.form.weatherName || '') : '',
+                markerName: isTodo ? String(this.form.markerName || '') : '',
                 seq: tabSeq,
             };
         },
@@ -849,6 +982,15 @@ export default {
                     status: this.form.status,
                     version: this.version,
                 };
+                /* v1.4.1.1：待办标题栏的心情 / 天气 / 标记也走这一笔保存 */
+                if (this.type === 'todo') {
+                    payload.mood = this.form.mood;
+                    payload.moodName = this.form.moodName;
+                    payload.weather = this.form.weather;
+                    payload.weatherName = this.form.weatherName;
+                    payload.markerName = this.form.markerName;
+                    payload.dueAt = this.form.dueAt;
+                }
                 try {
                     const r = await updateArticle(metaId, payload);
                     if (this.articleId !== metaId) return true; // 期间切了文章，不回写状态
@@ -1252,6 +1394,47 @@ export default {
     font-size: 11px;
     color: var(--el-text-color-placeholder);
 }
+/* v1.4.1.1（需求）：待办截止时间 —— 放在模块标题行，收起模块也看得见 */
+.aep-due {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.aep-due-icon {
+    font-size: 11px;
+    color: var(--el-text-color-placeholder);
+}
+.aep-due-picker {
+    width: 176px;
+}
+.aep-due-picker .el-input__wrapper {
+    box-shadow: none;
+    background: var(--el-fill-color-light);
+}
+.aep-due-picker .el-input__inner {
+    font-size: 12px;
+}
+.aep-due-left {
+    flex: 0 0 auto;
+    padding: 0 7px;
+    height: 20px;
+    line-height: 20px;
+    border-radius: 5px;
+    background: var(--el-fill-color-light);
+    color: var(--el-text-color-secondary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.aep-due.is-urgent .aep-due-left {
+    background: var(--el-color-warning-light-9);
+    color: var(--el-color-warning);
+}
+.aep-due.is-overdue .aep-due-left {
+    background: var(--el-color-danger-light-9);
+    color: var(--el-color-danger);
+}
 .aep-meta-body {
     margin-top: 6px;
 }
@@ -1591,14 +1774,18 @@ export default {
     color: var(--el-color-danger);
 }
 /* v1.4.1：移动端排在页签末尾的「新增页签」 */
+/* v1.4.1.1（需求）：移动端的「新增页签」只留图标，做成与页签同高的方形虚线按钮 */
 .aep-tab-add-end {
     flex: 0 0 auto;
-    gap: 4px;
+    justify-content: center;
+    gap: 0;
+    width: 40px;
+    min-width: 40px;
+    padding: 0;
     border: 1px dashed var(--el-border-color);
     background: transparent;
     color: var(--el-text-color-secondary);
-    font-size: 11.5px;
-    padding: 0 10px;
+    font-size: 12px;
 }
 .aep-tab-add-end:hover {
     border-color: var(--el-color-primary);
@@ -1642,6 +1829,16 @@ export default {
     }
     .aep-meta {
         padding: 6px 10px 8px;
+    }
+    /* v1.4.1.1：手机上模块标题行只留「模块 + 截止时间」，提示与剩余徽标让位 */
+    .aep-meta-hint {
+        display: none;
+    }
+    .aep-due-picker {
+        width: 148px;
+    }
+    .aep-due-left {
+        padding: 0 5px;
     }
     .aep-grid-3 {
         grid-template-columns: 1fr;

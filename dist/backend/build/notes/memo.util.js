@@ -75,7 +75,11 @@ function withBlockIds(md) {
             out.push(bare);
             continue;
         }
-        if (tableRows.has(i) || !isBlockLine(bare)) {
+        const prev = i > 0 ? lines[i - 1] : null;
+        const isBrContinuation = !!prev
+            && !prev.inFence
+            && /<br\s*\/?>$/.test(prev.text.replace(BLOCK_ID_RE, '').replace(/[ \t]+$/, ''));
+        if (isBrContinuation || tableRows.has(i) || !isBlockLine(bare)) {
             out.push(bare);
             continue;
         }
@@ -111,7 +115,7 @@ function plainTextOf(md) {
         let t = line
             .replace(/^\s{0,3}#{1,6}\s*/, '')
             .replace(/^\s{0,3}>\s?/, '')
-            .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/, '')
+            .replace(/^\s*[-*+]\s+\[[ xX]\]\s*/, '')
             .replace(/^\s*[-*+]\s+/, '')
             .replace(/^\s*\d+[.)]\s+/, '')
             .replace(/^\s*\|/, '')

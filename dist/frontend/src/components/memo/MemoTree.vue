@@ -16,7 +16,12 @@
     -->
     <div class="mt-root">
         <div class="mt-head">
-            <span class="mt-title">{{ $t('memo.treeTitle') }}</span>
+            <!-- v1.4.1.1（需求）：聚焦节点后顶部给出「退出聚焦」 -->
+            <button v-if="focusId" type="button" class="mt-focus-exit" :title="$t('memo.exitFocus')" @click="clearFocus">
+                <font-awesome-icon icon="times" />
+                <span>{{ $t('memo.exitFocus') }}</span>
+            </button>
+            <span v-else class="mt-title">{{ $t('memo.treeTitle') }}</span>
             <div class="mt-head-actions">
                 <!-- 一键收起 / 展开全部层级 -->
                 <button
@@ -105,7 +110,7 @@
                             <font-awesome-icon :icon="node.expanded ? 'angles-up' : 'angles-down'" />
                         </button>
                         <el-dropdown
-                            trigger="click"
+                            :trigger="isDesktop ? 'hover' : 'click'"
                             class="mt-node-more"
                             :class="{ 'is-leaf': !hasChildren(data) }"
                             @command="(cmd) => onCommand(cmd, data)"
@@ -116,11 +121,18 @@
                             </button>
                             <template #dropdown>
                                 <el-dropdown-menu>
+                                    <!-- v1.4.1.1（需求）：菜单补「编辑节点」「聚焦节点」，两个「查看 / 新建」改叫「子级」 -->
+                                    <el-dropdown-item command="edit">
+                                        {{ $t('memo.editNode') }}
+                                    </el-dropdown-item>
                                     <el-dropdown-item v-if="hasChildren(data)" command="view">
                                         {{ $t('memo.viewNode') }}
                                     </el-dropdown-item>
                                     <el-dropdown-item command="child">
                                         {{ $t('memo.newChildNote') }}
+                                    </el-dropdown-item>
+                                    <el-dropdown-item v-if="hasChildren(data)" command="focus" divided>
+                                        {{ $t('memo.focusNode') }}
                                     </el-dropdown-item>
                                     <el-dropdown-item command="rename" :disabled="data.isSystem">
                                         {{ $t('memo.rename') }}
@@ -158,6 +170,11 @@
             <div class="mts-row">
                 <label class="mts-label">{{ $t('memo.nodeShowLines') }}</label>
                 <el-switch v-model="settingsDraft.showLines" size="small" />
+            </div>
+            <!-- v1.4.1.1（需求）：点目录节点只展开一级，而不是打开这篇记事 -->
+            <div class="mts-row">
+                <label class="mts-label">{{ $t('memo.nodeClickFolderExpand') }}</label>
+                <el-switch v-model="settingsDraft.clickFolderExpand" size="small" />
             </div>
             <div class="mts-section-title">{{ $t('memo.nodeFolderIcon') }}</div>
             <el-select v-model="settingsDraft.folderIcon" size="small" class="mts-select">
@@ -271,6 +288,11 @@ export default {
             /** 草稿里代表「默认图标」的哨兵值（空串会被 el-select 当成未选择而显示 placeholder） */
             DEFAULT_PICK: '__default__',
             /** 移动 */
+            /** v1.4.1.1（需求）：聚焦节点 —— 非空时树只显示该节点及其子级 */
+            focusId: '',
+            focusTitle: '',
+            /** 桌面端「更多菜单」鼠标移上去就展开（移动端保持点击） */
+            isDesktop: true,
             moveVisible: false,
             moveSaving: false,
             moveTargetId: '',
@@ -342,7 +364,12 @@ export default {
         },
     },
     mounted() {
+        this.syncDesktop();
+        window.addEventListener('resize', this.syncDesktop);
         this.reload();
+    },
+    beforeUnmount() {
+        window.removeEventListener('resize', this.syncDesktop);
     },
     methods: {
         /** 子节点 id 列表（按扁平 nodes 算） */
@@ -389,6 +416,14 @@ export default {
                     children: depth < 60 ? make(n.id, depth + 1) : [],
                 }));
             };
+            /*
+             * v1.4.1.1（需求：聚焦节点）：只把被聚焦的节点当作唯一的一级目录，
+             * 它的子孙照常往下挂 —— 树的其他分支整棵不出现。
+             */
+            if (this.focusId) {
+                const focus = list.find((n) => String(n.id) === String(this.focusId));
+                if (focus) return [{ ...focus, children: make(focus.id, 1) }];
+            }
             const roots = make('', 0);
             // 系统节点按 笔记/日记/札记/灵感/模板 的固定顺序排，其余按 sort
             const order = { 笔记: 0, 日记: 1, 札记: 2, 灵感: 3, 模板: 4 };
@@ -504,8 +539,42 @@ export default {
             this.search = '';
             this.applyFilter();
         },
+        syncDesktop() {
+            this.isDesktop = window.innerWidth > 900;
+        },
+        /**
+         * v1.4.1.1（需求）：节点设置里开了「点击目录节点展开子级」后，
+         * 点有子级的目录只展开 / 收起一级，不再跳去打开这篇记事。
+         */
         onNodeClick(data) {
+            if (this.settings.clickFolderExpand && this.hasChildren(data)) {
+                const store = this.$refs.tree && this.$refs.tree.store;
+                const nm = store && store.nodesMap ? store.nodesMap[data.id] : null;
+                if (nm) {
+                    nm.expanded = !nm.expanded;
+                    if (nm.expanded) {
+                        if (!this.openKeys.includes(data.id)) this.openKeys.push(data.id);
+                    } else {
+                        this.openKeys = this.openKeys.filter((id) => id !== data.id);
+                    }
+                    return;
+                }
+            }
             this.$emit('select', data.id);
+        },
+        /** v1.4.1.1（需求）：聚焦节点 —— 只留该目录及其子级，作为唯一的一级目录 */
+        focusNode(data) {
+            if (!data || !data.id) return;
+            this.focusId = String(data.id);
+            this.focusTitle = String(data.title || '');
+            this.applyExpandedKeys([this.focusId]);
+            this.$emit('focus-node', { id: this.focusId, title: this.focusTitle });
+        },
+        clearFocus() {
+            this.focusId = '';
+            this.focusTitle = '';
+            this.reload();
+            this.$emit('focus-node', { id: '', title: '' });
         },
         allowDrag(node) {
             return !node.data.isSystem;
@@ -541,6 +610,8 @@ export default {
             }
         },
         onCommand(cmd, data) {
+            if (cmd === 'edit') return this.$emit('select', data.id);
+            if (cmd === 'focus') return this.focusNode(data);
             if (cmd === 'child') return this.$emit('create-child', { id: data.id, docType: data.docType });
             if (cmd === 'rename') return this.doRename(data);
             if (cmd === 'move') return this.openMove(data);
@@ -653,6 +724,8 @@ export default {
             this.settingsDraft = {
                 rowHeight: s.rowHeight,
                 showLines: s.showLines,
+                /* v1.4.1.2（Bug 修复）：这一项之前漏在草稿之外，开关拨了也存不进去 */
+                clickFolderExpand: !!s.clickFolderExpand,
                 folderIcon: s.folderIcon || this.DEFAULT_PICK,
                 typeIcons,
             };
@@ -670,6 +743,8 @@ export default {
                 const saved = await apiSaveNodeSettings({
                     rowHeight: d.rowHeight,
                     showLines: d.showLines,
+                    /* v1.4.1.2：点击目录节点是否展开子级，随这一批设置一起提交 */
+                    clickFolderExpand: !!d.clickFolderExpand,
                     folderIcon: !d.folderIcon || d.folderIcon === this.DEFAULT_PICK ? '' : d.folderIcon,
                     typeIcons,
                 });
@@ -705,6 +780,24 @@ export default {
     padding: 8px 10px 6px;
     font-size: 12px;
     color: var(--el-text-color-secondary);
+}
+/* v1.4.1.1（需求）：聚焦态下顶部换成「退出聚焦」按钮 */
+.mt-focus-exit {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 9px;
+    border: none;
+    border-radius: 6px;
+    background: var(--el-color-primary-light-9);
+    color: var(--el-color-primary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.mt-focus-exit:hover {
+    background: var(--el-color-primary-light-8);
 }
 .mt-title {
     font-weight: 600;
@@ -815,6 +908,13 @@ export default {
     height: 100%;
     border-left: 1px dashed var(--el-border-color);
     pointer-events: none;
+}
+/*
+ * v1.4.1.1（需求）：最后一个子节点的竖线不再拖到整棵子树末尾，
+ * 只画到本行文字的底部（行高减去行内的上下留白）。
+ */
+.mt-tree.show-lines :deep(.el-tree-node__children > .el-tree-node:last-child)::before {
+    height: calc(var(--mt-row-h, 32px) - 8px);
 }
 /* 子级行左侧留出原「横向短线」占的 11px，去掉横线后层级缩进保持不变 */
 .mt-tree :deep(.el-tree-node__children > .el-tree-node > .el-tree-node__content) {

@@ -7,7 +7,8 @@
  *   2) 待办完成率 —— 需求要求「检测正文中共有几个待办项、完成了几个」，
  *      这里按 markdown 任务列表语法统计，代码块内的示例不算（不能把教程里的
  *      `- [ ]` 当成真的待办）；
- *   3) 摘要兜底 —— 用户没填摘要时，从正文首段推一段，列表不留空。
+ *   3) 摘要兜底 —— 用户没填摘要时，从正文首段推一段，列表不留空；
+ *      v1.4.1.1 起待办再往前一步：先取正文任务项名称当简介。
  */
 import { plainTextOf, countMemoWords, stripBlockIds } from '../notes/memo.util';
 
@@ -82,11 +83,79 @@ export function countTodoTasks(md: unknown): { total: number; done: number } {
   return { total, done };
 }
 
-/** 摘要兜底：正文首段纯文本，最多 max 字 */
+/**
+ * v1.4.1.1（需求：列表简介要过滤源码、文件等非文本）：
+ * 把「看得见但读不出句子」的东西先剔掉 —— 代码围栏整段、附件 / 文件引用。
+ * 图片与链接交给 plainTextOf 继续降级成 alt / 文字。
+ */
+function dropNonText(md: unknown): string {
+  const src = stripBlockIds(String(md ?? ''));
+  const kept: string[] = [];
+  let inFence = false;
+  let fenceMark = '';
+  for (const raw of src.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    const fence = /^\s{0,3}(```+|~~~+)/.exec(line);
+    if (fence) {
+      const mark = fence[1][0];
+      if (!inFence) {
+        inFence = true;
+        fenceMark = mark;
+      } else if (mark === fenceMark) {
+        inFence = false;
+        fenceMark = '';
+      }
+      continue;
+    }
+    if (inFence) continue;
+    // `![[file:xxx|名称]]` / `[[file:xxx]]`：附件不是正文，名称也不进摘要
+    kept.push(line.replace(/!?\[\[file:[^\]]*\]\](\{[^}]*\})?/g, ' '));
+  }
+  return kept.join('\n');
+}
+
+/** 摘要兜底：正文首段纯文本，最多 max 字（代码与附件不算正文） */
 export function excerptOfArticle(md: unknown, max = 140): string {
-  const text = plainTextOf(md).replace(/\s+/g, ' ').trim();
+  const text = plainTextOf(dropNonText(md)).replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+/**
+ * v1.4.1.1（需求）：待办列表的简介优先看「正文里的任务项名称」。
+ *
+ * 没有手填摘要时，任务列表的项目名本身就是这篇待办的提纲，
+ * 比正文首段更像简介；一条都没有（用户在正文里没写任务）时才回落到正文。
+ * 代码围栏里的 `- [ ]` 依然不算（同 countTodoTasks 的口径）。
+ */
+export function todoNamesOfArticle(md: unknown, max = 140): string {
+  const text = stripBlockIds(String(md ?? '')) || '';
+  const names: string[] = [];
+  let inFence = false;
+  let fenceMark = '';
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    const fence = /^\s{0,3}(```+|~~~+)/.exec(line);
+    if (fence) {
+      const mark = fence[1][0];
+      if (!inFence) {
+        inFence = true;
+        fenceMark = mark;
+      } else if (mark === fenceMark) {
+        inFence = false;
+        fenceMark = '';
+      }
+      continue;
+    }
+    if (inFence) continue;
+    if (!/^\s*(?:[-*+]|\d+[.)])\s+\[(?:[ xX])\]\s*\S/.test(line)) continue;
+    // 复用 plainTextOf 剥掉 `- [ ]`、加粗、行内代码等标记，只留项目名
+    const name = plainTextOf(line).replace(/\s+/g, ' ').trim();
+    if (name) names.push(name);
+  }
+  if (!names.length) return '';
+  const joined = names.join(' · ');
+  return joined.length > max ? `${joined.slice(0, max)}…` : joined;
 }
 
 /** 正文字数（与记事页同一套口径：汉字 + 字母） */

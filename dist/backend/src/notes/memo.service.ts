@@ -19,6 +19,7 @@ import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
 import { safeParse, normalizeTagNames } from './notes.util';
 import { findOrCreateTag } from '../common/tags';
+import { findOrCreateMarker } from '../common/markers';
 import { countMemoChars, countMemoWords, excerptOf, titleFromContent, withBlockIds } from './memo.util';
 import { parseBlocks, parseLinks } from './memo-block.util';
 
@@ -102,6 +103,8 @@ const ROOT_DOC_TYPE: Record<string, MemoNodeType> = {
 const DEFAULT_NODE_SETTINGS = {
   rowHeight: 30,
   showLines: true,
+  /** v1.4.1.1：点目录节点只展开一级（关 = 点节点直接打开这篇记事） */
+  clickFolderExpand: false,
   folderIcon: 'book-bookmark',
   typeIcons: { note: 'file-lines', diary: 'heart', journal: 'feather-pointed', inspiration: 'lightbulb', template: '' } as Record<string, string>,
 };
@@ -840,6 +843,7 @@ export class MemoService {
     return {
       rowHeight: Math.min(64, Math.max(22, asInt(saved.rowHeight, def.rowHeight))),
       showLines: typeof saved.showLines === 'boolean' ? saved.showLines : def.showLines,
+      clickFolderExpand: typeof saved.clickFolderExpand === 'boolean' ? saved.clickFolderExpand : def.clickFolderExpand,
       folderIcon: typeof saved.folderIcon === 'string' ? saved.folderIcon.slice(0, 60) : def.folderIcon,
       typeIcons,
     };
@@ -852,6 +856,7 @@ export class MemoService {
     const next = {
       rowHeight: Math.min(64, Math.max(22, asInt(src.rowHeight, cur.rowHeight))),
       showLines: typeof src.showLines === 'boolean' ? src.showLines : cur.showLines,
+      clickFolderExpand: typeof src.clickFolderExpand === 'boolean' ? src.clickFolderExpand : cur.clickFolderExpand,
       folderIcon: typeof src.folderIcon === 'string' ? String(src.folderIcon).slice(0, 60) : cur.folderIcon,
       typeIcons: { ...cur.typeIcons },
     };
@@ -1389,6 +1394,20 @@ export class MemoService {
       where: { id, author: viewer, instanceId, kind: 'memo' },
     });
     if (!row) return null;
+    /*
+     * v1.4.1.1（需求）：编辑器标题栏的「标记」。
+     * 关联在 note_markers（一条内容只能有一个标记），这里取出名称给前端回填。
+     */
+    let markerName = '';
+    try {
+      const link = await prisma.noteMarker.findUnique({
+        where: { noteId: id },
+        select: { marker: { select: { name: true } } },
+      });
+      markerName = String(link?.marker?.name || '');
+    } catch (e) {
+      markerName = '';
+    }
     return {
       id: row.id,
       title: String(row.title || ''),
@@ -1405,6 +1424,8 @@ export class MemoService {
       moodName: String((row as any).moodName || ''),
       weather: String((row as any).weather || ''),
       weatherName: String((row as any).weatherName || ''),
+      // v1.4.1.1：标记名称（空 = 未设置）
+      markerName,
       version: asInt(row.version, 1),
       status: String(row.status || ''),
       createdAt: timeOf(row.createdAt),
@@ -1511,6 +1532,7 @@ export class MemoService {
     input: {
       title?: unknown; content?: unknown; folderId?: unknown; version?: unknown;
       mood?: unknown; moodName?: unknown; weather?: unknown; weatherName?: unknown;
+      markerName?: unknown;
     },
   ) {
     const row = await prisma.note.findFirst({
@@ -1565,6 +1587,22 @@ export class MemoService {
       data.folderId = folderId;
     }
     const next = await prisma.note.update({ where: { id }, data: data as any, select: { version: true, updatedAt: true } });
+    /*
+     * v1.4.1.1（需求）：标记（单选）—— 写 markers 表 + note_markers 关联。
+     * 与心情 / 天气同一套「传了才改」的规则：编辑器普通自动保存不带 markerName，
+     * 不能把已经设好的标记清掉；传空串才代表清空。
+     */
+    if (input.markerName !== undefined) {
+      try {
+        const name = String(input.markerName ?? '').trim().slice(0, 120);
+        const marker = name ? await findOrCreateMarker(name, instanceId, viewer, 'note') : null;
+        await prisma.noteMarker.deleteMany({ where: { noteId: id } });
+        if (marker) await prisma.noteMarker.create({ data: { noteId: id, markerId: marker.id } });
+      } catch (e) {
+        // 标记是附加信息，写失败不该把整次保存拖垮
+        appLog.warn('memo', `保存标记失败：笔记 ${id}`);
+      }
+    }
     /*
      * 块索引跟着 md 走。内部已 try/catch，索引挂了也不影响这次保存 ——
      * 索引是派生物，随时能从 md 重建；内容才是真源。

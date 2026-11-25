@@ -58,6 +58,38 @@ function encodeAnnNote(v) {
     .replace(/\n/g, '&#10;');
 }
 
+/**
+ * v1.4.1.1：匹配一个 `<span class="...">…</span>`，**按嵌套深度找配对的结束标签**。
+ *
+ * 旧实现用 `([\s\S]*?)<\/span>` 做非贪婪匹配，遇到第一个 `</span>` 就截断。带嵌套的
+ * 行内样式（颜色套字号）一落盘就会变成：
+ *   `<span class="gh-c-orange"><span class="gh-fs-24">{变调}</span></span>`
+ * 解析成「c-orange 包住 `<span class="gh-fs-24">{变调}`」+ 一个裸露的 `</span>`，
+ * 于是「刚设置样式时正常，刷新后错乱」。
+ *
+ * 这里从开标签往后逐个数 `<span>` / `</span>`，深度归零才是真正的结尾。
+ */
+function matchSpanBlock(rest, clsRe) {
+  const open = new RegExp(`^<span class="${clsRe}">`, 'i').exec(rest);
+  if (!open) return null;
+  const innerStart = open[0].length;
+  const tagRe = /<span\b[^>]*>|<\/span\s*>/gi;
+  tagRe.lastIndex = innerStart;
+  let depth = 1;
+  let m;
+  while ((m = tagRe.exec(rest))) {
+    if (m[0].charAt(1) === '/') {
+      depth -= 1;
+      if (depth === 0) {
+        return { m: open, inner: rest.slice(innerStart, m.index), len: m.index + m[0].length };
+      }
+    } else {
+      depth += 1;
+    }
+  }
+  return null;
+}
+
 function parseInline(src, marks = []) {
   const out = [];
   let buf = '';
@@ -184,16 +216,18 @@ function parseInline(src, marks = []) {
       i += m[0].length;
       continue;
     }
-    if ((m = /^<span class="gh-fs-(s|m|l|[0-9]+)">([\s\S]*?)<\/span>/i.exec(rest))) {
+    const fsSpan = matchSpanBlock(rest, 'gh-fs-(s|m|l|[0-9]+)');
+    if (fsSpan) {
       flush();
-      out.push(...parseInline(m[2], withMark({ type: 'fontSize', attrs: { size: m[1].toLowerCase() } })));
-      i += m[0].length;
+      out.push(...parseInline(fsSpan.inner, withMark({ type: 'fontSize', attrs: { size: fsSpan.m[1].toLowerCase() } })));
+      i += fsSpan.len;
       continue;
     }
-    if ((m = /^<span class="gh-c-([a-z]+)">([\s\S]*?)<\/span>/i.exec(rest))) {
+    const colorSpan = matchSpanBlock(rest, 'gh-c-([a-z]+)');
+    if (colorSpan) {
       flush();
-      out.push(...parseInline(m[2], withMark({ type: 'textColor', attrs: { color: m[1] } })));
-      i += m[0].length;
+      out.push(...parseInline(colorSpan.inner, withMark({ type: 'textColor', attrs: { color: colorSpan.m[1] } })));
+      i += colorSpan.len;
       continue;
     }
     if ((m = /^(\*\*|__)([\s\S]+?)\1/.exec(rest))) {
@@ -571,7 +605,11 @@ function collectList(lines, start, kind) {
         i = next > i ? next : i + 1;
         continue;
       }
-      last.text += ` ${trimmed}`;
+      /*
+       * v1.4.1.1：上一截以 `<br>` 结尾时不要再补空格 —— 那个空格会变成
+       * 换行后的行首空白（`第一行<br> 第二行`），看着像多缩进了一格。
+       */
+      last.text += /<br\s*\/?>$/i.test(last.text) ? trimmed : ` ${trimmed}`;
       i += 1;
       continue;
     }
@@ -621,7 +659,12 @@ export function mdToDoc(md) {
     const parts = text.split('\n');
     const inline = [];
     parts.forEach((line, idx) => {
-      if (idx > 0) inline.push({ type: 'hardBreak' });
+      /*
+       * v1.4.1.1（需求：`<br>` 后面带真换行，解析时不能算两次）
+       * 序列化把硬换行写成 `<br>\n`，切行后上一行末尾就留着 `<br>`；
+       * 此时这一行的换行已经由它表达，再补 hardBreak 会变成两个空行。
+       */
+      if (idx > 0 && !/<br\s*\/?>$/i.test(parts[idx - 1])) inline.push({ type: 'hardBreak' });
       /*
        * 去掉行尾空白再解析：`hardBreak` 序列化成两个空格 + 换行，
        * 这两个空格如果被当正文读进来，下次序列化又加一遍 —— 每保存一次就多两个空格，
@@ -1024,6 +1067,22 @@ function escapeLineStart(text) {
   return String(text || '').replace(/^(\s*)(#{1,6}\s|>|[-*+]\s|\d+[.)]\s)/, '$1\\$2');
 }
 
+/**
+ * v1.4.1.1（需求：回车插入实体换行时，`<br>` 后面要跟一个真换行）
+ *
+ * v1.3.1.2 把 hardBreak 写成 `<br>`，只保证「渲染出来是换行」；在源码模式里
+ * 它挤在同一行（`第一行<br>第二行`），看起来就像「只塞了个符号、根本没换行」。
+ * 这里统一在 `<br>` 后面补上换行符，把「符号」和「真换行」两件事一起做到。
+ *
+ * 末尾的 `<br>` 不补换行 —— 段落末尾留一个空行会让块之间多出空行，
+ * 每次保存多一行，md 文件会「越长越胖」。
+ */
+function breakNewlines(text) {
+  return String(text || '')
+    .replace(/<br\s*\/?>/gi, '<br>\n')
+    .replace(/\n+$/, '');
+}
+
 function inlineToMd(nodes = []) {
   const out = [];
   for (const n of nodes) {
@@ -1104,7 +1163,16 @@ function listItemToMd(item, kind, depth, index) {
   const text = first && first.type === 'paragraph' ? inlineToMd(first.content) : '';
   const bullet =
     kind === 'ordered' ? `${index + 1}. ` : kind === 'task' ? `- [${item.attrs?.checked ? 'x' : ' '}] ` : '- ';
-  const lines = [`${pad}${bullet}${escapeLineStart(text)}`];
+  /*
+   * v1.4.1.1（需求：实体换行要「插入 <br> 且真的换行」）
+   * 列表项里的换行不能写成顶格的新行 —— 那样列表就断了。写成「缩进对齐正文」的续行，
+   * 解析侧的续行合并逻辑认得它（见 buildList 里 `<br>` 结尾不再补空格那一段）。
+   */
+  const textLines = breakNewlines(text).split('\n');
+  const lines = [`${pad}${bullet}${escapeLineStart(textLines[0] || '')}`];
+  for (const extra of textLines.slice(1)) {
+    lines.push(`${pad}  ${escapeLineStart(extra)}`);
+  }
   /*
    * v1.3.4.1（需求：列表下嵌套的其他内容保存后变成平级）
    *
@@ -1138,7 +1206,11 @@ function listItemToMd(item, kind, depth, index) {
 function blockToMd(node, depth = 0) {
   switch (node.type) {
     case 'paragraph': {
-      const text = inlineToMd(node.content).split('\n').map(escapeLineStart).join('\n');
+      /*
+       * v1.4.1.1：`<br>` 后面补真换行 —— 段落里允许出现换行符，
+       * 解析侧靠「上一行以 <br> 结尾就不再补 hardBreak」保证不会变成两个换行。
+       */
+      const text = breakNewlines(inlineToMd(node.content)).split('\n').map(escapeLineStart).join('\n');
       const align = String(node.attrs?.align || '');
       // v1.3.1.1：有对齐就落成 `<p align="...">`，否则保持最朴素的段落
       return align ? `<p align="${align}">${text}</p>` : text;

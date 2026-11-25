@@ -282,7 +282,7 @@
                 popper-class="mp-marker-popper"
             >
                 <template #prefix>
-                    <font-awesome-icon icon="tag" class="mp-marker-icon" />
+                    <font-awesome-icon icon="highlighter" class="mp-marker-icon" />
                 </template>
             </el-autocomplete>
 

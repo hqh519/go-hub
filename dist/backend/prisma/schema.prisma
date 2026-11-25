@@ -568,7 +568,9 @@ model ShareLink {
 /// 笔记主干（所有笔记类型共用）
 model Note {
   id               String    @id @default(cuid())
-  /// moment | article | collection | nav | todo | memo（memo 自 v1.3.0 起实现，其余为预留）
+  /// moment | memo —— 只有这两个值会被写入。
+  /// 曾经预留的 article / collection / nav / todo 已删除：文章与待办走 articles 表，
+  /// 导航走独立的导航配置，都不会从 notes 派生，留在这里只会让人误以为要往里写。
   kind             String
   /// 正文：瞬间 = 纯文本；笔记（memo）/ 文章 = markdown
   content          String    @default("")
@@ -843,7 +845,9 @@ model Marker {
   metas      String   @default("{}")
   createdAt  DateTime @default(now())
 
-  notes NoteMarker[]
+  notes    NoteMarker[]
+  /// v1.4.1.1：文章 / 待办的标记关联
+  articles ArticleMarker[]
 
   @@unique([name, instanceId, type, scope])
   @@index([instanceId, type])
@@ -937,6 +941,11 @@ model Article {
   comments    Int       @default(0)
   /// 同级排序（值小的在前）
   sort        Int       @default(0)
+  /// v1.4.1.1：心情 / 天气（待办编辑区改成笔记样式后，标题栏要显示这两个选择器）
+  mood        String    @default("")
+  moodName    String    @default("")
+  weather     String    @default("")
+  weatherName String    @default("")
   /// 乐观并发版本号（保存时 +1）
   version     Int       @default(1)
   /// 正文字数（全部页签合计，只数汉字 / 字母 / 数字）
@@ -944,14 +953,19 @@ model Article {
   /// 待办项统计（全部页签合计）：总数 / 已完成数 —— 列表直接算完成率
   todoTotal   Int       @default(0)
   todoDone    Int       @default(0)
+  /// v1.4.1.1：待办截止时间（空 = 不设截止）
+  dueAt       DateTime?
   publishedAt DateTime?
+  /// 软删除 —— 删除先进回收站，恢复 / 彻底删除分开（非空 = 在回收站）
   deletedAt   DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   metas       String    @default("{}")
 
-  tabs ArticleTab[]
-  tags ArticleTag[]
+  tabs    ArticleTab[]
+  tags    ArticleTag[]
+  /// v1.4.1.1：标记关联（一条内容只能有一个标记）
+  markers ArticleMarker[]
 
   @@index([instanceId, type, status, folderId, updatedAt])
   @@index([instanceId, author, type, status, updatedAt])
@@ -1012,6 +1026,23 @@ model ArticleTag {
   @@map("article_tags")
 }
 
+/// v1.4.1.1：文章 / 待办的标记关联。
+/// 结构与 note_markers 完全对称（一条内容只允许一个标记），标记本体共用 markers 表，
+/// type 由内容类型决定（todo / article）。
+model ArticleMarker {
+  articleId String
+  markerId  String
+  createdAt DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  marker  Marker  @relation(fields: [markerId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, markerId])
+  @@unique([articleId])
+  @@index([markerId])
+  @@map("article_markers")
+}
+
 // ============================================================
 //  v1.3.5.3 登记功能（P0 + P1） / v1.3.5.7 条目独立 + 标签归一
 //  ------------------------------------------------------------
@@ -1044,6 +1075,8 @@ model RegTracker {
   precision  Int      @default(2)
   /// v1.3.5.9：性质已迁到 reg_entries.direction（每条登记各自的性质）
   note       String   @default("")
+  /// v1.4.1.2：条目描述（登记表单「条目」下方的说明，随条目锁定；旧库 db push 自动补空串）
+  desc       String   @default("")
   archived   Boolean  @default(false)
   /// v1.3.5.4（P3）：预算额度（0 = 不设）；统计页按当前周期用量给出超支提醒
   budget     Float    @default(0)

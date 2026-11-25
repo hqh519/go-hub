@@ -11,6 +11,7 @@ const common_1 = require("@nestjs/common");
 const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const tags_1 = require("../common/tags");
+const markers_1 = require("../common/markers");
 const notes_util_1 = require("../notes/notes.util");
 const article_util_1 = require("./article.util");
 function asInt(v, d = 0) {
@@ -41,6 +42,7 @@ let ArticleService = class ArticleService {
         version: true,
         coverFileId: true,
         author: true,
+        dueAt: true,
         createdAt: true,
         updatedAt: true,
         publishedAt: true,
@@ -277,7 +279,9 @@ let ArticleService = class ArticleService {
         const coverMap = new Map(covers.map((f) => [String(f.id), String(f.name || '')]));
         const list = rows.map((r) => {
             const id = String(r.id);
-            const excerpt = String(r.excerpt || '').trim() || (0, article_util_1.excerptOfArticle)(r.content, 140);
+            const excerpt = String(r.excerpt || '').trim() ||
+                (String(r.type || type) === 'todo' ? (0, article_util_1.todoNamesOfArticle)(r.content, 140) : '') ||
+                (0, article_util_1.excerptOfArticle)(r.content, 140);
             const folderIdOf = String(r.folderId || '');
             return {
                 id,
@@ -298,6 +302,7 @@ let ArticleService = class ArticleService {
                 tags: tagMap.get(id) || [],
                 coverFileId: String(r.coverFileId || ''),
                 coverName: coverMap.get(String(r.coverFileId || '')) || '',
+                dueAt: timeOf(r.dueAt),
                 createdAt: timeOf(r.createdAt),
                 updatedAt: timeOf(r.updatedAt),
                 publishedAt: timeOf(r.publishedAt),
@@ -311,6 +316,7 @@ let ArticleService = class ArticleService {
             include: {
                 tabs: { orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }] },
                 tags: { include: { tag: { select: { id: true, name: true } } } },
+                markers: { include: { marker: { select: { id: true, name: true } } } },
             },
         });
         if (!row)
@@ -350,6 +356,12 @@ let ArticleService = class ArticleService {
                 todoDone: asInt(row.todoDone),
                 version: asInt(row.version, 1),
                 author: String(row.author || ''),
+                mood: String(row.mood || ''),
+                moodName: String(row.moodName || ''),
+                weather: String(row.weather || ''),
+                weatherName: String(row.weatherName || ''),
+                markerName: String(row.markers?.[0]?.marker?.name || ''),
+                dueAt: timeOf(row.dueAt),
                 createdAt: timeOf(row.createdAt),
                 updatedAt: timeOf(row.updatedAt),
                 publishedAt: timeOf(row.publishedAt),
@@ -440,6 +452,18 @@ let ArticleService = class ArticleService {
         }
         if (input.done !== undefined)
             data.done = !!input.done;
+        if (input.mood !== undefined)
+            data.mood = String(input.mood ?? '').slice(0, 40);
+        if (input.moodName !== undefined)
+            data.moodName = String(input.moodName ?? '').slice(0, 60);
+        if (input.weather !== undefined)
+            data.weather = String(input.weather ?? '').slice(0, 40);
+        if (input.weatherName !== undefined)
+            data.weatherName = String(input.weatherName ?? '').slice(0, 60);
+        if (input.dueAt !== undefined) {
+            const ts = Number(input.dueAt);
+            data.dueAt = Number.isFinite(ts) && ts > 0 ? new Date(ts) : null;
+        }
         if (input.status !== undefined) {
             const status = (0, article_util_1.normalizeArticleStatus)(input.status);
             data.status = status;
@@ -448,6 +472,19 @@ let ArticleService = class ArticleService {
         }
         data.version = asInt(row.version, 1) + 1;
         const updated = await prisma_1.prisma.article.update({ where: { id }, data: data });
+        if (input.markerName !== undefined) {
+            try {
+                const name = String(input.markerName ?? '').trim().slice(0, 120);
+                const markerType = String(row.type || 'article');
+                const marker = name ? await (0, markers_1.findOrCreateMarker)(name, instanceId, viewer, markerType) : null;
+                await prisma_1.prisma.articleMarker.deleteMany({ where: { articleId: id } });
+                if (marker)
+                    await prisma_1.prisma.articleMarker.create({ data: { articleId: id, markerId: marker.id } });
+            }
+            catch (e) {
+                app_log_1.appLog.warn('article', `保存标记失败：文章 ${id}`);
+            }
+        }
         return {
             id: String(updated.id),
             version: asInt(updated.version, 1),
@@ -456,6 +493,7 @@ let ArticleService = class ArticleService {
             done: !!updated.done,
             folderId: String(updated.folderId || ''),
             title: String(updated.title || ''),
+            dueAt: timeOf(updated.dueAt),
         };
     }
     async saveTabs(viewer, instanceId, id, input) {

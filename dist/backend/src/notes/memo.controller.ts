@@ -348,6 +348,8 @@ export class MemoController {
       moodName: body.moodName,
       weather: body.weather,
       weatherName: body.weatherName,
+      // v1.4.1.1（需求）：编辑器标题栏的「标记」—— 与瞬间共用 markers 表
+      markerName: body.markerName,
     });
     if ('error' in r && r.error) this.fail(r.error);
     // 版本冲突用 409：前端据此弹「已在别处修改」，不能当成普通错误提示

@@ -237,6 +237,7 @@ let MemoController = class MemoController {
             moodName: body.moodName,
             weather: body.weather,
             weatherName: body.weatherName,
+            markerName: body.markerName,
         });
         if ('error' in r && r.error)
             this.fail(r.error);

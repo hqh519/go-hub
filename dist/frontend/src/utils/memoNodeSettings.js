@@ -34,6 +34,8 @@ export const DEFAULT_TYPE_ICON = {
 export const DEFAULT_NODE_SETTINGS = {
     rowHeight: 30,
     showLines: true,
+    /** v1.4.1.1：点目录节点只展开一级（关 = 点节点直接打开这篇记事） */
+    clickFolderExpand: false,
     /** 目录节点（含下级）的图标；空串 = 用默认文件夹 */
     folderIcon: 'book-bookmark',
     /** 各类型「页」的图标；空串 = 用 DEFAULT_TYPE_ICON 对应值 */
@@ -77,6 +79,8 @@ export function normalizeNodeSettings(raw) {
     return {
         rowHeight: Number.isFinite(rowHeight) && rowHeight >= 22 && rowHeight <= 64 ? Math.round(rowHeight) : DEFAULT_NODE_SETTINGS.rowHeight,
         showLines: typeof s.showLines === 'boolean' ? s.showLines : DEFAULT_NODE_SETTINGS.showLines,
+        clickFolderExpand:
+            typeof s.clickFolderExpand === 'boolean' ? s.clickFolderExpand : DEFAULT_NODE_SETTINGS.clickFolderExpand,
         folderIcon: typeof s.folderIcon === 'string' && ICON_CHOICES.includes(s.folderIcon) ? s.folderIcon : DEFAULT_NODE_SETTINGS.folderIcon,
         typeIcons,
     };

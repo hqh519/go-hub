@@ -189,6 +189,14 @@ export class ArticleController {
       status: body.status,
       done: body.done,
       version: body.version,
+      // v1.4.1.1：待办编辑区标题栏的心情 / 天气 / 标记
+      mood: body.mood,
+      moodName: body.moodName,
+      weather: body.weather,
+      weatherName: body.weatherName,
+      markerName: body.markerName,
+      // v1.4.1.1：待办截止时间（时间戳；0 / null = 清除）
+      dueAt: body.dueAt,
     });
     this.unwrap(r as { error?: string; conflict?: boolean; version?: number });
     return { success: true, data: r };

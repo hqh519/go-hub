@@ -1118,6 +1118,46 @@ const ZH = {
       ]
     },
     {
+      id: 'whatsnew-1412',
+      title: '八十二、v1.4.1.2 更新要点',
+      intro: '这一版主要修发布页登记表单的三处体验问题，并把记事的「标记」挪到正文末尾。登记表单：提交或关闭一次后再打开，「详情」输入框不再整块消失；「条目」下面新增「描述」，默认 3 行、最多 5 行，跟随条目锁定，在登记设置的条目编辑里也能改；「详情」自动增高封顶改为视口高度的 35%，超出部分在框内滚动。编辑器背景在切换全局配色（含自动到点切夜间）时实时跟着变，不用再刷新页面。文档树节点设置里的「点击目录节点展开子级」现在能正常保存。记事编辑页的「标记」从标题栏下一行移到正文最后一行的下面，样式与标签栏一致，背景与编辑区同色，已有标记显示为可点 × 清除的胶囊。',
+      items: [
+        { t: '登记表单：详情框不再消失', d: '在发布页的登记分类里提交一条登记，或打开表单后直接取消，再次打开表单时「详情」输入框会变成 0 高度——看不见也点不进去，只能刷新页面。原因是关闭表单时把内容清空，隐藏状态下重新量高度得到 0，这个 0 就一直留到了下次打开。现在关闭时不再清空、每次打开后重新量一次，问题消除。' },
+        { t: '登记表单新增「描述」', d: '「条目」下面多了一行「描述」：多行输入，默认 3 行，内容多了自动长高，最多 5 行。描述属于条目本身，选到已有条目时会自动带出并锁定为只读，要改去「登记设置 → 条目管理 → 编辑」；新建条目时可以在表单里直接写。这一栏的背景和边框与表格里其它格子一致。' },
+        { t: '详情框最高占视口 35%', d: '「详情」输入框仍随内容自动增高，但最高不超过页面可视高度的 35%；超过之后不再继续撑高页面，改为在框内滚动，长内容也不会把下面的字段顶出屏幕。' },
+        { t: '编辑器背景实时跟随配色', d: '以前把全局配色切成白天 / 黑夜（或「自动」到点切夜间）时，编辑区背景要刷新页面才变，其它地方已经变了、只有编辑区还是旧颜色。现在切换的瞬间编辑区背景、标记栏背景一起跟着换，不用刷新。' },
+        { t: '节点设置：点击展开能保存了', d: '文档树节点设置里的「点击目录节点展开子级」开关以前拨了也存不住，关掉弹窗再打开又回到关闭状态。现在和其它几项一起保存，重新进入也保持选择。' },
+        { t: '记事编辑页：标记栏移到正文末尾', d: '「标记」从标题栏下面那一行移到正文最后一行的下方，成为编辑区末尾的一条独立栏：左右内边距、行高、胶囊样式都和标签栏一致，背景使用编辑区自己的背景色。已有标记显示为一个带高亮笔图标的胶囊，点右侧 × 清除；没有标记时显示输入框，可从历史标记里选，也可以直接输入。' },
+        { t: '标记现在真的会保存', d: '顺带修掉一个隐藏问题：编辑器的保存请求此前没有把标记一起发出去，所以选了标记、刷新后又变回空。现在标记与心情 / 天气一样随正文保存，刷新、换设备都能看到。' }
+      ]
+    },
+    {
+      id: 'whatsnew-1411',
+      title: '八十一、v1.4.1.1 更新要点',
+      intro: '这一版把上一轮留下的细节补齐：编辑器里「() 或 （）＋空格」变提示块（不再是回车），开启「回车插入实体换行」后回车既插 <br> 也真的换行，工具栏末位「设置」与记事页的「编辑器设置」合并成同一个弹层，大纲能一键跳到首尾，标题菜单只在标题标记右侧第一位出现，修掉行内样式刷新后错乱；记事编辑页新增「标记」并列进 markers 表、字数移到底部；待办新增截止时间与「剩几天 / 剩几时」、列表简介按摘要 → 任务项 → 正文回退、勾选框改灰；文章列表改分割线分隔且简介过滤源码；文档树支持聚焦节点、点目录只展开、默认落在笔记分类，移动端目录从左侧滑出；登记管理的三种图表在没有自定义图例时也能出图，登记类型选「时长」时按天计算并强校验截止时间。',
+      items: [
+        { t: '视频灯箱：自定义循环次数', d: '单曲循环模式下多了一排次数：不限制 / 1 / 3 / 5 / 10。选定后从现在开始计数，播够遍数自动停住，不再无限转。设了次数就不能再用浏览器原生的 loop（原生循环不会触发结束事件），改为播完手动回到 0 秒重播。' },
+        { t: '括号变提示块：回车改为空格', d: '以前输入 `()` 或 `（）` 要按回车才落成提示块，现在改成按空格 —— 回车在正文里还要用来换行、建列表，占着它容易误触。只认「光标前正好是这两个字符、且不在行内代码或代码块里」，Shift / Ctrl / Alt + 空格照常输入空格。' },
+        { t: '回车插入实体换行：现在真的换行', d: '开启这个开关后，回车会插入 `<br>` 并且当场换行，不再出现「符号进去了、字还在同一行」的情况。依旧是 Shift + 回车新起段落，代码块里回车照旧是换行。' },
+        { t: '工具栏末位的「设置」与记事页统一', d: '编辑器工具栏最后的齿轮以前打开的是另一套精简面板，和记事管理页顶栏的「编辑器设置」不是同一个东西，改完一边另一边不生效。现在两处打开的是同一个弹层，工具栏配置、可用的工具清单、样式与背景色都在里面，改一处两处都生效。' },
+        { t: '设置按钮排在工具栏最后一行末位', d: '按钮移进工具栏最后一行的最后一个位置，跟着工具一起横向滚动；移动端不再固定吸附在行尾，滑到哪就在哪，避免遮住旁边的工具。' },
+        { t: '大纲：跳到开始行 / 跳到末尾行', d: '大纲面板第一行固定是「跳到开始行」，最后一行固定是「跳到末尾行」，长文想回开头或跳到结尾不用一路滚。正文里一个标题都没有时，点「大纲」也会弹出面板（以前只提示一句「没有标题」），里面就这两项。' },
+        { t: '标题菜单：只在标题标记右侧第一位出现', d: 'H1~H6 的行内菜单以前在标题文字末尾也会冒出来，挡住正在写的字。现在只有光标紧贴在 `### ` 这类标记的右侧第一位时才显示，移到文字中间或末尾都会收起。' },
+        { t: '行内样式刷新后不再错乱', d: '像 `<span class="gh-fs-24">拆开看一下。</span><span class="gh-c-orange"><span class="gh-fs-24">{变调}</span></span>` 这种嵌套写法，刚设好是对的、刷新后字号和颜色就串到一起：解析器原来用非贪婪匹配找配对的 `</span>`，遇到嵌套会提前截断。现在按嵌套深度配对，嵌套多少层都能正确还原。' },
+        { t: '记事编辑页：字数移到底部、新增标记', d: '桌面端把字数和字符数从标题栏下一行移到底部「反链」按钮后面，移动端只移字数，底部那一行因此和编辑区更贴近。天气按钮后面新增「标记」输入框（与发布瞬间页同款，可从历史标记里选），提交时统一落到 markers 表 + note_markers 关联，一条记事只能有一个标记。' },
+        { t: '待办编辑页：改成笔记的样子', d: '标题从表单区挪到工具栏下一行，和记事一样在正文里直接改；标题栏下一行依次是历史版本、保存时间、已保存、心情、天气、标记，字数和字符移到底部栏。模块区（摘要 / 备注 / 封面 / 分类）默认收起，进来第一眼就是「工具栏 → 标题 → 正文」。移动端「添加页签」去掉文字，只留一个加号图标。' },
+        { t: '待办新增截止时间', d: '待办编辑页的模块标题行多了「截止时间」，可以精确到分钟，旁边直接显示还剩几天；不设就空着。数据库新增 articles.due_at 列，列表与发布页都按「截止时间 − 发布时间」算出「剩 N 天」，不足一天折成「剩 N 时」，过期标「已逾期」并用警示色。' },
+        { t: '待办列表的简介与勾选框', d: '简介按三级回退：手填摘要 → 正文里任务项的名称（`- [ ] 买牛奶 · - [x] 写代码` 拼成一行）→ 正文纯文本；代码块和附件引用不算正文，不会把源码或文件名当成简介。勾选标题前的方框后，方框与勾不再是绿色，改成和标题同样的灰，整条同步变淡。' },
+        { t: '文章列表：分割线与简介回退', d: '文章管理列表和发布页「文章」分类改成表格观感：行与行之间一条贯穿的分隔线，行本身不带圆角，分隔线顶到两边。简介在没填摘要时自动取正文，同样先剔掉代码块、附件与文件引用。' },
+        { t: '我的发布：待办分类更清爽', d: '待办项后面的「编辑」和「更多」按钮去掉 —— 点标题就进编辑，多两个按钮只是挤地方；勾选框同样改成与标题一致的灰。' },
+        { t: '文档树：聚焦节点与更顺手的展开', d: '节点设置新增「点击目录节点展开子级」：开启后点带子级的目录只展开一级，不再直接打开那篇记事；关掉就还是原来的行为。更多菜单新增「编辑节点」和「聚焦节点」，聚焦后整棵树只留这个目录及其子级，顶部给出「退出聚焦」；「查看节点 / 新建节点」改名为「查看子级 / 新建子级」。桌面端鼠标移到更多按钮上就自动展开菜单。层级关系线的最后一段不再拖到子树末尾，而是与最后一行文字的底部齐平。' },
+        { t: '记事页：默认停在笔记分类，移动端目录滑出', d: '进入记事管理且没打开任何记事时，左侧默认停在「笔记」这个一级分类上（高亮、已展开），不再是一片没有任何选中的空态。手机上编辑时顶栏多一个目录按钮，点开节点树从左侧边缘滑出，占屏幕宽 94%、高 100%，点遮罩或选中节点即收起。' },
+        { t: '登记管理：三种图表与时长口径', d: '圆环 / 条形 / 雷达图以前要求至少两条图例，只有默认项时会被强制退回柱形；现在没有自定义图例也能出图，分类轴换成最近 6 个周期 —— 周期选「按日」就是当前日、前一日……前五日，按月、按季、按年同理。' },
+        { t: '登记表单：时长类型的约束', d: '类型选「时长」时，截止时间变必填、数值锁成 0、单位锁成「天」，切回别的类型会把原来的输入还原。只要填了截止时间，就必须晚于起始时间和发生时间，否则不允许提交并给出具体提示。统计类型选「时长」时，数值改为「截止时间 − 起始时间（没有起始就减发生时间，再没有就减登记时间）」并换算成天参与运算。' },
+        { t: '登记管理页的页面切换', d: '左上角页面切换与「我的发布」页对齐：同一个组件、同一套内边距，桌面与手机上的落点一致，不再比别的页偏几个像素。' }
+      ]
+    },
+    {
       id: 'whatsnew-141',
       title: '八十、v1.4.1 更新要点',
       intro: '这一版把「编辑器设置」搬到工具栏末位，任何编辑器里都能直接打开；编辑器新增「输入 () 或 （） 回车变提示块」与「回车插入实体换行」两项，编辑区背景可以自定义、白天默认护眼绿；记事预览里的文件点击改为灯箱打开；文章与待办改成右栏内直接编辑，修掉「有时保存无效」，移动端长按页签管理、上滚收起顶栏，桌面页签栏能拖宽；待办新建即发布并自动命名，列表去掉删除线、改按创建日期倒序。',
@@ -1166,7 +1206,7 @@ const ZH = {
       intro: '这一版统一了节点树一级目录的图标，节点更多菜单新增「查看节点」，右栏可以直接列出某个节点下的全部子文档；编辑器把标题栏再压 2px、大纲改到页面正中、源码模式支持自动换行并与滚动联动，任务列表勾选后光标自动落到行末；移动端「返回目录」换成目录树图标，边缘侧滑不再退页，引用搜索浮层在任何屏幕尺寸下都不会溢出。',
       items: [
         { t: '一级节点图标统一', d: '「笔记 / 日记 / 札记 / 灵感 / 模板」五个一级目录不再使用各自专属图标，改为直接使用节点设置里「各类型页面图标」的值，与下级文档同一套图标；只有这五个一级节点用主题色，子节点仍为灰色。' },
-        { t: '查看节点', d: '目录节点的更多菜单在「删除节点」之前新增「查看节点」：右栏以列表形式列出该节点下的全部子级文档（含更深层级），每条显示标题、两行简介、日期与字数，点条目直接进入编辑；列表内仍可搜索。' },
+        { t: '查看子级', d: '目录节点的更多菜单在「删除节点」之前新增「查看节点」：右栏以列表形式列出该节点下的全部子级文档（含更深层级），每条显示标题、两行简介、日期与字数，点条目直接进入编辑；列表内仍可搜索。' },
         { t: '标题栏更紧凑', d: '编辑器标题栏行高再减 2px，标题与类型图标依旧垂直居中，顶部更省空间。' },
         { t: '大纲居中', d: '「大纲」弹出页从「偏上」改为页面正中（水平 + 垂直居中），大屏下不用再抬头找。' },
         { t: '顶栏跟手', d: '顶部栏的起手阈值从 50px 收到 12px，收起 / 展开过渡从 0.3s 缩到 0.18s，滚动一动就跟着走；底部反向链接行采用同一阈值与同一节奏，两处同时收起、同时回来。' },
@@ -2683,6 +2723,46 @@ const EN = {
         { t: 'Zero line and mobile tooltip', d: 'The value-0 grid line becomes a dashed line with theme-aware colour (light grey in dark mode so it does not disappear). Tapping outside the chart on a phone hides the tooltip.' },
         { t: 'No more manual cache clearing', d: 'The entry HTML is served with no-store while hashed assets stay immutable; a small version watcher compares the entry script and reloads once when a new build is detected. Upgrades are picked up on the next visit.' },
         { t: 'Upgrade compatibility', d: 'The register table gains a deleted_at column (NULL for all existing rows, meaning not deleted). The unit table was confirmed unused before being dropped. Nothing else changes, so existing data upgrades in place.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1412',
+      title: '82. What is new in v1.4.1.2',
+      intro: 'This release fixes three rough edges in the register form on the publish page and moves the note marker to the end of the body. In the register form the Details box no longer collapses to nothing after submitting or cancelling once; a Description field sits under Item, three rows by default and up to five, locked to the item and editable from register settings; Details grows up to 35% of the viewport and then scrolls inside. The editor background now follows the global colour mode (including the automatic day/night switch) without a reload. The Click folder node to expand children switch in document tree settings now saves. In the notes editor the marker moves from under the title to below the last line of the body, styled like the tag row, using the editor background, and shown as a pill with a clear button.',
+      items: [
+        { t: 'Register form: Details no longer disappears', d: 'After submitting a register entry, or opening the form and cancelling, the Details box came back at zero height - invisible and impossible to click into until the page was refreshed. Clearing the form while the dialog was hidden made the auto-height calculation return 0, and that 0 stuck. The form is no longer cleared on close and the height is recalculated every time the dialog opens.' },
+        { t: 'Register form: Description field', d: 'A Description row now sits under Item. It is a multi-line field, three rows by default, growing with the content up to five rows. The description belongs to the item: picking an existing item fills it in and locks it read-only, and changes go through Register settings, Items, Edit; when creating a new item it can be typed right in the form.' },
+        { t: 'Details capped at 35% of the viewport', d: 'Details still grows with its content, but never taller than 35% of the visible page; past that it scrolls inside the box, so long text no longer pushes the fields below it off screen.' },
+        { t: 'Editor background follows the theme live', d: 'Switching the global colour mode between light, dark and automatic (including the scheduled switch to night) used to leave the editor background on the old colour until a reload. It now changes together with the rest of the page, instantly.' },
+        { t: 'Tree settings: click-to-expand saves', d: 'The Click folder node to expand children switch in document tree settings used to reset to off whenever the dialog was reopened. It now saves with the other options and stays as set.' },
+        { t: 'Notes editor: marker at the end of the body', d: 'The marker moves from the row under the title to its own row below the last line of the body. Spacing, row height and pill styling match the tag row, and it uses the editor background colour. An existing marker shows as a pill with a highlighter icon and a clear button; with no marker the input appears, with history suggestions and free typing.' },
+        { t: 'Markers are actually saved now', d: 'A hidden problem is fixed along the way: the editor save request never included the marker, so it reverted to empty after a reload. Markers now save with the body, just like mood and weather, and survive reloads and device changes.' }
+      ]
+    },
+    {
+      id: 'en-whatsnew-1411',
+      title: '81. What is new in v1.4.1.1',
+      intro: 'This release closes the loose ends left by the previous one: () or （） plus Space (no longer Enter) becomes a callout; with hard breaks enabled, Enter both inserts <br> and actually breaks the line; the toolbar settings button and the notes page editor settings now open the same dialog; the outline jumps to the first or last line; the heading menu only appears with the caret right after the marker; nested inline styles survive a refresh. The notes editor moves the word count to the footer and gains a marker field backed by the markers table; todos gain a due date with a days-left badge, a three-step excerpt fallback and a grey checkbox; article lists switch to full-width dividers and filter code out of excerpts; the document tree gains focus mode, click-to-expand folders and a default Notes category, plus a slide-in drawer on phones; the register charts render without custom legends and duration entries are counted in days with strict due-date checks.',
+      items: [
+        { t: 'Video lightbox: custom loop count', d: 'Single-loop mode gains a count row: unlimited / 1 / 3 / 5 / 10. Counting starts when you pick it and playback stops once the count is reached. With a count set, the native loop attribute has to go (it never fires the ended event), so replay is handled manually from 0s.' },
+        { t: 'Brackets: Enter becomes Space', d: 'Typing () or （） used to need Enter to drop a callout; it is now Space. Enter is needed for line breaks and lists in prose, so tying the callout to it caused accidental triggers. Only the exact two characters right before the caret count, inline code and code blocks are skipped, and Shift / Ctrl / Alt + Space still type a space.' },
+        { t: 'Hard breaks really break the line', d: 'With the switch on, Enter inserts <br> and breaks the line immediately instead of leaving the text on the same line. Shift + Enter still starts a new paragraph, and code blocks are unaffected.' },
+        { t: 'One editor settings dialog everywhere', d: 'The gear at the end of the toolbar used to open a different, smaller panel than the editor settings in the notes header, so changes in one did not show up in the other. Both now open the same dialog with toolbar lines, available tools, typography and background colour.' },
+        { t: 'Settings button at the end of the last row', d: 'The button now sits in the last position of the toolbar last row and scrolls with the tools. On phones it is no longer pinned to the row end, so it never covers the tools next to it.' },
+        { t: 'Outline: jump to start / end', d: 'The first row of the outline is always Jump to start and the last row is Jump to end, so long documents do not need a long scroll. With no headings at all, clicking Outline still opens the panel with just those two rows.' },
+        { t: 'Heading menu only after the marker', d: 'The H1-H6 inline menu used to pop up at the end of the heading text and cover what you were typing. It now appears only when the caret sits immediately after the ### marker and hides once you move into or past the text.' },
+        { t: 'Nested inline styles survive a refresh', d: 'Markup like a font-size span wrapping another font-size span inside a colour span looked right when applied but mixed up sizes and colours after a reload: the parser matched the first closing tag with a non-greedy pattern and cut nested spans short. It now pairs tags by nesting depth, however deep.' },
+        { t: 'Notes editor: word count and marker', d: 'On desktop the word and character counts move from under the title bar to the footer, after the backlinks button; on phones only the word count moves. A marker field is added after the weather button (same picker as the moment editor) and is stored in the markers table through a note_markers link - one marker per note.' },
+        { t: 'Todo editor now mirrors notes', d: 'The title moves into the body, right under the toolbar row, and is edited in place. The row under it carries history, save time, saved state, mood, weather and marker, while word and character counts move to the footer. The module block (excerpt, note, cover, category) is collapsed by default, so a todo opens as toolbar, title, body. The add-tab button becomes an icon-only button on phones.' },
+        { t: 'Todos gain a due date', d: 'The module header row gains a due date picker with a live days-left hint. Lists and My posts compute due date minus publish time and show N days left, folding to N hours below a day and to Overdue in a warning colour once passed.' },
+        { t: 'Todo excerpt and checkbox', d: 'The excerpt falls back in three steps: typed excerpt, then the names of the task items in the body, then the body text. Code fences and attachment references are not body text, so snippets and file names never show up as an excerpt. Ticking the checkbox turns the box and the tick grey to match the title instead of green.' },
+        { t: 'Article list: dividers and excerpts', d: 'The article manager and the Articles tab on My posts now read like a table: one full-width divider between rows, no rounded corners on the rows. With no excerpt typed, the body is used, again with code blocks, attachments and file references stripped.' },
+        { t: 'My posts: cleaner todo rows', d: 'The Edit and more buttons after each todo are removed - tapping the title already opens the editor - and the checkbox turns grey like the title.' },
+        { t: 'Document tree: focus and friendlier folders', d: 'Node settings gains Click folder node to expand children, so clicking a folder expands one level instead of opening that note; turn it off for the old behaviour. The more menu gains Edit node and Focus node; focusing leaves only that folder and its children in the tree with an Exit focus button on top. View node and New node become View children and New child. On desktop the more menu opens on hover, and the last segment of the hierarchy line now ends level with the last row text instead of running past it.' },
+        { t: 'Notes page: defaults to Notes, drawer on phones', d: 'Opening the notes page with nothing selected now lands on the Notes category (highlighted and expanded) instead of an empty state. On a phone the top bar gains a tree button that slides the tree in from the left edge at 94% width and full height, closing on tap outside or on a node.' },
+        { t: 'Register: three charts and duration in days', d: 'Doughnut, horizontal bar and radar charts used to require at least two legend rows and fell back to bars with only the default row. They now render with the default row alone, using the last six periods as categories - with the period set to Daily that is current day, one day ago, and so on to five days ago; monthly, quarterly and yearly work the same way.' },
+        { t: 'Register form: duration constraints', d: 'With the type set to Duration, the due date becomes required, the value locks to 0 and the unit locks to days; switching back restores what you had typed. Whenever a due date is set it must be later than both the start and the occurrence time, otherwise the form refuses to submit with a specific message. When statistics run on Duration, values are computed as due minus start (falling back to occurrence, then to the registration time) and converted to days.' },
+        { t: 'Register page switcher aligned', d: 'The page switcher in the top-left corner now matches My posts exactly - same component, same padding - so it lands on the same pixel on desktop and on phones.' }
       ]
     },
     {

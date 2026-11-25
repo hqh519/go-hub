@@ -127,6 +127,12 @@ let ArticleController = class ArticleController {
             status: body.status,
             done: body.done,
             version: body.version,
+            mood: body.mood,
+            moodName: body.moodName,
+            weather: body.weather,
+            weatherName: body.weatherName,
+            markerName: body.markerName,
+            dueAt: body.dueAt,
         });
         this.unwrap(r);
         return { success: true, data: r };

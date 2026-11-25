@@ -16,7 +16,7 @@
         :width="dialogWidth"
         append-to-body
         class="reg-dialog"
-        @opened="scrollToTop"
+        @opened="onOpened"
         @closed="onClosed"
     >
         <!--
@@ -41,10 +41,11 @@
                     />
                 </div>
 
-                <!-- 详情：内容超出后自动增高，最高不超过视口 30% -->
+                <!-- 详情：内容超出后自动增高，最高不超过视口 35%（超出部分内部滚动） -->
                 <div class="reg-cell reg-span-6">
                     <span class="reg-cell-label">{{ $t('reg.fieldDetail') }}</span>
                     <el-input
+                        ref="detailInput"
                         v-model="form.event"
                         class="reg-plain reg-detail"
                         type="textarea"
@@ -95,14 +96,16 @@
                     />
                 </div>
                 <div class="reg-cell reg-span-2">
-                    <span class="reg-cell-label">{{ $t('reg.fieldDueAt') }}</span>
+                    <span class="reg-cell-label">
+                        {{ $t('reg.fieldDueAt') }}<em v-if="isDuration">*</em>
+                    </span>
                     <el-date-picker
                         v-model="form.dueAt"
                         type="datetime"
                         class="reg-plain reg-date"
                         :popper-class="datePopperClass"
-                        clearable
-                        :placeholder="$t('reg.fieldOptional')"
+                        :clearable="!isDuration"
+                        :placeholder="isDuration ? $t('reg.fieldRequired') : $t('reg.fieldOptional')"
                     />
                 </div>
 
@@ -119,6 +122,26 @@
                         maxlength="80"
                         @select="onTrackerPicked"
                         @blur="lockByTrackerName"
+                    />
+                </div>
+
+                <!--
+                    v1.4.1.2（需求）：条目描述 —— 放在「条目」下一行。
+                    描述属于条目本身，选中已有条目后跟随锁定（只读），要改去
+                    「登记设置 → 条目管理 → 编辑」；新条目则在这里一起填。
+                -->
+                <div class="reg-cell reg-span-6">
+                    <span class="reg-cell-label">{{ $t('reg.fieldDesc') }}</span>
+                    <el-input
+                        ref="descInput"
+                        v-model="form.trackerDesc"
+                        class="reg-plain reg-desc"
+                        :class="{ 'is-locked': locked }"
+                        type="textarea"
+                        :autosize="{ minRows: 3, maxRows: 5 }"
+                        maxlength="500"
+                        :readonly="locked"
+                        :placeholder="locked ? $t('reg.fieldDescLockedPh') : $t('reg.fieldDescPh')"
                     />
                 </div>
 
@@ -145,6 +168,7 @@
                         class="reg-plain"
                         :placeholder="$t('reg.fieldAmountPh')"
                         inputmode="decimal"
+                        :disabled="isDuration"
                         @input="onAmountInput"
                         @keydown.enter.prevent
                     />
@@ -168,7 +192,7 @@
                         class="reg-plain"
                         :fetch-suggestions="(q, cb) => suggestFrom('units', q, cb)"
                         :placeholder="$t('reg.fieldUnitPh')"
-                        :disabled="locked"
+                        :disabled="locked || isDuration"
                         clearable
                         maxlength="24"
                     />
@@ -375,6 +399,8 @@ const emptyForm = () => ({
     /* 性质：0 无 / -1 减出 / 1 增进 */
     direction: 0,
     event: '',
+    /* v1.4.1.2（需求）：条目描述 —— 选到已有条目时跟随条目锁定并回填 */
+    trackerDesc: '',
     occurredAt: Date.now(),
     startAt: null,
     dueAt: null,
@@ -457,6 +483,10 @@ export default {
             return this.docList.filter((d) => String(d.title || '').toLowerCase().includes(q));
         },
         unitOptions() { return this.candidates.units || []; },
+        /** v1.4.1.1（需求）：类型=时长时，截止时间必填、数值锁 0、单位锁「天」 */
+        isDuration() {
+            return String(this.form.valueType || '') === 'duration';
+        },
         portionOptions() { return this.candidates.portions || []; },
         tagOptions() { return this.candidates.tags || []; },
     },
@@ -479,6 +509,24 @@ export default {
         'form.direction'() {
             this.syncAmountSign();
         },
+        /**
+         * v1.4.1.1（需求）：类型选「时长」时，数值固定 0、单位固定「天」，
+         * 切走时把用户原来的输入还原，不至于把别的类型的数值清掉。
+         */
+        'form.valueType'(next, prev) {
+            if (!this.ready) return;
+            if (next === 'duration' && prev !== 'duration') {
+                this._prevAmount = this.form.amount;
+                this._prevUnit = this.form.unit;
+                this.form.amount = '0';
+                this.form.unit = '天';
+                return;
+            }
+            if (prev === 'duration' && next !== 'duration') {
+                this.form.amount = this._prevAmount === undefined ? '' : this._prevAmount;
+                this.form.unit = this._prevUnit === undefined ? '' : this._prevUnit;
+            }
+        },
     },
     methods: {
         async init() {
@@ -497,6 +545,8 @@ export default {
                     id: e.id,
                     trackerId: e.trackerId || (tracker ? tracker.id : '') || '',
                     trackerName: e.trackerName || (tracker ? tracker.name : '') || '',
+                    /* v1.4.1.2：条目描述跟着条目走（编辑态只读展示） */
+                    trackerDesc: e.trackerDesc || (tracker ? tracker.desc : '') || '',
                     valueType: e.valueType || (tracker ? tracker.valueType : '') || 'flow',
                     /* v1.3.5.9：性质读这条记录自己的（老数据可能没给，回落 0） */
                     direction: [-1, 0, 1].includes(Number(e.direction)) ? Number(e.direction) : 0,
@@ -535,6 +585,14 @@ export default {
                 }
             }
             await Promise.all([this.loadTrackers(), this.loadCandidates()]);
+            /*
+             * v1.4.1.2：列表里的 entry.tracker 可能没带 desc（旧缓存 / 旧接口），
+             * 回填以条目表这一份为准，避免编辑态描述框空着。
+             */
+            if (this.isEdit && this.form.trackerId && !this.form.trackerDesc) {
+                const t = this.trackers.find((x) => String(x.id) === String(this.form.trackerId));
+                if (t) this.form.trackerDesc = String(t.desc || '');
+            }
             this.ready = true;
             if (!this.isEdit && this.form.trackerName) this.lockByTrackerName();
             this.scrollToTop();
@@ -639,6 +697,8 @@ export default {
             }
             this.form.trackerId = '';
             this.locked = false;
+            /* v1.4.1.2：条目名改成一条新条目时，不把上一条的描述带过去 */
+            this.form.trackerDesc = '';
         },
         lockByTrackerName() {
             const name = trimText(this.form.trackerName);
@@ -654,6 +714,8 @@ export default {
             }
             this.form.trackerId = '';
             this.locked = false;
+            /* v1.4.1.2：同上 —— 解除锁定即视为新条目，描述重新输入 */
+            this.form.trackerDesc = '';
         },
         /**
          * 选中已有条目 → 类型 / 单位 / 分母全部锁定，使用该条目已定的口径。
@@ -667,6 +729,13 @@ export default {
             /* v1.3.5.9：性质不再跟随条目（它是每条登记自己的事） */
             this.form.unit = t.unit || '';
             this.form.portion = t.portion || '';
+            /* v1.4.1.2：描述是条目自己的字段，选到条目就跟着回填（输入框同时置为只读） */
+            this.form.trackerDesc = String(t.desc || '');
+            /* v1.4.1.1：时长类型条目的数值固定 0、单位固定「天」（与类型选择同一口径） */
+            if (String(this.form.valueType || '') === 'duration') {
+                this.form.amount = '0';
+                this.form.unit = '天';
+            }
             this.locked = true;
         },
         /* ── 其它候选 ─────────────────────────────────────────── */
@@ -750,6 +819,25 @@ export default {
                 if (f && typeof f.scrollTop === 'number') f.scrollTop = 0;
                 const body = this.$el && this.$el.querySelector ? this.$el.querySelector('.reg-body') : null;
                 if (body) body.scrollTop = 0;
+            });
+        },
+        /**
+         * v1.4.1.2（Bug 修复）：弹层完全打开后再强制重算一次 textarea 的自适应高度。
+         *
+         * 原因：el-input 的 autosize 是在「值变化」时算高度的，而关闭弹层时
+         * onClosed 会把 form 重置成空表 —— 那一刻弹层已经是 display:none，
+         * 隐藏元素量出来的 scrollHeight / offsetWidth 全是 0，Element Plus 就把
+         * 内联样式写成 height:0; min-height:0。下次打开时值没有再变化，
+         * 这段 0 高度就一直留着，于是「详情」框看起来消失、也点不进去。
+         * 现在 onClosed 不再改表单，且每次 opened 都显式重算一遍，双保险。
+         */
+        onOpened() {
+            this.scrollToTop();
+            this.$nextTick(() => {
+                ['detailInput', 'descInput'].forEach((key) => {
+                    const comp = this.$refs[key];
+                    if (comp && typeof comp.resizeTextarea === 'function') comp.resizeTextarea();
+                });
             });
         },
         removeAttachment(i) {
@@ -925,6 +1013,24 @@ export default {
                 this.$message.warning(this.$t('reg.timeRequired'));
                 return;
             }
+            /* v1.4.1.1（需求）：类型=时长时截止时间必填，且必须晚于起始 / 发生时间 */
+            const dueMs = this.form.dueAt ? new Date(this.form.dueAt).getTime() : 0;
+            if (this.isDuration && !dueMs) {
+                this.$message.warning(this.$t('reg.dueRequired'));
+                return;
+            }
+            if (dueMs) {
+                const startMs = this.form.startAt ? new Date(this.form.startAt).getTime() : 0;
+                const occurredMs = this.form.occurredAt ? new Date(this.form.occurredAt).getTime() : 0;
+                if (startMs && startMs > dueMs) {
+                    this.$message.warning(this.$t('reg.dueAfterStart'));
+                    return;
+                }
+                if (occurredMs && occurredMs > dueMs) {
+                    this.$message.warning(this.$t('reg.dueAfterOccurred'));
+                    return;
+                }
+            }
             const amountRaw = trimText(this.form.amount);
             if (amountRaw === '' || amountRaw === '-' || amountRaw === '+') {
                 this.$message.warning(this.$t('reg.amountRequired'));
@@ -948,6 +1054,8 @@ export default {
                 const body = {
                     trackerId: this.form.trackerId || '',
                     trackerName,
+                    /* v1.4.1.2：描述只在「新建条目」这条路径上生效，已有条目由后端保持原值 */
+                    trackerDesc: trimText(this.form.trackerDesc),
                     valueType: this.form.valueType,
                     direction: Number(this.form.direction) || 0,
                     unit: trimText(this.form.unit),
@@ -992,7 +1100,12 @@ export default {
             return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
         },
         onClosed() {
-            this.form = emptyForm();
+            /*
+             * v1.4.1.2（Bug 修复）：这里不再重置表单。
+             * 关闭动画结束时弹层已经 display:none，此时改 form.event 会让
+             * el-input 在隐藏状态下重算 autosize（算出 0 高度），导致下次打开
+             * 「详情」框消失。重置交给下一次打开时的 init()，那时弹层正在显示。
+             */
             this.trackerCache = {};
             this.pendingFiles = [];
             this.pendingLink = '';
@@ -1093,7 +1206,7 @@ export default {
     color: var(--el-text-color-primary);
 }
 
-/* 详情：内容超出后自动增高，最高 30vh（超出部分内部滚动） */
+/* 文本域：内容超出后自动增高（v1.4.1.2：最高不超过视口 35%，超出部分内部滚动） */
 .reg-cell :deep(.el-textarea__inner) {
     padding: 0 2px;
     background: transparent;
@@ -1101,8 +1214,24 @@ export default {
     resize: none;
     font-size: 13px;
     line-height: 1.6;
-    max-height: 30vh;
-    overflow-y: auto;
+    /*
+     * Element Plus 的 autosize 会内联写 overflow-y:hidden（它自己按行数封顶），
+     * 一旦内容超过 max-height 就会被直接裁掉、滚不动 —— 这里必须 !important 抢回来。
+     */
+    overflow-y: auto !important;
+}
+.reg-cell :deep(.reg-detail .el-textarea__inner) {
+    /* v1.4.1.2（需求）：详情最高占视口 35%，超过后框内滚动 */
+    max-height: 35vh;
+}
+/* v1.4.1.2：条目描述（默认 3 行、最多 5 行由 autosize 的 maxRows 控制） */
+.reg-cell :deep(.reg-desc .el-textarea__inner) {
+    max-height: none;
+    color: var(--el-text-color-primary);
+}
+.reg-cell :deep(.reg-desc.is-locked .el-textarea__inner) {
+    color: var(--el-text-color-regular);
+    cursor: default;
 }
 
 /* v1.3.5.8：附件按钮在表格外，默认换行排列 */

@@ -114,7 +114,18 @@ export function withBlockIds(md: unknown): string {
       out.push(bare);
       continue;
     }
-    if (tableRows.has(i) || !isBlockLine(bare)) {
+    /*
+     * v1.4.1.1（需求：回车插入实体换行后，`<br>` 后面跟一个真换行）
+     *
+     * 这一段换行把原本一行的段落切成了多行，但它们在编辑器里**还是同一个段落**。
+     * 按行注入会在一段里塞两个 `^blk_x`，块引用就会指向半段文字；
+     * 上一行以 `<br>` 结尾时，这一行只是续行，跳过注入。
+     */
+    const prev = i > 0 ? lines[i - 1] : null;
+    const isBrContinuation = !!prev
+      && !prev.inFence
+      && /<br\s*\/?>$/.test(prev.text.replace(BLOCK_ID_RE, '').replace(/[ \t]+$/, ''));
+    if (isBrContinuation || tableRows.has(i) || !isBlockLine(bare)) {
       out.push(bare);
       continue;
     }
@@ -165,7 +176,11 @@ export function plainTextOf(md: unknown): string {
     let t = line
       .replace(/^\s{0,3}#{1,6}\s*/, '') // 标题
       .replace(/^\s{0,3}>\s?/, '') // 引用
-      .replace(/^\s*[-*+]\s+\[[ xX]\]\s+/, '') // 任务
+      /*
+       * v1.4.1.1：任务行的方括号后可能没有空格（`- [ ]` / `- [x]做完`），
+       * 原来要求 `\s+` 才剥，导致摘要里留下一个 `[ ]` —— 改成剥掉即可，不要求尾随空格。
+       */
+      .replace(/^\s*[-*+]\s+\[[ xX]\]\s*/, '') // 任务
       .replace(/^\s*[-*+]\s+/, '') // 无序列表
       .replace(/^\s*\d+[.)]\s+/, '') // 有序列表
       .replace(/^\s*\|/, '') // 表格首尾竖线

@@ -8,7 +8,7 @@
         右侧是操作区（编辑 + 更多菜单）。待办变体在前面多一个整篇勾选框，
         后面多一圈「正文待办项完成率」，其余完全一致 —— 两者本就是同一张表。
     -->
-    <div class="alp-root" :class="{ 'is-compact': compact, 'is-todo': type === 'todo' }">
+    <div class="alp-root" :class="{ 'is-compact': compact, 'is-todo': type === 'todo', 'is-article': type === 'article' }">
         <div v-if="!hideToolbar" class="alp-toolbar">
             <div class="alp-search">
                 <font-awesome-icon icon="search" class="alp-search-icon" />
@@ -105,6 +105,15 @@
                                 <span class="alp-meta-item">
                                     <font-awesome-icon icon="calendar" />{{ fmtDate(item.createdAt) }}
                                 </span>
+                                <!-- v1.4.1.1（需求）：设了截止时间才显示「剩几天 / 剩几时」 -->
+                                <span
+                                    v-if="dueLeft(item)"
+                                    class="alp-meta-item alp-due"
+                                    :class="{ 'is-urgent': dueLeft(item).urgent, 'is-overdue': dueLeft(item).overdue }"
+                                    :title="dueTitle(item)"
+                                >
+                                    <font-awesome-icon icon="calendar-day" />{{ dueLeft(item).text }}
+                                </span>
                                 <span class="alp-meta-item">
                                     <font-awesome-icon icon="font" />{{ $t('article.wordCount', { n: item.wordCount || 0 }) }}
                                 </span>
@@ -146,7 +155,7 @@
                         </span>
                     </div>
 
-                    <div class="alp-actions" @click.stop>
+                    <div v-if="!hideActions" class="alp-actions" @click.stop>
                         <template v-if="trashMode">
                             <button type="button" class="alp-btn" @click="restore(item)">
                                 {{ $t('article.restore') }}
@@ -207,6 +216,11 @@ export default {
          * 紧凑版改成：勾选框左上、完成率右上、标题与摘要在中间、操作悬浮右下。
          */
         compact: { type: Boolean, default: false },
+        /**
+         * v1.4.1.1（需求：「我的发布」的待办分类去掉「编辑」「更多」）：
+         * 列表项本身点一下就是进编辑，发布页里再挂两个按钮只是挤地方。
+         */
+        hideActions: { type: Boolean, default: false },
     },
     emits: ['edit', 'create', 'changed', 'loaded'],
     data() {
@@ -277,6 +291,25 @@ export default {
         coverUrl(item) {
             if (!item?.coverName) return '';
             return `/file/${encodeURIComponent(item.coverName)}`;
+        },
+        /**
+         * v1.4.1.1（需求）：待办剩余时间 = 截止时间 - 发布时间。
+         * 不足 1 天按「剩几时」显示；已过期只留一句「已逾期」，不再算负数。
+         * 草稿没有发布时间时退到创建时间，免得整条不显示。
+         */
+        dueLeft(item) {
+            const due = Number(item?.dueAt) || 0;
+            if (!due) return null;
+            const base = Number(item?.publishedAt) || Number(item?.createdAt) || Date.now();
+            const diff = due - base;
+            if (diff < 0) return { text: this.$t('article.dueOverdue'), overdue: true, urgent: false };
+            const days = Math.floor(diff / 86400000);
+            if (days >= 1) return { text: this.$t('article.dueDays', { n: days }), overdue: false, urgent: false };
+            const hours = Math.max(1, Math.floor(diff / 3600000));
+            return { text: this.$t('article.dueHours', { n: hours }), overdue: false, urgent: true };
+        },
+        dueTitle(item) {
+            return this.$t('article.dueTip', { time: this.fmtTime(item?.dueAt) });
         },
         /** 完成率：正文待办项「已完成 / 总数」 */
         rateOf(item) {
@@ -558,6 +591,24 @@ export default {
 .alp-item.is-active {
     background: var(--el-color-primary-light-9);
 }
+/*
+ * v1.4.1.1（需求：文章列表改为分割线分隔、两边无圆角）：
+ * 文章列表按「表格」的观感走 —— 行与行之间一条贯穿的分隔线，行本身不带圆角，
+ * 左右内边距从列表容器挪到行上，分隔线才能顶到两边。
+ */
+.alp-root.is-article .alp-list {
+    padding: 0 0 4px;
+}
+.alp-root.is-article .alp-item {
+    padding: 12px 16px;
+    border-radius: 0;
+}
+.alp-root.is-article .alp-item:hover {
+    background: var(--el-fill-color-lighter);
+}
+.alp-root.is-article .alp-item.is-active {
+    background: var(--el-color-primary-light-9);
+}
 /* v1.4.1（需求）：勾选后不要删除线，整条待办转灰 */
 .alp-item.is-done {
     background: var(--el-fill-color-lighter);
@@ -591,8 +642,12 @@ export default {
     border-color: var(--el-color-primary);
 }
 .alp-check.is-checked {
-    background: var(--el-color-success);
-    border-color: var(--el-color-success);
+    /* v1.4.1.1（需求）：勾选后不要彩色，跟标题一样走灰 */
+    background: var(--el-text-color-placeholder);
+    border-color: var(--el-text-color-placeholder);
+}
+.alp-item.is-done .alp-check {
+    opacity: 0.62;
 }
 .alp-cover {
     flex: 0 0 auto;
@@ -680,6 +735,20 @@ export default {
 .alp-folder {
     color: var(--el-color-primary);
     opacity: 0.85;
+}
+/* v1.4.1.1（需求）：待办剩余时间 —— 不足 1 天转警示色，已逾期转危险色 */
+.alp-due {
+    color: var(--el-text-color-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.alp-due.is-urgent {
+    color: var(--el-color-warning);
+}
+.alp-due.is-overdue {
+    color: var(--el-color-danger);
+}
+.alp-item.is-done .alp-due {
+    color: var(--el-text-color-placeholder);
 }
 .alp-progress {
     position: relative;

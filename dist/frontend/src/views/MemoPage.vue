@@ -72,8 +72,8 @@
                     v-if="isMobile && editingId"
                     type="button"
                     class="memo-icon-btn memo-back-tree-btn"
-                    :title="$t('memo.backToTree')"
-                    @click="backToTree"
+                    :title="$t('memo.openTree')"
+                    @click="openTreeDrawer"
                 >
                     <!--
                         v1.3.9.3（需求）：按参考图换成「目录树」图标 ——
@@ -122,8 +122,9 @@
                 点节点 = 打开这篇笔记，同时可以在它下面继续挂子笔记。
             -->
             <aside
-                v-show="!isMobile || (!editingId && !previewNode && activeFolder !== '__trash')"
+                v-show="!isMobile || treeDrawer || (!editingId && !previewNode && activeFolder !== '__trash')"
                 class="memo-col memo-col-tree"
+                :class="{ 'is-drawer': isMobile && treeDrawer }"
                 :style="isMobile ? null : { flexBasis: `${treeWidth}px`, maxWidth: `${treeWidth}px` }"
                 @contextmenu.prevent
             >
@@ -151,6 +152,8 @@
                     @pointerdown.prevent="startTreeResize"
                 ></span>
             </aside>
+            <!-- v1.4.1.1（需求）：移动端节点树从左侧边缘滑出（宽 94%、高 100%） -->
+            <div v-if="isMobile && treeDrawer" class="memo-tree-mask" @click="closeTreeDrawer"></div>
 
             <!-- 右：回收站 / 编辑器（两栏，v1.3.9 去掉中间列表栏） -->
             <main
@@ -440,6 +443,8 @@ export default {
     data() {
         return {
             isMobile: false,
+            /** v1.4.1.1（需求）：移动端节点树抽屉是否展开 */
+            treeDrawer: false,
             /** 当前实例（'' = 默认实例），口径同其它后台页 */
             instance: '',
             /** '' 未选 / '__trash' 回收站 / 笔记节点 id */
@@ -710,6 +715,17 @@ export default {
         onTreeLoaded(payload) {
             // v1.3.9：树返回扁平节点数组（旧版是 folders + unfiled）
             this.folders = Array.isArray(payload?.nodes) ? payload.nodes : [];
+            /*
+             * v1.4.1.1（需求）：进入 /memo 且没打开任何记事时，
+             * 左侧默认落在「笔记」这个一级分类上（高亮 + 已展开），
+             * 而不是停在一片没有任何选中的空态。
+             */
+            if (!this.activeFolder && !this.selectedId) {
+                const roots = Array.isArray(payload?.roots) ? payload.roots : [];
+                const noteRoot = roots.find((n) => String(n?.title || '') === '笔记')
+                    || (this.folders || []).find((n) => String(n?.title || '') === '笔记' && !n.parentId);
+                if (noteRoot?.id) this.activeFolder = String(noteRoot.id);
+            }
             // v1.3.9.1：节点设置接口偶发失败时 node-settings-changed 不会触发，这里兜一次底
             if (payload?.nodeSettings) this.nodeSettings = payload.nodeSettings;
         },
@@ -779,7 +795,15 @@ export default {
             if (ed && typeof ed.saveNow === 'function') ed.saveNow();
         },
         /** v1.3.9：移动端从编辑器回到记事树 */
+        /* v1.4.1.1（需求）：移动端节点树抽屉 —— 从左侧边缘滑出，宽 94% */
+        openTreeDrawer() {
+            this.treeDrawer = true;
+        },
+        closeTreeDrawer() {
+            this.treeDrawer = false;
+        },
         backToTree() {
+            this.treeDrawer = false;
             this.currentNote = null;
             this.previewNode = null;
             this.selectedId = '';
@@ -981,6 +1005,7 @@ export default {
         /** 树节点点击 = 打开这篇笔记（节点本身就是文档） */
         async onPickNode(id) {
             if (!id) return;
+            this.treeDrawer = false;
             this.activeFolder = id;
             if (id !== this.selectedId) this.currentNote = null;
             await this.openNote(id);
@@ -1622,6 +1647,46 @@ export default {
     width: 100%;
     height: 100%;
     border-left: none;
+}
+/*
+ * v1.4.1.1（需求）：移动端「打开节点树」—— 从左侧边缘滑出，
+ * 宽 94%、高 100%（参考 v1.3.8 的目录抽屉），点遮罩或选中节点即收起。
+ */
+.memo-page.is-mobile .memo-col-tree.is-drawer {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 2300;
+    width: 94%;
+    max-width: 94%;
+    height: 100%;
+    background: var(--el-bg-color);
+    box-shadow: 0 0 26px rgba(0, 0, 0, 0.38);
+    animation: memo-tree-slide-in 0.22s ease-out;
+}
+@keyframes memo-tree-slide-in {
+    from {
+        transform: translateX(-100%);
+    }
+    to {
+        transform: translateX(0);
+    }
+}
+.memo-tree-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 2290;
+    background: rgba(0, 0, 0, 0.42);
+    animation: memo-tree-mask-in 0.22s ease-out;
+}
+@keyframes memo-tree-mask-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
 }
 /* v1.3.9.1：移动端进入回收站时的顶部返回栏 */
 .memo-trash-bar {

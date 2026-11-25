@@ -434,7 +434,7 @@
                         <i class="reg-cond-dot" :style="{ background: s.color }"></i>
                         <b class="reg-legend-name">{{ s.name }}</b>
                         <em>{{ fmt(s.total) }}{{ chartUnit ? ' ' + chartUnit : '' }}</em>
-                        <span class="reg-legend-count">{{ $t('reg.entryCount', { n: s.count }) }}</span>
+                        <span v-if="s.count !== null" class="reg-legend-count">{{ $t('reg.entryCount', { n: s.count }) }}</span>
                     </span>
                 </div>
 
@@ -535,6 +535,17 @@
                 <div class="reg-item-field">
                     <span>{{ $t('reg.fieldPortion') }}</span>
                     <el-input v-model="itemForm.portion" size="small" maxlength="32" :placeholder="$t('reg.fieldPortionPh')" />
+                </div>
+                <!-- v1.4.1.2（需求）：条目描述，和名称 / 类型 / 单位 / 分母一起在这里编辑 -->
+                <div class="reg-item-field">
+                    <span>{{ $t('reg.fieldDesc') }}</span>
+                    <el-input
+                        v-model="itemForm.desc"
+                        type="textarea"
+                        size="small"
+                        maxlength="500"
+                        :autosize="{ minRows: 3, maxRows: 5 }"
+                    />
                 </div>
             </div>
             <p class="reg-item-tip">{{ $t('reg.itemEditTip') }}</p>
@@ -660,7 +671,7 @@ export default {
             /* 条目管理 */
             itemEditVisible: false,
             itemSaving: false,
-            itemForm: { id: '', name: '', valueType: 'flow', unit: '', portion: '' },
+            itemForm: { id: '', name: '', valueType: 'flow', unit: '', portion: '', desc: '' },
             itemMergeVisible: false,
             itemMerging: false,
             mergeTarget: { id: '', name: '' },
@@ -708,8 +719,12 @@ export default {
         canAddLegend() {
             return !!this.trackerFilter && this.legends.length < 5;
         },
+        /*
+         * v1.4.1.1（需求）：圆环 / 条形 / 雷达在没有自定义图例时也要能画 ——
+         * 这时分类轴换成「最近 6 个周期」，不再要求至少两条图例。
+         */
         availableChartTypes() {
-            return this.chartTypes.filter((c) => c.value === 'bar' || c.value === 'line' || this.seriesCount >= 2);
+            return this.chartTypes;
         },
         /** 默认项 = 总范围本身（类型 + 条目 + 时间 + 人物 / 地点 / 标签） */
         defaultTraceText() {
@@ -822,7 +837,12 @@ export default {
                 /* 有标签但一条数据都没有时也算空（例如横轴切到「起始时间」而记录都没填） */
                 return sets.length > 0 && sets.some((d) => Number(d.count) > 0);
             }
-            /* 圆环 / 条形 / 雷达：统计的是「图例项 × 数据源」，至少要两个系列 */
+            /*
+             * v1.4.1.1（需求）：没有自定义图例时，圆环 / 条形 / 雷达改用「最近 6 个周期」，
+             * 这时只要周期轴有桶就出图，不再要求「至少两个系列」。
+             */
+            if (this.periodAxis) return true;
+            /* 多个自定义图例时：统计的是「图例项 × 数据源」，至少要两个系列 */
             return this.seriesCount >= 2 && sets.some((d) => Math.abs(Number(d.total) || 0) > 0);
         },
         chartSub() {
@@ -837,9 +857,54 @@ export default {
         seriesNames() {
             return ((this.stats.chart && this.stats.chart.datasets) || []).map((d) => String(d.name || ''));
         },
+        /** 周期单位词：「按日」→ 日，「按月」→ 月 */
+        periodUnitWord() {
+            const map = { day: 'reg.unitDay', week: 'reg.unitWeek', month: 'reg.unitMonth', quarter: 'reg.unitQuarter', year: 'reg.unitYear' };
+            return this.$t(map[this.bucket] || 'reg.unitDay');
+        },
+        /**
+         * v1.4.1.1（需求）：没有自定义图例（只有默认项）时，
+         * 圆环 / 条形 / 雷达的分类轴改成「最近 6 个周期」——
+         * 当前周期、前一个、前二个……前五个，单位跟着「周期」选择走（日 / 周 / 月 / 季 / 年）。
+         * 数据直接取默认系列已算好的时间桶，最后 6 个桶从旧到新排。
+         */
+        periodAxis() {
+            if (this.customLegendCount > 0) return null;
+            const chart = this.stats.chart || {};
+            const labels = Array.isArray(chart.labels) ? chart.labels : [];
+            const first = (chart.datasets || [])[0];
+            const data = first && Array.isArray(first.data) ? first.data : [];
+            if (!labels.length || !data.length) return null;
+            const take = Math.min(6, labels.length);
+            const unit = this.periodUnitWord;
+            const zhNum = ['', '一', '二', '三', '四', '五'];
+            const out = [];
+            for (let i = labels.length - take; i < labels.length; i += 1) {
+                const back = labels.length - 1 - i;
+                const locale = String((this.$i18n && this.$i18n.locale) || 'zh-CN');
+                const num = locale.startsWith('zh') ? (zhNum[back] || String(back)) : back;
+                out.push({
+                    name: back === 0
+                        ? this.$t('reg.periodCurrent', { unit })
+                        : this.$t('reg.periodPrev', { unit, n: num }),
+                    value: Number(data[i]) || 0,
+                    key: labels[i],
+                });
+            }
+            return out;
+        },
         /** 图表下方那片颜色方块图例（圆环 / 条形 / 雷达用）：名称 + 合计 + 条数 */
         seriesLegend() {
             if (this.isSeriesChart) return [];
+            /* v1.4.1.1：周期模式下，色块图例列的是这 6 个周期（没有「条数」） */
+            if (this.periodAxis) {
+                return this.periodAxis.map((p, i) => ({
+                    name: p.name,
+                    total: p.value,
+                    count: null,
+                    color: this.chartColor(i),
+                }));
+            }
             return ((this.stats.chart && this.stats.chart.datasets) || []).map((d, i) => ({
                 name: String(d.name || ''),
                 total: Number(d.total) || 0,
@@ -908,13 +973,21 @@ export default {
             const names = sets.map((d) => String(d.name || ''));
             const totals = sets.map((d) => Number(d.total) || 0);
 
+            /*
+             * v1.4.1.1：只有默认项时，圆环 / 条形 / 雷达的分类轴换成最近 6 个周期
+             * （本轮数据直接取默认系列的时间桶，不再依赖图例条数）。
+             */
+            const axis = this.periodAxis;
+            const axisNames = axis ? axis.map((p) => p.name) : names;
+            const axisValues = axis ? axis.map((p) => p.value) : totals;
+
             if (type === 'doughnut') {
                 return {
-                    labels: names,
+                    labels: axisNames,
                     datasets: [{
                         label: valueLabel,
-                        data: totals.map((v) => Math.abs(v)),
-                        backgroundColor: names.map((_, i) => colors[i % colors.length]),
+                        data: axisValues.map((v) => Math.abs(v)),
+                        backgroundColor: axisNames.map((_, i) => colors[i % colors.length]),
                         borderWidth: 2,
                         borderColor: 'transparent',
                         hoverOffset: 6,
@@ -924,11 +997,11 @@ export default {
             if (type === 'hbar') {
                 /* 纵轴名称改成颜色方块（见 chartOptions 的 ticks），真实名称在图表下方 */
                 return {
-                    labels: names,
+                    labels: axisNames,
                     datasets: [{
                         label: valueLabel,
-                        data: totals,
-                        backgroundColor: names.map((_, i) => colors[i % colors.length]),
+                        data: axisValues,
+                        backgroundColor: axisNames.map((_, i) => colors[i % colors.length]),
                         borderRadius: 6,
                         borderWidth: 0,
                     }],
@@ -937,15 +1010,15 @@ export default {
             if (type === 'radar') {
                 /* 雷达图统计「图例项 × 数据源」：每个轴是一个图例项，值是该系列的合计 */
                 return {
-                    labels: names,
+                    labels: axisNames,
                     datasets: [{
                         label: valueLabel,
-                        data: totals,
+                        data: axisValues,
                         borderColor: colors[0],
                         backgroundColor: 'rgba(64, 158, 255, 0.18)',
                         borderWidth: 2,
-                        pointBackgroundColor: names.map((_, i) => colors[i % colors.length]),
-                        pointBorderColor: names.map((_, i) => colors[i % colors.length]),
+                        pointBackgroundColor: axisNames.map((_, i) => colors[i % colors.length]),
+                        pointBorderColor: axisNames.map((_, i) => colors[i % colors.length]),
                         pointRadius: 4,
                     }],
                 };
@@ -1070,7 +1143,11 @@ export default {
                             ...tooltipBase,
                             callbacks: {
                                 /* v1.3.6：雷达外围是「■」色块，tooltip 标题换回真实项名 */
-                                title: (items) => String(this.seriesNames[(items[0] && items[0].dataIndex) || 0] || ''),
+                                title: (items) => {
+                                    const i = (items[0] && items[0].dataIndex) || 0;
+                                    if (this.periodAxis) return String(this.periodAxis[i]?.name || '');
+                                    return String(this.seriesNames[i] || '');
+                                },
                                 label: seriesLabel,
                             },
                         },
@@ -1085,15 +1162,21 @@ export default {
                              * 名称写在图表下方的色块图例里。
                              */
                             pointLabels: {
-                                color: series.map((_, i) => colorAt(i)),
-                                font: { size: this.narrow ? 15 : 17, weight: '700' },
+                                /* v1.4.1.1：周期模式直接写周期名，图例模式仍用颜色方块 */
+                                color: this.periodAxis ? textColor : series.map((_, i) => colorAt(i)),
+                                font: this.periodAxis
+                                    ? { size: this.narrow ? 10 : 11, weight: '600' }
+                                    : { size: this.narrow ? 15 : 17, weight: '700' },
                                 padding: 8,
-                                callback: () => '■',
+                                callback: (label) => (this.periodAxis ? label : '■'),
                             },
                             ticks: { display: false },
                             /* 顶点贴在最外圈会被网格线盖住，留 20% 余量 */
                             suggestedMax: (() => {
-                                const max = Math.max(0, ...((this.stats.chart.datasets || []).map((d) => Number(d.total) || 0)));
+                                const vals = this.periodAxis
+                                    ? this.periodAxis.map((p) => p.value)
+                                    : (this.stats.chart.datasets || []).map((d) => Number(d.total) || 0);
+                                const max = Math.max(0, ...vals);
                                 return max > 0 ? max * 1.2 : 1;
                             })(),
                         },
@@ -1107,12 +1190,19 @@ export default {
                 offset: true,
                 grid: { display: false },
                 ticks: horizontal
-                    ? {
-                        /* v1.3.5.10：条形图纵轴名称换成颜色方块 */
-                        color: (ctx) => colorAt(ctx.index),
-                        font: { size: this.narrow ? 12 : 14, weight: '700' },
-                        callback: () => '■',
-                    }
+                    ? (this.periodAxis
+                        ? {
+                            /* v1.4.1.1：周期模式直接写「当前日 / 前一日…」 */
+                            color: textColor,
+                            font: { size: fontSize },
+                            callback: (label) => label,
+                        }
+                        : {
+                            /* v1.3.5.10：条形图纵轴名称换成颜色方块 */
+                            color: (ctx) => colorAt(ctx.index),
+                            font: { size: this.narrow ? 12 : 14, weight: '700' },
+                            callback: () => '■',
+                        })
                     : {
                         color: textColor,
                         font: { size: fontSize },
@@ -1189,10 +1279,6 @@ export default {
         /* 窄屏 / 宽屏切换：日期值互搬，避免筛选看起来被清空 */
         narrow() {
             this.syncRangeBetweenModes();
-        },
-        /* 自定义图例被删到只剩默认项时，圆环 / 条形 / 雷达要退回柱形 */
-        seriesCount(n) {
-            if (n < 2 && ['doughnut', 'hbar', 'radar'].includes(this.chartType)) this.chartType = 'bar';
         },
     },
     beforeUnmount() {
@@ -1378,6 +1464,8 @@ export default {
                 valueType: t.valueType || 'flow',
                 unit: t.unit || '',
                 portion: t.portion || '',
+                /* v1.4.1.2：条目描述 */
+                desc: t.desc || '',
             };
             this.itemEditVisible = true;
         },
@@ -1397,6 +1485,8 @@ export default {
                         valueType: this.itemForm.valueType,
                         unit: String(this.itemForm.unit || '').trim(),
                         portion: String(this.itemForm.portion || '').trim(),
+                        /* v1.4.1.2：描述随条目一起保存（空串 = 清空） */
+                        desc: String(this.itemForm.desc || '').trim(),
                     }),
                 });
                 const data = await res.json().catch(() => ({}));
@@ -1840,9 +1930,19 @@ export default {
     align-items: center;
     gap: 10px;
     margin: -16px -18px 14px;
-    padding: 8px 14px;
+    /*
+     * v1.4.1.1（需求：左上角页面切换要与「我的发布」完全一致）：
+     * 内边距直接对齐 /post 顶栏（桌面 8/16、移动 8/6），
+     * 这样同一个 DashboardTabs 按钮在两张页面上落在同一位置。
+     */
+    padding: 8px 16px;
     background: var(--el-bg-color);
     border-bottom: 1px solid var(--el-border-color-lighter);
+}
+@media (max-width: 900px) {
+    .reg-topbar {
+        padding: 6px;
+    }
 }
 
 .reg-head {

@@ -136,6 +136,9 @@ let RegService = class RegService {
             const patch = {};
             if (input.scene !== undefined)
                 patch.scene = String(input.scene).slice(0, 24);
+            const descIn = text(input.trackerDesc, 500);
+            if (descIn && !String(existed.desc || '').trim())
+                patch.desc = descIn;
             if (Object.keys(patch).length) {
                 const row = await prisma_1.prisma.regTracker.update({ where: { id: existed.id }, data: patch });
                 return { row, locked: true };
@@ -154,6 +157,7 @@ let RegService = class RegService {
                 portion: text(input.portion, 32),
                 unitKind: String(input.unitKind || '').slice(0, 24),
                 precision: Math.max(0, Math.min(6, Math.round(num(input.precision, 2)))),
+                desc: text(input.trackerDesc, 500),
             },
         });
         return { row, locked: false };
@@ -187,10 +191,11 @@ let RegService = class RegService {
                 portion,
                 ...(input.scene === undefined ? {} : { scene: String(input.scene).slice(0, 24) }),
                 ...(input.note === undefined ? {} : { note: String(input.note).slice(0, 200) }),
+                ...(input.desc === undefined ? {} : { desc: String(input.desc).trim().slice(0, 500) }),
                 ...(input.precision === undefined ? {} : { precision: Math.max(0, Math.min(6, Math.round(num(input.precision, 2)))) }),
             },
         });
-        return { id: row.id, name: row.name, unit: row.unit, portion: row.portion, valueType: row.valueType };
+        return { id: row.id, name: row.name, unit: row.unit, portion: row.portion, valueType: row.valueType, desc: row.desc };
     }
     async mergeTrackers(targetId, sourceIds, owner) {
         const target = await prisma_1.prisma.regTracker.findFirst({ where: { id: String(targetId || ''), owner } });
@@ -537,6 +542,18 @@ let RegService = class RegService {
         const qty = r.quantity === 0 || r.quantity === undefined || r.quantity === null ? 1 : num(r.quantity, 1);
         return axisY === 'quantity' ? qty : num(r.amount) * qty;
     }
+    durationDaysOf(r) {
+        const due = r?.dueAt ? new Date(r.dueAt).getTime() : NaN;
+        if (!Number.isFinite(due))
+            return 0;
+        const start = r?.startAt ? new Date(r.startAt).getTime() : NaN;
+        const occurred = r?.occurredAt ? new Date(r.occurredAt).getTime() : NaN;
+        const created = r?.createdAt ? new Date(r.createdAt).getTime() : NaN;
+        const base = [start, occurred, created].find((t) => Number.isFinite(t));
+        if (!Number.isFinite(base))
+            return 0;
+        return Math.round(((due - base) / 86400000) * 100) / 100;
+    }
     async stats(q) {
         const instanceId = String(q.instanceId || '');
         const axisX = this.axisField(q.axisX);
@@ -581,6 +598,7 @@ let RegService = class RegService {
             defaultWhere.AND = and;
         }
         const hasDefaultExtra = Object.keys(defaultWhere).length !== Object.keys(totalWhere).length;
+        const durationMode = type === 'duration';
         const rows = await prisma_1.prisma.regEntry.findMany({
             where: defaultWhere,
             include: {
@@ -610,8 +628,8 @@ let RegService = class RegService {
         const values = [];
         const unitKeys = new Set();
         for (const r of rows) {
-            const m = this.metricOf(r, axisY);
-            const v = num(r.amount) * (r.quantity === 0 ? 1 : num(r.quantity, 1));
+            const m = durationMode ? this.durationDaysOf(r) : this.metricOf(r, axisY);
+            const v = durationMode ? m : num(r.amount) * (r.quantity === 0 ? 1 : num(r.quantity, 1));
             total += m;
             quantity += num(r.quantity, 1);
             if (m > max)
@@ -655,8 +673,12 @@ let RegService = class RegService {
         if (defaultLegend && !defaultLegend.trackerId && !defaultLegend.trackerName && q.trackerId) {
             defaultLegend.trackerId = String(q.trackerId);
         }
-        const chart = this.buildChart(legends.length ? chartRows : rows, { axisX, axisY, bucket, from, to, legends });
-        if (!legends.some((l) => !l.isDefault) && unitKeys.size > 1) {
+        const chart = this.buildChart(legends.length ? chartRows : rows, { axisX, axisY, bucket, from, to, legends, durationMode });
+        if (durationMode) {
+            chart.unit = '天';
+            chart.portion = '';
+        }
+        else if (!legends.some((l) => !l.isDefault) && unitKeys.size > 1) {
             chart.unit = '';
             chart.portion = '';
         }
@@ -679,8 +701,8 @@ let RegService = class RegService {
             byTracker,
             byWeekday,
             histogram: this.buildHistogram(values),
-            unit: unitKeys.size > 1 ? '' : (firstTracker ? String(firstTracker.unit || '') : ''),
-            portion: unitKeys.size > 1 ? '' : (firstTracker ? String(firstTracker.portion || '') : ''),
+            unit: durationMode ? '天' : (unitKeys.size > 1 ? '' : (firstTracker ? String(firstTracker.unit || '') : '')),
+            portion: durationMode ? '' : (unitKeys.size > 1 ? '' : (firstTracker ? String(firstTracker.portion || '') : '')),
             currency: rows[0]?.currency || '',
             bucket,
             axisX,
@@ -721,7 +743,7 @@ let RegService = class RegService {
             .filter((x) => x.isDefault || x.trackerId || x.trackerName);
     }
     buildChart(rows, opt) {
-        const { axisX, axisY, bucket, from, to, legends } = opt;
+        const { axisX, axisY, bucket, from, to, legends, durationMode } = opt;
         const groups = legends.length ? legends : [null];
         const keyOf = (r) => {
             const d = this.axisDate(r, axisX);
@@ -759,7 +781,7 @@ let RegService = class RegService {
                 const k = keyOf(r);
                 if (!k)
                     continue;
-                const m = this.metricOf(r, axisY);
+                const m = durationMode ? this.durationDaysOf(r) : this.metricOf(r, axisY);
                 map.set(k, (map.get(k) || 0) + m);
                 sum += m;
             }

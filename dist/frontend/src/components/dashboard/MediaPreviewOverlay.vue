@@ -335,6 +335,20 @@
                                 @click="setVideoMode(m.value)"
                             >{{ m.label }}</button>
                         </div>
+                        <!-- v1.4.1.1（需求）：单片循环时可自定义循环次数，播满自动停止 -->
+                        <template v-if="videoMode === 'single'">
+                            <div class="mv-menu-label">{{ $t('mediaViewer.loopCount') }}</div>
+                            <div class="mv-menu-chips">
+                                <button
+                                    v-for="n in videoLoopOptions"
+                                    :key="'loop' + n"
+                                    type="button"
+                                    class="mv-chip"
+                                    :class="{ 'is-active': videoLoopLimit === n }"
+                                    @click="setVideoLoopLimit(n)"
+                                >{{ n === 0 ? $t('mediaViewer.loopUnlimited') : $t('mediaViewer.loopTimes', { n }) }}</button>
+                            </div>
+                        </template>
                         <!-- v3.0.0（R16）：画面方向 —— 支持切到横屏播放（移动端 CSS 旋转 / 桌面端全屏） -->
                         <div class="mv-menu-label">{{ $t('mediaViewer.screenOrientation') }}</div>
                         <div class="mv-menu-chips">
@@ -833,6 +847,15 @@ export default {
             videoRateOptions: [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4],
             // v3.0.0 播放模式：once = 单次播放，single = 单片循环，random = 随机，sequence = 顺序
             videoMode: 'sequence',
+            /*
+             * v1.4.1.1（需求）：单片循环的自定义循环数。
+             * 0 = 不限（原生 loop 处理）；>0 = 不用原生 loop，改为播完一遍计一次数，
+             * 数到 0 就停住。计数从「设置这一刻」开始：设置 5 次 = 接下来再播 5 遍。
+             */
+            videoLoopLimit: 0,
+            videoLoopsLeft: 0,
+            /** 循环数可选值（0 = 不限） */
+            videoLoopOptions: [0, 1, 3, 5, 10],
             // v3.0.0：音频播放模式（once=单次 / single=单曲循环 / random=随机 / sequence=顺序）
             audioMode: 'sequence',
             // v3.0.0：文本类预览内容 / 加载中 / 是否被截断
@@ -2132,9 +2155,21 @@ export default {
             if (this._lp3xActive) return
             try {
                 v.playbackRate = this.videoRate
-                // 单片循环用原生 loop；单次播放/随机/顺序由 ended 事件接管
-                v.loop = this.videoMode === 'single'
+                /*
+                 * 单片循环用原生 loop；单次播放/随机/顺序由 ended 事件接管。
+                 * v1.4.1.1：设了「循环次数」就不能用原生 loop —— loop=true 时
+                 * ended 不触发，数不到数，只能让 ended 事件来接管重播。
+                 */
+                v.loop = this.videoMode === 'single' && this.videoLoopLimit <= 0
             } catch (e) { /* 忽略：部分浏览器限制设置时机 */ }
+        },
+        /** v1.4.1.1：设置循环次数，从这一刻开始重新计数 */
+        setVideoLoopLimit(n) {
+            const limit = Math.max(0, Number(n) || 0)
+            this.videoLoopLimit = limit
+            this.videoLoopsLeft = limit
+            this.applyVideoSettings()
+            this.bumpControls()
         },
         setVideoRate(rate) {
             this.videoRate = Number(rate) || 1
@@ -2145,6 +2180,8 @@ export default {
         },
         setVideoMode(mode) {
             this.videoMode = mode
+            // v1.4.1.1：切回单片循环时，循环次数从满额重新开始
+            if (mode === 'single') this.videoLoopsLeft = this.videoLoopLimit
             this.applyVideoSettings()
             this.bumpControls()
         },
@@ -2191,9 +2228,23 @@ export default {
             // v3.0.0 单次播放：播完即停
             if (this.videoMode === 'once') return
             if (this.videoMode === 'single') {
-                // loop 已生效，这里是兜底
                 const v = this.$refs.videoEl
-                if (v) { v.currentTime = 0; v.play().catch(() => {}) }
+                if (!v) return
+                /*
+                 * v1.4.1.1（需求）：自定义循环数。设了次数时由这里接管重播：
+                 * 每播完一遍扣一次，扣到 0 就停住（不重播、不暂停错位）。
+                 * 没设次数时走原生 loop，这里只是兜底。
+                 */
+                if (this.videoLoopLimit > 0) {
+                    if (this.videoLoopsLeft > 0) this.videoLoopsLeft -= 1
+                    if (this.videoLoopsLeft > 0) {
+                        v.currentTime = 0
+                        v.play().catch(() => {})
+                    }
+                    return
+                }
+                v.currentTime = 0
+                v.play().catch(() => {})
                 return
             }
             const videoIndexes = (this.items || [])

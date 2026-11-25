@@ -13,6 +13,7 @@ const prisma_1 = require("../common/prisma");
 const app_log_1 = require("../common/app-log");
 const notes_util_1 = require("./notes.util");
 const tags_1 = require("../common/tags");
+const markers_1 = require("../common/markers");
 const memo_util_1 = require("./memo.util");
 const memo_block_util_1 = require("./memo-block.util");
 const SYSTEM_ROOT_TITLES = ['笔记', '日记', '札记', '灵感', '模板'];
@@ -26,6 +27,7 @@ const ROOT_DOC_TYPE = {
 const DEFAULT_NODE_SETTINGS = {
     rowHeight: 30,
     showLines: true,
+    clickFolderExpand: false,
     folderIcon: 'book-bookmark',
     typeIcons: { note: 'file-lines', diary: 'heart', journal: 'feather-pointed', inspiration: 'lightbulb', template: '' },
 };
@@ -623,6 +625,7 @@ let MemoService = MemoService_1 = class MemoService {
         return {
             rowHeight: Math.min(64, Math.max(22, asInt(saved.rowHeight, def.rowHeight))),
             showLines: typeof saved.showLines === 'boolean' ? saved.showLines : def.showLines,
+            clickFolderExpand: typeof saved.clickFolderExpand === 'boolean' ? saved.clickFolderExpand : def.clickFolderExpand,
             folderIcon: typeof saved.folderIcon === 'string' ? saved.folderIcon.slice(0, 60) : def.folderIcon,
             typeIcons,
         };
@@ -633,6 +636,7 @@ let MemoService = MemoService_1 = class MemoService {
         const next = {
             rowHeight: Math.min(64, Math.max(22, asInt(src.rowHeight, cur.rowHeight))),
             showLines: typeof src.showLines === 'boolean' ? src.showLines : cur.showLines,
+            clickFolderExpand: typeof src.clickFolderExpand === 'boolean' ? src.clickFolderExpand : cur.clickFolderExpand,
             folderIcon: typeof src.folderIcon === 'string' ? String(src.folderIcon).slice(0, 60) : cur.folderIcon,
             typeIcons: { ...cur.typeIcons },
         };
@@ -1088,6 +1092,17 @@ let MemoService = MemoService_1 = class MemoService {
         });
         if (!row)
             return null;
+        let markerName = '';
+        try {
+            const link = await prisma_1.prisma.noteMarker.findUnique({
+                where: { noteId: id },
+                select: { marker: { select: { name: true } } },
+            });
+            markerName = String(link?.marker?.name || '');
+        }
+        catch (e) {
+            markerName = '';
+        }
         return {
             id: row.id,
             title: String(row.title || ''),
@@ -1102,6 +1117,7 @@ let MemoService = MemoService_1 = class MemoService {
             moodName: String(row.moodName || ''),
             weather: String(row.weather || ''),
             weatherName: String(row.weatherName || ''),
+            markerName,
             version: asInt(row.version, 1),
             status: String(row.status || ''),
             createdAt: timeOf(row.createdAt),
@@ -1222,6 +1238,18 @@ let MemoService = MemoService_1 = class MemoService {
             data.folderId = folderId;
         }
         const next = await prisma_1.prisma.note.update({ where: { id }, data: data, select: { version: true, updatedAt: true } });
+        if (input.markerName !== undefined) {
+            try {
+                const name = String(input.markerName ?? '').trim().slice(0, 120);
+                const marker = name ? await (0, markers_1.findOrCreateMarker)(name, instanceId, viewer, 'note') : null;
+                await prisma_1.prisma.noteMarker.deleteMany({ where: { noteId: id } });
+                if (marker)
+                    await prisma_1.prisma.noteMarker.create({ data: { noteId: id, markerId: marker.id } });
+            }
+            catch (e) {
+                app_log_1.appLog.warn('memo', `保存标记失败：笔记 ${id}`);
+            }
+        }
         await this.rebuildNoteIndex(id, content, viewer, instanceId);
         return { version: asInt(next.version, 1), updatedAt: timeOf(next.updatedAt) };
     }

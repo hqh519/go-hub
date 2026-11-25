@@ -252,17 +252,9 @@
                         {{ updatedText }}
                     </span>
                     <!--
-                        v1.3.4.1（需求）：字数 / 字符按新口径统计。
-                        「字数」= 汉字 + 字母；「字符」= 总字符数（所有字符都统计）。
-                        v1.3.5（需求）：点这两项弹出内容统计页 —— 改成按钮，键盘也能触发。
-                        v1.3.9.1（需求）：移动端只留字数统计，`字符 xxx` 移除不要。
+                        v1.4.1.1（需求）：字数 / 字符从这一行移到底部「反链」后面，
+                        让标题栏下面这行只放版本 / 保存时间 / 状态 / 心情 / 天气 / 标记。
                     -->
-                    <button type="button" class="me-meta-item me-meta-stat" :title="$t('memo.statsTitle')" @click="openStats">
-                        {{ $t('memo.wordCount', { n: wordCount }) }}
-                    </button>
-                    <button v-if="!isMobileViewport" type="button" class="me-meta-item me-meta-stat" :title="$t('memo.statsTitle')" @click="openStats">
-                        {{ $t('memo.charCountAll', { n: charCount }) }}
-                    </button>
                     <span class="me-status">
                         <span v-if="saving" class="me-status-text">{{ $t('memo.saving') }}</span>
                         <span v-else-if="dirty" class="me-status-text is-dirty">{{ $t('memo.unsaved') }}</span>
@@ -280,6 +272,11 @@
                         :weather="weather"
                         @change="onMoodWeatherChange"
                     />
+                    <!--
+                        v1.4.1.1（需求）：天气按钮后面加「标记」输入框，直接复刻发布瞬间页那一套
+                        （可手输、可查历史、单选）。标记本体统一进 markers 表，关联走 note_markers。
+                        v1.4.1.2（需求）：标记栏移到编辑区末尾行的下方，这里不再显示。
+                    -->
                 </div>
                 <!-- 标签行：交互与瞬间发布页一致（输入即查候选，空格 / 回车成标签） -->
                 <div class="me-tags">
@@ -379,19 +376,61 @@
                 </div>
             </div>
 
-            <!--
-                v1.3.9.1（需求）：预览模式直接共用编辑模式的整套样式 ——
-                同一个 TipTap 编辑器实例只是不可编辑（editable=false）、隐藏工具栏与行级栏，
-                不再用 marked 渲染一份静态 HTML（两套样式永远对不齐）。
-            -->
-            <EditorContent
-                v-show="mode === 'wysiwyg' || mode === 'preview'"
-                :editor="editor"
-                class="me-wysiwyg"
-                :class="{ 'is-readonly': mode === 'preview' }"
-                @click="onPreviewClick"
-            />
-            <div v-show="mode === 'source'" ref="sourceEl" class="me-source"></div>
+            <div class="me-main">
+                <!--
+                    v1.3.9.1（需求）：预览模式直接共用编辑模式的整套样式 ——
+                    同一个 TipTap 编辑器实例只是不可编辑（editable=false）、隐藏工具栏与行级栏，
+                    不再用 marked 渲染一份静态 HTML（两套样式永远对不齐）。
+                -->
+                <EditorContent
+                    v-show="mode === 'wysiwyg' || mode === 'preview'"
+                    :editor="editor"
+                    class="me-wysiwyg"
+                    :class="{ 'is-readonly': mode === 'preview' }"
+                    @click="onPreviewClick"
+                />
+                <div v-show="mode === 'source'" ref="sourceEl" class="me-source"></div>
+
+                <!--
+                    v1.4.1.2（需求）：标记栏从「标签栏上一行」移到编辑区末尾行的下方，
+                    样式与标签栏保持一致（同样的 padding / 胶囊标签 / 行高），
+                    背景沿用编辑区（.me-body 已经铺了 --me-bg）。
+                -->
+                <div v-if="note && !extApiActive" class="me-marker-bar">
+                    <span v-if="markerName" class="me-tag me-marker-chip">
+                        <font-awesome-icon icon="highlighter" class="me-marker-chip-icon" />
+                        <span class="me-marker-chip-text">{{ markerName }}</span>
+                        <button
+                            type="button"
+                            class="me-tag-x"
+                            :title="$t('memo.markerClear')"
+                            @click="clearMarker"
+                        >
+                            <font-awesome-icon icon="times" />
+                        </button>
+                    </span>
+                    <!--
+                        用独立的草稿变量承接输入：直接绑 markerName 的话，敲下第一个字符
+                        胶囊就会出现、输入框随之消失，根本没法继续输入。
+                        提交（回车 / 选中候选 / 失焦）后才写回 markerName。
+                    -->
+                    <span v-else class="me-marker-field">
+                        <el-autocomplete
+                            ref="markerField"
+                            v-model="markerInput"
+                            class="me-marker-ac"
+                            size="small"
+                            :fetch-suggestions="queryMarker"
+                            :placeholder="$t('notes.markerPlaceholder')"
+                            :trigger-on-focus="true"
+                            maxlength="120"
+                            popper-class="me-marker-popper"
+                            @select="onMarkerPicked"
+                            @change="commitMarker"
+                        />
+                    </span>
+                </div>
+            </div>
 
             <!--
                 图片缩放手柄（v1.4.0）：8 个方向的把手浮在选中的图片上方。
@@ -425,6 +464,24 @@
                     <span class="me-bl-count">{{ backlinks.length }}</span>
                     <font-awesome-icon :icon="backlinksOpen ? 'chevron-up' : 'chevron-down'" class="me-bl-caret" />
                 </button>
+                <!--
+                    v1.4.1.1（需求）：字数 / 字符统计移到底部栏「反链」后面。
+                    桌面端两项都显示；移动端只显示字数（沿用 v1.3.9.1 的口径）。
+                    点一下仍然弹内容统计页。
+                -->
+                <button
+                    type="button"
+                    class="me-bl-stat"
+                    :title="$t('memo.statsTitle')"
+                    @click="openStats"
+                >{{ $t('memo.wordCount', { n: wordCount }) }}</button>
+                <button
+                    v-if="!isMobileViewport"
+                    type="button"
+                    class="me-bl-stat"
+                    :title="$t('memo.statsTitle')"
+                    @click="openStats"
+                >{{ $t('memo.charCountAll', { n: charCount }) }}</button>
                 <!--
                     v1.3.9.2（需求）：
                       · 「编辑 / 源码 / 预览」切换从工具栏末尾移到这里，放在大纲工具左侧；
@@ -903,6 +960,15 @@
                         </button>
                     </div>
                     <div class="me-outline-list">
+                        <!-- v1.4.1.1（需求）：首行「跳到开始行」+ 末行「跳到末尾行」 -->
+                        <button
+                            type="button"
+                            class="me-outline-item me-outline-jump"
+                            @click="jumpToDocEdge('start')"
+                        >
+                            <span class="me-outline-jump-icon"><font-awesome-icon icon="angles-up" /></span>
+                            <span class="me-outline-text">{{ $t('memo.outlineJumpStart') }}</span>
+                        </button>
                         <button
                             v-for="it in outlineVisible"
                             :key="it.pos"
@@ -927,6 +993,14 @@
                             </span>
                             <span class="me-outline-tag">H{{ it.level }}</span>
                             <span class="me-outline-text">{{ it.text }}</span>
+                        </button>
+                        <button
+                            type="button"
+                            class="me-outline-item me-outline-jump"
+                            @click="jumpToDocEdge('end')"
+                        >
+                            <span class="me-outline-jump-icon"><font-awesome-icon icon="angles-down" /></span>
+                            <span class="me-outline-text">{{ $t('memo.outlineJumpEnd') }}</span>
                         </button>
                     </div>
                 </div>
@@ -1468,6 +1542,7 @@ import UploadTargetDialog from '@/components/upload/UploadTargetDialog.vue';
 import MediaPreviewOverlay from '@/components/dashboard/MediaPreviewOverlay.vue';
 import FileDetailUnified from '@/components/dashboard/FileDetailUnified.vue';
 import { loadFileDetail } from '@/utils/fileDetailLoader';
+import fetchWithAuth from '@/utils/fetchWithAuth';
 import { docToMd, mdToDoc, renderMarkdownSafe, plainTextOf } from '@/utils/markdown';
 import {
     saveNote,
@@ -4089,6 +4164,14 @@ export default {
             charCount: 0,
             /** v1.3.9.1：窗口宽度（只在跨 900px 断点时更新，供 isMobileViewport 用） */
             winW: typeof window !== 'undefined' ? window.innerWidth : 1440,
+            /**
+             * v1.4.1.2（Bug 修复）：<html> 上是否有 dark 类。
+             * 全局配色模式（含「自动」按时间切换）是直接改 documentElement 的 class，
+             * 这不是 Vue 的响应式数据 —— 原来 editorTheme 里直接读 classList，
+             * computed 缓存下来就再也不会重算，编辑器背景只能靠刷新页面才跟着变。
+             * 现在用 MutationObserver 把 class 变化同步进这个字段。
+             */
+            htmlDark: typeof document !== 'undefined' && document.documentElement.classList.contains('dark'),
             pickerVisible: false,
             sourceView: null,
             saveTimer: null,
@@ -4110,6 +4193,11 @@ export default {
             moodName: '',
             weather: '',
             weatherName: '',
+            /** v1.4.1.1（需求）：标记（单选，写 markers 表 + note_markers 关联） */
+            markerName: '',
+            /** v1.4.1.2：标记输入框的草稿（提交后才写成 markerName） */
+            markerInput: '',
+            markerCache: {},
             /** v1.4.1：编辑器设置弹窗（工具栏最后一格打开） */
             editorSettingsOpen: false,
             /** v1.3.9.1：导入模板弹窗 */
@@ -4513,8 +4601,11 @@ export default {
         editorTheme() {
             const t = String(this.editorConfig?.theme || 'auto');
             if (t === 'light' || t === 'dark') return t;
-            const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
-            return dark ? 'dark' : 'light';
+            /*
+             * v1.4.1.2：改读响应式的 htmlDark，而不是现查 classList ——
+             * 全局主题切换时 computed 才会重算，编辑区背景实时跟随，不用刷新。
+             */
+            return this.htmlDark ? 'dark' : 'light';
         },
         /**
          * v1.4.1（需求）：编辑区背景色。
@@ -4697,6 +4788,18 @@ export default {
             this.annPop = { ...this.annPop, visible: false };
         };
         document.addEventListener('pointerdown', this._annOutside, true);
+        /*
+         * v1.4.1.2（Bug 修复）：盯住 <html> 的 class。
+         * 全局配色模式切换（手动切白天/黑夜，或「自动」到点切夜间）只改这个类，
+         * 不会触发 Vue 更新；观察它把 htmlDark 同步进响应式，编辑器背景才能实时跟着换。
+         */
+        if (typeof MutationObserver !== 'undefined') {
+            this._themeObserver = new MutationObserver(() => {
+                const dark = document.documentElement.classList.contains('dark');
+                if (dark !== this.htmlDark) this.htmlDark = dark;
+            });
+            this._themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        }
         this.applyCustomCss();
         this.$nextTick(() => {
             this.measureToolbar();
@@ -5024,6 +5127,11 @@ export default {
             this._gutterRO.disconnect();
             this._gutterRO = null;
         }
+        /* v1.4.1.2：主题观察器随组件销毁一起摘掉 */
+        if (this._themeObserver) {
+            this._themeObserver.disconnect();
+            this._themeObserver = null;
+        }
         const _body = this.$refs.bodyEl;
         if (_body && this._gutterLoad) {
             _body.removeEventListener('load', this._gutterLoad, true);
@@ -5212,6 +5320,8 @@ export default {
                 this.moodName = '';
                 this.weather = '';
                 this.weatherName = '';
+                this.markerName = '';
+                this.markerInput = '';
                 this.editor?.commands.clearContent(true);
                 return;
             }
@@ -5222,6 +5332,9 @@ export default {
             this.moodName = String(note.moodName || '');
             this.weather = String(note.weather || '');
             this.weatherName = String(note.weatherName || '');
+            // v1.4.1.1：标记（服务端从 note_markers 关联里取名称）
+            this.markerName = String(note.markerName || '');
+            this.markerInput = '';
             const md = String(note.content || '');
             this.charCount = this.countChars(md);
             this.updatedAt = Number(note.updatedAt) || 0;
@@ -6320,6 +6433,59 @@ export default {
         },
 
         /**
+         * v1.4.1.1（需求）：标记候选 —— 与发布瞬间页同一个接口，kind 换成 note。
+         * 标记是「单选」的，所以输入框只有一个值，不与标签混用。
+         */
+        async queryMarker(queryString, cb) {
+            const q = String(queryString || '').trim();
+            const key = q.toLowerCase();
+            if (this.markerCache[key]) {
+                cb(this.markerCache[key]);
+                return;
+            }
+            try {
+                const params = new URLSearchParams({ instanceId: this.instanceId || '', kind: 'note' });
+                if (q) params.set('keyword', q);
+                const res = await fetchWithAuth(`/api/notes/markers?${params.toString()}`);
+                const data = await res.json().catch(() => []);
+                const rows = Array.isArray(data) ? data : data.list || [];
+                const list = rows
+                    .map((r) => (typeof r === 'string' ? r : (r && r.name) || ''))
+                    .filter((v) => String(v).trim())
+                    .slice(0, 20)
+                    .map((v) => ({ value: v }));
+                this.markerCache[key] = list;
+                cb(list);
+            } catch (e) {
+                cb([]);
+            }
+        },
+        /** 标记改了就排一次保存（清空同样要落库，所以不看空值） */
+        onMarkerChange() {
+            this.markDirty();
+            this.scheduleSave();
+        },
+        /** v1.4.1.2：选中候选项 → 直接当成标记提交 */
+        onMarkerPicked(item) {
+            this.commitMarker(item && item.value !== undefined ? item.value : item);
+        },
+        /** v1.4.1.2：输入框提交（回车 / 失焦）→ 写成标记胶囊，再排一次保存 */
+        commitMarker(v) {
+            const next = String(v === undefined || v === null ? this.markerInput : v).trim();
+            this.markerInput = '';
+            if (!next || next === this.markerName) return;
+            this.markerName = next;
+            this.onMarkerChange();
+        },
+        /** v1.4.1.2：点标记胶囊上的 × 清空（清空后输入框重新出现，可换一个新标记） */
+        clearMarker() {
+            if (!this.markerName) return;
+            this.markerName = '';
+            this.markerInput = '';
+            this.onMarkerChange();
+        },
+
+        /**
          * v1.4.1：设置保存后立刻作用到当前编辑器。
          * 直接把新值合进 editorConfig —— 父页面传下来的是同一个响应式对象，
          * 合并后工具栏 / 配色 / 背景色的 computed 会一起重算，不用刷新页面。
@@ -6404,6 +6570,8 @@ export default {
                     moodName: this.moodName,
                     weather: this.weather,
                     weatherName: this.weatherName,
+                    // v1.4.1.1：笔记的「标记」（服务端只在字段给定时写，空串 = 清空）
+                    markerName: this.markerName,
                 });
                 this.version = Number(r?.version) || this.version + 1;
                 this.dirty = false;
@@ -9027,7 +9195,11 @@ export default {
                 }
             });
             if (!items.length) {
-                ElMessage.info(this.$t('memo.outlineEmpty'));
+                /*
+                 * v1.4.1.1（需求）：没有标题时也要弹大纲 —— 里面还有
+                 * 「跳到开始行 / 跳到末尾行」两个导航项，长文档里照样有用。
+                 */
+                this.outline = { open: true, items: [], folded: {} };
                 return;
             }
             /*
@@ -9053,6 +9225,26 @@ export default {
                 ...this.outline,
                 folded: { ...folded, [it.pos]: !folded[it.pos] },
             };
+        },
+
+        jumpToDocEdge(where) {
+            const ed = this.editor;
+            if (!ed) return;
+            this.outline = { ...this.outline, open: false };
+            const size = ed.state.doc.content.size;
+            /*
+             * 文档首尾都用「节点内部第一个位置」：1 是第一个块的开头，
+             * size - 1 是最后一个块的末尾（size 本身是文档边界，不能落光标）。
+             * 空文档时两者都退化为 1，clamp 一下免得 setTextSelection 抛错。
+             */
+            const raw = where === 'end' ? size - 1 : 1;
+            const at = Math.min(Math.max(1, raw), Math.max(1, size - 1));
+            try {
+                ed.chain().focus().setTextSelection(at).scrollIntoView().run();
+            } catch (e) {
+                return;
+            }
+            this.onEditorUpdate();
         },
 
         jumpToHeading(pos) {
@@ -9555,15 +9747,20 @@ export default {
              * 原生只会把项抬出列表，做不出「变成下级块」。
              */
             /*
-             * v1.4.1（需求）：输入 `()` 或 `（）` 后回车 → 插入提示块。
+             * v1.4.1（需求）：输入 `()` 或 `（）` 后 → 插入提示块。
+             * v1.4.1.1（需求）：触发键从「回车」改为「空格」 —— 括号后面接回车
+             * 在中文写作里太常见（换段），空格才是「我要把它转成块」的明确信号。
              * 只认「光标前正好是这两个字符」的情况：写作时括号太常见，
              * 松一点（比如任意位置出现括号）就会把正常标点吃掉。
              * 行内代码 / 代码块里不处理 —— 那里的括号是代码。
              */
             if (
                 this.mode === 'wysiwyg' &&
-                event.key === 'Enter' &&
+                (event.key === ' ' || event.code === 'Space') &&
                 !event.shiftKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                !event.altKey &&
                 !this.slash.open &&
                 !event.isComposing &&
                 event.keyCode !== 229
@@ -9701,18 +9898,16 @@ export default {
             /*
              * v1.3.9.1（需求）：列表菜单的显示条件改为「光标在列表标识的右侧第一位」——
              *   光标在列表符号后面第一位时显示；在右侧文本后面（非第一位）不显示，
-             *   在文本末尾也不显示。标题菜单保持原规则（光标停在标题文本最末尾）。
+             *   在文本末尾也不显示。
+             * v1.4.1.1（需求）：标题菜单改成与列表同一套规则 ——
+             *   只在 `### ` 标识右侧第一位显示；光标落在标题文字中间或末尾都不显示。
+             *   （原来要求「停在行末且有内容才显示」，写长标题时菜单浮在行尾，
+             *     既不跟标识在一起，也容易挡住下面一行。）
              */
             const isHeading = $from.parent.type.name === 'heading';
             const inList = ed.isActive('listItem') || ed.isActive('taskItem');
             if (isHeading) {
-                // 标题菜单：保持「光标停在内容行末」的原规则
-                if ($from.pos < $from.end()) return close();
-                /*
-                 * v1.3.4.1（需求）：只有标识没有内容时不显示行末菜单。
-                 * 刚敲完 `##` 时块里是空的，必须输入了实际内容才显示。
-                 */
-                if (!String($from.parent.textContent || '').trim()) return close();
+                if ($from.parentOffset !== 0) return close();
             } else if (inList) {
                 // 列表菜单：必须落在列表项的第一个段落里，且 parentOffset === 0（标识后的第一位）
                 const item = this.currentListItem();
@@ -11409,6 +11604,65 @@ export default {
     flex: 0 0 auto;
     margin-left: 2px;
 }
+/*
+ * v1.4.1.2（需求）：标记栏从「标签栏上一行」移到编辑区末尾行下方。
+ * 行本身复刻标签栏（同样的 4px 16px 内边距、6px 间距、22px 胶囊），
+ * 背景沿用编辑区（.me-body 已铺 --me-bg，这里再显式写一次，独立成行时也不会跳色）。
+ */
+.me-marker-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 30px;
+    padding: 4px 16px;
+    border-top: 1px solid var(--el-border-color-lighter);
+    background: var(--me-bg, transparent);
+}
+.me-marker-chip {
+    gap: 5px;
+    padding-left: 6px;
+    max-width: 100%;
+}
+.me-marker-chip-icon {
+    font-size: 10px;
+    opacity: 0.75;
+}
+.me-marker-chip-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 空态才显示输入框：无边框，和标签栏里的 .me-tag-input 同一观感 */
+.me-marker-field {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    width: 220px;
+    max-width: 100%;
+}
+.me-marker-field :deep(.el-input__wrapper) {
+    padding-left: 4px;
+    background: transparent;
+    box-shadow: none !important;
+}
+.me-marker-field :deep(.el-input__inner) {
+    font-size: 12px;
+    color: var(--el-color-primary);
+}
+.me-marker-icon {
+    font-size: 11px;
+    opacity: 0.6;
+}
+@media (max-width: 900px) {
+    .me-marker-bar {
+        padding-left: 3px;
+        padding-right: 3px;
+    }
+    .me-marker-field {
+        width: 168px;
+    }
+}
 .me-title {
     flex: 1 1 auto;
     min-width: 0;
@@ -11729,6 +11983,15 @@ export default {
     background: var(--el-bg-color);
     padding-left: 4px;
 }
+/* v1.4.1.1（需求）：移动端不做吸附 —— 设置按钮随其它工具一起横向滑动，
+   只在最后一行最后一个位置上，不再钉在可视区右边缘。 */
+@media (max-width: 900px) {
+    .me-btn-settings {
+        position: static;
+        background: transparent;
+        padding-left: 0;
+    }
+}
 .me-btn-settings::before {
     content: '';
     position: absolute;
@@ -11757,8 +12020,13 @@ export default {
      */
     overscroll-behavior-y: contain;
 }
-.me-wysiwyg {
-    height: 100%;
+/*
+ * v1.4.1.2：编辑区纵向容器 —— 正文 + 末尾标记栏。
+ * 不再给 min-height:100%（那会把标记栏推到视口最底部、和最后一行之间留一大片空白）；
+ * 这里按内容自然高度排，标记栏紧跟在最后一行下面。
+ */
+.me-main {
+    display: block;
 }
 .me-source {
     /*
@@ -13585,6 +13853,26 @@ export default {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+/* v1.4.1.1（需求）：大纲首尾的「跳到开始行 / 跳到末尾行」 */
+.me-outline-jump {
+    color: var(--el-text-color-secondary);
+    font-size: 12.5px;
+}
+.me-outline-jump:hover {
+    color: var(--el-color-primary);
+}
+.me-outline-jump-icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    width: 14px;
+    font-size: 11px;
+    opacity: 0.75;
+}
+.me-outline-jump + .me-outline-jump,
+.me-outline-jump ~ .me-outline-item.me-outline-jump {
+    margin-top: 2px;
+}
 
 /* 引用搜索面板（复用 me-slash 的容器样式） */
 .me-ref {
@@ -13926,6 +14214,22 @@ export default {
 .me-bl-icon {
     font-size: 11px;
     opacity: 0.7;
+}
+/* v1.4.1.1（需求）：底部栏的字数 / 字符（原在标题栏下一行） */
+.me-bl-stat {
+    flex: 0 0 auto;
+    padding: 2px 4px;
+    border: 0;
+    background: transparent;
+    color: var(--el-text-color-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: color 0.15s ease;
+}
+.me-bl-stat:hover {
+    color: var(--el-color-primary);
 }
 .me-bl-title {
     font-weight: 600;

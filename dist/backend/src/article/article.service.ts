@@ -18,6 +18,7 @@ import { Injectable } from '@nestjs/common';
 import { prisma } from '../common/prisma';
 import { appLog } from '../common/app-log';
 import { findOrCreateTag, tagScope } from '../common/tags';
+import { findOrCreateMarker } from '../common/markers';
 import { safeParse, normalizeTagNames, MAX_TAGS_PER_NOTE } from '../notes/notes.util';
 import {
   MAX_ARTICLE_EXCERPT,
@@ -29,6 +30,7 @@ import {
   countArticleWords,
   countTodoTasks,
   excerptOfArticle,
+  todoNamesOfArticle,
   normalizeArticleStatus,
   normalizeArticleType,
 } from './article.util';
@@ -62,6 +64,8 @@ export type ArticleListItem = {
   tags: string[];
   coverFileId: string;
   coverName: string;
+  /** v1.4.1.1：待办截止时间（0 = 未设），列表据此算「剩几天 / 剩几时」 */
+  dueAt: number;
   createdAt: number;
   updatedAt: number;
   publishedAt: number;
@@ -87,6 +91,8 @@ export class ArticleService {
     version: true,
     coverFileId: true,
     author: true,
+    /// v1.4.1.1：待办截止时间 —— 列表直接算「剩几天」，不必再查一次详情
+    dueAt: true,
     createdAt: true,
     updatedAt: true,
     publishedAt: true,
@@ -369,7 +375,15 @@ export class ArticleService {
 
     const list: ArticleListItem[] = (rows as Array<Record<string, unknown>>).map((r) => {
       const id = String(r.id);
-      const excerpt = String(r.excerpt || '').trim() || excerptOfArticle(r.content, 140);
+      /*
+       * v1.4.1.1（需求）：
+       *   · 待办 → 摘要为空时先取正文里的任务项名称，没有任务项才回落正文；
+       *   · 文章 → 摘要为空时回落正文（过滤代码 / 附件等非文本）。
+       */
+      const excerpt =
+        String(r.excerpt || '').trim() ||
+        (String(r.type || type) === 'todo' ? todoNamesOfArticle(r.content, 140) : '') ||
+        excerptOfArticle(r.content, 140);
       const folderIdOf = String(r.folderId || '');
       return {
         id,
@@ -390,6 +404,7 @@ export class ArticleService {
         tags: tagMap.get(id) || [],
         coverFileId: String(r.coverFileId || ''),
         coverName: coverMap.get(String(r.coverFileId || '')) || '',
+        dueAt: timeOf((r as { dueAt?: unknown }).dueAt),
         createdAt: timeOf(r.createdAt),
         updatedAt: timeOf(r.updatedAt),
         publishedAt: timeOf(r.publishedAt),
@@ -405,6 +420,8 @@ export class ArticleService {
       include: {
         tabs: { orderBy: [{ sort: 'asc' }, { createdAt: 'asc' }] },
         tags: { include: { tag: { select: { id: true, name: true } } } },
+        // v1.4.1.1：标记（一条内容只能有一个，关联表唯一键保证）
+        markers: { include: { marker: { select: { id: true, name: true } } } },
       },
     });
     if (!row) return { error: '文章不存在' as string };
@@ -443,6 +460,14 @@ export class ArticleService {
         todoDone: asInt(row.todoDone),
         version: asInt(row.version, 1),
         author: String(row.author || ''),
+        /* v1.4.1.1：待办编辑区改成笔记样式后，标题栏要显示心情 / 天气 / 标记 */
+        mood: String((row as { mood?: string }).mood || ''),
+        moodName: String((row as { moodName?: string }).moodName || ''),
+        weather: String((row as { weather?: string }).weather || ''),
+        weatherName: String((row as { weatherName?: string }).weatherName || ''),
+        markerName: String((row as { markers?: { marker?: { name?: string } }[] }).markers?.[0]?.marker?.name || ''),
+        /* v1.4.1.1：待办截止时间（0 = 未设） */
+        dueAt: timeOf(row.dueAt),
         createdAt: timeOf(row.createdAt),
         updatedAt: timeOf(row.updatedAt),
         publishedAt: timeOf(row.publishedAt),
@@ -543,6 +568,14 @@ export class ArticleService {
       status?: unknown;
       done?: unknown;
       version?: unknown;
+      /* v1.4.1.1：待办编辑区的标题栏字段（心情 / 天气 / 标记） */
+      mood?: unknown;
+      moodName?: unknown;
+      weather?: unknown;
+      weatherName?: unknown;
+      markerName?: unknown;
+      /* v1.4.1.1：截止时间（时间戳；0 / null = 清除） */
+      dueAt?: unknown;
     },
   ) {
     const row = await prisma.article.findFirst({ where: { id, author: viewer, instanceId } });
@@ -566,6 +599,16 @@ export class ArticleService {
       data.folderId = fid;
     }
     if (input.done !== undefined) data.done = !!input.done;
+    /* v1.4.1.1：心情 / 天气（与笔记同一套 key / 名称，只有传了才写） */
+    if (input.mood !== undefined) data.mood = String(input.mood ?? '').slice(0, 40);
+    if (input.moodName !== undefined) data.moodName = String(input.moodName ?? '').slice(0, 60);
+    if (input.weather !== undefined) data.weather = String(input.weather ?? '').slice(0, 40);
+    if (input.weatherName !== undefined) data.weatherName = String(input.weatherName ?? '').slice(0, 60);
+    /* v1.4.1.1：截止时间 —— 0 / 空 / 非法值一律按「不设截止」写 null */
+    if (input.dueAt !== undefined) {
+      const ts = Number(input.dueAt);
+      data.dueAt = Number.isFinite(ts) && ts > 0 ? new Date(ts) : null;
+    }
     if (input.status !== undefined) {
       const status = normalizeArticleStatus(input.status);
       data.status = status;
@@ -573,6 +616,22 @@ export class ArticleService {
     }
     data.version = asInt(row.version, 1) + 1;
     const updated = await prisma.article.update({ where: { id }, data: data as never });
+    /*
+     * v1.4.1.1：标记（单选）—— 写 markers 表 + article_markers 关联。
+     * 与笔记同一套「传了才改」规则：编辑器普通自动保存不带 markerName，
+     * 不能把已经设好的标记清掉；传空串才代表清空。
+     */
+    if (input.markerName !== undefined) {
+      try {
+        const name = String(input.markerName ?? '').trim().slice(0, 120);
+        const markerType = String(row.type || 'article');
+        const marker = name ? await findOrCreateMarker(name, instanceId, viewer, markerType) : null;
+        await prisma.articleMarker.deleteMany({ where: { articleId: id } });
+        if (marker) await prisma.articleMarker.create({ data: { articleId: id, markerId: marker.id } });
+      } catch (e) {
+        appLog.warn('article', `保存标记失败：文章 ${id}`);
+      }
+    }
     return {
       id: String(updated.id),
       version: asInt(updated.version, 1),
@@ -581,6 +640,7 @@ export class ArticleService {
       done: !!updated.done,
       folderId: String(updated.folderId || ''),
       title: String(updated.title || ''),
+      dueAt: timeOf(updated.dueAt),
     };
   }
 
